@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { Bag, SubagentChat, SubagentRequest } from '@ahpd/sdk';
+import type { Bag, BoundTool, SubagentChat, SubagentRequest } from '@ahpd/sdk';
 
 /*
  * A subagent's frames, drawn on the chat that call opened.
@@ -416,6 +416,47 @@ it('asks about a tool inside a subagent on that subagent\'s chat', async () => {
   await settle();
   expect(worker.actions.some((one) => one.type === 'chat/toolCallComplete' && one.toolCallId === write)).toBe(true);
   expect(worker.ended).toEqual([{ state: 'complete' }]);
+});
+
+it('asks a client to run a worker\'s call on the worker\'s chat', async () => {
+  /*
+   * Every input-needed entry carries the chat it is in, with the turn and the
+   * call a client answers by on that chat's channel.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L118
+   */
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { main, workers, session } = await replay('none', lines.slice(0, 5));
+  const worker = workers.get(call) as Worker;
+  expect(worker).toBeDefined();
+  await session.setTools?.([{
+    owner: 'probe',
+    definition: { name: 'probe__openFile', description: 'Open a file', inputSchema: { type: 'object', properties: {} } },
+  } as unknown as BoundTool]);
+
+  sdk.push({
+    type: 'assistant',
+    parent_tool_use_id: call,
+    uuid: 'worker-open',
+    message: {
+      id: 'msg-worker-open',
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'toolu_open', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+    },
+  });
+  await settle();
+
+  const raised = main
+    .filter((one) => one.channel === 'session' && one.action.type === 'session/inputNeededSet')
+    .map((one) => one.action.request as Bag)
+    .filter((one) => one.kind === 'toolClientExecution');
+  expect(raised).toHaveLength(1);
+  expect(raised[0]).toMatchObject({
+    chat: worker.uri,
+    turnId: `wturn-${call}`,
+    clientId: 'probe',
+    toolCall: { toolCallId: 'toolu_open', toolName: 'openFile' },
+  });
 });
 
 it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', async () => {

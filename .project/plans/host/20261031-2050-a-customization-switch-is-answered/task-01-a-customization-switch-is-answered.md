@@ -9,7 +9,8 @@ refs:
 
 ## Objective
 
-A client's switch of a customization is said back with its origin once it is made, by the backend or by this host for a client's plugin.
+A client's switch of a customization is said back with its origin once it is made.
+The backend makes it, or this host does for a client's plugin.
 
 ## Files
 

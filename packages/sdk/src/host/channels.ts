@@ -71,35 +71,14 @@ export const baseOf = (uri: string): string => {
 export type ChannelKind = 'session' | 'terminal' | 'other';
 
 /**
- * The keys whose string values are URIs, in an action or a state.
- *
- * Every field the protocol types `URI`, a changeset's `uriTemplate`, and
- * `subagentChatUri`, the worker chat link this host stamps on a tool call's
- * `_meta`. What `respelledIn` rewrites for a client that knows a session by
- * another name.
- *
- * `chats` is the odd one out of those fields: the protocol types it `URI[]`
- * on `session/chatsReordered` and an array of summaries everywhere else, and
- * only a string is ever read for a URI here - so the reorder's list is
- * rewritten and a state's rows, being objects, are left to `spelledFor`.
- */
-export const URI_KEYS = new Set([
-  'automation', 'channel', 'chat', 'chats', 'cwd', 'defaultChat', 'defaultDirectory', 'destination', 'directory',
-  'initialSubscriptions', 'logs', 'metrics', 'missing', 'primarySession', 'replacement', 'resource', 'root', 'run',
-  'session', 'sessions', 'source', 'src', 'subscriptions', 'traces', 'uri', 'url', 'workingDirectories',
-  'workingDirectory', 'uriTemplate', 'subagentChatUri',
-]);
-
-/**
  * A channel URI a client named, checked for being one at all.
  *
- * Not for its *scheme*: any scheme is taken. VS Code names a session after its
- * provider (`claude:/<uuid>`) and a terminal `agenthost-terminal:/<uuid>`, and
- * the protocol's own example is `ahp-session:/<uuid>`. For a session the client
- * names the id and the host names the URI: a new session is
- * `ahp-session:/<id>`, a client's other spelling is an alias, and an old
- * session keeps its `<provider>:/<id>` name - decision
- * `a-new-session-is-held-under-the-protocols-uri`.
+ * Not for its *scheme*: any scheme is taken. An older VS Code window names a
+ * session after its provider (`claude:/<uuid>`) and a terminal
+ * `agenthost-terminal:/<uuid>`, and the protocol's own example is
+ * `ahp-session:/<uuid>`. A session a client creates is held under the URI it
+ * named, as the reference host holds it, and is answered under that URI alone.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221
  */
 export const named = (uri: string, what: string): string => {
   const colon = uri.indexOf(':');
@@ -130,11 +109,32 @@ export const named = (uri: string, what: string): string => {
  * is subscribed to. One name has to win everywhere, and it has to be the one
  * the only other implementation computes.
  *
- * The other spelling is still answered - see `chatOf` - so nothing holding an
- * older URI is broken by this.
+ * It names the session's chat while the session's record says it is the
+ * default, or says nothing: see `sessionOfChat`.
  */
 export const chatUriFor = (session: string): string =>
   `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+/**
+ * The session a shaped chat URI names, or nothing for any other URI.
+ *
+ * A shaped chat is `ahp-chat://<chatId>/<base64(session)>`, or a worker's
+ * `ahp-chat://subagent/<base64(session)>/<toolCallId>`: the session it was made
+ * in is inside it, which is how an older VS Code window reads a chat's session.
+ * An opaque chat, `ahp-chat:/<uuid>`, names none.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/common/state/sessionState.ts#L899-L928
+ */
+export const shapedSession = (uri: string): string | undefined => {
+  if (!uri.startsWith('ahp-chat://')) return undefined;
+  const [chatId, ...rest] = uri.slice('ahp-chat://'.length).split('/');
+  const encoded = chatId === 'subagent' ? rest[0] ?? '' : rest.join('/');
+  if (chatId === '' || encoded === '' || (chatId === 'subagent' && rest.length < 2)) return undefined;
+  try {
+    const session = Buffer.from(encoded, 'base64url').toString('utf8');
+    return session.includes(':') ? session : undefined;
+  }
+  catch { return undefined; }
+};
 
 /**
  * The name a chat's own conversation is kept under, or nothing for a
@@ -166,8 +166,8 @@ export const chatIdFor = (session: string, chatUri: string): string | undefined 
 export const subagentChatUri = (session: string, toolCallId: string): string =>
   `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
-/** The client actions a worker's chat takes: answers to what it asked, and a stop. */
-export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputCompleted', 'chat/turnCancelled']);
+/** The client actions a worker's chat takes: answers to what it asked, drafts of them, and a stop. */
+export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled']);
 
 /** The tool call a worker chat was opened for, or nothing when it is not one. */
 export const toolCallOfSubagentChat = (uri: string): string | undefined => {
@@ -186,9 +186,7 @@ const CANVAS = 'ahp-canvas:/';
  * How this host names one canvas of a chat.
  *
  * The reference host's shape, `ahp-canvas:/<base64url(chat)>/<id>`. The chat is
- * base64url for two reasons: the reference host builds and reads the name that
- * way, and a name that carried the session URI plainly would be rewritten by
- * `respelledIn` for a client that knows the session by another name.
+ * base64url because the reference host builds and reads the name that way.
  *
  * `id` names one lifetime of a canvas. A canvas drawn again under the
  * `instanceId` it was opened with keeps its name, and a canvas that closes and
@@ -255,7 +253,7 @@ export const retainedTerminalOf = (uri: string): { chat: string; key: string } |
  * class - and Insiders builds from that window still subscribe under it,
  * and were refused `-32001` here about a session nobody had named. The
  * reference host now takes anything on the scheme, and so does this one:
- * a client is answered under the spelling it used, the way a chat is.
+ * a client is answered under the spelling it used, the way the root is.
  */
 export const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
 

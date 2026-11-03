@@ -42,10 +42,10 @@ describe('driving a turn', () => {
   });
 
   it('passes the client\'s turn to the agent', async () => {
-    const { client, uri } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
     });
     await settle();
     expect(sdk.said).toEqual(['hello']);
@@ -55,7 +55,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -77,7 +77,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -140,7 +140,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       await emit(...frames);
@@ -186,7 +186,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       const progress = (extra: Record<string, unknown>) => ({
@@ -236,6 +236,42 @@ describe('driving a turn', () => {
       expect(after).toEqual(ended);
     });
 
+    /*
+     * The worker's link, through every progress line. The host writes the
+     * `subagent` content onto the running call when the worker's chat opens,
+     * and `chat/toolCallContentChanged` replaces a call's whole content, so a
+     * progress line carries the link along with the line.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L162
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L719-L729
+     */
+    it('keeps a running worker\'s link through its progress line', async () => {
+      const { client, peer: p, uri, chatUri } = await running();
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      const held = async () => (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { activeTurn: { responseParts: { toolCall?: { content?: unknown[]; _meta?: Record<string, unknown> } }[] } } };
+      }).snapshot.state.activeTurn.responseParts[0]?.toolCall;
+      await emit(
+        { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'Task', input: { description: 'look', prompt: 'Look around' } }] } },
+        // The worker's first words, which open its chat.
+        { type: 'assistant', parent_tool_use_id: 'tc1', message: { id: 'w1', content: [{ type: 'text', text: 'Looking.' }] } },
+      );
+      const linked = (await held())?.content;
+      expect(linked).toEqual([{
+        type: 'subagent', resource: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/), title: 'look', description: 'look',
+      }]);
+      await emit({
+        type: 'system', subtype: 'task_progress', task_id: 'task-1', tool_use_id: 'tc1', description: 'look', summary: 'Reading the tests',
+      });
+      const progress = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallContentChanged').at(-1)?.action;
+      expect(progress?._meta).toMatchObject({ progressMessage: 'Reading the tests' });
+      expect(progress?.content).toEqual(linked);
+      expect((await held())?.content).toEqual(linked);
+    });
+
     it('says nothing for a tool it has no kind for', async () => {
       const { started, held } = await kinds([{
         type: 'assistant',
@@ -253,7 +289,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -304,10 +340,10 @@ describe('driving a turn', () => {
    * without a word.
    */
   it('asks about two tools at once and answers each of them', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
     });
     await settle();
 
@@ -331,7 +367,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action' },
       },
     });
@@ -351,7 +387,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-b', approved: false, reason: 'denied' },
       },
     });
@@ -363,7 +399,7 @@ describe('driving a turn', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
@@ -386,7 +422,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Working' }] } });
@@ -427,7 +463,8 @@ describe('driving a turn', () => {
   });
 
   /**
-   * A failure is about the turn that failed, not about the chat for ever.
+   * A failure is about the turn that failed, not about the chat or its
+   * session for ever.
    *
    * `Status.Error` was read off a flag that was set when a turn failed and
    * never unset, so one bad tool call left every client showing the session
@@ -435,8 +472,12 @@ describe('driving a turn', () => {
    * client, because the flag lives in the host rather than in the client that
    * draws it. The only way back was a new session. The chat's status is the
    * protocol's chat reducer's over its turns, and the failure is the turn's.
+   * A session shows it where the protocol puts a chat's status: the session's
+   * row for the chat, and its own row in the session list, whose status is
+   * the default chat's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-session/state.ts#L465-L480
    */
-  it('stops calling a chat failed once it is working again', async () => {
+  it('stops calling a chat or its session failed once it is working again', async () => {
     const { client, uri, chatUri } = await running();
     type Part = { kind: string; error?: { message?: string } };
     const seen = async (): Promise<{ status: number; turns: { state?: string; responseParts: Part[] }[] }> =>
@@ -445,10 +486,24 @@ describe('driving a turn', () => {
       }).snapshot.state;
     // The activity bits, without the read and archived flags.
     const statusOf = async (): Promise<number> => (await seen()).status & (Status.IsRead - 1);
+    /** The session's own error, its row for the chat, and its row in the session list, by their activity bits. */
+    const sessionSide = async (): Promise<{ error: unknown; row: number; listed: number }> => {
+      const session = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+        snapshot: { state: { error?: unknown; chats: { resource: string; status: number }[] } };
+      }).snapshot.state;
+      const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string; status: number }[];
+      };
+      return {
+        error: session.error,
+        row: (session.chats.find((one) => one.resource === chatUri)?.status ?? 0) & (Status.IsRead - 1),
+        listed: (listed.items.find((one) => one.resource === uri)?.status ?? 0) & (Status.IsRead - 1),
+      };
+    };
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({
@@ -461,26 +516,29 @@ describe('driving a turn', () => {
     const failed = (await seen()).turns.at(-1);
     expect(failed?.state).toBe('error');
     expect(failed?.responseParts.at(-1)).toMatchObject({ kind: 'error', error: { message: 'the tool exploded' } });
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.Error, listed: Status.Error });
 
     // The next thing asked of it. Running, not still in error, from the
     // moment the turn starts - the chat does not wait for it to succeed to
     // stop saying the last one failed.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
     });
     await settle();
     expect(await statusOf()).toBe(Status.InProgress);
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.InProgress, listed: Status.InProgress });
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
     expect(await statusOf()).toBe(Status.Idle);
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.Idle, listed: Status.Idle });
   });
 
   it('says a turn ended badly even when the harness gave no words', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     // A subtype that is not `success` and no `errors` at all - which happens,
@@ -513,7 +571,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -578,12 +636,13 @@ describe('a turn asked for while one is running', () => {
       .find((one) => one.rejectionReason !== undefined);
     expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
     expect(rejected?.action?.turnId).toBe('t2');
-    // The refusal carries the action back rather than applying it, so what is
+    // The refusal carries the action back and applies nothing, so what is
     // counted here is everything else: nothing of `t2` reaches the chat, and
-    // the window that did not ask hears nothing of it at all.
+    // the window that did not ask hears only the same refusal.
     const applied = actions(p, chatUri).filter((e) => e.rejectionReason === undefined);
     expect(applied.some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2')).toBe(false);
-    expect(actions(other, chatUri).some((e) => e.action.turnId === 't2')).toBe(false);
+    expect(actions(other, chatUri).filter((e) => e.action.turnId === 't2').map((e) => e.rejectionReason))
+      .toEqual(['A turn is running in this chat']);
     expect(sdk.said).toEqual(['first']);
 
     const still = await activeTurn(client, chatUri);
@@ -629,7 +688,7 @@ describe('what the client is told about its own turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     // Reducing it privately is not enough. A client applies what the host
@@ -733,7 +792,7 @@ describe('one tool call, one row', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
     });
     await settle();
 
@@ -776,7 +835,7 @@ describe('one tool call, one row', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
     });
     await settle();
 

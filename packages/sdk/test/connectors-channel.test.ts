@@ -812,6 +812,19 @@ it('answers a put with the check its adapter ran', async () => {
   await close();
 });
 
+it('is unauthorized while its last check was denied, and ready again once one passes', async () => {
+  const { host, users, probe, close } = await served();
+  probe.answer = async () => ({ result: 'denied', message: 'HTTP 401' });
+  const cy = await as(host, users, 'cy');
+
+  expect(await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
+  })).toMatchObject({ result: { state: 'unauthorized', health: { check: { result: 'denied' } } } });
+  probe.answer = async () => ({ result: 'unreachable' });
+  expect(await cy.call('x-ahpd/connectors/check', { id: 'ci' })).toMatchObject({ result: { state: 'ready', health: { check: { result: 'unreachable' } } } });
+  await close();
+});
+
 it('keeps a check that throws as failed, with the message the adapter gave', async () => {
   const { host, users, probe, close } = await served();
   probe.answer = async () => { throw new Error('the service said no'); };
@@ -908,6 +921,131 @@ it('keeps a call the plugin of the connector\'s adapter notes, and refuses a not
   // Somebody who may put the connector is not the plugin that makes its calls.
   expect(await ha.call('x-ahpd/connectors/note', { id: 'shared', ok: true })).toMatchObject({ code: -32009 });
   expect((await iv.rows())['shared']).toMatchObject({ health: { lastCall: { ok: false, error } } });
+  await close();
+});
+
+it('writes a refreshed secret the adapter\'s plugin sends, and never reopens the connector', async () => {
+  const { host, users, connectors, collection, opened, problems, vault, close } = await served();
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', {
+    id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: 'old-value' },
+  });
+  expect(await vault.get('host:connector/shared/secret')).toBe('old-value');
+  const stored = await collection.get('shared');
+  const reopened = opened.length;
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+
+  const answer = await connectors.methods['x-ahpd/connectors/secret']!.handle(
+    { id: 'shared', values: { secret: 'new-value' } }, plugin, 'webhook',
+  );
+
+  // The vault holds the new value, and the record keeps the reference it had.
+  expect(await vault.get('host:connector/shared/secret')).toBe('new-value');
+  expect(await collection.get('shared')).toEqual(stored);
+  expect(answer).toMatchObject({
+    id: 'shared',
+    state: 'ready',
+    config: { target: 'a', secret: { $secret: 'host:connector/shared/secret' } },
+  });
+  // The plugin already holds the value, so nothing is closed and opened again.
+  expect(opened).toHaveLength(reopened);
+  // No answer and no problem line carries a value.
+  for (const value of ['old-value', 'new-value']) {
+    expect(JSON.stringify(answer)).not.toContain(value);
+    expect(JSON.stringify(problems)).not.toContain(value);
+  }
+  await close();
+});
+
+it('writes the record\'s reference when a secret field had none', async () => {
+  process.env['AHPD_TEST_CONNECTOR_KEY'] = 'from-env-value';
+  const { host, users, connectors, collection, vault, close } = await served();
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', {
+    id: 'env', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } },
+  });
+  expect((await collection.get('env'))?.['config']).toEqual({ target: 'a', secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } });
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+
+  await connectors.methods['x-ahpd/connectors/secret']!.handle(
+    { id: 'env', values: { secret: 'refreshed-value' } }, plugin, 'webhook',
+  );
+
+  expect(await vault.get('host:connector/env/secret')).toBe('refreshed-value');
+  expect((await collection.get('env'))?.['config']).toEqual({
+    target: 'a', secret: { $secret: 'host:connector/env/secret' },
+  });
+  await close();
+});
+
+it('lets the adapter\'s own plugin write with no grant, for the host\'s connector and a person\'s', async () => {
+  const { host, users, connectors, vault, close } = await served();
+  const cy = await as(host, users, 'cy');
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', { id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: 'old-value' } });
+  await cy.call('x-ahpd/connectors/put', { id: 'mine', adapter: 'webhook', owner: 'user:cy', config: { target: 'a', secret: 'old-value' } });
+  const bare: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => false };
+  const method = connectors.methods['x-ahpd/connectors/secret']!;
+
+  for (const id of ['shared', 'mine']) {
+    expect(await method.authorize!({ id }, bare)).toBe(true);
+    await method.handle({ id, values: { secret: 'new-value' } }, bare, 'webhook');
+  }
+  expect(await vault.get('host:connector/shared/secret')).toBe('new-value');
+  expect(await vault.get('user:cy/connector/mine/secret')).toBe('new-value');
+  expect(await connectors.methods['x-ahpd/connectors/note']!.authorize!({ id: 'mine' }, bare)).toBe(true);
+  expect(await connectors.methods['x-ahpd/connectors/check']!.authorize!({ id: 'mine' }, bare)).toBe(true);
+  // Another plugin with no grant is not let in.
+  expect(await method.authorize!({ id: 'shared' }, { ...bare, id: 'plugin:other', plugin: 'other' })).toBe(false);
+  await close();
+});
+
+it('refuses a secret from another plugin and a closed connector', async () => {
+  const { host, users, connectors, adapters, collection, close } = await served();
+  const cy = await as(host, users, 'cy');
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', {
+    id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: 'old-value' },
+  });
+  await cy.call('x-ahpd/connectors/put', { id: 'mine', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+  const other: Principal = { id: 'plugin:other', plugin: 'other', roles: [], can: () => true };
+  const secret = async (id: string, reader: Principal): Promise<unknown> =>
+    await connectors.methods['x-ahpd/connectors/secret']!.handle({ id, values: { secret: 'x-value' } }, reader, reader.plugin ?? id);
+
+  await expect(secret('shared', other)).rejects.toThrow("shared's secrets are written by the plugin of webhook");
+  await expect(connectors.methods['x-ahpd/connectors/secret']!
+    .handle({ id: 'never', values: { secret: 'x-value' } }, plugin, 'webhook'))
+    .rejects.toThrow('holds no never');
+
+  // A record a failed open left behind is stored and not open.
+  const start = adapters['webhook']!.open;
+  adapters['webhook']!.open = () => { throw new Error('not today'); };
+  expect(await ha.call('x-ahpd/connectors/put', { id: 'shut', adapter: 'webhook', owner: 'host', config: { target: 'a' } }))
+    .toMatchObject({ code: -32603 });
+  adapters['webhook']!.open = start;
+  expect(await collection.get('shut')).toBeDefined();
+  await expect(secret('shut', plugin)).rejects.toThrow('shut is not an open connector');
+  await close();
+});
+
+it('refuses a field that is not a secret and an empty value, and never repeats a value', async () => {
+  const { host, users, connectors, close } = await served();
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', {
+    id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: 'old-value' },
+  });
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+  const call = async (values: Bag): Promise<unknown> =>
+    await connectors.methods['x-ahpd/connectors/secret']!.handle({ id: 'shared', values }, plugin, 'webhook');
+
+  const failure = await call({ target: 'sk-live-value' }).then(() => undefined, (error: unknown) => error);
+  expect(String((failure as Error).message)).toBe(
+    'x-ahpd/connectors/secret takes target as a field the schema marks secret',
+  );
+  expect(String((failure as Error).message)).not.toContain('sk-live-value');
+  await expect(call({ secret: '' })).rejects.toThrow('takes secret as a non-empty string');
+  await expect(call({})).rejects.toThrow('needs values');
   await close();
 });
 

@@ -688,8 +688,8 @@ export interface Agent {
    *
    * The last two are what the *host* reads, and they are the only two things
    * it needs to know about a key it otherwise knows nothing about.
-   * `sessionMutable: false` is refused on a running session rather than
-   * accepted and dropped. `scope` is `'session'` - the default - for a key the
+   * A key whose `sessionMutable` is not `true` is refused on a running session
+   * rather than accepted and dropped. `scope` is `'session'` - the default - for a key the
    * chats of one session share, and `'chat'` for one each chat answers for
    * itself: a permission mode is the session's, and a model is the chat's.
    * `scope` is this library's, not the protocol's, whose config schema is

@@ -72,6 +72,8 @@ interface Knobs {
   status?: number;
   /** What a `close` waits on before it finishes, as an agent slow to exit. */
   exiting?: Promise<void>;
+  /** What a read of the record answers in place of the turns the backend kept. */
+  read?: (turns: Bag[]) => Bag[];
 }
 
 /** The echo backend, with the knobs a case turns. */
@@ -79,6 +81,12 @@ const wrapped = (dir: string, knobs: Knobs): Agent => {
   const base = echo({ path: dir, pace: 0 });
   return {
     ...base,
+    transcript: async (id, at) => {
+      const turns = await base.transcript?.(id, at);
+      return knobs.read === undefined || turns === undefined
+        ? turns
+        : knobs.read(turns as unknown as Bag[]) as unknown as typeof turns;
+    },
     create: (start: Start): Session => {
       const session = base.create(start);
       knobs.starts = (knobs.starts ?? 0) + 1;
@@ -177,7 +185,7 @@ async function serving(knobs: Knobs, options: Options = {}) {
 
   const root = async (): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } })) as { snapshot: { state: Bag } }).snapshot.state;
-  /** The sessions the root says are open: running, and asleep until disposed. */
+  /** The sessions the root says are running a turn. */
   const active = async (): Promise<number> => Number((await root()).activeSessions);
   /** The sessions whose agent runs now: every start less every close. */
   const awake = (): number => (knobs.starts ?? 0) - knobs.closes.length;
@@ -232,7 +240,7 @@ it('keeps a session awake while a turn runs or a message is queued', async () =>
 
 it('keeps a session awake while a tool confirmation or an input request waits', async () => {
   const knobs: Knobs = { closes: [] };
-  const { time, open, active } = await serving(knobs);
+  const { time, open, awake } = await serving(knobs);
   const one = await open('one');
   await one.leave();
 
@@ -240,23 +248,23 @@ it('keeps a session awake while a tool confirmation or an input request waits', 
   knobs.state = waiting({ kind: 'toolCall', toolCall: { toolCallId: 'c', status: 'pending-confirmation' } });
   time.pass(31);
   await settle();
-  expect(await active()).toBe(1);
+  expect(awake()).toBe(1);
 
   knobs.state = waiting({ kind: 'inputRequest', id: 'r', questions: [] });
   time.pass(31);
   await settle();
-  expect(await active()).toBe(1);
+  expect(awake()).toBe(1);
   expect(knobs.closes).toEqual([]);
 });
 
 it('keeps a session awake when resumable answers false', async () => {
   const knobs: Knobs = { closes: [], resumable: false };
-  const { time, open, active } = await serving(knobs);
+  const { time, open, awake } = await serving(knobs);
   const one = await open('one');
   await one.leave();
   time.pass(31);
   await settle();
-  expect(await active()).toBe(1);
+  expect(awake()).toBe(1);
   expect(knobs.closes).toEqual([]);
 });
 
@@ -292,19 +300,48 @@ it('does not count a client subscribe as activity', async () => {
 
 it('keeps a session awake while a client is subscribed to it', async () => {
   const knobs: Knobs = { closes: [] };
-  const { time, open, active } = await serving(knobs);
+  const { time, open, awake } = await serving(knobs);
   await open('one');
   time.pass(31);
   await settle();
   time.pass(60);
   await settle();
-  expect(await active()).toBe(1);
+  expect(awake()).toBe(1);
   expect(knobs.closes).toEqual([]);
+});
+
+it('answers a client back from a drop with the state read again while it was away', async () => {
+  /*
+   * A session asleep holds its state while somebody watches it, and opens
+   * again from its record. A client whose state came from the earlier opening
+   * cannot be replayed onto the one held now: the actions since apply to a
+   * state it never had. The reference answers a client that holds no baseline
+   * from the state the host holds with the state itself.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   */
+  const knobs: Knobs = { closes: [] };
+  const { host, client, time, open } = await serving(knobs);
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
+  client.close();
+  time.pass(31);
+  await until(() => knobs.closes.length > 0);
+
+  // The record says the turn was stopped, which the client never held.
+  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
+  }) as { type: string; snapshots?: { resource: string; state: Bag }[] };
+  expect(answer.type).toBe('snapshot');
+  const chat = answer.snapshots?.find((one_) => one_.resource === one.chatUri);
+  expect(((chat?.state.turns ?? []) as Bag[]).map((turn) => turn.state)).toEqual(['cancelled']);
 });
 
 it('sleeps the least recently used quiet session over the count limit', async () => {
   const knobs: Knobs = { closes: [], closed: [] };
-  const { time, open, awake, active, listed } = await serving(knobs, { sessionResidencyLimit: 2 });
+  const { time, open, awake, listed } = await serving(knobs, { sessionResidencyLimit: 2 });
   const one = await open('one');
   await one.leave();
   time.pass(0.1);
@@ -317,10 +354,9 @@ it('sleeps the least recently used quiet session over the count limit', async ()
   await open('three');
   await until(() => knobs.closes.length > 0);
   expect(awake()).toBe(2);
-  // Asleep is not disposed: all three are open sessions.
-  expect(await active()).toBe(3);
   expect(knobs.closed).toEqual(['one']);
-  // The oldest turn start went, and every one of them is still listed.
+  // The oldest turn start went, and every one of them is still listed: asleep
+  // is not disposed.
   const rows = await listed();
   expect(rows).toEqual(expect.arrayContaining([one.resource, two.resource, 'ahp-session:/three']));
   expect(rows).toHaveLength(3);
@@ -367,7 +403,7 @@ it('closes each chat with close(\'stopping\'), and keeps its terminals and rule 
   opened[0]?.close();
 });
 
-it('lists a sleeping session in the catalogue, and counts it among the open sessions', async () => {
+it('lists a sleeping session in the catalogue, and counts it among no sessions running a turn', async () => {
   const knobs: Knobs = { closes: [] };
   const { time, open, active, awake, listed } = await serving(knobs);
   const one = await open('one');
@@ -375,20 +411,20 @@ it('lists a sleeping session in the catalogue, and counts it among the open sess
   time.pass(31);
   await until(() => knobs.closes.length > 0);
   expect(awake()).toBe(0);
-  // Asleep is not disposed, and the protocol counts the non-disposed.
-  expect(await active()).toBe(1);
+  // Asleep is not disposed, and a session asleep runs no turn.
+  expect(await active()).toBe(0);
   expect(await listed()).toContain(one.resource);
 });
 
 it('never sleeps with sleepAfterMinutes 0 and sessionResidencyLimit 0', async () => {
   const knobs: Knobs = { closes: [] };
-  const { time, open, active } = await serving(knobs, { sleepAfterMinutes: 0, sessionResidencyLimit: 0 });
+  const { time, open, awake } = await serving(knobs, { sleepAfterMinutes: 0, sessionResidencyLimit: 0 });
   const one = await open('one');
   await one.leave();
   await (await open('two')).leave();
   time.pass(24 * 60);
   await settle();
-  expect(await active()).toBe(2);
+  expect(awake()).toBe(2);
   expect(knobs.closes).toEqual([]);
 });
 

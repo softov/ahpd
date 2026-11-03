@@ -1,7 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
-import type { Agent, McpServer, ToolEffects } from './agent.js';
+import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
@@ -15,6 +15,7 @@ import type { EnablementStore } from '../plugins/enablement.js';
 import type { ChatPreamble, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
 import type { ConnectorRef, ServedAdapter } from './connectors.js';
 import type { AgentOwner, ServedEngine } from './agents.js';
+import type { ServedTunnelKind } from './tunnels.js';
 import type { ConnectorsChannel } from '../connectors/channel.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort, HandedAgent, NestedStart, NestedStarted } from './computers.js';
@@ -212,6 +213,15 @@ export interface HostOptions {
    * stored record whose `engine` is not here is served as `unavailable`.
    */
   engines?: Record<string, ServedEngine>;
+  /**
+   * The kinds of tunnel the plugins offer, by name.
+   *
+   * The fold fills this from `registerTunnelKind`, and one name is one kind: a
+   * second plugin registering it is reported and loses that kind alone. The
+   * host asks each kind for its system tunnel and calls its handlers for a
+   * stored record; a record whose kind is not here cannot be started.
+   */
+  tunnelKinds?: Record<string, ServedTunnelKind>;
   /**
    * Whose each agent is, by its id, as the last read of its record found it.
    *
@@ -894,18 +904,11 @@ export interface Diagnostics {
 export type TitleStrategy = 'activeAgent' | 'utility' | 'deferred';
 
 /**
- * One tool the host contributes, and what running it does.
- *
- * `definition` is what a client draws and what the model is offered;
- * `run` is called when the model calls it, with the arguments it passed and
- * the chat it called from. Returning a string is the answer; throwing is a
- * tool that failed, and the message reaches the model.
+ * What every host tool carries, whichever place it runs from.
  */
-export interface HostTool {
+interface HostToolCommon {
   /** What the model is offered. `name` is the id it calls. */
   definition: ToolDefinition;
-  /** What running it does. */
-  run(input: Record<string, unknown>, at: ToolCall): Promise<string> | string;
   /**
    * What running this tool does to the world.
    *
@@ -990,7 +993,61 @@ export interface HostTool {
    * Undefined leaves the harness's own default in force.
    */
   deferLoading?: boolean;
+  /**
+   * The grant a person needs to see this tool where no session asks.
+   *
+   * Only read for a tool that says `sessionless: true`, and only by the list
+   * built for a person rather than for a session: a caller who may not do the
+   * grant is not offered the tool at all, which is how a window that may read
+   * the sessions is offered `list_sessions` and not `delete_session`. Absent
+   * says the tool needs no grant, and a tool with no `sessionless` is never in
+   * that list whichever grant it names.
+   */
+  grant?: Grant;
 }
+
+/**
+ * One tool a session is offered, and what running it does.
+ *
+ * `definition` is what a client draws and what the model is offered;
+ * `run` is called when the model calls it, with the arguments it passed and
+ * the chat it called from. Returning a string is the answer; throwing is a
+ * tool that failed, and the message reaches the model.
+ *
+ * Every tool that a session may call is one of these unless it also says
+ * `sessionless: true` - a plugin's tool, a client's tool and the host's own
+ * alike - so a tool written against `ToolCall` keeps its `at.session` and its
+ * `at.chat` as it always had them.
+ */
+export interface SessionHostTool extends HostToolCommon {
+  sessionless?: false;
+  /** What running it does. */
+  run(input: Record<string, unknown>, at: ToolCall): Promise<string> | string;
+}
+
+/**
+ * One tool a person may call with no session behind the call.
+ *
+ * The other place a tool runs from: a window asking the host about its
+ * sessions, or opening one, before any chat exists to be the caller. What is
+ * about a call in a session - the chat it came from, the turn it runs in - is
+ * still on `at`, so one function can serve both, and a tool that has nothing
+ * to do without a session throws rather than guessing one.
+ */
+export interface SessionlessHostTool extends HostToolCommon {
+  sessionless: true;
+  /** What running it does. */
+  run(input: Record<string, unknown>, at: SessionlessToolCall): Promise<string> | string;
+}
+
+/**
+ * One tool the host contributes, and what running it does.
+ *
+ * Which of the two a tool is decides where it runs: a tool that says
+ * `sessionless: true` is offered to a person with no session and to every
+ * session as well, and one that does not is offered to sessions alone.
+ */
+export type HostTool = SessionHostTool | SessionlessHostTool;
 
 /**
  * Where a host tool was called from, and what the host knows.
@@ -1070,6 +1127,14 @@ export interface ToolCall {
   /** Models any session here can run on, each with the provider it belongs to. */
   models(): { id: string; name: string; provider: string }[];
   /**
+   * The provider ids this host offers, in the order it holds them.
+   *
+   * Every backend the host was built with or was handed by a plugin, whether
+   * or not it has told the host a model yet - the list a tool names when it
+   * refuses one an input names.
+   */
+  providers(): string[];
+  /**
    * A chat's conversation, as its channel snapshot carries it.
    *
    * The newest page of turns, the running one, and whether older ones exist
@@ -1093,13 +1158,20 @@ export interface ToolCall {
    *
    * `isolation` decides a worktree the way a client's `config.isolation`
    * does; absent, the host's default for the directory. `model` names the
-   * provider as well as the model. Answers the session's URI and its default
-   * chat's.
+   * provider as well as the model.
+   *
+   * `config` is the backend's settings for the new session, checked against
+   * its schema as `createChat` checks a chat's. What the host owns - the
+   * `isolation` and `model` above - wins over a value of the same name, since
+   * those are the keys this call was made with.
+   *
+   * Answers the session's URI and its default chat's.
    */
   create(options: {
     workingDirectory: string;
     provider?: string;
     model?: string;
+    config?: Record<string, unknown>;
     isolation?: 'worktree' | 'folder';
     title: string;
     prompt: string;
@@ -1171,6 +1243,42 @@ export interface ToolCall {
    * nothing serves it, in the words of whatever refused.
    */
   read(uri: string): Promise<string>;
+}
+
+/**
+ * What a tool called with no session behind it is handed.
+ *
+ * The same host as `ToolCall`, so one function serves both lists, with the two
+ * facts about where the call ran made optional: a call with no session behind
+ * it has neither, and one made from a session has both. They are absent rather
+ * than empty strings so a tool may ask whether there is one, and a tool that
+ * needs one throws rather than letting the host guess on the caller's behalf.
+ *
+ * What is left is the person: `person()` names the caller, `may` and
+ * `refusal` answer for them, and the tools that reach a chat or a session take
+ * one as an argument instead of reading it from the call.
+ */
+export interface SessionlessToolCall extends Omit<ToolCall, 'session' | 'chat'> {
+  /** The session the call was made from, where one was. */
+  session?: string;
+  /** The chat the call was made from, where one was. */
+  chat?: string;
+}
+
+/**
+ * Who a call made with no session is made by.
+ *
+ * A window that signed in names its principal, which is who its tools are
+ * offered to and who they answer to when they run; the host's own root
+ * connection names `root` and is allowed everything. Neither is set when the
+ * host has no users directory, where there is nobody to ask and every call is
+ * trusted as it always was.
+ */
+export interface ToolCaller {
+  /** The person behind the call, when the host has a users directory. */
+  principal?: Principal;
+  /** True for this host's own root connection. */
+  root?: boolean;
 }
 
 /**
@@ -1246,19 +1354,6 @@ export interface Connection {
    */
   principalUntil?: number;
   /**
-   * The preferences this client pushed that are its own, not the host's.
-   *
-   * `root/configChanged` carries two kinds of key. Some describe the host and
-   * are one setting for everybody, like `globalAutoApproveEnabled`.
-   * `defaultShell` is not one of those: the host's own note calls these "the
-   * preferences a *client* holds about how the host should behave for it", and
-   * VS Code pushes the shell out of a per-person setting the moment it
-   * connects. Kept in one shared record, the last client to connect decided
-   * everybody's shell - so the person's half is kept here instead, and each
-   * connection reads its own back in root state.
-   */
-  config?: Record<string, unknown>;
-  /**
    * The folders this window said yes to when the host asked it about one.
    *
    * A move into a folder the window never pushed asks it then and there, and
@@ -1269,8 +1364,7 @@ export interface Connection {
    * window pushes a `workspaceTrust` value, which answers for every folder at
    * once and so puts the folder-by-folder answers behind it.
    *
-   * Per connection for the same reason `config` is: it is what one window
-   * said, and it dies with the socket.
+   * Per connection: it is what one window said, and it dies with the socket.
    */
   trustedFolders?: string[];
   /**
@@ -1292,16 +1386,30 @@ export interface Connection {
    */
   tokens: Map<string, Credential>;
   /**
-   * Channels this client named in a shape of its own, by the channel they mean.
-   *
-   * A client may address a chat by a URI this host did not mint - see
-   * `chatFor` - and it then expects to be answered about *that* URI: its
-   * subscription is keyed by the string it sent, and an action arriving under
-   * any other name belongs to a channel it is not watching. So the spelling is
-   * remembered per connection and every notification is addressed back the way
-   * it was asked for.
+   * Host channels this client named in another spelling, by the channel they
+   * mean: `ahp-root:` for `ahp-root://`, and the automations catalogue with an
+   * authority. Its subscription is keyed by the string it sent, so every
+   * notification on such a channel is addressed back that way. A session and a
+   * chat have one URI each, and are never here.
    */
   aliases: Map<string, string>;
+  /**
+   * Whether this client is a VS Code window that cannot address an
+   * `ahp-session:` session: it names itself `vscode-editor-window` or
+   * `vscode-agents-window` and does not declare `vscode.ahpSessionUris`. Such a
+   * window is shown no `ahp-session:` session, as the reference host hides one
+   * from it.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055
+   */
+  legacySessionUris?: boolean;
+  /**
+   * Whether this client is a VS Code window that cannot address an opaque
+   * chat: it names itself as above and does not declare `vscode.ahpChatUris`.
+   * Such a window reads a chat's session out of its URI, so it is shown only
+   * shaped chats in the session they name.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4344-L4351
+   */
+  legacyChatUris?: boolean;
 }
 
 /**
@@ -1424,6 +1532,16 @@ export interface Host {
    * backend is offered its tools when its process starts.
    */
   setTools(tools: HostTool[]): void;
+  /**
+   * The tools a person may call with no session behind the call.
+   *
+   * The other list, for the other place tools run: the tools that say
+   * `sessionless: true`, less those the caller may not do by their `grant`,
+   * less the host's advanced ones unless `advancedTools` is on. Built for one
+   * caller and meant for one request - the principal decides both what is
+   * offered and who a tool answers to - so nothing here is kept between calls.
+   */
+  sessionlessTools(caller: ToolCaller): BoundTool[];
   /**
    * Take a new fold of the options, keeping every open session.
    *

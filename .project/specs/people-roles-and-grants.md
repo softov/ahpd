@@ -192,9 +192,9 @@ AND the other plugin commands, `config` and `restart` need `config:write`.
 ### A root config change
 
 WHEN a person who is not root dispatches `root/configChanged`
-THEN a change that replaces the config, or names a key that is not `defaultShell` or `workspaceTrust`, needs `config:change`
-AND a change that names `workspaceTrust` needs `trust:push`, which the `member` role holds through `trust:write`
-AND a change that names only `defaultShell` needs no grant beyond sign-in, because those keys belong to the connection
+THEN a change that replaces the config, or names any key but `workspaceTrust`, needs `config:change`, because each key is one value for the whole host
+AND a change that names only `workspaceTrust` needs `trust:push`, which the `member` role holds through `trust:write`
+AND a change that names no key needs no grant beyond sign-in
 AND only root, or a person with `config:settings`, sees the daemon's own settings in the root config.
 
 ### A policy is a record clients edit

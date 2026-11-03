@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';
 import { forget } from '../src/catalog.js';
@@ -97,7 +98,7 @@ it('accepts a truncation through the host and rewinds the restarted session', as
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
@@ -127,7 +128,14 @@ it('accepts a truncation through the host and rewinds the restarted session', as
   client.close();
 });
 
-it('opens again for the turn after pi refused the rewind', async () => {
+/*
+ * A cut pi refuses, logged, and the turn runs on pi's leaf.
+ *
+ * The reference host holds a truncation before its agent cuts and logs a cut
+ * that fails (agentSideEffects.ts L1982-L1986 at a4e689ae), so a client that
+ * truncated sees its next turn run.
+ */
+it('runs the turn after pi refused the rewind, and logs the refusal', async () => {
   const pi = fakePi();
   pi.refuseRewindOnce();
   const sent: { channel: string; action: Bag }[] = [];
@@ -141,17 +149,14 @@ it('opens again for the turn after pi refused the rewind', async () => {
     rewindAt: 'entry-7',
   } as Start;
   const session = piSession({}, start, pi.open);
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
   session.begin('t1', 'hello');
-  await until(() => sent.some((one) => one.action.type === 'chat/error'));
-  const failure = sent.find((one) => one.action.type === 'chat/error')?.action;
-  expect(((failure?.part as Bag).error as Bag).message).toContain('refused');
+  await until(() => sent.some((one) => one.action.type === 'chat/turnComplete'));
+  expect(sent.filter((one) => one.action.type === 'chat/error')).toEqual([]);
   expect(pi.opens).toHaveLength(1);
-
-  // The session is not broken: the next turn opens pi and tries the truncation.
-  session.begin('t2', 'again');
-  await until(() => pi.asked.filter((one) => one.kind === 'rewind').length === 2);
-  expect(pi.opens).toHaveLength(2);
-  expect(pi.asked.filter((one) => one.kind === 'rewind')).toHaveLength(2);
+  expect(pi.asked.filter((one) => one.kind === 'rewind')).toHaveLength(1);
+  expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
+  warned.mockRestore();
   session.close();
 });

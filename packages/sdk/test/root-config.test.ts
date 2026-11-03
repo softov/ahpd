@@ -304,7 +304,13 @@ it('declares workspaceTrust as VS Code declares it', async () => {
   });
 });
 
-it('keeps a pushed workspaceTrust on the connection that pushed it', async () => {
+/*
+ * The window's keys are one value for the whole host, which the last push from
+ * any window sets and every client reads, as the reference host keeps one root
+ * config for every window connected to it.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostConfigurationSync.ts#L47-L55
+ */
+it('keeps a pushed workspaceTrust for the whole host, the last push the one held', async () => {
   const { signedIn, rootOf } = served();
   const ana = await signedIn('admin', 'ana');
   const ben = await signedIn('admin', 'ben');
@@ -314,16 +320,21 @@ it('keeps a pushed workspaceTrust on the connection that pushed it', async () =>
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { workspaceTrust: trust } } },
   });
   await settle();
-  // The person's own, as `defaultShell` is: a window's trust is that window's,
-  // and kept in one shared record the last client to connect would set the
-  // trust of every session on the host.
   const mine = (await rootOf(ana.client)).config as { values: Record<string, unknown> };
   expect(mine.values.workspaceTrust).toEqual(trust);
   const theirs = (await rootOf(ben.client)).config as { values: Record<string, unknown> };
-  expect(theirs.values.workspaceTrust).toBeUndefined();
+  expect(theirs.values.workspaceTrust).toEqual(trust);
+
+  const later = { enabled: true, trustedUris: [uriOf('/b')] };
+  await ben.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { workspaceTrust: later } } },
+  });
+  await settle();
+  expect(((await rootOf(ana.client)).config as { values: Record<string, unknown> }).values.workspaceTrust).toEqual(later);
 });
 
-it('keeps the three approval keys on the connection that pushed them', async () => {
+it('keeps the three approval keys for the whole host', async () => {
   const { signedIn, rootOf } = served();
   const ana = await signedIn('admin', 'ana');
   const ben = await signedIn('admin', 'ben');
@@ -337,15 +348,10 @@ it('keeps the three approval keys on the connection that pushed them', async () 
     params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } },
   });
   await settle();
-  // A window's command rules are the window's, like its trust and its shell: a
-  // session is started by one window, and the last client to connect must not
-  // decide the rules of every session on the host.
   const mine = (await rootOf(ana.client)).config as { values: Record<string, unknown> };
   expect(mine.values).toMatchObject(pushed);
   const theirs = (await rootOf(ben.client)).config as { values: Record<string, unknown> };
-  expect(theirs.values.terminalAutoApproveEnabled).toBeUndefined();
-  expect(theirs.values.terminalAutoApproveRules).toBeUndefined();
-  expect(theirs.values.editAutoApprovePatterns).toBeUndefined();
+  expect(theirs.values).toMatchObject(pushed);
 });
 
 it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole host', async () => {
@@ -386,8 +392,10 @@ it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole
     expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') }),
   ]);
 
+  // The admin heard the member's refusal, as every client of the root does,
+  // and then its own push taken.
   await push(admin.client);
-  expect(heardOnRoot(admin.heard)).toEqual([
+  expect(heardOnRoot(admin.heard).filter((one) => one.rejectionReason === undefined)).toEqual([
     expect.objectContaining({ action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } }),
   ]);
   // Kept in the host's half, so the member that could not push it reads it.
@@ -395,18 +403,29 @@ it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole
   expect(held.values.eligibleForAutoApproval).toEqual(rules);
 });
 
-it('takes the three approval keys from a member, needing no config:change', async () => {
+it('takes the three approval keys only with config:change, since they are the host\'s', async () => {
   const { signedIn, rootOf, heardOnRoot } = served(false);
+  const admin = await signedIn('admin', 'admin');
   const member = await signedIn('member', 'member');
   const pushed = { terminalAutoApproveRules: { 'make test': true }, editAutoApprovePatterns: { '**/*': true } };
-  await member.client.handle({
-    method: 'dispatchAction',
-    params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } },
-  });
-  await settle();
-  // No rejection: the keys describe what this window's own sessions may run,
-  // and saying so is not changing the host.
+  const push = async (client: Client): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } },
+    });
+    await settle();
+  };
+  // The rules every session on the host reads are the host's: saying them
+  // changes what everybody's sessions run, so it needs config:change, as a
+  // rule about every session's tool calls does.
+  await push(member.client);
   expect(heardOnRoot(member.heard)).toEqual([
+    expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') }),
+  ]);
+  await push(admin.client);
+  // What the admin was answered, which is its own push taken: a refusal of
+  // somebody else's push says nothing about this one.
+  expect(heardOnRoot(admin.heard).filter((one) => one.rejectionReason === undefined)).toEqual([
     expect.objectContaining({ action: { type: 'root/configChanged', config: pushed } }),
   ]);
   const { values } = (await rootOf(member.client)).config as { values: Record<string, unknown> };

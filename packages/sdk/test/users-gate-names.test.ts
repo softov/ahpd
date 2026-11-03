@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { shellTerminals } from '../src/machines/terminals.js';
@@ -30,9 +31,10 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  await call(admin.client, 'subscribe', { channel: 'claude:/one' });
-  await call(admin.client, 'subscribe', { channel: 'ahp-chat:/one' });
+  // Held under the URI the client asked for, in a scheme of its own.
+  expect(await call(admin.client, 'createSession', { channel: 'x:/one', provider: 'claude' })).toHaveProperty('result');
+  await call(admin.client, 'subscribe', { channel: 'x:/one' });
+  await call(admin.client, 'subscribe', { channel: chatUriFor('x:/one') });
 
   // A file:read guest who names the session as a file reads nothing of it and drives nothing in it.
   const guest = await withRole(made, 'g');
@@ -48,6 +50,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
+  // Nothing taken, and nothing heard: a refusal at the gate is the guest's alone.
   const acted = admin.seen.seen.filter((one) => one.method === 'action'
     && ['session/titleChanged', 'chat/turnStarted'].includes(String(one.params.action?.type)));
   expect(acted).toEqual([]);
@@ -55,11 +58,11 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     'file:///one: file:///one is not a session here',
     'file:///one: file:///one is not a session here',
     'file:///one/annotations: file:///one/annotations is not a session here',
-    'ahp-session:/one: g may not session:rename here',
+    'x:/one: g may not session:rename here',
   ]);
 
   // The session and a watch under a name of its own both still work.
-  await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Mine' });
+  await admin.send('x:/one', { type: 'session/titleChanged', title: 'Mine' });
   expect(admin.refused()).toEqual([]);
   expect(admin.seen.seen.some((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')).toBe(true);
   const own = made.accept(publishing('x:/w'));
@@ -110,7 +113,7 @@ it('keeps terminals and sessions from being named after each other', async () =>
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  // A terminal named after a live session, in its held name or another.
+  // A terminal named after a live session, and one in its provider's scheme.
   expect(await call(admin.client, 'createTerminal', { channel: 'claude:/one', cwd: root })).toMatchObject({ code: -32003 });
   expect(await call(admin.client, 'createTerminal', { channel: 'ahp-session:/one', cwd: root })).toMatchObject({ code: -32003 });
   // A name in a provider's scheme is a session's even with no session under it.
@@ -137,7 +140,7 @@ it('refuses turns for a name that is nobody\'s session or chat', async () => {
     terminals: shellTerminals(),
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'subscribe', { channel: 'claude:/one' })).toHaveProperty('result');
+  expect(await call(admin.client, 'subscribe', { channel: 'ahp-session:/one' })).toHaveProperty('result');
   // A terminal the client named after the session's *id*, which is a name in
   // the terminal space and no session of this host's.
   const terminal = 'ahp-terminal:/one';
@@ -155,7 +158,7 @@ it('refuses turns for a name that is nobody\'s session or chat', async () => {
   await call(admin.client, 'fetchTurns', { channel: terminal, cursor: '1' });
   expect(admin.seen.seen.filter((said) => said.method === 'action' && said.params.channel === terminal)).toEqual([]);
   // And the session's own chat still pages.
-  await call(admin.client, 'fetchTurns', { channel: 'claude:/one', cursor: '1' });
+  await call(admin.client, 'fetchTurns', { channel: 'ahp-session:/one', cursor: '1' });
   expect(admin.seen.seen.filter((said) => said.method === 'action'
     && said.params.action?.type === 'chat/turnsLoaded')).not.toEqual([]);
 });
@@ -174,10 +177,10 @@ it('answers no channel a connection may not read in its handshake', async () => 
   const stranger = made.accept(seen);
   const hand = await stranger.handle({
     method: 'initialize',
-    params: { clientId: 'stranger', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT, 'claude:/one', 'ahp-session:/one', 'ahp-terminal:/t'] },
+    params: { clientId: 'stranger', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT, 'ahp-session:/one', 'ahp-terminal:/t'] },
   }) as { snapshots: { resource: string }[] };
   expect(hand.snapshots.map((one) => one.resource)).toEqual([ROOT]);
-  await admin.send('claude:/one', { type: 'session/titleChanged', title: 'Private' });
+  await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Private' });
   await admin.send('ahp-terminal:/t', { type: 'terminal/input', data: 'echo SECRET\n' });
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(seen.seen.filter((one) => one.method === 'action' && one.params.channel !== ROOT)).toEqual([]);
@@ -191,10 +194,10 @@ it('resumes a client id for a person signed in only when it is theirs, and only 
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
   const guest = await withRole(made, 'g');
-  const resume = { clientId: 'a', subscriptions: [ROOT, 'claude:/one'], lastSeenServerSeq: 0 };
+  const resume = { clientId: 'a', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: 0 };
 
   // Nobody signed in resumes nothing it may not read; somebody else signed in is told the id is not theirs.
-  expect(await call(made.accept(peer()), 'reconnect', resume)).toMatchObject({ result: { missing: ['claude:/one'] } });
+  expect(await call(made.accept(peer()), 'reconnect', resume)).toMatchObject({ result: { missing: ['ahp-session:/one'] } });
   const other = made.accept(peer());
   await hello(other, 'elsewhere'); await signIn(other, 'g');
   expect(await call(other, 'reconnect', resume)).toMatchObject({ code: -32008 });
@@ -207,7 +210,7 @@ it('resumes a client id for a person signed in only when it is theirs, and only 
   // And a person resuming their own id gets back only what they may read.
   const back = made.accept(peer());
   await hello(back, 'later'); await signIn(back, 'g');
-  expect(await call(back, 'reconnect', { ...resume, clientId: 'g' })).toMatchObject({ result: { missing: ['claude:/one'] } });
+  expect(await call(back, 'reconnect', { ...resume, clientId: 'g' })).toMatchObject({ result: { missing: ['ahp-session:/one'] } });
   expect(guest.refused()).toEqual([]);
 });
 
@@ -231,11 +234,11 @@ it('keeps every name to one kind of thing', async () => {
   expect(await call(admin.client, 'createSession', { channel: 'x:/later', provider: 'claude' })).toMatchObject({ code: -32003 });
   // A chat named in a space this host keeps for something else.
   for (const chat of ['file:///c', 'ahp-root://c', 'ahp-session:/c', 'ahp-terminal:/c', 'claude:/c', 'x:/later']) {
-    expect(await call(admin.client, 'createChat', { channel: 'claude:/one', chat })).toMatchObject({ code: -32003 });
+    expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat })).toMatchObject({ code: -32003 });
   }
-  expect(await call(admin.client, 'createChat', { channel: 'claude:/one', chat: 'peer:/two' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/two' })).toHaveProperty('result');
   // A terminal named after a chat, or a channel of a session.
-  for (const channel of ['peer:/two', 'claude:/one/annotations', 'claude:/one/changeset/x', 'file:///t', 'ahp-chat:/t']) {
+  for (const channel of ['peer:/two', 'ahp-session:/one/annotations', 'ahp-session:/one/changeset/x', 'file:///t', 'ahp-chat:/t']) {
     expect(await call(admin.client, 'createTerminal', { channel, cwd: root })).toMatchObject({ code: -32003 });
   }
   // A session named after a terminal, in the name it was asked for.
@@ -265,12 +268,12 @@ it('keeps a session\'s marks out of a file named after it', async () => {
   const { agent } = listingOne();
   const made = host({ users: directory({ a: ['file:read', 'session:read', 'session:write'], g: ['file:read'] }), agents: [agent] });
   const admin = await withRole(made, 'a');
-  await admin.send('claude:/disk/annotations', {
+  await admin.send('ahp-session:/disk/annotations', {
     type: 'annotations/set',
-    annotation: { id: 'a1', origin: { session: 'claude:/disk' }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'private' }] },
+    annotation: { id: 'a1', origin: { session: 'ahp-session:/disk' }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'private' }] },
   });
   expect(admin.refused()).toEqual([]);
-  expect(JSON.stringify(await call(admin.client, 'subscribe', { channel: 'claude:/disk/annotations' }))).toContain('private');
+  expect(JSON.stringify(await call(admin.client, 'subscribe', { channel: 'ahp-session:/disk/annotations' }))).toContain('private');
   const guest = await withRole(made, 'g');
   expect(JSON.stringify(await call(guest.client, 'subscribe', { channel: 'file:///disk/annotations' }))).not.toContain('private');
 });
@@ -294,7 +297,7 @@ it('resumes another person\'s client id with nothing it may not read, and no cla
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  await admin.send('claude:/one', { type: 'session/titleChanged', title: 'Private' });
+  await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Private' });
   // The person's own publisher, which goes away.
   const first = made.accept(answering('first'));
   await hello(first, 'pub'); await signIn(first, 'a');
@@ -302,8 +305,8 @@ it('resumes another person\'s client id with nothing it may not read, and no cla
 
   const stranger = answering('stranger');
   const back = made.accept(stranger);
-  const resumed = await call(back, 'reconnect', { clientId: 'pub', subscriptions: [ROOT, 'claude:/one'], lastSeenServerSeq: 0 }) as { result: { type: string; missing: string[]; actions: Bag[] } };
-  expect(resumed.result).toMatchObject({ type: 'replay', missing: ['claude:/one'] });
+  const resumed = await call(back, 'reconnect', { clientId: 'pub', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: 0 }) as { result: { type: string; missing: string[]; actions: Bag[] } };
+  expect(resumed.result).toMatchObject({ type: 'replay', missing: ['ahp-session:/one'] });
   expect(resumed.result.actions.filter((one) => one.channel !== ROOT)).toEqual([]);
   // Nothing published under the id reaches it, and nobody else may sign in on it.
   expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).not.toMatchObject({ result: { data: 'stranger' } });
@@ -312,7 +315,7 @@ it('resumes another person\'s client id with nothing it may not read, and no cla
 
   // The person who holds it signs in, and it is theirs again.
   await signIn(back, 'a');
-  expect(await call(back, 'subscribe', { channel: 'claude:/one' })).toHaveProperty('result');
+  expect(await call(back, 'subscribe', { channel: 'ahp-session:/one' })).toHaveProperty('result');
   expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).toMatchObject({ result: { data: 'stranger' } });
 });
 
@@ -374,17 +377,17 @@ it('keeps every family of action to its own kind of channel', async () => {
   expect(await call(admin.client, 'createTerminal', { channel: 'ahp-terminal:/t', cwd: root })).toHaveProperty('result');
   const before = admin.refused().length;
   await admin.send('ahp-terminal:/t', { type: 'session/titleChanged', title: 'x' });
-  await admin.send('claude:/one', { type: 'terminal/input', data: 'echo no\n' });
-  await admin.send('claude:/one', { type: 'automation/removed', resource: 'ahp-automation:/n' });
-  await admin.send('claude:/one', { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } });
+  await admin.send('ahp-session:/one', { type: 'terminal/input', data: 'echo no\n' });
+  await admin.send('ahp-session:/one', { type: 'automation/removed', resource: 'ahp-automation:/n' });
+  await admin.send('ahp-session:/one', { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } });
   await admin.send('file:///x', { type: 'automationRun/cancelRequested', resource: 'ahp-automation-run:/r' });
   await admin.send('ahp-automations://', { type: 'annotations/set', annotations: [] });
   await admin.send('ahp-automations://', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
   expect(admin.refused().slice(before)).toEqual([
     'ahp-terminal:/t: ahp-terminal:/t is not a session here',
-    'ahp-session:/one: claude:/one is not a terminal here',
-    'ahp-session:/one: claude:/one is not an automation channel here',
-    'ahp-session:/one: claude:/one is not the root here',
+    'ahp-session:/one: ahp-session:/one is not a terminal here',
+    'ahp-session:/one: ahp-session:/one is not an automation channel here',
+    'ahp-session:/one: ahp-session:/one is not the root here',
     'file:///x: file:///x is not an automation channel here',
     'ahp-automations://: ahp-automations:// is not a session here',
     'ahp-automations://: ahp-automations:// is not a session here',
@@ -404,15 +407,15 @@ it('keeps a name in a provider\'s scheme for a session, before anything has list
   const owner = made.accept(publishing('claude:/disk'));
   await hello(owner, 'evil');
   expect(await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://evil/src' })).toMatchObject({ code: -32003 });
-  // The session is still reachable once it is listed.
+  // The session is reachable once it is listed, under the name it is listed by.
   await call(admin.client, 'listSessions', { channel: ROOT });
-  expect(await call(admin.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ result: { snapshot: { resource: 'claude:/disk' } } });
+  expect(await call(admin.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
   await admin.send('ahp-session:/disk', { type: 'session/isReadChanged', isRead: true });
   expect(admin.refused()).toEqual([]);
   // A chat in a provider's scheme is refused too; any other scheme is a chat's to take.
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  expect(await call(admin.client, 'createChat', { channel: 'claude:/one', chat: 'claude:/side' })).toMatchObject({ code: -32003 });
-  expect(await call(admin.client, 'createChat', { channel: 'claude:/one', chat: 'peer:/side' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'claude:/side' })).toMatchObject({ code: -32003 });
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/side' })).toHaveProperty('result');
 });
 
 it('keeps a watch or a terminal named like a session\'s marks what it is once the session is listed', async () => {
@@ -430,9 +433,9 @@ it('keeps a watch or a terminal named like a session\'s marks what it is once th
   await hello(owner, 'plugin'); await signIn(owner, 'a');
   expect(await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://plugin/src' })).toMatchObject({ result: { channel: watch } });
   expect(await call(admin.client, 'createTerminal', { channel: terminal, cwd: root })).toHaveProperty('result');
-  await admin.send('claude:/disk/annotations', {
+  await admin.send('ahp-session:/disk/annotations', {
     type: 'annotations/set',
-    annotation: { id: 'a1', origin: { session: 'claude:/disk' }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'private' }] },
+    annotation: { id: 'a1', origin: { session: 'ahp-session:/disk' }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'private' }] },
   });
   await call(admin.client, 'listSessions', { channel: ROOT });
 

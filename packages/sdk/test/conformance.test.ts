@@ -120,7 +120,7 @@ async function running(over: Partial<HostOptions> = {}) {
     params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/live';
-  const chatUri = 'ahp-chat:/live';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   const root = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as { snapshot: { state: unknown } };
   const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: unknown } };
@@ -480,11 +480,7 @@ it('reduces a chat reordered inside its session', async () => {
   await settle();
   await said({ type: 'system', subtype: 'init', session_id: 'sdk-2' });
   await said({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
-  /*
-   * The chat the session hands out, read from the list rather than assumed:
-   * `ahp-chat:/live` is this client's name for it, and the name a client holds
-   * it under is the one the session lists it by.
-   */
+  // The chat the session hands out, read from the list.
   const before = held(p, opened)[uri] as Session;
   const lead = before.chats?.[0]?.resource as string;
   expect(before.chats?.map((one) => one.resource)).toEqual([lead, other]);
@@ -496,13 +492,9 @@ it('reduces a chat reordered inside its session', async () => {
   await settle();
 
   /*
-   * The order the client ends on is the one the action named, in the client's
-   * own spelling of the session.
-   *
-   * The reducer replaces the order only when the action names every chat the
-   * client holds exactly once, so a reorder sent in the name this host holds
-   * the session by would leave a client that asked with another one showing
-   * the old order for ever - and no error anywhere to say why.
+   * The order the client ends on is the one the action named. The reducer
+   * replaces the order only when the action names every chat the client holds
+   * exactly once.
    */
   const after = held(p, opened)[uri] as Session;
   expect(after.chats?.map((one) => one.resource)).toEqual([other, lead]);
@@ -620,7 +612,7 @@ it('reduces a changeset, through an operation and a turn', async () => {
   // A turn disables every operation while it runs, and an operation moves
   // through `running` and back. Both are `changeset/operationStatusChanged`
   // and `changeset/operationsChanged`, and both go through the reducer here.
-  dispatch(client, 'ahp-chat:/one', started('t1', 'hello'));
+  dispatch(client, chatUriFor(uri), started('t1', 'hello'));
   await settle(12);
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' } });
   await settle(12);
@@ -853,17 +845,12 @@ it('still refuses something that is not a URI at all', async () => {
 });
 
 /*
- * Keys VS Code sends whatever a host advertises.
+ * The permission mode, under the one key this backend declares for it.
  *
- * `autoApprove` and `mode` are conventional names a client dispatches on its
- * own - this host advertises `permissionMode` and its own four values, as the
- * protocol asks a backend to, and VS Code's own hosts advertise different
- * properties for Copilot and for Claude. So the schema stays ours and the
- * mapping happens on the way in; this used to answer `autoApprove is not a
- * config key this backend takes` and leave the session where it was.
+ * This host advertises `permissionMode` and the CLI's values, as the protocol
+ * asks a backend to; VS Code's own hosts advertise different properties for
+ * Copilot and for Claude.
  */
-const { permissionFor } = await import('../../agent-claude/src/session.js');
-
 it('advertises the six modes the CLI has, under the name it has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
@@ -880,22 +867,6 @@ it('advertises the six modes the CLI has, under the name it has them', async () 
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
   expect(cfg.schema.properties.permissionMode?.enum)
     .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
-});
-
-it('maps the keys a client sends onto the mode this harness takes', () => {
-  expect(permissionFor('autoApprove', 'default')).toBe('default');
-  // The inexact one: VS Code means "assess the risk first" and this harness
-  // has no risk model, so it gets the rung it does have.
-  expect(permissionFor('autoApprove', 'assisted')).toBe('acceptEdits');
-  expect(permissionFor('autoApprove', 'autoApprove')).toBe('bypassPermissions');
-  // The value VS Code's own migration moved onto the mode axis, still read.
-  expect(permissionFor('autoApprove', 'autopilot')).toBe('bypassPermissions');
-  expect(permissionFor('mode', 'interactive')).toBe('default');
-  expect(permissionFor('mode', 'plan')).toBe('plan');
-  expect(permissionFor('mode', 'autopilot')).toBe('bypassPermissions');
-  // Neither a key nor a value this means anything for.
-  expect(permissionFor('mode', 'yolo')).toBeUndefined();
-  expect(permissionFor('isolation', 'worktree')).toBeUndefined();
 });
 
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
@@ -930,6 +901,35 @@ it('takes one on a running session, and leaves the advertised control saying wha
    * only the backend knows which of the two things went wrong.
    */
   expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
+});
+
+/*
+ * A key the schema does not declare, refused in the backend's words.
+ *
+ * "Only properties with `sessionMutable: true` in the config schema may be
+ * changed", and this backend declares neither `autoApprove` nor `mode`. No VS
+ * Code client sends either to a host whose schema leaves it out: its clients
+ * filter a session's config by the schema (sessionConfigProperties.ts
+ * L131-L133, L159-L165 at a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+ */
+it('refuses the approval and mode keys its schema does not declare, and the mode stays', async () => {
+  const { client, peer: p, uri } = await running();
+  /** The permission mode a client subscribing now is served. */
+  const served = async (): Promise<unknown> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { config: { values: Record<string, unknown> } } };
+  }).snapshot.state.config.values.permissionMode;
+
+  dispatch(client, uri, { type: 'session/configChanged', config: { autoApprove: 'assisted' } });
+  await settle();
+  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'plan' } });
+  await settle();
+  expect(refusals(p, uri)).toEqual([
+    'autoApprove is not a config key this backend takes',
+    'mode is not a config key this backend takes',
+  ]);
+  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toEqual([]);
+  expect(await served()).toBe('default');
 });
 
 /*

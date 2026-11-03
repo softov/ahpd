@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { meMethods } from '../../sdk/src/access/me.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { raise } from '../../sdk/src/plugins/plugins.js';
 import { idOf } from '../../sdk/src/sessions/catalog.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
@@ -35,7 +36,7 @@ const DIR = '/tmp/plugin-connect';
 const SPEC = './packages/server/test/fixtures/plugin-connect';
 /* Named as a client names them, which is how the watching client names them too. */
 const SESSION = 'ahp-session:/connect';
-const CHAT = 'ahp-chat:/connect';
+const CHAT = chatUriFor(SESSION);
 /** The plugin's own id, which is what it calls its connection and its log lines. */
 const BY = 'plugin-connect';
 

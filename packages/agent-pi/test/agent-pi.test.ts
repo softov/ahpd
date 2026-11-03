@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { sessionReducer } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
@@ -441,8 +442,36 @@ it('says a steering message as it takes it, holds it, and takes it out once pi h
   expect((session.chatState() as Bag).steeringMessage).toBeUndefined();
 });
 
+/*
+ * A steer pi will not take is the steering message's failure, and the turn
+ * runs on in pi, so every client holds it running: the message comes out of
+ * the chat and the reason goes to the log, as the reference drops a steering
+ * message it cannot hand its agent.
+ * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
+ */
+it('keeps the turn running when pi will not take a steer, and takes the message out', async () => {
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const { session, pi, sent } = opened();
+    pi.hold();
+    session.begin('t1', 'hello');
+    await settled();
+    pi.failSteer(new Error('pi is compacting'));
+    expect(session.steer?.('s1', 'actually, stop')).toBe(true);
+    await settled();
+    expect(sent.some((one) => one.action.type === 'chat/error')).toBe(false);
+    expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
+      .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
+    expect(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id).toBe('t1');
+    expect(warned.mock.calls.flat().join(' ')).toContain('pi is compacting');
+  }
+  finally {
+    warned.mockRestore();
+  }
+});
+
 it('queues a second message and runs it when the first turn ends', async () => {
-  const { session, pi, types } = opened();
+  const { session, pi, types, last } = opened();
   pi.hold();
   session.begin('t1', 'first');
   await settled();
@@ -453,7 +482,9 @@ it('queues a second message and runs it when the first turn ends', async () => {
 
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
-  expect(types('chat')).toContain('chat/pendingMessageRemoved');
+  // The turn that takes it up names it; nothing is said before that turn.
+  expect(types('chat')).not.toContain('chat/pendingMessageRemoved');
+  expect(last('chat/turnStarted')?.queuedMessageId).toBe('t2');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
 });
 
@@ -506,12 +537,18 @@ it('opens pi under the chat\'s own name, so a second chat is a conversation of i
   expect(pi.opens[0]?.id).toBe(CHAT);
 });
 
-it('reports the level pi moved to as a value in force', async () => {
+it('reports the level pi moved to as a value in force, which a client reduces', async () => {
   const { session, pi, last } = opened();
   session.begin('t1', 'hello');
   await settled();
   pi.raise({ type: 'thinking_level_changed', level: 'high' as never });
-  expect((last('session/configChanged')?.values as Bag).thinkingLevel).toBe('high');
+  // Through the protocol's reducer, which merges the action's `config` into
+  // the values a client holds.
+  const held = sessionReducer(
+    { config: { schema: { type: 'object', properties: {} }, values: {} } } as never,
+    last('session/configChanged') as never,
+  ) as unknown as { config: { values: Bag } };
+  expect(held.config.values.thinkingLevel).toBe('high');
   expect(session.settings().thinkingLevel).toBe('high');
 });
 
@@ -563,15 +600,22 @@ it('names no point for a !command turn, which is not pi running', async () => {
   expect(session.endPoint?.('t1')).toBeUndefined();
 });
 
-it('fails the turn when pi refuses to move the leaf back', async () => {
+/*
+ * A cut pi refuses is logged, and the turn runs on pi's leaf: the reference
+ * host logs an agent's cut that failed (agentSideEffects.ts L1982-L1986 at
+ * a4e689ae).
+ */
+it('runs the turn when pi refuses to move the leaf back, and logs the refusal', async () => {
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   pi.refuseRewind();
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   session.begin('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
-  const failure = last('chat/error');
-  expect(((failure?.part as Bag).error as Bag).message).toContain('refused');
-  expect(session.status()).toBe(2);
+  expect(last('chat/error')).toBeUndefined();
+  expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('hello');
+  expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
+  warned.mockRestore();
 });
 
 it('fails the turn on the last assistant message ending in error', async () => {
@@ -664,6 +708,40 @@ it('sends no usage for a !command turn, which is not pi running', async () => {
   session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
   await settled();
   expect(types('chat')).not.toContain('chat/usage');
+});
+
+/*
+ * A queued message with nothing running starts at once, as a turn naming it:
+ * "the server SHOULD immediately consume it", and the reference host starts
+ * an accepted queued message while its chat is idle, as `chat/turnStarted`
+ * with `queuedMessageId` and nothing said before it (queueDrainContribution.ts
+ * L117-L119, L283-L292 at a4e689ae).
+ */
+it('starts a message queued with nothing running at once, as a turn naming it', async () => {
+  const { session, sent, pi } = opened();
+  session.queue('q1', 'only');
+  await settled();
+  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+  expect(said.map((one) => one.type).slice(0, 2)).toEqual(['chat/pendingMessageSet', 'chat/turnStarted']);
+  expect(said.find((one) => one.type === 'chat/turnStarted')?.queuedMessageId).toBe('q1');
+  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
+  expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('only');
+});
+
+it('starts a queued !command as a turn naming it, with nothing said before it', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.ran?.('t2', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }), 'q1');
+  await settled();
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+  const started = said.filter((one) => one.type === 'chat/turnStarted');
+  expect(started.at(-1)?.message).toMatchObject({ text: '!echo hi' });
+  expect(started.at(-1)?.queuedMessageId).toBe('q1');
+  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
 });
 
 it('sends no usage for an error that used no tokens', async () => {

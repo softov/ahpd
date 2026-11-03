@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../src/sessions/catalog.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,7 +55,7 @@ async function twoAutomationOwners() {
   await ben.handle(hello(['0.9.0'], { clientId: 'ben' }));
   await ana.handle({ method: 'subscribe', params: { channel: MINE } });
   await ben.handle({ method: 'subscribe', params: { channel: MINE } });
-  return { store, ana, ben, anaPeer, benPeer };
+  return { store, host, ana, ben, anaPeer, benPeer };
 }
 
 /** The catalogue as a snapshot answers it. */
@@ -314,10 +315,10 @@ describe('the fields a client reads by name', () => {
   });
 
   it('sends root/sessionSummaryChanged as a partial, without the identity fields', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -355,10 +356,9 @@ describe('the fields a client reads by name', () => {
     });
     await settle();
 
-    const moved = catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    // Named the way the catalogue named it, which is by its provider. The
-    // client dispatched under the older spelling and is answered about the
-    // session it meant.
+    const summaries = () => catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged');
+    const moved = summaries().find((n) => (n.params.changes as Record<string, unknown>).status !== undefined);
+    // Named the way the catalogue named it.
     expect(moved?.params.session).toBe('ahp-session:/browsed');
     // A row nobody is running still has a status - `IsRead` is this host's bit
     // and belongs to the row, not to a process - so the notification carries
@@ -366,6 +366,14 @@ describe('the fields a client reads by name', () => {
     // the case that needed saying.
     expect((moved?.params.changes as Record<string, unknown>).status)
       .toBe(Status.Idle | Status.IsRead);
+    // The mark is the first record the store holds for the row, and the row
+    // keeps the name it was listed by: the pass over the catalogue that lands
+    // after it says the row's fields under that name, and adds it under none.
+    await vi.waitFor(() => {
+      expect(summaries().some((n) => (n.params.changes as Record<string, unknown>).title !== undefined)).toBe(true);
+    });
+    expect(summaries().every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
+    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')).toEqual([]);
   });
 
   it('holds a draft typed into a session nothing is running for', async () => {
@@ -375,7 +383,7 @@ describe('the fields a client reads by name', () => {
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/Y2xhdWRlOi90eXBlZA';
+    const chat = chatUriFor('ahp-session:/typed');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
 
     const draft = { text: '/', origin: { kind: 'user' } };
@@ -405,7 +413,7 @@ describe('the fields a client reads by name', () => {
     expect(state.draft?.text).toBe('/');
   });
 
-  it('answers a draft it already holds for a session nothing is running for to its sender alone', async () => {
+  it('says a draft it already holds for a session nothing is running for to every client of the chat, starting nothing', async () => {
     sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov');
     const p = peer();
@@ -415,7 +423,7 @@ describe('the fields a client reads by name', () => {
     const watching = host.accept(other);
     await watching.handle(hello(['0.9.0'], { clientId: 'two', initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/Y2xhdWRlOi9oZWxk';
+    const chat = chatUriFor('ahp-session:/held');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await watching.handle({ method: 'subscribe', params: { channel: chat } });
 
@@ -430,7 +438,8 @@ describe('the fields a client reads by name', () => {
     const answer = drafts(p).find((one) => one.origin?.clientSeq === 2);
     expect(answer?.origin?.clientId).toBe('one');
     expect(answer?.rejectionReason).toBeUndefined();
-    expect(drafts(other)).toHaveLength(1);
+    // The client watching alongside hears it too, the sender's own action.
+    expect(drafts(other).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
     expect(sessionQueries()).toHaveLength(0);
   });
 
@@ -442,7 +451,7 @@ describe('the fields a client reads by name', () => {
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L2NhcnJpZWQ';
+    const chat = chatUriFor('ahp-session:/carried');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',
@@ -468,20 +477,30 @@ describe('the fields a client reads by name', () => {
   it('will not hold a draft for a chat naming a session it has never heard of', async () => {
     const { client, peer: p } = await running();
     p.notes.length = 0;
+    // The default chat of a session nobody has made yet.
+    const later = chatUriFor('ahp-session:/later');
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat://default/Y2xhdWRlOi9ub2JvZHk',
+        channel: later,
+        clientSeq: 9,
         action: { type: 'chat/draftChanged', draft: { text: 'x', origin: { kind: 'user' } } },
       },
     });
-    await settle();
-    // A chat URI is a client's to spell, so a draft kept for every one that
-    // arrived would be a map that only grows.
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('not a session this host knows'))).toBe(true);
+    await settle(8);
+    // Taken as the reference host takes an action on a chat it does not know,
+    // and said only to the clients that watch that chat, which this one does
+    // not.
+    // https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12490
+    expect(actions(p)).toEqual([]);
+    // And not kept: a chat URI is a client's to spell, so a draft kept for
+    // every one that arrived would be a map that only grows. The session it
+    // names, made later, opens its chat with no draft.
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: later } }) as {
+      snapshot: { state: { draft?: unknown } };
+    };
+    expect(opened.snapshot.state.draft).toBeUndefined();
   });
 
   it('advertises automations only where there are any', async () => {
@@ -546,12 +565,59 @@ describe('the fields a client reads by name', () => {
     expect(actions(benPeer, MINE).some((one) => one.action.type === 'automation/removed')).toBe(true);
   });
 
+  it('says a request on the filtered catalogue to its sender and owner, and to no other owner', async () => {
+    const { ana, anaPeer, benPeer } = await twoAutomationOwners();
+    anaPeer.notes.length = 0;
+    benPeer.notes.length = 0;
+    const send = (clientSeq: number, action: Record<string, unknown>) =>
+      ana.handle({ method: 'dispatchAction', params: { channel: MINE, clientSeq, action } });
+    await send(1, { type: 'automation/createRequested', resource: 'ahp-automation:/ana-weekly', definition: AUTOMATION_DEFINITION });
+    await send(2, { type: 'automation/updateRequested', resource: 'ahp-automation:/ana-nightly', changes: { title: 'Secret' } });
+    await settle();
+    const requests = (p: ReturnType<typeof peer>) => actions(p, MINE)
+      .filter((one) => one.action.type === 'automation/createRequested' || one.action.type === 'automation/updateRequested')
+      .map((one) => one.origin?.clientSeq);
+    expect(requests(anaPeer)).toEqual([1, 2]);
+    expect(requests(benPeer)).toEqual([]);
+  });
+
+  it('says a refused request on the filtered catalogue to its sender alone, live and on a reconnect', async () => {
+    const { ana, ben, anaPeer, benPeer, host } = await twoAutomationOwners();
+    const before = (await ben.handle({ method: 'subscribe', params: { channel: MINE } }) as {
+      snapshot: { fromSeq: number };
+    }).snapshot.fromSeq;
+    anaPeer.notes.length = 0;
+    benPeer.notes.length = 0;
+    const send = (clientSeq: number, action: Record<string, unknown>) =>
+      ana.handle({ method: 'dispatchAction', params: { channel: MINE, clientSeq, action } });
+    await send(1, {
+      type: 'automation/createRequested',
+      resource: 'ahp-automation:/ana-secret',
+      definition: { ...AUTOMATION_DEFINITION, message: { text: 'Secret' }, disableConditions: [{ kind: 'afterRuns', max: 2 }, { kind: 'afterRuns', max: 5 }] },
+    });
+    await send(2, { type: 'automation/updateRequested', resource: 'ahp-automation:/nobody', changes: { title: 'Secret' } });
+    await settle();
+    const refused = (p: ReturnType<typeof peer>) => actions(p, MINE)
+      .filter((one) => (one as { rejectionReason?: string }).rejectionReason !== undefined)
+      .map((one) => one.origin?.clientSeq);
+    expect(refused(anaPeer)).toEqual([1, 2]);
+    expect(refused(benPeer)).toEqual([]);
+    // Nor is it replayed to another owner who comes back.
+    const back = host.accept(peer(), person('ben'));
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'ben', subscriptions: [MINE], lastSeenServerSeq: before },
+    }) as { type: string; actions?: { action: { type: string } }[] };
+    expect(answer.type).toBe('replay');
+    expect(JSON.stringify(answer.actions)).not.toContain('Secret');
+  });
+
   it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 41,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } },
       },
@@ -576,11 +642,11 @@ describe('the fields a client reads by name', () => {
   });
 
   it('echoes the clientSeq of a turn that switched the model before it began', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 42,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'sonnet' } } },
       },
@@ -594,7 +660,7 @@ describe('the fields a client reads by name', () => {
     expect(started?.origin).toEqual({ clientId: 'probe', clientSeq: 42 });
   });
 
-  it('refuses a dispatch out loud, to the client that sent it and nobody else', async () => {
+  it('refuses a dispatch out loud, to every client watching its channel, and holds the refusal for a reconnect', async () => {
     const host = serving('/home/softov');
     const mine = peer();
     const theirs = peer();
@@ -604,21 +670,24 @@ describe('the fields a client reads by name', () => {
     await other.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/live';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await other.handle({ method: 'subscribe', params: { channel: uri } });
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await other.handle({ method: 'subscribe', params: { channel: chat } });
     // Where the state stands before the refusal. A snapshot is taken *at* a
     // sequence number, so this is the one every later action must be above.
-    const at = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const at = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { fromSeq: number };
     }).snapshot.fromSeq;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
 
-    const refused = actions(mine, uri)
+    const refused = actions(mine, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
@@ -628,18 +697,33 @@ describe('the fields a client reads by name', () => {
     // this chat has no turn by that name, so there is nothing to truncate to.
     expect((refused[0] as { rejectionReason?: string }).rejectionReason)
       .toContain('not a completed turn');
-    // No state moved, so the sequence did not either: the refusal carries the
-    // number this host is still at rather than claiming a place in the stream.
-    expect(refused[0]?.serverSeq).toBe(at);
-    // And the client watching alongside hears nothing: it never applied this,
-    // so it has nothing to put back - and reducing a refused envelope would
-    // apply the very change this host declined to make.
-    expect(actions(theirs, uri)
-      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined)).toHaveLength(0);
+    // An envelope after a snapshot carries a greater number than the one the
+    // snapshot was taken at, a refusal included: "Subsequent actions will have
+    // `serverSeq > fromSeq`".
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
+    expect(refused[0]?.serverSeq).toBeGreaterThan(at);
+    // And the client watching alongside hears the same envelope: an action
+    // goes to every client subscribed to its channel, a refused one among
+    // them, and that client holds nothing of it to put back.
+    const heard = actions(theirs, chat)
+      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.serverSeq).toBe(refused[0]?.serverSeq);
+    expect(heard[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
+    // A client that comes back within the buffer is replayed it in its place
+    // in the order, as any action it missed.
+    const back = host.accept(peer());
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'probe', subscriptions: [chat], lastSeenServerSeq: at },
+    }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
+    expect(answer.type).toBe('replay');
+    expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
+      .toContain('not a completed turn');
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
     const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
     expect(born).toEqual(expect.any(String));
@@ -648,7 +732,7 @@ describe('the fields a client reads by name', () => {
     await new Promise((r) => { setTimeout(r, 5); });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -737,10 +821,11 @@ describe('the fields a client reads by name', () => {
     expect(state.status).toBe(Status.Idle | Status.IsRead);
   });
 
-  it('only answers its sender the second time a chat is marked read', async () => {
+  it('says a chat marked read again on the chat alone, moving no row', async () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
     const read = (clientSeq: number) => ({
       method: 'dispatchAction',
       params: { channel: second, clientSeq, action: { type: 'chat/isReadChanged', isRead: true } },
@@ -750,11 +835,10 @@ describe('the fields a client reads by name', () => {
     const said = p.notes.length;
     client.handle(read(2));
     await settle();
-    // One echo, with the sender's own `clientSeq`, so it can let go of what it
-    // applied. Not the row: the catalogue did not move, and a state that did
-    // not move is no reason to wake anybody.
+    // The client's own action on the chat, with its `clientSeq`, so it can let
+    // go of what it applied. Not the row: the catalogue did not move.
     const after = p.notes.slice(said);
-    expect(after.map((one) => one.method)).toEqual(['action']);
+    expect(after.map((one) => [one.method, (one.params as { channel?: string }).channel])).toEqual([['action', second]]);
     expect((after[0]?.params as { origin?: { clientSeq?: number } }).origin?.clientSeq).toBe(2);
   });
 
@@ -774,7 +858,7 @@ describe('the fields a client reads by name', () => {
     // lists no chats - so the worker's chat is only there once one is.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
     });
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -792,6 +876,33 @@ describe('the fields a client reads by name', () => {
     // read-only: somebody who has read what a subagent did does not want it
     // back as unread when they open the session again.
     expect(statusOf(p, 'ahp-session:/restored', worker?.resource as string)).toBe(Status.Idle | Status.IsRead);
+  });
+
+  it('reads back a worker\'s call that never finished as cancelled, with no link it cannot carry', async () => {
+    /*
+     * A cancelled call has no content in the protocol's types, which is where
+     * a link to a worker rides; the worker's chat names the call from its own
+     * origin. A client whose turn ended around the call holds it so too.
+     */
+    sdk.sessions.push({ sessionId: 'cut', summary: 'Cut off', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
+      { type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Task', input: { description: 'Explore', prompt: 'look' } }] } },
+    );
+    const host = serving('/home/softov', [], {
+      agents: [{
+        ...claude({ paths: ['/home/softov'] }),
+        subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
+      }],
+    } as never);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/cut' } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/cut') } }) as { snapshot: { state: Record<string, unknown> } };
+    const parts = ((read.snapshot.state.turns as Record<string, unknown>[])[0]?.responseParts ?? []) as Record<string, unknown>[];
+    const call = parts.map((part) => part.toolCall as Record<string, unknown> | undefined).find((one) => one?.toolCallId === 'toolu_task');
+    expect(call).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+    expect(call).not.toHaveProperty('content');
   });
 
   it('archives one chat, and restores it, without archiving the session', async () => {

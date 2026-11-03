@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { isShellName } from '@ahpd/sdk';
-import type { Session, ShellEnv } from '@ahpd/sdk';
+import type { ConfigTaken, Session, ShellEnv } from '@ahpd/sdk';
 import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -84,48 +84,6 @@ const shellEnvLines = (shellEnv?: ShellEnv): string => {
 };
 
 /**
- * A permission mode a client asked for in somebody else's vocabulary.
- *
- * This backend advertises `permissionMode` and its own six values, which is
- * what the protocol asks a backend to do - the config schema is deliberately
- * generic, and VS Code's own hosts advertise different properties for Copilot
- * and for Claude. So the schema stays this harness's.
- *
- * What arrives is another matter. A client draws controls from the schema and
- * *also* dispatches two conventional keys of its own: `autoApprove` (how much
- * may run unasked) and `mode` (how the agent works). VS Code sends both at
- * session creation whatever a host advertises, and this host used to answer
- * `autoApprove is not a config key this backend takes` and leave the session
- * where it was.
- *
- * So they are accepted and mapped here, on the way in, and nothing about what
- * is advertised changes. Planning wins over any approval level - a plan that
- * ran a command would not be a plan - and `autopilot` is the mode axis saying
- * what `autoApprove` says at its top, which is why VS Code's own migration
- * moved `autoApprove: 'autopilot'` onto that axis.
- *
- * `assisted` is the inexact one: VS Code means "assess the risk first" and
- * this harness has no risk model, so it gets `acceptEdits`, which is the rung
- * it does have in that place.
- *
- * Undefined for a key or a value neither axis knows, so a caller refuses it
- * rather than collapsing it into `default`.
- */
-export function permissionFor(key: string, value: string): PermissionMode | undefined {
-  if (key === 'mode') {
-    if (value === 'plan') return 'plan';
-    if (value === 'autopilot') return 'bypassPermissions';
-    if (value === 'interactive') return 'default';
-    return undefined;
-  }
-  if (key !== 'autoApprove') return undefined;
-  if (value === 'autoApprove' || value === 'autopilot') return 'bypassPermissions';
-  if (value === 'assisted') return 'acceptEdits';
-  if (value === 'default') return 'default';
-  return undefined;
-}
-
-/**
  * A `permissions` value, if it is one.
  *
  * `undefined` for anything else, which is what makes `setConfig` able to
@@ -158,7 +116,7 @@ export interface Config {
    */
   unprefixed: Map<string, string>;
   methods: {
-    setConfig: (key: string, value: unknown) => true | string | Promise<true | string>;
+    setConfig: (key: string, value: unknown) => ConfigTaken | Promise<ConfigTaken>;
     settings: () => Record<string, unknown>;
   };
 }
@@ -233,16 +191,13 @@ export function createConfig(ctx: SessionContext): Config {
 
   const methods: Config['methods'] = {
     /**
-     * A key this backend does not advertise, taken anyway when it means one.
+     * A key this backend's schema declares, and the model a turn may name.
      *
-     * `autoApprove` and `mode` are conventional names a client sends whatever
-     * a host advertises, and both mean something this harness can do. Mapped
-     * onto the mode the CLI takes and recorded there, so the control this
-     * backend *does* advertise shows what actually happened.
-     *
-     * False for anything else, and false is a real answer: a setter that
-     * reported success and changed nothing would leave a client showing a
-     * session in a state it is not in.
+     * A refusal for anything else, since only a key the schema declares may
+     * be changed, and a refusal is a real answer: a setter that reported
+     * success and changed nothing would leave a client showing a session in a
+     * state it is not in.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
      */
     setConfig: async (key, value) => {
       /*
@@ -276,26 +231,16 @@ export function createConfig(ctx: SessionContext): Config {
         const found = EFFORTS.find((one) => one === said);
         if (!found) return `The harness has no effort level called ${said}`;
         ctx.settings.effortLevel = found;
+        // The level in force from here, over any a turn's model set.
+        ctx.turnEffort = undefined;
         void ctx.handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
         return true;
       }
-      /*
-       * The mode this backend advertises, and the two conventional names for
-       * the same axis.
-       *
-       * `permissionMode` is the schema's own property and its six values are
-       * the CLI's. `autoApprove` and `mode` are what a client sends whatever a
-       * host advertises, and `permissionFor` maps them onto the same axis.
-       */
+      if (key !== 'permissionMode') return `${key} is not a config key this backend takes`;
+      // The schema's own property, whose six values are the CLI's.
       const modes = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
-      const found = key === 'permissionMode'
-        ? modes.find((one) => one === said)
-        : permissionFor(key, said);
-      if (!found) {
-        return key === 'permissionMode' || key === 'autoApprove' || key === 'mode'
-          ? `The harness has no permission mode called ${said}`
-          : `${key} is not a config key this backend takes`;
-      }
+      const found = modes.find((one) => one === said);
+      if (!found) return `The harness has no permission mode called ${said}`;
       ctx.settings.permissionMode = found;
       void ctx.handle.setPermissionMode(found).catch(() => {});
       return true;

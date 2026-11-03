@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, hello, machine, open, peer, sdk,
+  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
   serving, settle, running,
 } from './support/host.js';
 
@@ -146,11 +146,11 @@ describe('what the harness offers', () => {
   });
 
   it('runs a turn on the model and the thinking level the client chose', async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: {
           type: 'chat/turnStarted',
           turnId: 't1',
@@ -168,13 +168,39 @@ describe('what the harness offers', () => {
      */
     expect(sdk.modelsSet).toContain('sonnet');
     expect(sdk.effortsSet).toContain('xhigh');
-    // And the session-wide control is told, because the CLI holds one effort
-    // setting for the whole query: two controls describing different futures
-    // is the state this avoids.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { config: { values: Record<string, string> } } };
-    }).snapshot.state;
-    expect(state.config.values.effortLevel).toBe('xhigh');
+  });
+
+  /*
+   * A turn's thinking level is that turn's, and the session's config stays.
+   *
+   * The reference host hands a turn's model to its agent, which sets the
+   * model's effort on the SDK, and says no config action (agentSideEffects.ts
+   * L2228-L2235, claudeAgentSession.ts L1206-L1226 at a4e689ae). The CLI holds
+   * one effort for the query, so the next turn that names none goes back to
+   * the session's.
+   */
+  it('runs a turn on its own thinking level, and the session keeps its effort', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const turn = (turnId: string, model: Record<string, unknown>) => client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'hi', model } } },
+    });
+    const held = async (): Promise<Record<string, unknown>> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state.config.values;
+    const before = (await held()).effortLevel;
+    expect(before).toBe('high');
+
+    void turn('t1', { id: 'sonnet', config: { thinkingLevel: 'xhigh' } });
+    await settle();
+    expect(sdk.effortsSet.at(-1)).toBe('xhigh');
+    expect(actions(p, uri).filter((one) => one.action.type === 'session/configChanged')).toEqual([]);
+    expect((await held()).effortLevel).toBe(before);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
+    void turn('t2', { id: 'sonnet' });
+    await settle();
+    expect(sdk.effortsSet.at(-1)).toBe(before);
   });
 
   it('says what a harness offers on the root channel, before any session exists', async () => {
@@ -896,7 +922,7 @@ describe('turning a customization on and off', () => {
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
-  it('answers a request to background a startup to its sender, since nothing here waits on one', async () => {
+  it('says a request to background a startup to every client, moving nothing, since nothing here waits on one', async () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
@@ -913,13 +939,14 @@ describe('turning a customization on and off', () => {
     /*
      * The Claude CLI's startup holds a turn back only on a server that says
      * `alwaysLoad`, and this backend reports none, so the server is not
-     * blocking and the protocol's reducer changes nothing for the request: its
-     * sender hears it back, alone, with nothing moved.
+     * blocking and the protocol's reducer changes nothing for the request. It
+     * goes out sequenced, as every accepted action does, and no state follows.
      */
     expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
     const answered = actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 6);
-    expect(answered.map((e) => [e.action.type, e.rejectionReason, e.serverSeq]))
-      .toEqual([['session/mcpServerBackgroundRequested', undefined, seq]]);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/mcpServerBackgroundRequested', undefined]]);
+    expect(answered[0]?.serverSeq).toBeGreaterThan(seq ?? 0);
+    expect(actions(p, uri).at(-1)?.action.type).toBe('session/mcpServerBackgroundRequested');
   });
 
   it('hands a background request to a backend that has the call, once, with the id', async () => {

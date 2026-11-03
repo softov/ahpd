@@ -202,6 +202,69 @@ describe('a streamed delta', () => {
       .map((one) => String(one.action.content ?? ''));
     expect(inSnapshot(snapshot.state) + later.join('')).toBe('held more');
   });
+
+  it('is written once into a client whose snapshot read waits while it lands', async () => {
+    sdk.sessions.push({ sessionId: 'older', summary: 'Older', lastModified: 1, cwd: DIR });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    /*
+     * A backend whose first worker list this test finishes itself, and whose
+     * later ones answer at once. A client subscribes to a session nothing runs,
+     * and its read of the session's record asks for the workers first and
+     * waits; a turn then resumes the session, whose own read answers, so the
+     * chat runs and speaks while the snapshot read still waits.
+     */
+    const workers = deferred<undefined>();
+    let asked = 0;
+    const host = createHost({
+      path: DIR,
+      agents: [{ ...claude({ paths: [DIR] }), subagents: async () => { asked += 1; return asked === 1 ? await workers.waiting : undefined; } }],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    const chatUri = chatUriFor(listed.items[0]?.resource as string);
+
+    const latePeer = peer();
+    const late = host.accept(latePeer);
+    await late.handle(hello(['0.9.0']));
+    // Parked in the workers read of the session's record.
+    const reading = late.handle({ method: 'subscribe', params: { channel: chatUri } }) as Promise<{
+      snapshot: { state: { activeTurn?: { responseParts?: { content?: unknown }[] } }; fromSeq: number };
+    }>;
+    let answered = false;
+    void reading.then(() => { answered = true; });
+    await settle();
+    expect(asked).toBe(1);
+
+    // Somebody says something, which resumes the session while the read waits.
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle(6);
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
+      said('held'),
+    );
+    await pastWindow();
+    // Said, and still the read has not answered.
+    expect(answered).toBe(false);
+    workers.finish(undefined);
+    const { snapshot } = await reading;
+    await emit(said(' more'));
+    await pastWindow();
+
+    // What landed while the read waited is the snapshot's, and only what came after it follows.
+    const later = actions(latePeer, chatUri)
+      .filter((one) => one.serverSeq > snapshot.fromSeq && one.action.type === 'chat/delta')
+      .map((one) => String(one.action.content ?? ''));
+    expect(inSnapshot(snapshot.state)).toBe('held');
+    expect(later.join('')).toBe(' more');
+  });
 });
 
 describe('a host closing', () => {

@@ -19,6 +19,7 @@ import { undeclaredIn } from './support/wire.js';
  */
 
 const { createHost } = await import('../src/host.js');
+const { chatUriFor } = await import('../src/host/channels.js');
 
 /** Every frame the host put on the wire, in order. */
 const wire: { method: string; params: Record<string, unknown> }[] = [];
@@ -224,7 +225,7 @@ async function running(late = false, hold = false) {
     channel: 'ahp-root://', clientId: 'sub', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
   });
   const uri = 'ahp-session:/sub';
-  const chatUri = 'ahp-chat:/sub';
+  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'fake' });
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
@@ -441,9 +442,16 @@ function askingInWorker(stoppable = false): Agent {
             id: 'toolu_ask', chat: worker.uri, kind: 'chatInput',
             request: { id: 'toolu_ask', message: 'Which one?', questions: [] },
           };
+          // The question on the worker's chat, where a client answers it.
+          worker.emit({ type: 'chat/inputRequested', request: question.request });
           needed.push(confirmation, question);
           start.emit('session', { type: 'session/inputNeededSet', request: confirmation });
           start.emit('session', { type: 'session/inputNeededSet', request: question });
+          // And two calls of the lead's own, each waiting to be allowed.
+          for (const id of ['c1', 'c2']) {
+            start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: id, toolName: 'Bash', displayName: 'Bash' });
+            start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: id, invocationMessage: 'Run it', toolInput: 'true' });
+          }
         },
         cancel: (turnId) => {
           told.push({ what: 'cancel', id: turnId });
@@ -470,9 +478,9 @@ function askingInWorker(stoppable = false): Agent {
 }
 
 /**
- * A host running the asking fake, its session subscribed under `as`, with the
- * worker's asks on the wire. `worker` is the worker chat in the spelling the
- * client was given for it.
+ * A host running the asking fake, its session `ahp-session:/ask` subscribed as
+ * `as`, with the worker's asks on the wire. `worker` is the worker chat built
+ * from `as`.
  */
 async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   wire.length = 0;
@@ -504,6 +512,18 @@ async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   return { ask, lead, worker, send, refusals };
 }
 
+/*
+ * A draft of the answer to a worker's question, taken on the worker's chat,
+ * where the question is: the reducer keeps it on the request, and the
+ * reference host takes one on any chat.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L355-L356
+ */
+it('takes a draft answer on a worker chat', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/inputAnswerChanged', requestId: 'toolu_ask', questionId: 'q1', answer: { state: 'skipped' } });
+  expect(refusals()).toEqual([]);
+});
+
 it('takes an approval given on a worker chat to the session\'s backend', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, confirmed: 'user-action' });
@@ -521,20 +541,41 @@ it('takes the option picked on a worker chat to the session\'s backend', async (
 it('takes the option picked on the lead chat to its backend, and none when none was picked', async () => {
   const { lead, send, refusals } = await waiting();
   await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, selectedOptionId: 'always', confirmed: 'user-action' });
-  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c2', approved: true, confirmed: 'user-action' });
   expect(refusals()).toEqual([]);
   expect(told.map(({ what, id, value, option }) => ({ what, id, value, option }))).toStrictEqual([
     { what: 'confirm', id: 'c1', value: true, option: 'always' },
-    { what: 'confirm', id: 'c1', value: true, option: undefined },
+    { what: 'confirm', id: 'c2', value: true, option: undefined },
   ]);
 });
 
-it('takes an approval given on a worker chat spelt from a session alias', async () => {
-  const { ask, worker, send, refusals } = await waiting('fake:/ask');
-  expect(worker.startsWith(`ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/`)).toBe(true);
-  // The chat the snapshot tells this client to answer on is spelt the way it
-  // subscribed.
-  const answer = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { state: Bag } };
+/*
+ * A confirmation is checked against the chat's state, which is what every
+ * client of the chat was served: a call there that is not waiting on one is
+ * refused, as the protocol has a host refuse it, and the backend is not asked.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L352
+ */
+it('refuses a second confirmation of a call the first one answered, without asking the backend', async () => {
+  const { lead, send, refusals } = await waiting();
+  await send(lead, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  await send(lead, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  expect(refusals()).toEqual(['c1 is not a call this chat is waiting to have confirmed']);
+  expect(told.map(({ id }) => id)).toEqual(['c1']);
+});
+
+/*
+ * A session and its worker chats have one URI each, the one they are held by:
+ * the session's id in another scheme is no session, and a worker chat built
+ * from it no chat, as the reference host keys a subscription by the URI sent.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
+ */
+it('refuses the session and its worker chat spelt from another scheme of its id', async () => {
+  const { ask, worker, send, refusals } = await waiting();
+  const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  await expect(ask('subscribe', { channel: 'fake:/ask' })).rejects.toMatchObject({ code: -32001 });
+  await expect(ask('subscribe', { channel: elsewhere })).rejects.toMatchObject({ code: -32001 });
+  // The worker chat the session names is the one built from the URI it is held by.
+  const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
   expect(needed.map((one) => one.chat)).toEqual([worker, worker]);
   await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
@@ -543,14 +584,13 @@ it('takes an approval given on a worker chat spelt from a session alias', async 
 });
 
 /*
- * The actions about a session, to two clients that name it differently.
+ * The actions about a session, to two clients of it.
  *
- * The creator made it as `ahp-session:/ask` and the host holds it as
- * `ahp-session:/ask`. Each client is sent every URI of the session inside an action in
- * its own spelling, the same as its snapshot, so the worker chat it is told
- * about is one it can subscribe to and answer on.
+ * Each client is sent every URI of the session inside an action as the host
+ * holds it, the same as its snapshot, so the worker chat it is told about is
+ * one it can subscribe to and answer on.
  */
-it('says the session\'s URIs inside an action in the spelling each client uses', async () => {
+it('says the session\'s URIs inside an action as the host holds them, to every client', async () => {
   const host = createHost({ path: '/tmp', agents: [askingInWorker()] });
   const listening = (into: Bag[]): Peer => ({
     send: () => {},
@@ -569,9 +609,9 @@ it('says the session\'s URIs inside an action in the spelling each client uses',
   const chatOf = (session: string): string => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
   const workerOf = (session: string): string =>
     `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
-  for (const [client, session] of [[creator, 'ahp-session:/ask'], [other, 'fake:/ask']] as const) {
-    await client('subscribe', { channel: session });
-    await client('subscribe', { channel: chatOf(session) });
+  for (const client of [creator, other]) {
+    await client('subscribe', { channel: 'ahp-session:/ask' });
+    await client('subscribe', { channel: chatOf('ahp-session:/ask') });
   }
   await creator('dispatchAction', {
     channel: chatOf('ahp-session:/ask'),
@@ -579,7 +619,8 @@ it('says the session\'s URIs inside an action in the spelling each client uses',
   });
   await settle();
 
-  for (const [said, session] of [[heard.creator, 'ahp-session:/ask'], [heard.other, 'fake:/ask']] as const) {
+  const session = 'ahp-session:/ask';
+  for (const said of [heard.creator, heard.other]) {
     const on_ = (channel: string, type: string): Bag[] => said
       .filter((one) => one.channel === channel && (one.action as Bag).type === type)
       .map((one) => one.action as Bag);
@@ -608,28 +649,43 @@ it('says an answer given on a worker chat back on that chat, once', async () => 
 });
 
 it('cancels the lead turn when a worker chat is stopped', async () => {
-  const { lead, worker, send, refusals } = await waiting();
-  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  const { ask, lead, worker, send, refusals } = await waiting();
+  // The worker's running turn, as a client of its chat names it.
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  await send(worker, { type: 'chat/turnCancelled', turnId: String(opened.snapshot.state.activeTurn?.id), duration: 0 });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'cancel', id: 't1' }]);
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled' && one.turnId === 't1')).toBe(true);
 });
 
 it('asks a backend that can stop one worker to stop that worker, and leaves the lead turn running', async () => {
-  const { lead, worker, send, refusals } = await waiting('ahp-session:/ask', true);
-  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  const { ask, lead, worker, send, refusals } = await waiting('ahp-session:/ask', true);
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  await send(worker, { type: 'chat/turnCancelled', turnId: String(opened.snapshot.state.activeTurn?.id), duration: 0 });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'stop', id: 'toolu_agent' }]);
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled')).toBe(false);
 });
 
+/** The stops said on a chat under the busy client's origin, each as the client's own action. */
+const saidBack = (chat: string): { turnId: unknown; clientSeq: unknown; rejectionReason: unknown }[] => wire
+  .filter((one) => one.method === 'action' && one.params.channel === chat && (one.params.action as Bag | undefined)?.type === 'chat/turnCancelled'
+    && (one.params.origin as Bag | undefined)?.clientId === 'busy')
+  .map((one) => ({
+    turnId: (one.params.action as Bag).turnId,
+    clientSeq: (one.params.origin as Bag).clientSeq,
+    rejectionReason: one.params.rejectionReason,
+  }));
+
 /*
- * A worker chat runs a turn of its own, the worker's, and once the worker has
- * ended a stop there has no turn to stop: "`chat/turnCancelled` | No active
- * turn | Server MUST reject the action".
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+ * A worker chat runs a turn of its own, the worker's, and a stop there that
+ * names no running turn of it stops nothing: once the worker has ended, or
+ * when it names another turn. The reference host says such a stop back as the
+ * client's own action and aborts nothing, "Ignoring cancellation of an inactive
+ * turn", so the lead's conversation runs on.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
  */
-it('stops a worker that runs on after its lead turn, and refuses a stop once it has ended', async () => {
+it('stops a worker that runs on after its lead turn, and says a stop back once it has ended, stopping nothing', async () => {
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
@@ -649,8 +705,24 @@ it('stops a worker that runs on after its lead turn, and refuses a stop once it 
   told.length = 0;
   await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: '' } });
   await settle();
-  expect(refusals()).toEqual([`Nothing is running on ${worker} to stop`]);
+  expect(refusals()).toEqual([]);
+  expect(saidBack(worker).filter((one) => one.clientSeq === 2)).toEqual([{ turnId: '', clientSeq: 2, rejectionReason: undefined }]);
   expect(told).toEqual([]);
+});
+
+it('stops nothing when a stop on a running worker\'s chat names another turn, and says it back', async () => {
+  const { ask, uri, lead } = await busyHost(true);
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('subscribe', { channel: worker });
+  await settle();
+
+  await ask('dispatchAction', { channel: worker, clientSeq: 3, action: { type: 'chat/turnCancelled', turnId: 'not-the-workers' } });
+  await settle();
+  expect(saidBack(worker)).toEqual([{ turnId: 'not-the-workers', clientSeq: 3, rejectionReason: undefined }]);
+  expect(told).toEqual([]);
+  finishWorker();
+  await settle();
 });
 
 it('refuses anything else on a worker chat as read-only', async () => {
@@ -785,18 +857,19 @@ const chatOn = (row: Bag, chat: string): number | undefined =>
   (row.chats as Bag[] | undefined)?.find((one) => one.resource === chat)?.status as number | undefined;
 
 /*
- * A session's row takes its activity from the default chat, promoted only by
- * a chat that needs input or failed, as the protocol aggregates a session made
- * of chats. Each chat's own status is on the row's list of chats.
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L89-L101
+ * A session's row is promoted by its chats as the reference host aggregates
+ * them: a chat that needs input makes it need input, else a chat that runs
+ * makes it run, else it reads its default chat. A worker is a chat of the
+ * session and counts. Each chat's own status is on the row's list of chats.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
  */
-it('reads a session by its default chat while its worker runs after the lead turn, and the worker on its own row', async () => {
+it('reads a session as running while its worker runs after the lead turn, and the worker on its own row', async () => {
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
   const running = held(row());
-  expect(activity(running.status)).toBe(1);
+  expect(activity(running.status)).toBe(8);
   expect(activity(chatOn(running, worker))).toBe(8);
 
   finishWorker();
@@ -813,7 +886,7 @@ it('reads a session as waiting while its worker asks, though the lead is running
   expect(activity(held(row()).status)).toBe(24);
 });
 
-it('reads a session by its idle default chat while a second chat runs, and the second on its own row', async () => {
+it('reads a session as running while a second chat runs and its default chat is idle, and the second on its own row', async () => {
   const { ask, uri, row, activity } = await busyHost();
   const second = 'ahp-chat:/busy-second';
   await ask('createChat', { channel: uri, chat: second });
@@ -821,7 +894,7 @@ it('reads a session by its idle default chat while a second chat runs, and the s
   await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'work' } } });
   await settle();
   const moved = held(row());
-  expect(activity(moved.status)).toBe(1);
+  expect(activity(moved.status)).toBe(8);
   expect(activity(chatOn(moved, second))).toBe(8);
 });
 

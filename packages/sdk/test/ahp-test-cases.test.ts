@@ -232,8 +232,6 @@ interface Broken {
   by: string;
 }
 
-const ECHOED = '"the server echoes them back as an ActionEnvelope once accepted" (types/common/commands.ts, dispatchAction)';
-
 /** The rules the divergences in this file break. */
 const BROKEN = {
   baselines: {
@@ -246,35 +244,20 @@ const BROKEN = {
     row: 'E18',
     by: '10',
   },
-  echoRewritten: {
-    breaks: `${ECHOED}; the echo of chat/turnStarted carries the host's own startedAt and leaves queuedMessageId off`,
-    row: 'E8',
-    by: '3, the answer',
-  },
-  clientRewritten: {
-    breaks: `${ECHOED}; the echo of session/activeClientSet carries the connection's clientId in place of the one sent`,
-    row: 'C12',
-    by: '3, the answer',
-  },
-  reorderRewritten: {
-    breaks: `${ECHOED}; the echo of chat/queuedMessagesReordered carries the order the backend holds in place of the one sent`,
-    row: 'E8',
-    by: '3, the answer',
-  },
-  senderOnly: {
-    breaks: 'subscriptions.md: "Session actions go to all clients subscribed to that session\'s URI." and "Chat actions go to all clients subscribed to that chat\'s URI."; an action the host\'s own records say moves nothing is echoed to its sender alone',
-    row: 'E5',
-    by: '4, one audience',
-  },
   rootPerConnection: {
     breaks: 'authentication.md: "Root state is global and visible to all subscribed clients."; the root a connection is served carries a `_meta` and config values of its own',
     row: 'E46',
     by: '8, root state is global',
   },
   idleSteering: {
-    breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
+    breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."; this host runs one as a turn of its own under its id',
     row: 'A10',
-    by: '10',
+    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L260-L262 at a4e689ae)',
+  },
+  otherClientRefused: {
+    breaks: 'types/channels-session/actions.ts: session/activeClientSet is @clientDispatchable and upserts the entry its clientId names; this host refuses an entry naming another client than the connection',
+    row: 'C12',
+    by: 'none, host policy: a client announces itself and no other',
   },
   removalUnserved: {
     breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
@@ -302,7 +285,8 @@ const NEGOTIATION_DIVERGES: Record<number, Broken & { answered: Answered }> = {
 
 /*
  * A row with a version in common is answered with it; an invalid offer is
- * malformed params; a row with nothing in common is `-32005` with the
+ * malformed params, and the connection stays open, as the protocol's own
+ * interop host answers one; a row with nothing in common is `-32005` with the
  * protocol's baselines in `supportedVersions`, and the connection closed.
  * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/versioning.md#L52-L68
  * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/clients/dotnet/tests/AgentHostProtocol.Tests/interop/session-host.ts#L85-L101
@@ -325,7 +309,7 @@ describe('the protocol’s version negotiation cases, through ahpd', () => {
         }),
       );
       const owed: Answered = row.invalid === true
-        ? { code: -32602, closed: asked.closed }
+        ? { code: -32602, closed: false }
         : row.expected === null || row.expected === undefined
           ? { code: -32005, supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS], closed: true }
           : { protocolVersion: row.expected };
@@ -360,9 +344,6 @@ interface Differs {
   refused?: string[];
 }
 
-const turnStartRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten }];
-const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten }];
-const reorderRewritten: (Differs & Broken)[] = [{ reduced: ['queuedMessages'], ...BROKEN.reorderRewritten }];
 const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
 const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
 
@@ -376,55 +357,31 @@ const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROK
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '001-root-agentschanged': rootPerConnection,
   '002-root-activesessionschanged': rootPerConnection,
-  '005-session-turnstarted': turnStartRewritten,
-  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': queuedTurnRewritten,
-  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'steeringMessage'], ...BROKEN.echoRewritten }],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
-  '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
-  '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
-  '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '053-reorders-queued-messages': reorderRewritten,
-  '054-keeps-messages-not-in-order-at-end-in-original-order': reorderRewritten,
-  '055-ignores-unknown-ids-in-reorder': reorderRewritten,
+  '039-set-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
   '071-root-terminalschanged': rootPerConnection,
-  '071-session-isreadchanged-marks-session-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '074-session-isarchivedchanged-unarchives-session': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '075-turnstarted-clears-isread': turnStartRewritten,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
-  '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
   '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '161-chat-turn-lifecycle-on-chat': turnStartRewritten,
+  '035-session-activeclientset-adds-client': [{ refused: ['vscode-1 is another client; this connection is cases-035-session-activeclientset-adds-client'], ...BROKEN.otherClientRefused }],
+  '036-session-activeclientset-replaces-client': [{ refused: ['vscode-1 is another client; this connection is cases-036-session-activeclientset-replaces-client'], ...BROKEN.otherClientRefused }],
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
-  '224-chat-draftchanged-clears-draft': [{ reduced: ['draft'], ...BROKEN.senderOnly }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
   '226-session-customizationtoggled-is-no-op-for-unknown-child-id': [{ refused: ['does-not-exist has no runtime switch'], ...BROKEN.toggleNoOp }],
   '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],
-  '244-session-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '250-chat-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
   '263-session-customizationtoggled-clears-enablement': [{ refused: ['server-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '267-session-workingdirectoryreplaced-replaces-and-deduplicates': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '268-session-workingdirectoryreplaced-replaces-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '269-session-workingdirectoryreplaced-replaces-non-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '270-session-workingdirectoryreplaced-deduplicates-earlier-replacement': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '273-chat-isarchivedchanged-unarchives-chat': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '286-chat-isreadchanged-marks-default-chat-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
-const CONSUMED = 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."';
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
@@ -439,10 +396,10 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
-  '045-set-a-new-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
+  '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
+  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
+  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activity'], because: THINKING }],
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': [{ reduced: ['activity'], because: THINKING }],
   '075-turnstarted-clears-isread': [{ reduced: ['activity'], because: THINKING }],
   '105-session-input-full-draft-and-complete-flow': [{ reduced: ['activity'], because: THINKING }],
@@ -480,46 +437,102 @@ interface Where {
 
 const MAY_NOT_ORIGINATE = 'types/common/reducer-helpers.ts, isClientDispatchable: servers "reject any action the client is not allowed to originate"';
 const CONTRIBUTOR = 'the server SHOULD reject this action if the dispatching client does not match the contributor\'s `clientId`';
+const RESUMED = 'chat-channel.md: "chat/turnResume | An active turn exists, turnId is not the latest errored turn, or its final error part is not resumable | Server MUST reject the action"';
+
+/** The parts of a chat state's running turn, or none. */
+const runningParts = (state: Record<string, unknown>): Record<string, unknown>[] =>
+  ((state.activeTurn as { responseParts?: Record<string, unknown>[] } | undefined)?.responseParts ?? []);
+
+/** Whether a chat state's latest turn is the one named, errored, with a resumable error as its last part. */
+const resumable = (state: Record<string, unknown>, turnId: unknown): boolean => {
+  const last = ((state.turns ?? []) as Record<string, unknown>[]).at(-1);
+  const part = ((last?.responseParts ?? []) as Record<string, unknown>[]).at(-1);
+  return last !== undefined && last.id === turnId && last.state === 'error' && part?.kind === 'error' && part.resumable === true;
+};
+
+/** The client a call of a chat state's running turn names as its contributor, when one does. */
+const clientOf = (state: Record<string, unknown>, toolCallId: unknown): unknown => runningParts(state)
+  .map((part) => (part.kind === 'toolCall' ? part.toolCall as { toolCallId?: unknown; contributor?: { kind?: unknown; clientId?: unknown } } : undefined))
+  .find((call) => call !== undefined && call.toolCallId === toolCallId && call.contributor?.kind === 'client')?.contributor?.clientId;
+
+/** Whether a chat state's running turn has an input request by this id with no response. */
+const waitingOn = (state: Record<string, unknown>, requestId: unknown): boolean => runningParts(state)
+  .some((part) => part.kind === 'inputRequest' && part.response === undefined
+    && (part.request as { id?: unknown } | undefined)?.id === requestId);
 
 /**
  * Why this host refuses an action a client may send, by its type: the host's
  * words for it, and the specification row or the host policy that allows it.
  *
+ * A row the protocol states over the chat's state says so in `holds`, read
+ * against the state the client held when it sent the action: the state it
+ * was served, and every action before it the host accepted. So a refusal is
+ * held to its condition and not to its words alone, and a host that read the
+ * condition off anything but that state is caught where the two disagree.
+ *
  * An action a client may not originate is not here: the protocol's
  * `IS_CLIENT_DISPATCHABLE` names those, and each is refused with one sentence.
  */
-const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: Where) => string; source: string }[]> = {
+const REFUSALS: Record<string, {
+  said: (action: Record<string, unknown>, where: Where) => string;
+  source: string;
+  holds?: (state: Record<string, unknown>, action: Record<string, unknown>, where: Where) => boolean;
+}[]> = {
   'chat/toolCallConfirmed': [{
     said: (action) => `${String(action.toolCallId)} is not a call this chat is waiting to have confirmed`,
     source: 'chat-channel.md: "chat/toolCallConfirmed | Tool call not in pending-confirmation state | Server MUST reject the action"',
-  }],
-  'chat/turnCancelled': [{
-    said: (_action, where) => `Nothing is running on ${where.channel} to stop`,
-    source: 'chat-channel.md: "chat/turnCancelled | No active turn | Server MUST reject the action"',
+    holds: (state, action) => !runningParts(state).some((part) => part.kind === 'toolCall'
+      && (part.toolCall as { toolCallId?: unknown; status?: unknown }).toolCallId === action.toolCallId
+      && (part.toolCall as { status?: unknown }).status === 'pending-confirmation'),
   }],
   'chat/turnResume': [{
+    said: () => 'A turn is running in this chat',
+    source: RESUMED,
+    holds: (state) => state.activeTurn !== undefined && state.activeTurn !== null,
+  }, {
     said: (action) => `${String(action.turnId)} is not the latest turn`,
-    source: 'chat-channel.md: "chat/turnResume | An active turn exists, turnId is not the latest errored turn, or its final error part is not resumable | Server MUST reject the action"',
+    source: RESUMED,
+    holds: (state, action) => ((state.turns ?? []) as Record<string, unknown>[]).at(-1)?.id !== action.turnId,
+  }, {
+    said: (action) => `${String(action.turnId)} did not end with an error that can be resumed`,
+    source: RESUMED,
+    holds: (state, action) => !resumable(state, action.turnId),
+  }, {
+    said: (action) => `${String(action.turnId)} is not a turn that can be resumed`,
+    source: 'host policy, host/chatactions.ts: a turn a backend runs again is one it ran, and the turn the action reopens runs nowhere else',
+    holds: (state, action) => (state.activeTurn === undefined || state.activeTurn === null) && resumable(state, action.turnId),
   }],
   'chat/inputAnswerChanged': [{
     said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
     source: 'chat-channel.md: "chat/inputAnswerChanged | No input request with matching requestId | Server SHOULD reject the action"',
+    holds: (state, action) => !waitingOn(state, action.requestId),
   }],
   'chat/inputCompleted': [{
     said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
     source: 'chat-channel.md: "chat/inputCompleted | No input request with matching requestId | Server SHOULD reject the action"',
+    holds: (state, action) => !waitingOn(state, action.requestId),
   }],
   'chat/pendingMessageRemoved': [{
     said: (action) => `${String(action.id)} is not a ${String(action.kind)} message this chat holds`,
     source: 'chat-channel.md: "chat/pendingMessageRemoved | No pending message with matching id and kind | Server SHOULD reject the action"',
+    holds: (state, action) => (action.kind === 'steering'
+      ? (state.steeringMessage as { id?: unknown } | undefined)?.id !== action.id
+      : !((state.queuedMessages ?? []) as { id?: unknown }[]).some((one) => one.id === action.id)),
+  }, {
+    said: () => 'Cannot change a steering message while it is being processed.',
+    source: 'VS Code agentService.ts L13493-L13508: "Steering handed to the provider cannot be edited, and can be removed only if the provider can withdraw it."',
+    holds: (state, action) => state.activeTurn !== undefined && state.activeTurn !== null
+      && (state.steeringMessage as { id?: unknown } | undefined)?.id === action.id,
   }],
   'chat/toolCallComplete': [{
     said: (action, where) => `${String(action.toolCallId)} is not a call ${where.client} is running here`,
     source: `types/channels-chat/actions.ts, chat/toolCallComplete: ${CONTRIBUTOR}`,
+    holds: (state, action, where) => clientOf(state, action.toolCallId) !== where.client,
   }],
   'chat/toolCallContentChanged': [{
     said: (action) => `${String(action.toolCallId)} is not a call a client is running here`,
     source: `types/channels-chat/actions.ts, chat/toolCallContentChanged: ${CONTRIBUTOR}`,
+    holds: (state, action) => clientOf(state, action.toolCallId) === undefined,
   }],
   'chat/workingDirectorySet': [{
     said: (action, where) => `${localPath(String(action.directory))} is not a working directory of ${where.session}`,
@@ -547,6 +560,11 @@ const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: 
   'chat/truncated': [{
     said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
     source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
+    holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
+  }, {
+    said: (action) => `${String(action.turnId)} is not a turn this host can rewind to`,
+    source: 'host policy, host/chatactions.ts: a truncation cuts the backend at its own end of the turn, and a backend that never ran the turn has none',
+    holds: (state, action) => ((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
   }],
   'chat/toolCallResultConfirmed': [{
     said: () => 'No tool call here asks for its result to be confirmed',
@@ -576,9 +594,10 @@ interface Driven {
   /** What a client that only watched holds: its snapshot, and every action it was told of since. */
   view: Record<string, unknown>;
   /**
-   * What the protocol's reducer makes of that start and the actions the host
-   * did not refuse: the case's `expected` when the start is its `initial` and
-   * the host refused nothing.
+   * What the protocol's reducer makes of that start, the actions the host did
+   * not refuse, and the actions the protocol has the host say for them on its
+   * own: the case's `expected` when the start is its `initial`, the host
+   * refused nothing and the protocol has it say nothing.
    */
   reduced: Record<string, unknown>;
   /** The state a client that subscribes after the actions is served. */
@@ -654,17 +673,41 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
       .map((note) => note.params as { origin?: { clientId?: string; clientSeq?: number }; rejectionReason?: string })
       .filter((envelope) => envelope.origin?.clientId === `cases-${one.name}` && envelope.origin.clientSeq === clientSeq));
     // A refused envelope reaches only its sender, and a client applies none.
-    const view = reduced(one.reducer, watching.state, watched.notes
+    const told = watched.notes
       .filter((note) => note.method === 'action')
       .map((note) => note.params as { channel: string; action: Record<string, unknown>; serverSeq: number; rejectionReason?: string })
       .filter((envelope) => envelope.channel === channel && envelope.serverSeq > watching.fromSeq && envelope.rejectionReason === undefined)
-      .map((envelope) => envelope.action));
+      .map((envelope) => envelope.action);
+    const view = reduced(one.reducer, watching.state, told);
     const accepted = sent
       .filter((_, at) => (answers[at] ?? []).every((envelope) => envelope.rejectionReason === undefined))
       .map(({ action }) => action);
-    const goal = accepted.length === one.actions.length && parted(watching.state, one.initial).length === 0
+    /*
+     * A queued message a chat takes while it is idle is taken up at once, in
+     * the two actions the protocol has the host say: the message taken out,
+     * and the turn that takes it up naming it. The turn's id and its start are
+     * the host's own, read off the turn it said naming the message.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L365-L372
+     */
+    const due: Record<string, unknown>[] = [];
+    let held = watching.state;
+    for (const action of accepted) {
+      const taken = [action];
+      held = reduced(one.reducer, held, [action]);
+      if (one.reducer === 'chat' && action.type === 'chat/pendingMessageSet' && (action.kind ?? 'queued') === 'queued' && held.activeTurn === undefined) {
+        const turn = told.find((said) => said.type === 'chat/turnStarted' && said.queuedMessageId === action.id);
+        const consumed = [
+          { type: 'chat/pendingMessageRemoved', kind: 'queued', id: action.id },
+          { type: 'chat/turnStarted', turnId: turn?.turnId, startedAt: turn?.startedAt, message: action.message, queuedMessageId: action.id },
+        ];
+        held = reduced(one.reducer, held, consumed);
+        taken.push(...consumed);
+      }
+      due.push(...taken);
+    }
+    const goal = accepted.length === one.actions.length && due.length === accepted.length && parted(watching.state, one.initial).length === 0
       ? one.expected
-      : reduced(one.reducer, watching.state, accepted);
+      : reduced(one.reducer, watching.state, due);
     return { answers, start: watching.state, view, reduced: goal, served: served.state, channel, session: uri };
   }
   finally {
@@ -699,13 +742,27 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
       const reasons = outcome.answers.map((list) => list[0]?.rejectionReason);
       const listed = departs.flatMap((entry) => entry.refused ?? []);
       const where: Where = { client: `cases-${one.name}`, channel: outcome.channel, session: outcome.session };
+      // What the client held as it sent each action: its start, and every
+      // action before it the host accepted.
+      let held = outcome.start;
       for (const [at, action] of one.actions.entries()) {
         const reason = reasons[at];
         const type = String(action.type);
         if (hostOnly(action)) expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBeDefined();
-        if (reason === undefined || listed.includes(reason)) continue;
-        if (hostOnly(action)) expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
-        else expect((REFUSALS[type] ?? []).map((rule) => rule.said(action, where)), `${one.name}: ${type} refused for a reason a source allows`).toContain(reason);
+        if (reason === undefined) {
+          held = reduced(one.reducer, held, [action]);
+          continue;
+        }
+        if (listed.includes(reason)) continue;
+        if (hostOnly(action)) {
+          expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
+          continue;
+        }
+        const rule = (REFUSALS[type] ?? []).find((one) => one.said(action, where) === reason);
+        expect(rule?.said(action, where), `${one.name}: ${type} refused for a reason a source allows`).toBe(reason);
+        if (rule?.holds !== undefined) {
+          expect(rule.holds(held, action, where), `${one.name}: ${type} refused as "${reason}" against a state that says otherwise`).toBe(true);
+        }
       }
       expect(listed.filter((reason) => !reasons.includes(reason)), `${one.name}: every refusal named a divergence still happens`).toEqual([]);
       expect(parted(outcome.start, one.initial), `${one.name}: where a client watching from the start starts`).toEqual(keys('start'));

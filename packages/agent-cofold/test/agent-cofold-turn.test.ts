@@ -9,6 +9,7 @@ import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents'
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
@@ -81,7 +82,7 @@ async function talking(
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
+  const chatUri = chatUriFor('ahp-session:/one');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
@@ -162,14 +163,21 @@ it('carries the model a turn runs on, on the message', async () => {
   expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/x');
 });
 
-it('carries the configured model when the turn names none', async () => {
+/*
+ * The turn's start is said back as the client sent it: a turn that named no
+ * model is one whose message names none, whatever the session runs it on. The
+ * reference host emits the client's action itself.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('says a turn that names no model back with none, and runs it on the configured one', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/y' });
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
 
   const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
-  expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/y');
+  expect((started?.action.message as { model?: unknown }).model).toBeUndefined();
+  expect(model.requests).toHaveLength(1);
 });
 
 it('runs a turn on the model the turn names, with no model in the session config', async () => {
@@ -212,15 +220,15 @@ it('runs a turn on the model the turn names, with no model in the session config
       params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/picked', provider: 'cofold' } });
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/picked' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/picked') } });
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat:/picked',
+        channel: chatUriFor('ahp-session:/picked'),
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
       },
     });
-    await until(() => ended(p, 'ahp-chat:/picked'));
+    await until(() => ended(p, chatUriFor('ahp-session:/picked')));
     expect(sent.at(-1)?.url).toBe('https://api.moonshot.ai/v1/chat/completions');
     expect(sent.at(-1)?.body.model).toBe('moonshotai/kimi-k3.1-pro');
     expect(sent.at(-1)?.authorization).toBe('Bearer k-moon');
@@ -440,6 +448,59 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
   expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
+/*
+ * A stop is said when it is taken, and the run lets its turn go after. What a
+ * client sends between the two is sent to an idle chat, and is applied to one
+ * once the run has let the stopped turn go.
+ */
+it('begins a turn sent after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  // The run holds the stopped turn until its model is released.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 7)?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  expect(answer(p, chatUri, 7)?.rejectionReason).toBeUndefined();
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+  expect(started).toEqual(['t1', 't2']);
+  expect(asked.at(-1)).toContain('second');
+});
+
+it('runs a message queued after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 8)?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1' });
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started[1]).toMatchObject({ queuedMessageId: 'q1', message: { text: 'later' } });
+  expect(asked.at(-1)).toContain('later');
+});
+
 /** The envelope that answers the dispatch this client numbered `clientSeq`. */
 const answer = (p: ReturnType<typeof peer>, chatUri: string, clientSeq: number) => p.notes
   .filter((n) => n.method === 'action')
@@ -553,6 +614,76 @@ it('runs a steering message the run never took in as a turn of its own, named by
   expect(fold(p, chatUri).steeringMessage).toBeUndefined();
 });
 
+/** A client taking back a steering message, under the number the client gave it. */
+const unsteer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string): void => {
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id } },
+  });
+};
+
+it('takes back a steering message a stopped run handed back, and it never runs', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  steer(client, chatUri, 4, 's1', 'one more thing');
+  await until(() => answer(p, chatUri, 4) !== undefined);
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  // Handed back by the run, and waiting for the chat's next turn to end.
+  expect(fold(p, chatUri).steeringMessage).toMatchObject({ id: 's1' });
+
+  unsteer(client, chatUri, 5, 's1');
+  await until(() => answer(p, chatUri, 5) !== undefined);
+  expect(answer(p, chatUri, 5)?.action).toEqual({ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
+  expect(answer(p, chatUri, 5)?.rejectionReason).toBeUndefined();
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+
+  begin(client, chatUri, 't2', 'second');
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+  expect(started).toEqual(['t1', 't2']);
+  expect(asked.join('\n')).not.toContain('one more thing');
+});
+
+it('refuses to take back a steering message the run holds, and the run still reads it', async () => {
+  const waiting: (() => void)[] = [];
+  const tool: HostTool = {
+    definition: {
+      name: 'lookup',
+      title: 'Look something up',
+      description: 'Looks a word up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    run: () => new Promise<string>((resolve) => { waiting.push(() => resolve('found x')); }),
+  };
+  const model = createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: {} }] }, { text: 'done' }],
+    stream: true,
+  });
+  const { client, peer: p, chatUri } = await talking(model, [tool]);
+  begin(client, chatUri, 't1', 'find x');
+  await until(() => waiting.length === 1);
+  steer(client, chatUri, 9, 's1', 'look for y instead');
+  await until(() => answer(p, chatUri, 9) !== undefined);
+
+  unsteer(client, chatUri, 10, 's1');
+  await until(() => answer(p, chatUri, 10) !== undefined);
+  // cofold's run holds it, and the run has no command that gives it back.
+  expect(answer(p, chatUri, 10)?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
+  expect(opened.snapshot.state.steeringMessage).toMatchObject({ id: 's1' });
+
+  waiting[0]?.();
+  await until(() => ended(p, chatUri));
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+});
+
 it('names the cofold session id from the AHP URI in one place', () => {
   expect(sessionIdOf('ahp-session:/one')).toBe('one');
   expect(sessionIdOf('ahp-session:/a/b')).toBe('a/b');
@@ -635,7 +766,7 @@ it('runs a !command in a shell rather than asking a model', async () => {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = 'ahp-chat:/bang';
+  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
@@ -686,7 +817,7 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = 'ahp-chat:/bang';
+  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
@@ -737,9 +868,9 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
       params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'cofold' } });
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/none' } });
-    begin(client, 'ahp-chat:/none', 't1', 'hi');
-    const failure = () => actions(p, 'ahp-chat:/none').find((e) => e.action.type === 'chat/error');
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/none') } });
+    begin(client, chatUriFor('ahp-session:/none'), 't1', 'hi');
+    const failure = () => actions(p, chatUriFor('ahp-session:/none')).find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
     const part = failure()?.action.part as { error?: { message?: string }; resumable?: unknown };
     const message = String(part?.error?.message);
@@ -894,7 +1025,7 @@ it('resumes a conversation\'s first turn by dropping the session and starting it
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/first';
-  const chatUri = 'ahp-chat:/first';
+  const chatUri = chatUriFor('ahp-session:/first');
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'cofold', workingDirectories: [work] },
@@ -978,7 +1109,7 @@ it('answers no for a resume the session cannot make', async () => {
   const agent = cofoldAgent({ memory: true });
   const open = (seed: Record<string, unknown>[]) => agent.create({
     uri: 'ahp-session:/answers',
-    chatUri: 'ahp-chat:/answers',
+    chatUri: chatUriFor('ahp-session:/answers'),
     settings: agent.defaults(),
     workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-answers-')),
     schema: () => agent.schema(),
@@ -1020,7 +1151,7 @@ it('answers no for a resume the session cannot make', async () => {
   // A turn still running has nothing to reopen yet.
   const busy = cofoldAgent({ adapter: heldModel(), memory: true }).create({
     uri: 'ahp-session:/busy',
-    chatUri: 'ahp-chat:/busy',
+    chatUri: chatUriFor('ahp-session:/busy'),
     settings: {},
     workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-busy-')),
     schema: () => ({}),
@@ -1055,7 +1186,7 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = 'ahp-chat:/bang';
+  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   begin(client, chatUri, 't1', '!echo cofold-ran-it');

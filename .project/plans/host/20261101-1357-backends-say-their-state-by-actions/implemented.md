@@ -31,4 +31,4 @@ A reopened nested session shows its title and its turns.
 
 ## Left for later
 
-- The backend sites the audit names beside these three, in [deferred.md](deferred.md).
+- The backend sites the audit names beside these three, in [deferred.md](deferred.md), which says where each went.

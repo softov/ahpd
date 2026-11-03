@@ -29,8 +29,10 @@ refs:
 ## Goal
 
 A turn or a steering message a client hands a cofold session is answered to that client.
-A turn that waited on the session's opening and finds a turn running once it has opened is refused with the sentence the host gives for the same case.
-A steering message is said as the chat's steering message inside the dispatch, taken out once the run has read it, and run as a turn of its own when the run it went into never did.
+A turn can wait on the session's opening and find a turn running once it has opened.
+It is refused with the sentence the host gives for the same case.
+A steering message is said as the chat's steering message inside the dispatch, and taken out once the run has read it.
+It runs as a turn of its own when the run it went into never read it.
 
 ## Reconnaissance
 
@@ -38,14 +40,16 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- `rg -n "opening" packages/agent-cofold/src` - a resume, a fork and a rewind set `ctx.opening`; every turn handed meanwhile waits on it, and the first to open makes the rest find a turn active.
+- `rg -n "opening" packages/agent-cofold/src` - a resume, a fork and a rewind set `ctx.opening`.
+  Every turn handed meanwhile waits on it, and the first to open makes the rest find a turn active.
 - `rg -n "ctx.active = " packages/agent-cofold/src/runs.ts` - `reopen` makes a paused run the active turn, so the client's first turn after a resume of a paused conversation finds it running.
 - `rg -n "steer" packages/agent-cofold/src` - `steer` submits and returns; `mapping.ts` drops `run.steered`; nothing says the message or takes it out.
 - `rg -n "rejectSteering|run.finished" node_modules/@cofold/agents/dist/run` - the steers a run never drained are rejected after `run.finished`.
 
 ### Gaps
 
-- A second turn handed while the session opens, and a first turn handed while a resumed paused run reopens, return at `openTurn` with nothing said (audit E5's cofold half, E6).
+- A second turn handed while the session opens returns at `openTurn` with nothing said (audit E5's cofold half).
+- A first turn handed while a resumed paused run reopens returns there too (audit E6).
 - A steering message gets no answer, no entry in the chat's state, and no removal once read (audit E10's cofold half).
 
 ## Answers
@@ -58,7 +62,9 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Proposed architecture
 
-- **Event flow** - a turn handed during the opening keeps its `handed` from `beginTurn`, and refuses through it when it finds a turn active; a steer says `chat/pendingMessageSet` inside the dispatch, then `chat/pendingMessageRemoved` when cofold's submit settles, or a turn of its own from `startNext` when it rejects.
+- **Event flow** - a turn handed during the opening keeps its `handed` from `beginTurn`, and refuses through it when it finds a turn active.
+  A steer says `chat/pendingMessageSet` inside the dispatch, then `chat/pendingMessageRemoved` when cofold's submit settles.
+  When the submit rejects, the steer becomes a turn of its own from `startNext`.
 - **Layer responsibilities** - the cofold backend: answering what it was handed.
 - **Source-of-truth files** - [`code://packages/agent-cofold/src/turns.ts`](../../../../packages/agent-cofold/src/turns.ts), [`code://packages/agent-cofold/src/session.ts`](../../../../packages/agent-cofold/src/session.ts), [`code://packages/agent-cofold/src/context.ts`](../../../../packages/agent-cofold/src/context.ts)
 
@@ -71,7 +77,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Risks and tradeoffs
 
-- A steering message left after a stopped turn waits until the chat next starts something, as a queued message does, and stays in the chat's state meanwhile.
+- A steering message left after a stopped turn waits until the chat next starts something, as a queued message does.
+  It stays in the chat's state meanwhile.
 
 ## Resume state
 

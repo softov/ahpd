@@ -81,6 +81,36 @@ it('emits turnCompleted, turnFailed and turnCancelled once per turn', () => {
   });
 });
 
+/*
+ * A stop or a call's result the backend never took is said back after its
+ * turn ended, and a client's stop of a turn not running is accepted and moves
+ * nothing. Neither ends anything a second time.
+ */
+it('says nothing for an end or a result about a turn the chat is not running', () => {
+  const { made, heard } = area();
+  made.observe(CHAT, { type: 'chat/turnStarted', turnId: 't1' });
+  made.observe(CHAT, { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'Bash' });
+  made.observe(CHAT, { type: 'chat/turnComplete', turnId: 't1' });
+  made.observe(CHAT, { type: 'chat/turnCancelled', turnId: 't1' });
+  made.observe(CHAT, { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: { success: true } });
+  expect(kinds(heard)).toEqual(['turnCompleted', 'idle']);
+
+  heard.length = 0;
+  made.observe(CHAT, { type: 'chat/turnStarted', turnId: 't2' });
+  made.observe(CHAT, { type: 'chat/turnCancelled', turnId: 't1' });
+  made.observe(CHAT, { type: 'chat/turnComplete', turnId: 't2' });
+  expect(kinds(heard)).toEqual(['turnCompleted', 'idle']);
+});
+
+it('ends a turn again when it starts again under the same id', () => {
+  const { made, heard } = area();
+  for (let i = 0; i < 2; i++) {
+    made.observe(CHAT, { type: 'chat/turnStarted', turnId: 't1' });
+    made.observe(CHAT, { type: 'chat/turnComplete', turnId: 't1' });
+  }
+  expect(kinds(heard).filter((kind) => kind === 'turnCompleted')).toHaveLength(2);
+});
+
 it('emits toolFailed with the tool name and the input hash', () => {
   const { made, heard } = area();
   const call = (id: string, input: string, success: boolean): void => {

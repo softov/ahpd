@@ -230,7 +230,7 @@ it('refuses a change onto another owner\'s machine, before the first turn', asyn
   await client.handle({
     method: 'dispatchAction',
     params: {
-      channel: 'echo:/two',
+      channel: 'ahp-session:/two',
       action: { type: 'session/configChanged', config: { computer: 'computer://box' } },
     },
   });

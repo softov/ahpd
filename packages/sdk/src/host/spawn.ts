@@ -14,7 +14,7 @@ import { meter } from '../usage/meter.js';
 import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
-import { chatUriFor, subagentChatUri } from './channels.js';
+import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING } from './common.js';
 import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
@@ -23,7 +23,7 @@ import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
 import type { Handed, Session, SubagentChat, SubagentRequest } from '../types/session.js';
-import type { Origin } from './state.js';
+import type { Dispatched } from './state.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
@@ -190,13 +190,13 @@ export function createSpawn(ctx: HostContext): Spawn {
   const {
     options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
     dispatch, log, described, links, resumedSessions,
-    sessionHolding, respell, dirOf, heldAs, operationsMoved, refreshWatched, refreshFacts,
+    sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, moveKeys, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
     learnAccount, movableMoved,
   } = ctx;
-  /** The client each action a backend holds through `Start.handed` came from. */
-  const handedFrom = new WeakMap<Handed, Origin>();
+  /** The client's dispatch each action a backend holds through `Start.handed` came from. */
+  const handedFrom = new WeakMap<Handed, Dispatched>();
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
@@ -490,19 +490,21 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   /**
-   * A chat of a session in the session's `ahp-session:/<id>` spelling, or
-   * nothing for a chat whose name does not carry its session - one a client
-   * named itself.
+   * A default or worker chat of a session held as `<provider>:/<id>`, built
+   * for `ahp-session:/<id>`, or nothing for any other chat.
    *
    * A default or worker chat's URI embeds its session's, and a session store
-   * may hold a chat's title under that spelling of it, so a title is looked
-   * for there too.
+   * may hold a chat's title under that URI of it, so a title is looked for
+   * there too.
    */
   const formerChatUri = (uri: string, chatUri: string): string | undefined => {
-    const former = respell(chatUri, uri, uriFor(idOf(uri)));
-    return former === chatUri ? undefined : former;
+    const former = uriFor(idOf(uri));
+    if (former === uri) return undefined;
+    if (chatUri === chatUriFor(uri)) return chatUriFor(former);
+    const callId = toolCallOfSubagentChat(chatUri);
+    return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
   };
-  /** A chat's stored title: under its name, or else under its `ahp-session:` spelling. */
+  /** A chat's stored title: under its URI, or else under `formerChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
     const former = formerChatUri(uri, chatUri);
     return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
@@ -513,7 +515,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (was === undefined) return;
     kept.setNested?.(id, { ...was, ...change, modifiedAt: new Date().toISOString() });
   };
-  /** Store a chat's title under its name, and clear one kept under its `ahp-session:` spelling. */
+  /** Store a chat's title under its URI, and clear one kept under `formerChatUri`. */
   const keepTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
     if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
@@ -668,12 +670,9 @@ export function createSpawn(ctx: HostContext): Spawn {
    */
   const planDraws = new Set<Promise<void>>();
 
-  const drawPlan = async (uri: string): Promise<void> => {
+  const drawPlan = async (session: string): Promise<void> => {
     const plan = options.plan;
     if (plan === undefined) return;
-    // A plugin names a session by whichever URI it holds it under, while the
-    // host holds it by the one its turns run under.
-    const session = heldAs(uri);
     const held = sessions.get(session);
     if (held === undefined) return;
     const open: { chat: string; turn: string }[] = [];
@@ -887,20 +886,19 @@ export function createSpawn(ctx: HostContext): Spawn {
     /*
      * What this backend is told about the folders it is handed.
      *
-     * Read from the connection that sent the turn that starts or restarts this
-     * backend, and on a host with people only when that connection is the
-     * session's owner. A turn somebody
-     * else sends into this session is not theirs to widen, which is why the
-     * two are compared rather than the value simply passed along; and an
-     * automation, a host tool and a daemon coming back up have no connection
-     * at all, so what they start is untrusted - which is the same answer as a
-     * window that pushed nothing.
+     * Read from the host's one `workspaceTrust`, which the last push from any
+     * window set, as the reference host reads it for every session it starts,
+     * and from the folders the window that sent the turn said yes to one at a
+     * time.
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
      *
-     * Where the host has no people directory there is nobody to be other than
-     * the sender, and the sender decides. `ownerFor` answers
-     * `undefined` for every connection there, so comparing owners would refuse
-     * every folder on such a host and make the value a window pushes dead on
-     * it.
+     * On a host with people, only a turn the session's owner sends reads it. A
+     * turn somebody else sends into this session is not theirs to widen, which
+     * is why the two are compared; and an automation, a host tool and a daemon
+     * coming back up send nothing, so what they start there is untrusted.
+     * Where the host has no people directory there is nobody to compare:
+     * `ownerFor` answers `undefined` for every connection, and every start
+     * reads the host's value.
      *
      * A worktree this host made is read as the repository it was cut from: it
      * is a folder the window has never opened and so cannot have pushed, and
@@ -916,17 +914,16 @@ export function createSpawn(ctx: HostContext): Spawn {
     const trustedBy = (folder: string): boolean => {
       const asked = kept.trustedFolder?.(idOf(uri));
       if (asked !== undefined && sameFolder(asked, folder)) return true;
-      if (sender === undefined) return false;
       if (options.users !== undefined) {
-        const who = ctx.ownerFor(sender);
+        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
         if (who === undefined || who !== kept.owner(idOf(uri))) return false;
       }
       const made = ctx.worktreeOf(uri);
       const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
-      return trusted(vouched, sender.config?.workspaceTrust, sender.trustedFolders);
+      return trusted(vouched, ctx.rootConfig.workspaceTrust, sender?.trustedFolders);
     };
     /*
-     * Whether a command or tool this session runs is answered by its owner's
+     * Whether a command or tool this session runs is answered by the host's
      * rules, or asks every time because the operator said so.
      *
      * The operator's `eligibleForAutoApproval` rule is read first, and without
@@ -935,17 +932,15 @@ export function createSpawn(ctx: HostContext): Spawn {
      * it names is `ask`, which is a call that asks every time and offers no
      * "always" option - before any terminal rule could approve it.
      *
-     * The terminal rules are read from the same connection `trustedBy` reads,
-     * and for the same reason: what a window lets its agent run without asking
-     * is that window's answer, and a turn somebody else sends into this
-     * session is not theirs to widen. A start nobody's connection asked for
-     * has no terminal rules at all, which is a command that asks.
-     *
-     * The rules and the edit patterns are the connection's own push. A window
-     * that pushed no rules gets what the daemon's setting applies - VS Code's
-     * table or none - and one that pushed an empty table gets no rules: an
-     * empty object is a table with nothing in it, not a window that never
-     * spoke.
+     * The terminal rules and the edit patterns are the host's one value each,
+     * which the last push from any window set, as the reference host reads
+     * them for every session it runs; on a host with people they answer the
+     * owner's turns alone, as `trustedBy` reads trust. Where no window pushed
+     * rules the daemon's setting applies - VS Code's table or none - and a
+     * pushed empty table is no rules: an empty object is a table with nothing
+     * in it, not a window that never spoke.
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L884
      *
      * Only `approved` is an approval. A command a deny rule named, and a line no
      * rule could read, are both `undefined`, which leaves the backend to ask.
@@ -955,17 +950,17 @@ export function createSpawn(ctx: HostContext): Spawn {
       const named = kind === 'tool' ? line : tool;
       if (named !== undefined && asksForTool(ctx.rootConfig, named)) return 'ask';
       if (kind === 'tool') return undefined;
-      if (shell === undefined || sender === undefined) return undefined;
+      if (shell === undefined) return undefined;
       if (options.users !== undefined) {
-        const who = ctx.ownerFor(sender);
+        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
         if (who === undefined || who !== kept.owner(idOf(uri))) return undefined;
       }
-      if (sender.config?.['terminalAutoApproveEnabled'] === false) return undefined;
-      const pushed = sender.config?.['terminalAutoApproveRules'];
+      if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
+      const pushed = ctx.rootConfig['terminalAutoApproveRules'];
       const rules = pushed !== null && typeof pushed === 'object'
         ? pushed as TerminalAutoApproveRules
         : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
-      const patterns = sender.config?.['editAutoApprovePatterns'];
+      const patterns = ctx.rootConfig['editAutoApprovePatterns'];
       const result = approver.evaluate(line, {
         rules,
         ...(patterns !== null && typeof patterns === 'object' ? { editPatterns: patterns as TerminalAutoApprovePatterns } : {}),
@@ -1170,12 +1165,14 @@ export function createSpawn(ctx: HostContext): Spawn {
       ...(options.plan === undefined ? {} : { plan: true }),
       /*
        * The client's action `action` answers, held for the backend that
-       * answers it later. The origin stays with this host, in `handedFrom`, and
-       * the refusal goes to the client that sent it.
+       * answers it later. The dispatch stays with this host, in `handedFrom`,
+       * and the refusal goes to the client that sent it. The dispatch is marked
+       * taken, so the host leaves its answer to the backend.
        */
       handed: (action) => {
-        const at = ctx.answering(chatUri, action);
+        const at = ctx.answering(String(action.type ?? '').startsWith('session/') ? uri : chatUri, action);
         if (at === undefined) return undefined;
+        at.taken = true;
         const handed: Handed = {
           refuse: (reason) => {
             ctx.refuse(at.peer, at.channel, at.action, at.origin, reason);
@@ -1190,7 +1187,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             }
           },
         };
-        handedFrom.set(handed, at.origin);
+        handedFrom.set(handed, at);
         return handed;
       },
       emit: (channel, action, handed) => {
@@ -1267,19 +1264,44 @@ export function createSpawn(ctx: HostContext): Spawn {
          * nothing is sent where there is nobody to name, so a host with no
          * users directory sends exactly what it sent before.
          */
-        const origin = handed === undefined ? undefined : handedFrom.get(handed);
-        if (sender !== undefined && action.type === 'chat/turnStarted') {
+        const answers = handed === undefined ? ctx.answering(where, action) : handedFrom.get(handed);
+        const origin = handed === undefined ? undefined : answers?.origin;
+        /*
+         * What goes out where this answers a client's dispatch is that
+         * client's own action, as it sent it: the backend says when the action
+         * is taken, and the client's echo carries what the client sent, as the
+         * reference host emits the client's action itself. A backend's own
+         * rebuilding of it - its start time, a model it filled in, the fields of
+         * a decision it did not pass on - stays the backend's.
+         * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+         *
+         * A field the client left out, and a message's origin, are the
+         * backend's: every reducer reads a turn's start time and a message's
+         * origin, and the server's echo is the one that wins where the two
+         * differ.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+         */
+        const own = answers?.action;
+        const word = (action.message ?? {}) as Bag;
+        const said = own === undefined ? action : {
+          ...action,
+          ...own,
+          ...(typeof own.message === 'object' && own.message !== null
+            ? { message: { ...(word.origin === undefined ? {} : { origin: word.origin }), ...(own.message as Bag) } }
+            : {}),
+        };
+        if (sender !== undefined && said.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
           // On the message as well as the action: the message is what a
           // chat's state keeps, and a turn read back says its sender there.
-          const message = (action.message ?? {}) as Bag;
+          const message = (said.message ?? {}) as Bag;
           dispatch(where, asSent({
-            ...action,
-            _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender },
+            ...said,
+            _meta: { ...(said._meta as Bag | undefined), 'ahpd.sender': sender },
             message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
           }), origin);
         }
-        else dispatch(where, asSent(action), origin);
+        else dispatch(where, asSent(said), origin);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.
         // The row's counts move with it: the turn has no checkpoint yet, so
@@ -1479,11 +1501,14 @@ export function createSpawn(ctx: HostContext): Spawn {
           const wasRead = ctx.commandTurns.get(commandKey) === true;
           /*
            * A `!` command's turn is the host's, so no transcript holds it: the
-           * host keeps it for its chat, as the reference keeps a local turn
-           * once the turn has completed.
-           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L224
+           * host keeps it for its chat once it has ended, as the chat's state
+           * holds it, which is the turn its clients reduced. The reference
+           * records a local turn from its state the same way.
+           * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L229-L247
            */
-          if (moved !== undefined && command) ctx.keepLocalTurn(uri, chatUri, moved.allTurns(), turn);
+          if (moved !== undefined && command) {
+            ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
+          }
           ctx.commandTurns.delete(commandKey);
           if (moved !== undefined) {
             chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);

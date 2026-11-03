@@ -96,10 +96,9 @@ const windowsShell = (
 /**
  * What runs, when nothing else was asked for.
  *
- * `asked` is a connection's `defaultShell` where there is a connection to have
- * one, and it wins on either system: somebody who named a shell gets that
- * shell, and failing to start it is the answer rather than a reason to quietly
- * pick another.
+ * `asked` is the host's `defaultShell` for a client's terminal, and it wins on
+ * either system: somebody who named a shell gets that shell, and failing to
+ * start it is the answer rather than a reason to quietly pick another.
  *
  * The platform, the environment and the check for a file are handed in, so a
  * case on Linux can ask what a Windows machine would answer - there is no
@@ -667,8 +666,9 @@ export function createTerminal(
     }),
 
     write: (data) => {
-      if (exitCode !== undefined)
-        return `${uri} has exited, and has no process to send input to`;
+      // Nothing reaches a process that has exited: its code is set at `exit`,
+      // and its pipes can still read as writable until `close`.
+      if (exitCode !== undefined) return;
       /*
        * `^C` is a signal, and there is nothing here to turn it into one.
        *
@@ -692,7 +692,7 @@ export function createTerminal(
         // shell echoes what was typed, but the echo arrives as output and
         // this is the only place the input itself is seen.
         typed += data;
-        return true;
+        return;
       }
       const at = data.indexOf('\u0003');
       if (at !== -1) {
@@ -707,7 +707,7 @@ export function createTerminal(
          * whatever started the host.
          */
         const group = child?.pid;
-        if (group === undefined) return `${uri} has no process to send input to`;
+        if (group === undefined) return;
         /*
          * Windows: the tree, by pid, because there is no group to name and no
          * signal a shell there acts on.
@@ -718,15 +718,13 @@ export function createTerminal(
          * interrupt and a kill; Windows has nothing here to draw it with, so
          * both are the same tree-ending call.
          */
-        if (windows) { endTree(group); return true; }
+        if (windows) { endTree(group); return; }
         try { process.kill(-group, 'SIGINT'); }
         // The group is gone, which is the outcome asked for.
         catch { /* nothing left to interrupt */ }
-        return true;
+        return;
       }
-      if (!child?.stdin.writable) return `${uri} has no process to send input to`;
-      child.stdin.write(data);
-      return true;
+      if (child?.stdin.writable) child.stdin.write(data);
     },
 
     // Told, when there is something to tell: a pseudoterminal gets the new

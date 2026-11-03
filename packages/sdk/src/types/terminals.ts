@@ -27,10 +27,9 @@ export interface TerminalOptions {
   /**
    * The shell to run, absolute. The store's own choice if none is given.
    *
-   * A connected client pushes this: VS Code sends `defaultShell` on the root
-   * channel out of `terminal.integrated.agentHostProfile.<os>`, because the
-   * shell somebody wants a host-managed terminal to open is a preference of
-   * theirs rather than a fact about the machine.
+   * A client's terminal opens the host's `defaultShell`, which a connected
+   * client pushes: VS Code sends it on the root channel out of
+   * `terminal.integrated.agentHostProfile.<os>`.
    */
   shell?: string;
   /**
@@ -104,11 +103,12 @@ export interface Terminal {
   state(): OnWire<TerminalState> & { exitCode?: number };
 
   /**
-   * Send input: `true` when it reached the process, otherwise the sentence
-   * that says why it did not, a process that has exited or none behind the
-   * terminal at all.
+   * Send input to the process, while one runs. Input to a process that has
+   * exited, or to a terminal with none behind it, goes nowhere, as VS Code's
+   * host writes input only to a running process terminal.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
    */
-  write(data: string): true | string;
+  write(data: string): void;
   /**
    * Record a new size and say it. A pseudoterminal behind the terminal is
    * told, and sends SIGWINCH itself.
@@ -317,8 +317,13 @@ export interface OutputTerminal {
  * to spawn, so nothing here needs one.
  */
 export interface OutputTerminals {
-  /** Open one, on a channel of the host's own, held by the session's chat. */
-  create(options: { title: string; chat: string }): OutputTerminal;
+  /**
+   * Open one, on a channel of the host's own, held by the session's chat.
+   *
+   * `isPty` says the text holds a pseudoterminal's VT sequences, as a copy of
+   * one does; absent, it is plain text.
+   */
+  create(options: { title: string; chat: string; isPty?: boolean }): OutputTerminal;
 }
 
 /**

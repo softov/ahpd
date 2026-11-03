@@ -11,9 +11,10 @@
 
 import { expect, it, describe } from 'vitest';
 import { conversation, scenario } from './scenario.js';
+import { chatUriFor } from '../src/host/channels.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = 'ahp-chat:/one';
+const CHAT = chatUriFor(SESSION);
 
 /** Say something, as a client dispatching a turn does. */
 const say = (id: string, text: string): { method: string; params: Record<string, unknown> } => ({

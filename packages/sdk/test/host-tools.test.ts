@@ -22,6 +22,7 @@ import type { PlanUpdate, Session } from '../src/types/session.js';
 import type { SessionAction, SessionInputRequest, SessionState } from '@microsoft/agent-host-protocol';
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import {
   resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
   machine, peer, sdk, serving, sessionQueries, settle, running,
@@ -228,6 +229,40 @@ describe('tools the host contributes', () => {
       const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
       expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
       expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+    });
+
+    /*
+     * A session the tool makes during a turn an older VS Code window sent is
+     * named in its provider's scheme, so that window can see it, as the
+     * reference host mints a session for the client whose turn made it.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108
+     */
+    it('names a session it creates for an older VS Code window\'s turn in its provider\'s scheme', async () => {
+      const host = createHost({ path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools: hostTools() });
+      const p = peer();
+      const window = host.accept(p);
+      await window.handle(hello(['1.0.0'], {
+        clientId: 'window', clientInfo: { name: 'vscode-agents-window', title: 'VS Code Agents Window' }, initialSubscriptions: ['ahp-root://'],
+      }));
+      const uri = 'claude:/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+      await window.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chat = chatUriFor(uri);
+      await window.handle({ method: 'subscribe', params: { channel: chat } });
+      window.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'start the port' } } },
+      });
+      await settle();
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: HERE, title: 'Port the makefile', prompt: 'port it', worktree: false,
+      });
+      expect(said).toMatch(/^New session created/);
+      await settle();
+      const added = p.notes.filter((one) => one.method === 'root/sessionAdded')
+        .map((one) => (one.params as { summary: { resource: string } }).summary.resource)
+        .filter((one) => one !== uri);
+      expect(added).toHaveLength(1);
+      expect(added[0]).toMatch(/^claude:\/[0-9a-f-]+$/);
     });
 
     it('creates a chat in the current session for currentSession work, and refuses a workspace with it', async () => {
@@ -496,7 +531,7 @@ describe('tools the host contributes', () => {
       const client = host.accept(peer(), people ? ana : undefined);
       await client.handle(hello(['0.9.0']));
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
-      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/who' } });
+      await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
       const person = async (): Promise<string | undefined> => {
         const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -513,7 +548,7 @@ describe('tools the host contributes', () => {
 
     // A turn sent by her gives the person the host knows behind that owner.
     await plenty.client.handle({ method: 'dispatchAction', params: {
-      channel: 'ahp-chat:/who',
+      channel: chatUriFor('ahp-session:/who'),
       action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'who am I' } },
     } });
     await settle();
@@ -1276,6 +1311,34 @@ describe('tools a client contributes', () => {
     expect(uri).toBeTruthy();
   });
 
+  it('names the client at the start of a call whose arguments are still streaming', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    /*
+     * The call opens as soon as its name is known, and its start is where the
+     * protocol establishes who runs it: a later `chat/toolCallReady` may not
+     * change that.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+     */
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: {} },
+        },
+      },
+    );
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
+  });
+
   it('says a failed call failed, in the words the client used', async () => {
     const { client, chatUri } = await providing();
     client.handle({
@@ -1394,17 +1457,24 @@ describe('tools a client contributes', () => {
         clientSeq: 4,
         action: {
           type: 'chat/toolCallContentChanged',
+          turnId: 't1',
           toolCallId: 'call-1',
           content: [{ type: 'text', text: 'reading…' }],
         },
       },
     });
     await settle();
-    // Passed through rather than reduced: what a tool is printing as it runs
-    // is the running client's to say, and this host holds none of it.
+    // Said to every client of the chat as the running client's own, and held
+    // as the chat's reducer folds it, so a client subscribing afterwards is
+    // served the call with what its tool printed.
     const said = actions(watching, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged');
     expect(said?.action.toolCallId).toBe('call-1');
     expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
+    const later = await other.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn?: { responseParts: { toolCall?: { toolCallId?: string; content?: unknown } }[] } } };
+    };
+    const call = later.snapshot.state.activeTurn?.responseParts.find((part) => part.toolCall?.toolCallId === 'call-1')?.toolCall;
+    expect(call?.content).toEqual([{ type: 'text', text: 'reading…' }]);
   });
 
   it('fails the calls of a client that goes, rather than leaving the turn hanging', async () => {
@@ -1740,12 +1810,12 @@ describe('tools a client contributes', () => {
   /** The person's answer, dispatched to the session the way a client dispatches it. */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
-    uri: string,
+    chatUri: string,
     approved: boolean,
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
     });
   };
 
@@ -1757,7 +1827,7 @@ describe('tools a client contributes', () => {
     ((await watched(client, uri)).inputNeeded ?? []).filter((one) => one.kind === 'toolClientExecution');
 
   it('opens a call the person allowed, and not before the question is answered', async () => {
-    const { client, uri, chatUri } = await providing();
+    const { client, peer: p, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
     /*
      * The callback first, which is the order `asking.ts` documents: the CLI
@@ -1768,6 +1838,9 @@ describe('tools a client contributes', () => {
     const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     expect(await askedToRun(client, uri)).toEqual([]);
+    // The question opens the call, and its start names the client that runs it.
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
 
     sdk.toolUseIds.push('call-1');
     const run = tool();
@@ -1780,7 +1853,7 @@ describe('tools a client contributes', () => {
     // waiting for ever.
     expect(done).toBe(false);
 
-    decided(client, uri, true);
+    decided(client, chatUri, true);
     await settle();
     expect(await gate).toMatchObject({ behavior: 'allow' });
     // The client is asked to run it now, and once.
@@ -1794,6 +1867,30 @@ describe('tools a client contributes', () => {
     answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
     expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
     await settle();
+    expect(await askedToRun(client, uri)).toEqual([]);
+  });
+
+  it('approves nothing on an input answer naming a call a person is asked to confirm', async () => {
+    const { client, peer: p, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    let decided: unknown;
+    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
+      ?.then((one) => { decided = one; });
+    await settle();
+    /*
+     * An input answer is checked against the questions the chat holds open,
+     * and a call waiting on a person is answered by `chat/toolCallConfirmed`.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L75
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L113-L114
+     */
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/inputCompleted', requestId: 'call-1', response: 'accept' } },
+    });
+    await settle();
+    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('is not a question this chat is waiting on');
+    expect(decided).toBeUndefined();
     expect(await askedToRun(client, uri)).toEqual([]);
   });
 
@@ -1821,7 +1918,7 @@ describe('tools a client contributes', () => {
     // asked to run the tool.
     expect(await askedToRun(client, uri)).toEqual([]);
 
-    decided(client, uri, true);
+    decided(client, chatUri, true);
     await settle();
     // Allowed, so it is the client's to run once more - one entry, not two.
     expect(await gate).toMatchObject({ behavior: 'allow' });
@@ -1842,7 +1939,7 @@ describe('tools a client contributes', () => {
     void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
-    decided(client, uri, false);
+    decided(client, chatUri, false);
     await settle();
     /*
      * Settled, and with the refusal: a handler left waiting on a call nobody
@@ -2037,6 +2134,22 @@ describe('a client\'s call, held by the backend', () => {
     return { host, heard, held, uri, chatUri, clients, peers };
   };
 
+  /**
+   * A client's call as a backend says it: on its chat, in a running turn,
+   * started under the client that runs it, and then handed to the holder.
+   * The chat's call is what the host checks a client's result against.
+   */
+  const called = (held: Held, toolCallId: string, owner: string): void => {
+    const { start, calls } = held;
+    start.emit('chat', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'open it', origin: { kind: 'user' } } });
+    start.emit('chat', {
+      type: 'chat/toolCallStart', turnId: 't1', toolCallId, toolName: 'openFile', displayName: 'openFile',
+      contributor: { kind: 'client', clientId: owner },
+    });
+    start.emit('chat', { type: 'chat/toolCallReady', turnId: 't1', toolCallId, invocationMessage: 'Run openFile', confirmed: 'not-needed' });
+    calls.open({ turnId: 't1', toolCall: running(toolCallId), owner });
+  };
+
   // One case runs the holder's own clock forward, and a timer left faked is a
   // `settle` in the next one that never fires.
   afterEach(() => { vi.useRealTimers(); });
@@ -2126,7 +2239,7 @@ describe('a client\'s call, held by the backend', () => {
   it('settles the call for its own client, and refuses the other one', async () => {
     const { held, clients, chatUri } = await open(['a', 'b']);
     const { calls } = held();
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 
@@ -2149,7 +2262,7 @@ describe('a client\'s call, held by the backend', () => {
   it('hands the whole answer to the backend, content blocks and all', async () => {
     const { held, clients, chatUri } = await open(['a']);
     const { calls } = held();
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 
@@ -2906,8 +3019,8 @@ describe('a harness list handed to the host', () => {
     const client = host.accept(peer(), ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
-    // The chat a client addresses, which is the one the client named it by.
-    const chat = 'ahp-chat:/list';
+    // The chat a client addresses, the session's default chat.
+    const chat = chatUriFor('ahp-session:/list');
     await client.handle({
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'plan it' } } },

@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -64,6 +65,14 @@ const wire = (): Bag => ({
       enum: ['a', 'b'],
       sessionMutable: true,
     },
+    // A key that says nothing of `sessionMutable`, which the protocol reads as
+    // a key that does not move once the session is created.
+    unsaid: {
+      type: 'string',
+      title: 'Unsaid',
+      description: 'Says nothing of whether it moves.',
+      enum: ['x', 'y'],
+    },
   },
 });
 
@@ -120,7 +129,7 @@ async function opened(initial: Record<string, unknown> = { fixed: 'one', mutable
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/fixed';
-  const chatUri = 'ahp-chat:/fixed';
+  const chatUri = chatUriFor(uri);
   // The values the New view's picker held when the session was created, which
   // is what the client sends with `createSession`.
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'fixed', config: initial } });
@@ -197,6 +206,42 @@ it('refuses a fixed key after the first turn, and keeps the value it had', async
   expect(refused?.rejectionReason).toBe('fixed is fixed once the session has started');
   expect(spawns).toHaveLength(1);
   expect(spawns[0]?.settings.fixed).toBe('one');
+});
+
+/*
+ * A key whose schema says nothing of `sessionMutable`.
+ *
+ * "Only properties with `sessionMutable: true` in the config schema may be
+ * changed", so such a key is fixed the way `sessionMutable: false` is. No VS
+ * Code client sends one on a running session: it writes a key there only when
+ * the schema says `sessionMutable` (sessionConfigProperties.ts L131-L133 at
+ * a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+ */
+it('refuses a key that says nothing of moving after the first turn, and never asks the backend', async () => {
+  const { client, p, uri, chatUri, spawns, set } = await opened();
+  await turn(client, chatUri);
+  await settle();
+
+  await change(client, uri, { unsaid: 'y' });
+  await settle();
+
+  const refused = actions(p, uri).find((one) => one.rejectionReason !== undefined);
+  expect(refused?.rejectionReason).toBe('unsaid is fixed once the session has started');
+  expect(set.map((one) => one.key)).not.toContain('unsaid');
+  expect(spawns).toHaveLength(1);
+});
+
+it('starts the session again for a key that says nothing of moving, before the first turn', async () => {
+  const { client, chatUri, uri, spawns, set, began } = await opened();
+  void change(client, uri, { unsaid: 'y' });
+  void turn(client, chatUri);
+  await settle();
+
+  expect(spawns).toHaveLength(2);
+  expect(spawns[1]?.settings.unsaid).toBe('y');
+  expect(set.map((one) => one.key)).not.toContain('unsaid');
+  expect(began).toEqual([{ spawn: 1, text: 'go' }]);
 });
 
 it('does not keep a refused value for the next chat in the session', async () => {
@@ -276,7 +321,7 @@ it('treats a key a plugin contributed the same way', async () => {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/contributed';
-  const chatUri = 'ahp-chat:/contributed';
+  const chatUri = chatUriFor(uri);
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'fixed', config: { fixed: 'one', computer: 'computer://a' } },
@@ -324,10 +369,10 @@ it('keeps a change the backend took while the session was being started again', 
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fixed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  void change(client, 'fixed:/fixed', { mutable: 'b' });
+  void change(client, 'ahp-session:/fixed', { mutable: 'b' });
   await settle();
   // The restart closes the old backend, which is when it answers.
-  void change(client, 'fixed:/fixed', { fixed: 'two' });
+  void change(client, 'ahp-session:/fixed', { fixed: 'two' });
   await settle();
   expect(store.config('fixed')).toMatchObject({ fixed: 'two', mutable: 'b' });
 });
@@ -377,7 +422,7 @@ it('applies a config change and a turn sent while the session starts again into 
   // The machine is still being made: the old backend is gone and the new one
   // not yet started. Both are sent back to back, as the first send does.
   void change(client, 'ahp-session:/boxed', { mutable: 'b' });
-  void turn(client, 'ahp-chat:/boxed', 'go');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   // And one on another channel, which this connection sent after them.
   void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
   await settle();
@@ -443,7 +488,7 @@ const intoMachine = async (throws = false) => {
 
 it('drops a turn that waited on a restart when its connection left', async () => {
   const { client, said, machine } = await intoMachine();
-  void turn(client, 'ahp-chat:/boxed', 'go');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   await settle();
   client.close();
   machine.made('m1');
@@ -453,8 +498,8 @@ it('drops a turn that waited on a restart when its connection left', async () =>
 
 it('refuses a waiting turn the backend throws on, to the client that sent it', async () => {
   const { p, client, said, machine } = await intoMachine(true);
-  void turn(client, 'ahp-chat:/boxed', 'first');
-  void turn(client, 'ahp-chat:/boxed', 'second');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'first');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'second');
   await settle();
   machine.made('m1');
   await settle();
@@ -468,7 +513,7 @@ it('refuses a dispatch that waited too long on a restart, and goes on with the n
   const { p, client, said } = await intoMachine();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
-    void turn(client, 'ahp-chat:/boxed', 'go');
+    void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
     void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
     await vi.advanceTimersByTimeAsync(59_000);
     expect(p.notes.filter((n) => n.method === 'action' && (n.params as Note).rejectionReason !== undefined)).toEqual([]);
@@ -554,8 +599,8 @@ it('keeps a session\'s chat names while the session starts again', async () => {
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  expect(await asked(client, 'createChat', { channel: 'fixed:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
-  void change(client, 'fixed:/boxed', { computer: 'disposable:box' });
+  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
+  void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
   // The session is being started again into its machine: its chats are gone
   // from the backend and not yet back, and their names are still its.

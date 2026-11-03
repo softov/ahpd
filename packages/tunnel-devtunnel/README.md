@@ -21,30 +21,57 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 
 ### What it needs
 
-- The [`devtunnel` CLI](https://aka.ms/devtunnels/download), installed and logged in:
+A signed-in `devtunnel` connector, and one GitHub account to sign in with. The plugin talks to the Dev Tunnels service through its SDK, so the `devtunnel` CLI is not needed and does not have to be installed.
 
-  ```bash
-  devtunnel user login       # a Microsoft account
-  devtunnel user login -g    # or a GitHub one
-  ```
+Set the connector's name as the plugin's `connector` option, and sign in to it in a client. Until then the plugin registers the kind but opens no tunnel of its own. [Signing in with a connector](#signing-in-with-a-connector) below has the steps.
 
 ## Options
 
 In the configuration file, with every option set:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "name": "dev03", "anonymous": true } }] }
+{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "connector": "dev03", "name": "dev03", "keep": true, "anonymous": true, "allowAccountChange": true } }] }
 ```
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `name` | this machine's hostname | What the tunnel is called in a client's list |
-| `keep` | `true` | Whether the tunnel outlives the daemon |
-| `anonymous` | `false` | Whether somebody not signed in to this account may reach it |
+| `connector` | none | The `devtunnel` connector this host's own tunnel uses; absent, no system tunnel is opened |
+| `name` | this machine's hostname | What a Dev Tunnel this plugin makes is called in a client's list |
+| `keep` | `true` | Whether the Dev Tunnel outlives the daemon |
+| `anonymous` | `false` | Whether somebody not signed in to this account may reach the system tunnel |
+| `allowAccountChange` | `false` | Whether a second sign-in may replace a connector's GitHub account |
 
-Keep `keep` on: a client derives its connection token from the tunnel's id, so a new tunnel on every start is a new token on every start.
+Keep `keep` on: a client derives its connection token from the Dev Tunnel's id, so a new tunnel on every start is a new token on every start.
 
-No option holds a credential, so the plugin takes nothing from the vault. The tunnel signs in through the `devtunnel` CLI's own login.
+No option holds a credential. A connector keeps its GitHub token in the vault, and the plugin signs in to the Dev Tunnels service with it.
+
+## Signing in with a connector
+
+A `devtunnel` connector is one GitHub account, signed in with a device code. In a client, make a connector of the `devtunnel` adapter and press **Sign in with GitHub**. The host shows a code and a URL, and you approve on `github.com` from any device. The connector's row is `ready` once the host holds the token, and `unauthorized` while the service refuses it, until you sign in again. Each GitHub account gets its own connector, so one host may hold several.
+
+A second sign-in on an existing connector from the same account keeps it. From another account it is refused, because a connector is one account. Set `allowAccountChange` to `true` to let a sign-in replace the account instead.
+
+The token lasts eight hours. The plugin refreshes it when the connector opens and every seven hours after. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered.
+
+The plugin needs no grant for that: the host lets the plugin that registered an adapter write the secrets of that adapter's connectors and ask for their check, whoever owns them.
+
+The Dev Tunnels service is reached with that token through the SDK, for the ports this plugin hosts and for the state on its page. Nothing is read from the `devtunnel` CLI's own login, and the CLI is not needed.
+
+## The tunnel kind
+
+The plugin registers one tunnel kind, `devtunnel`. A record of it is a connector, a port and whether the port is anonymous:
+
+```json
+{ "kind": "devtunnel", "settings": { "connector": "dev03", "port": 9187, "anonymous": false } }
+```
+
+Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found by the `_ahpd` label, so a restart reuses it and keeps its id, and with it every client's token.
+
+The kind offers `start`, `stop`, `restart` and `anonymous`. `restart` connects the relay to the same Dev Tunnel again without removing a port, which is what to try when the relay dropped. `anonymous` takes `{ "on": true }` or `{ "on": false }` and changes who may reach the port live, and the host saves it in the record.
+
+A record whose connector is not open is not started: its row reports an error asking you to sign in to the connector again, and stays, because a sign-in is the next thing you will do.
+
+With `keep` set to `false`, the last port stopping deletes the Dev Tunnel. The next start makes a new one with a new id, so every client derived a token for a tunnel that no longer exists and has to find the new one. Keep it on unless you mean that.
 
 ## In your own host
 
@@ -95,17 +122,19 @@ tunnel token 4d8f...  - what a client presents over the tunnel; this daemon requ
 
 ## The plugin's page
 
-A client that reads `x-ahpd-plugins` draws this plugin's row as a page: a card with the tunnel's address as a link, then the tunnel id, the port, whether the relay holds the tunnel, and how many clients are connected. The plugin reads that state from `devtunnel show <id> --json` when the tunnel starts and every 30 seconds after, and draws the page again only when the state changed.
+A client that reads `x-ahpd-plugins` draws this plugin's row as a page: a card with the tunnel's address as a link, then the tunnel id, the port, whether the relay holds the tunnel, and how many clients are connected. The plugin reads that state through the Dev Tunnels SDK when the system tunnel starts and every 30 seconds after, and draws the page again only when the state changed.
 
-A read that fails keeps the page as it was, and the plugin logs the first failure of a run of them. When the tunnel stops, the page is cleared. The page's words come in Portuguese or Spanish from the plugin's own catalogs.
+A read that fails keeps the page as it was, and the plugin logs the first failure of a run of them and warns on the row. The next good read takes the warning away. When the tunnel stops, the page is cleared. The page's words come in Portuguese or Spanish from the plugin's own catalogs.
 
-## What it does at startup
+## What the system tunnel does at startup
 
-1. Finds the tunnel it made before, by its own label, or makes one.
-2. Labels it `vscode-server-launcher` and `protocolv5`, which is what makes a client list it.
+With the `connector` option set, the host adds one system tunnel of the `devtunnel` kind and starts it when the daemon starts listening:
+
+1. Finds the connector's Dev Tunnel by the `_ahpd` label, or makes one with the convention's labels.
+2. Labels a new one `vscode-server-launcher` and `protocolv5`, which is what makes a client list it.
 3. Puts port 31546 on it, the fixed port VS Code looks for.
 4. Forwards 31546 on loopback to the port the daemon bound, unless the daemon is already on 31546.
-5. Hosts the tunnel and prints its address.
+5. Hosts the Dev Tunnel and prints its address.
 
 If any step fails, the daemon keeps running without the tunnel.
 

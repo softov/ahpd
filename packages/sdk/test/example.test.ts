@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -41,7 +42,7 @@ async function talking() {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
@@ -122,20 +123,20 @@ it('says it back in the voice the session was created with', async () => {
   });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/two', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/two'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
   });
   await settle(12);
-  const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/two' } }) as {
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/two') } }) as {
     snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
   };
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('HELLO');
 });
 
 it('leaves a finished session in the catalogue, and opens it again from its transcript', async () => {
-  const { client, uri } = await talking();
+  const { client, uri, chatUri } = await talking();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'remember me' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'remember me' } } },
   });
   await settle(12);
   await client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -150,9 +151,8 @@ it('leaves a finished session in the catalogue, and opens it again from its tran
   // catalogue row a row somebody can read.
   const again = await client.handle({
     method: 'subscribe',
-    // The id inside the resource, whatever scheme the row was named under -
-    // this host names a session after its provider.
-    params: { channel: `ahp-chat:/${listed.items[0]?.resource.split(':/').pop() ?? ''}` },
+    // The default chat of the row, built from the URI it is listed under.
+    params: { channel: chatUriFor(listed.items[0]?.resource ?? '') },
   }) as { snapshot: { state: { turns: unknown[] } } };
   expect(again.snapshot.state.turns).toHaveLength(1);
 });

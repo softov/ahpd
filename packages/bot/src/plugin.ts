@@ -71,9 +71,6 @@ export const defaults = {
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
 const CLIENT = 'ahpd-bot';
 
-/** How long a dispatch waits for the host's echo before it goes on as taken, in milliseconds. */
-const ECHO_MS = 10_000;
-
 /** The collection the tombstone of each deleted bot is kept in. */
 const GONE = 'bots-gone';
 
@@ -240,8 +237,8 @@ export function moveData(configDir: string, yaml: Yaml, problem: (line: string) 
 }
 
 /** Dispatches actions on the plugin's connection, and hears whether the host took each one. */
-interface Dispatcher {
-  /** Dispatch one action, and give the host's refusal reason, or `undefined` when the host took it or said nothing. */
+export interface Dispatcher {
+  /** Dispatch one action, and give the host's refusal reason, or `undefined` when the host took it. */
   dispatch(channel: string, action: Record<string, unknown>): Promise<string | undefined>;
 }
 
@@ -253,11 +250,12 @@ interface Dispatcher {
  * applied with an `action` frame naming that `clientId` and that `clientSeq` -
  * with a `rejectionReason` when it refused it, and without one when it took it.
  * The host echoes a taken action only to the subscribers of its channel, so a
- * caller subscribes first. A dispatch that hears nothing in `waitMs` gives
- * `undefined` and calls `silent`: only a refusal the host sent is a refusal,
- * since an action a host is still holding can still be applied.
+ * caller subscribes first. A dispatch is settled by that answer alone: the
+ * host answers every action it is sent, and a client holds what it sent until
+ * the answer comes, however long the host takes to decide.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L19-L32
  */
-function dispatcher(conn: PluginPeer, clientId: string, waitMs: number, silent?: (channel: string) => void): Dispatcher {
+export function dispatcher(conn: PluginPeer, clientId: string): Dispatcher {
   let seq = 0;
   const waiting = new Map<number, (refused: string | undefined) => void>();
   conn.onMessage((message) => {
@@ -275,16 +273,7 @@ function dispatcher(conn: PluginPeer, clientId: string, waitMs: number, silent?:
       seq += 1;
       const clientSeq = seq;
       return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          waiting.delete(clientSeq);
-          silent?.(channel);
-          resolve(undefined);
-        }, waitMs);
-        timer.unref?.();
-        waiting.set(clientSeq, (refused) => {
-          clearTimeout(timer);
-          resolve(refused);
-        });
+        waiting.set(clientSeq, resolve);
         conn.notify('dispatchAction', { channel, clientSeq, action });
       });
     },
@@ -433,9 +422,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const connection = (): Promise<Opened> => {
     opened ??= (async () => {
       const conn = host.connect();
-      const sender = dispatcher(conn, CLIENT, ECHO_MS, (channel) => {
-        host.problem(`${name}: the host did not echo an action in ${channel} in ${ECHO_MS / 1000} seconds`);
-      });
+      const sender = dispatcher(conn, CLIENT);
       await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
       return { conn, sender };
     })();
@@ -613,7 +600,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     })();
     read.then((text) => {
       if (!still()) return;
-      wake.finished(event.session, text);
+      wake.finished(event.session, text, event.status === 'error' ? event.error ?? 'The turn failed' : undefined);
     }, (error: unknown) => {
       host.problem(`${name}: the end of turn ${event.turn} in ${event.chat} was not read: ${reason(error)}`);
       if (!still()) return;

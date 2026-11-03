@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations, RUN_HISTORY_LIMIT } from '../src/automations/automations.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
@@ -249,8 +250,8 @@ it('takes a definition as a request and answers with what it actually holds', as
   await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
   await write(client, DEFINITION);
 
-  // `createRequested` is a request. What goes out is `automation/set`, which
-  // is the host saying what it has - not an echo of what was asked for.
+  // `createRequested` is a request. `automation/set` is the host saying what
+  // it holds, which every client takes as the entry.
   const said = actions(p, AUTOMATIONS).filter((one) => one.type === 'automation/set');
   expect(said).toHaveLength(1);
   const held = said[0]?.automation as { resource: string; operations: string[]; runs: unknown[] };
@@ -259,6 +260,36 @@ it('takes a definition as a request and answers with what it actually holds', as
   expect(held.operations).toEqual(['update', 'remove', 'run']);
   // And no `nextRunAt`, because nothing will fire it.
   expect('nextRunAt' in held).toBe(false);
+});
+
+/*
+ * A request the host takes is still the client's dispatch, "echoed back ...
+ * once accepted": the client holds it pending until its own action comes
+ * back. It follows the `automation/set` it caused, and reduces to nothing.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+ */
+it('answers a create, an update and a removal of nothing by the client\'s own action', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, action: Record<string, unknown>) =>
+    client.handle({ method: 'dispatchAction', params: { channel: AUTOMATIONS, clientSeq, action } });
+  await send(1, { type: 'automation/createRequested', resource: ONE, definition: DEFINITION });
+  await send(2, { type: 'automation/updateRequested', resource: ONE, changes: { title: 'Nightly' } });
+  await send(3, { type: 'automation/removed', resource: 'ahp-automation:/nothing' });
+  await settle();
+
+  const heard = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS);
+  const own = heard.filter((n) => n.origin !== undefined);
+  expect(own.map((n) => [n.action.type, n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    ['automation/createRequested', 1, undefined],
+    ['automation/updateRequested', 2, undefined],
+    ['automation/removed', 3, undefined],
+  ]);
+  const types = heard.map((n) => n.action.type);
+  expect(types.indexOf('automation/set')).toBeLessThan(types.indexOf('automation/createRequested'));
 });
 
 it('patches rather than overwrites, so one client does not revert another', async () => {
@@ -980,7 +1011,7 @@ it('starts a session and says the first message, which is the whole point', asyn
 
   // A session created and never spoken to does nothing, and nobody is at the
   // keyboard to speak to it - so the turn has to have been started here.
-  const chat = `ahp-chat:/${idOf(state.primarySession ?? '')}`;
+  const chat = chatUriFor(state.primarySession ?? '');
   const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
     snapshot: { state: { turns?: { message?: { text?: string; origin?: { kind?: string } } }[] } };
   };
@@ -1124,7 +1155,7 @@ it('stops a running run, and keeps the session it was running in', async () => {
 
   // And the turn is really over in the session, rather than only in the run.
   const chat = await client.handle({
-    method: 'subscribe', params: { channel: `ahp-chat:/${idOf(session)}` },
+    method: 'subscribe', params: { channel: chatUriFor(session) },
   }) as { snapshot: { state: { activeTurn?: unknown; turns?: { state?: string }[] } } };
   expect(chat.snapshot.state.activeTurn).toBeUndefined();
   expect(chat.snapshot.state.turns?.at(-1)?.state).toBe('cancelled');

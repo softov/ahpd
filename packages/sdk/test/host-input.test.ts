@@ -17,10 +17,10 @@ beforeEach(resetSdk);
 
 describe('driving a turn', () => {
   it('blocks on a confirmation and runs the tool when it is approved', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -47,7 +47,7 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: callId, approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: callId, approved: true } },
     });
     expect(await decision).toMatchObject({ behavior: 'allow' });
     expect(actions(p, uri).map((e) => e.action.type)).toContain('session/inputNeededRemoved');
@@ -62,7 +62,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running({ terminalAutoApproveDefaults: 'none' });
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       const decision = sdk.canUseTool?.('Bash', { command: 'ls' }, {
@@ -129,10 +129,10 @@ describe('driving a turn', () => {
   });
 
   it('answers a question keyed by its text, not by an id', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -151,7 +151,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: {
           type: 'chat/inputCompleted',
           requestId: request.id,
@@ -170,10 +170,10 @@ describe('driving a turn', () => {
   });
 
   it('syncs a half-typed answer, and completes with what was typed', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -191,7 +191,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer },
       },
     });
@@ -213,7 +213,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/inputCompleted', requestId: request.id, response: 'accept' },
       },
     });
@@ -232,10 +232,10 @@ describe('driving a turn', () => {
   });
 
   it('clears one answer draft without touching the others', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     const questions = [
@@ -251,7 +251,7 @@ describe('driving a turn', () => {
       client.handle({
         method: 'dispatchAction',
         params: {
-          channel: uri,
+          channel: chatUri,
           action: {
             type: 'chat/inputAnswerChanged',
             requestId: request.id,
@@ -275,11 +275,11 @@ describe('driving a turn', () => {
   });
 
   it('refuses an answer to a question nothing is waiting on', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/inputAnswerChanged', requestId: 'nobody', questionId: 'q1', answer: {} },
       },
     });
@@ -353,7 +353,7 @@ describe('driving a turn', () => {
       expect(await decision).toMatchObject({ behavior: 'deny' });
     });
 
-    it('refuses an answer to a request nothing is waiting on, to its sender alone', async () => {
+    it('refuses an answer to a request nothing is waiting on, to every client of the chat', async () => {
       const { p, q, chatUri } = await running().then(async ({ host, client, peer: p, chatUri }) => {
         const q = peer();
         const other = host.accept(q);
@@ -371,16 +371,18 @@ describe('driving a turn', () => {
       const refused = actions(p).filter((e) => e.rejectionReason !== undefined);
       expect(refused.map((e) => e.action.type)).toEqual(['chat/inputCompleted']);
       expect(refused[0]?.rejectionReason).toContain('nobody');
-      expect(actions(q, chatUri).map((e) => e.action.type)).not.toContain('chat/inputCompleted');
+      // The other client of the chat hears the same refusal, and neither hears
+      // the answer taken.
+      expect(actions(q, chatUri).map((e) => [e.action.type, e.rejectionReason])).toEqual([['chat/inputCompleted', refused[0]?.rejectionReason]]);
       expect(actions(p, chatUri).filter((e) => e.rejectionReason === undefined).map((e) => e.action.type))
         .not.toContain('chat/inputCompleted');
     });
 
     it('refuses a confirmation of a call that waits on none', async () => {
-      const { client, peer: p, uri } = await running();
+      const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'nobody', approved: true } },
+        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'nobody', approved: true } },
       });
       await settle();
       // The same table: a confirmation of a call not in `pending-confirmation` MUST be rejected.
@@ -392,10 +394,10 @@ describe('driving a turn', () => {
 
   it('settles the blocked promise when the turn is cancelled', async () => {
     // `ls` and `sleep` are in VS Code's table, which would approve them: no table, so the call asks.
-    const { client, uri } = await running({ terminalAutoApproveDefaults: 'none' });
+    const { client, chatUri } = await running({ terminalAutoApproveDefaults: 'none' });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     const decision = sdk.canUseTool?.('Bash', { command: 'sleep 100' }, { toolUseID: 'toolu_sleep', signal: new AbortController().signal, suggestions: [] });
@@ -403,7 +405,7 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
     });
     // A cancel that only interrupts leaves the subprocess waiting on a
     // promise nobody will ever settle.
@@ -566,19 +568,32 @@ describe('a message typed while a turn is running', () => {
     expect(state.steeringMessage).toBeUndefined();
   });
 
-  it('refuses one sent at a chat with nothing running to steer', async () => {
+  /*
+   * Steering that came with no turn to steer runs as a turn of its own.
+   *
+   * The reference host runs steering that arrived too late to steer a turn
+   * next, ahead of queued messages, under its id, so the turn naming it takes
+   * it out of every client's state (queueDrainContribution.ts L260-L262,
+   * L283-L292 at a4e689ae).
+   */
+  it('runs one sent at a chat with nothing running as a turn of its own, under its id', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
     });
     await settle();
-    // A real refusal now, rather than the blanket one: there is no turn to
-    // put it into, and turning it into an ordinary message would be sending
-    // something the person meant as a correction.
-    const refused = actions(p, chatUri).filter((one) => one.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('Nothing is running');
-    expect(sdk.said).toEqual([]);
+    expect(actions(p, chatUri).filter((one) => one.rejectionReason !== undefined)).toEqual([]);
+    const answer = actions(p, chatUri).find((one) => one.origin?.clientSeq === 1);
+    expect(answer?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'steering', id: 's1' });
+    const started = actions(p, chatUri).map((one) => one.action).find((one) => one.type === 'chat/turnStarted');
+    expect(started?.queuedMessageId).toBe('s1');
+    expect(sdk.said).toEqual(['now']);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { steeringMessage?: unknown; activeTurn?: { message: { text: string } } } };
+    }).snapshot.state;
+    expect(state.steeringMessage).toBeUndefined();
+    expect(state.activeTurn?.message.text).toBe('now');
   });
 
   it('starts one straight away when nothing is running', async () => {

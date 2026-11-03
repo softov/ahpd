@@ -173,8 +173,11 @@ export interface Wake {
    *
    * Nothing where no main turn is waiting on this session, which is a session
    * that posted already and one this wake never woke.
+   *
+   * `failed` is the sentence a turn that failed ended with, and the main turn
+   * fails with it.
    */
-  finished(backSession: string, text: string): void;
+  finished(backSession: string, text: string, failed?: string): void;
   /**
    * The connectors one back session may use, by alias, read live.
    *
@@ -398,10 +401,24 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * one blank line between: what was said, and the chat, the person and the
    * time it was said in.
    */
-  const turn = (block: string, text: string): Bag => ({
+  const turn = (block: string, message: ChatMessage): Bag => ({
     type: 'chat/turnStarted',
     turnId: randomUUID(),
-    message: { text: `${block}\n\n${text}` },
+    message: said(block, message),
+  });
+
+  /**
+   * The person's message as the back session is handed it: the context block
+   * in front of their words, and the model, agent and attachments they sent
+   * with them, since the agent doing the work is the one they were sent for.
+   * A chat attachment is resolved by the host the back session runs on.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+   */
+  const said = (block: string, message: ChatMessage): Bag => ({
+    text: `${block}\n\n${message.text}`,
+    ...(message.model === undefined ? {} : { model: message.model }),
+    ...(message.agent === undefined ? {} : { agent: message.agent }),
+    ...(message.attachments === undefined ? {} : { attachments: message.attachments }),
   });
 
   /**
@@ -414,11 +431,11 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * text for the same reason it is in a turn's: a steer is a message of its own,
    * and when it was said is not when the turn began.
    */
-  const steer = (block: string, text: string): Bag => ({
+  const steer = (block: string, message: ChatMessage): Bag => ({
     type: 'chat/pendingMessageSet',
     kind: 'steering',
     id: randomUUID(),
-    message: { text: `${block}\n\n${text}` },
+    message: said(block, message),
   });
 
   return {
@@ -466,11 +483,16 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       return true;
     },
 
-    finished: (backSession, text) => {
+    finished: (backSession, text, failed) => {
       const held = answering.get(backSession);
       if (held === undefined) return;
       // Let go first, for the reason `posted` says.
       answering.delete(backSession);
+      // A turn that failed fails the main turn, as the reference host ends a failed send.
+      if (failed !== undefined && held.handle.fail !== undefined) {
+        held.handle.fail(failed);
+        return;
+      }
       /*
        * The table `mainTurnPostMessageAbsent` names. A turn that said nothing
        * has nothing to post, so it is ended rather than given an empty reply;
@@ -535,20 +557,20 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       /*
        * Held before the message is sent, so a back session that answers and
        * ends inside the send still finds the turn that is waiting on it. A steer
-       * into a session already working overwrites this entry with the steered
-       * turn, which is the turn the answer after it belongs to.
+       * into a session already working names the open turn it went into, which
+       * is the turn the answer after it belongs to.
        */
       answering.set(session, { session: message.session, turnId: message.turnId, handle, bot: bot.name });
       /*
        * The open turn shows what it is waiting on: the back session's chat, as
        * a subagent call a client opens. The title is the bot's, which is who
-       * the person is talking to; a steered message is a turn of its own, so
-       * the call is that turn's own and not the interrupted turn's.
+       * the person is talking to; a steer into the open turn keeps the call it
+       * already shows.
        */
       handle.working?.(looked.chat, bot.name);
       let refused: string | undefined;
       try {
-        refused = await seams.send(looked.chat, looked.working ? steer(block, message.text) : turn(block, message.text));
+        refused = await seams.send(looked.chat, looked.working ? steer(block, message) : turn(block, message));
       }
       catch (error) {
         // A send that could not be made at all - the connection's own refusal,

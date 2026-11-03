@@ -439,7 +439,7 @@ it('advertises the operations of every subject it gates, on both blocks', async 
 
   expect(Object.keys(grants)).toEqual([
     'session', 'chat', 'terminal', 'automation', 'file', 'config', 'plugin', 'connector', 'agent', 'diagnostics', 'container', 'node',
-    'trust', 'proxy', 'account',
+    'trust', 'proxy', 'mcp', 'account',
   ]);
   // The root snapshot says the same thing the handshake said, to a client that
   // only ever subscribes.
@@ -514,12 +514,12 @@ it('advertises the schemes it serves beside the built-ins, so a role editor read
   const client = host.accept(peer(), undefined, true);
   const grants = await grantsOf(client);
 
-  // The fifteen the table decides still lead, in its order, and every scheme
+  // The sixteen the table decides still lead, in its order, and every scheme
   // follows under its own name: `team:put` is written into a role the way
   // `file:put` is.
   expect(Object.keys(grants)).toEqual([
     'session', 'chat', 'terminal', 'automation', 'file', 'config', 'plugin', 'connector', 'agent', 'diagnostics', 'container', 'node',
-    'trust', 'proxy', 'account', 'user', 'team', 'project', 'role',
+    'trust', 'proxy', 'mcp', 'account', 'user', 'team', 'project', 'role',
   ]);
   // The root snapshot says the same thing the handshake said.
   expect(await snapshotGrants(client)).toEqual(grants);

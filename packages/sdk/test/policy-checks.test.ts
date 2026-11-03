@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { computersFor } from '../src/machines/computers.js';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { checkKeyLimits, memoryPolicies } from '../src/access/policies.js';
 import { fileUsers } from '../src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -247,7 +248,7 @@ const turnOn = async (
   model: string | undefined,
 ): Promise<void> => {
   await makeSession(client, name, provider, computer);
-  const chat = `ahp-chat:/${name}`;
+  const chat = chatUriFor(`ahp-session:/${name}`);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void client.handle({
     method: 'dispatchAction',
@@ -326,7 +327,7 @@ describe('a session, with the switch on', () => {
     await client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'claude:/two',
+        channel: 'ahp-session:/two',
         action: { type: 'session/configChanged', config: { computer: 'disposable:s' } },
       },
     });
@@ -359,7 +360,7 @@ describe('a turn, with the switch on', () => {
   it('gives a turn its origin when the check that allowed it answers after the dispatch', async () => {
     const { client, said } = await signedIn(await host(true), 'alice');
     await makeSession(client, 'sonnet', 'claude', 'sandbox-alice');
-    const chat = 'ahp-chat:/sonnet';
+    const chat = chatUriFor('ahp-session:/sonnet');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',
@@ -380,7 +381,7 @@ describe('a turn, with the switch on', () => {
   it('gives a queued message its origin when the check that allowed it answers after the dispatch', async () => {
     const { client, said } = await signedIn(await host(true), 'alice');
     await makeSession(client, 'queued', 'claude', 'sandbox-alice');
-    const chat = 'ahp-chat:/queued';
+    const chat = chatUriFor('ahp-session:/queued');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',

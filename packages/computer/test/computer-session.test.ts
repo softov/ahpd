@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { computersFor } from '../../sdk/src/machines/computers.js';
 import { createHost, ROOT } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { memoryPolicies } from '../../sdk/src/access/policies.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { fileUsers } from '../../sdk/src/access/users.js';
@@ -146,7 +147,7 @@ async function probe(options: {
     const secret = await options.users.mint('ana');
     await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: 'ahpd://users', token: secret } });
   }
-  return { host, client, peer: p, sessions, uri: 'ahp-session:/in', chatUri: 'ahp-chat:/in' };
+  return { host, client, peer: p, sessions, uri: 'ahp-session:/in', chatUri: chatUriFor('ahp-session:/in') };
 }
 
 /** `probe`, with the session made on the machine its settings named. */
@@ -365,7 +366,7 @@ it('allows a machine with no label, on every road', async () => {
   expect(uri).toMatch(/^ahp-session:\//);
 });
 
-it('refuses the machine in a change made before the first turn, and announces nothing', async () => {
+it('refuses the machine in a change made before the first turn, to every subscriber, and moves nothing', async () => {
   const room = await talking({ command: process.execPath, args: [FIXTURE], computers: machines() });
   const other = await watching(room, room.uri);
   await room.client.handle({
@@ -376,11 +377,12 @@ it('refuses the machine in a change made before the first turn, and announces no
   await settle();
 
   expect(rejection(room.peer)).toMatch(/computer:\/\/box was prepared for claude/);
-  // The action was refused and nothing else happened. Only the connection that
-  // asked heard about it, and it heard the refusal rather than the change: a
-  // `configChanged` broadcast would leave every subscriber holding a setting
-  // the session does not have.
-  expect(types(other.peer, room.uri)).toEqual([]);
+  // The action was refused and nothing else happened. Every subscriber heard
+  // the refusal, with its reason, and none heard the change: a `configChanged`
+  // said without a reason would leave every subscriber holding a setting the
+  // session does not have.
+  expect(actions(other.peer, room.uri).map((one) => one.rejectionReason))
+    .toEqual([expect.stringMatching(/computer:\/\/box was prepared for claude/)]);
   expect(actions(room.peer, room.uri).every((one) => one.rejectionReason !== undefined)).toBe(true);
   // And nothing was written to the store, which a resume starts the lead chat
   // with: a computer recorded there is a session that comes back in one.

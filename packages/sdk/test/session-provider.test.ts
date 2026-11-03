@@ -1,5 +1,6 @@
 import { expect, describe, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { idOf } from '../src/sessions/catalog.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -82,7 +83,7 @@ function late(provider = 'echo'): Agent {
 }
 
 const uri = 'ahp-session:/made';
-const chatUri = 'ahp-chat:/made';
+const chatUri = chatUriFor(uri);
 
 /**
  * The example backend, which keeps each chat under the id it was handed.
@@ -183,7 +184,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await second.client.handle({ method: 'listSessions', params: { channel: ROOT } });
   second.client.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/made', action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
   });
   await settle();
   expect(store.provider('made')).toBe('echo');
@@ -245,7 +246,7 @@ it('records a session the host named itself under the id its backend picks', asy
   expect(store.provider('plain')).toBe('echo');
   expect(store.provider('own-plain')).toBeUndefined();
 
-  await talk(client, 'ahp-chat:/plain', 't1');
+  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
   expect(store.provider('own-plain')).toBe('echo');
 });
 
@@ -255,12 +256,12 @@ it('records the transcript id once, and writes nothing on the turns after', asyn
   await settle();
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/plain', provider: 'echo' } });
   await settle();
-  await talk(client, 'ahp-chat:/plain', 't1');
+  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 
   // Every turn ends the same way, and the answer does not change: a store
   // rewritten per turn is a store being written to for nothing.
-  await talk(client, 'ahp-chat:/plain', 't2');
+  await talk(client, chatUriFor('ahp-session:/plain'), 't2');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 });
 
@@ -451,7 +452,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/shared', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
     });
     await settle();
 
@@ -475,7 +476,7 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['two:/shared']);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/shared', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
     });
     await settle();
 
@@ -509,10 +510,9 @@ describe('a row two harnesses both list', () => {
     await catalogue(client);
 
     // A client hydrates a session by subscribing to its turns, its config and
-    // its marks, and both spellings of the last are this row's.
-    for (const channel of ['two:/shared/annotations', 'ahp-session:/shared/annotations'])
-      await expect(client.handle({ method: 'subscribe', params: { channel } }))
-        .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+    // its marks.
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared/annotations' } }))
+      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
     expect(store.provider('shared')).toBe('two');
   });
 
@@ -531,7 +531,7 @@ describe('a row two harnesses both list', () => {
     // The older turns, the marks, the session's config and a draft: four roads
     // that all end at a transcript this host cannot read, and none of which may
     // answer as though the session were nowhere, which is what it is not.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/shared' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: chatUriFor('two:/shared') } }))
       .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
 
     for (const [channel, action] of [
@@ -543,7 +543,7 @@ describe('a row two harnesses both list', () => {
         },
       }],
       ['two:/shared', { type: 'session/configChanged', config: { voice: 'shouty' } }],
-      ['ahp-chat:/shared', { type: 'chat/draftChanged', draft: { text: 'go' } }],
+      [chatUriFor('two:/shared'), { type: 'chat/draftChanged', draft: { text: 'go' } }],
     ] as [string, Record<string, unknown>][]) {
       client.handle({ method: 'dispatchAction', params: { channel, action } });
       await settle();
@@ -581,7 +581,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/shared', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
     });
     await settle();
 

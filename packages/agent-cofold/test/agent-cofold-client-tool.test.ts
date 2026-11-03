@@ -51,12 +51,13 @@ const settle = async (times = 12): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-type Note = { channel: string; action: Record<string, unknown> };
+type Note = { channel: string; action: Record<string, unknown>; rejectionReason?: string };
 
+/** The actions a client of `channel` applies: a refused one goes to every client too, and none applies it. */
 const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
   .filter((n) => n.method === 'action')
   .map((n) => n.params as Note)
-  .filter((e) => e.channel === channel);
+  .filter((e) => e.channel === channel && e.rejectionReason === undefined);
 
 const types = (p: ReturnType<typeof peer>, channel: string): string[] =>
   actions(p, channel).map((e) => String(e.action.type));
@@ -263,7 +264,7 @@ it('lets the owning client stream into its call and refuses anybody else', async
   expect(other.peer.notes.some((n) => n.method === 'action'
     && typeof (n.params as { rejectionReason?: unknown }).rejectionReason === 'string')).toBe(true);
 
-  // The owner's is relayed, which is the half `toolCallOwner` decides.
+  // The owner's is relayed: the call's contributor in the chat names it.
   await client.handle({
     method: 'dispatchAction',
     params: {

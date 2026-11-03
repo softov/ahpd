@@ -317,7 +317,7 @@ describe('a command typed into the conversation', () => {
     expect(listed()).toHaveLength(0);
   });
 
-  it('runs a command typed during a turn instead of handing it to the agent', async () => {
+  it('runs a command queued during a turn instead of handing it to the agent', async () => {
     const { client, peer: p, chatUri } = await shelled();
     // A turn that stays open: the fake CLI answers only when a result frame
     // arrives, which is what leaves the session busy enough to queue behind.
@@ -328,7 +328,7 @@ describe('a command typed into the conversation', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo queued-command' } } },
     });
     await settle();
     // Waiting, and not run: a command that jumped the queue would run against
@@ -353,7 +353,13 @@ describe('a command typed into the conversation', () => {
     expect(sdk.said).toEqual(['first']);
   });
 
-  it('answers a command typed during a turn with the queued message it waits as', async () => {
+  /*
+   * A turn start is answered by itself or by its refusal, and a chat holds one
+   * active turn: a command sent as a turn while a turn runs is refused, as a
+   * question is, and one that waits its turn is a queued message.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+   */
+  it('refuses a command sent as a turn while a turn runs', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
@@ -365,18 +371,10 @@ describe('a command typed into the conversation', () => {
       params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
     });
     await settle();
-    // The client holds its turn until an action with its own origin answers
-    // it, and what became of the turn is the queued message it waits as.
-    const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
-    expect(answers().map((e) => e.action)).toEqual([
-      expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'queued', id: 't2' }),
-    ]);
-
-    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
-    const done = await ended(p, chatUri, 't2');
-    // Once: the turn the command runs as is the queued message's.
-    expect(done.some((one) => one.type === 'chat/turnStarted' && one.queuedMessageId === 't2')).toBe(true);
-    expect(answers()).toHaveLength(1);
+    const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ action: { type: 'chat/turnStarted', turnId: 't2' }, rejectionReason: 'A turn is running in this chat' });
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageSet')).toBe(false);
   });
 
   it('refuses a command when the backend cannot hold one, rather than asking it', async () => {
@@ -728,9 +726,10 @@ describe('a shell on this machine', () => {
   /*
    * Every terminal action a client sends is answered, its echo or its refusal.
    * Input is side-effect only, so the protocol's reducer changes nothing on it,
-   * and a title set to the one it has changes nothing either: each is answered
-   * to the client that sent it, and to nobody else.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md
+   * and a title set to the one it has changes nothing either: each goes to
+   * every client of the terminal as the sender's own action, and so does the
+   * refusal of either.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
    */
   const watched = async (uri: string) => {
     const opened_ = await opened();
@@ -748,42 +747,61 @@ describe('a shell on this machine', () => {
     return { ...opened_, other, send };
   };
 
-  it('answers what it is sent to the client that sent it, and to nobody else', async () => {
+  it('says input to every client of the terminal, the sender\'s own action', async () => {
     const uri = 'ahp-terminal:/answered';
     const { peer: p, other, send } = await watched(uri);
     await send(3, { type: 'terminal/input', data: 'echo answered-input\n' });
     await spoken(p, uri, 'answered-input');
 
-    const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/input');
-    expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
-    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
+    for (const q of [p, other]) {
+      const said = actions(q, uri).filter((e) => e.action.type === 'terminal/input');
+      expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
+    }
+    // One envelope, one number, the same at both clients.
+    const seqOf = (q: typeof p) => actions(q, uri).find((e) => e.action.type === 'terminal/input')?.serverSeq;
+    expect(seqOf(other)).toBe(seqOf(p));
+    const seqs = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as { serverSeq: number }).serverSeq);
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone', async () => {
+  /*
+   * Input after the shell has gone goes out, and reaches no process: VS Code's
+   * host says a client's terminal action before its terminal manager reads
+   * it, and that manager writes input only to a running process.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
+   */
+  it('says what it is sent once the shell has gone to every client of the terminal', async () => {
     const uri = 'ahp-terminal:/gone';
-    const { peer: p, send } = await watched(uri);
+    const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 50); });
       if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
     }
+    const before = actions(p, uri).length;
     await send(5, { type: 'terminal/input', data: 'echo too-late\n' });
     await settle();
 
-    const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
-    expect(late?.rejectionReason).toBeDefined();
+    expect(actions(p, uri).slice(before).map((e) => [e.action.type, e.origin?.clientSeq, e.rejectionReason]))
+      .toEqual([['terminal/input', 5, undefined]]);
+    // It reaches who any input reaches, the same envelope.
+    const late = (q: typeof p) => actions(q, uri)
+      .filter((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5)
+      .map((e) => [e.serverSeq, e.rejectionReason]);
+    expect(late(other)).toEqual(late(p));
   });
 
-  it('answers a title it already has to its sender alone, and tells everyone a new one', async () => {
+  it('says a new title and a title it already has to every client of the terminal', async () => {
     const uri = 'ahp-terminal:/titled';
     const { peer: p, other, send } = await watched(uri);
     await send(6, { type: 'terminal/titleChanged', title: 'build' });
     await send(7, { type: 'terminal/titleChanged', title: 'build' });
     await settle();
 
-    const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/titleChanged');
-    expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[6, undefined], [7, undefined]]);
-    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/titleChanged')).toHaveLength(1);
+    for (const q of [p, other]) {
+      const said = actions(q, uri).filter((e) => e.action.type === 'terminal/titleChanged');
+      expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[6, undefined], [7, undefined]]);
+    }
   });
 
   it('refuses a claim that names nobody', async () => {

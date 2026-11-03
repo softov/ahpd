@@ -28,9 +28,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- The case driver, made to number its dispatches and count the envelopes carrying each one's origin, run over every case on 08b1d57a: four cases go unanswered, `272-chat-isarchivedchanged-archives-chat` and `274`, `275`, `276` (`session/mcpServerBackgroundRequested`). The audit's 043, 044, 050 and 051 are answered at this commit.
-- `rg "chat/isArchivedChanged" packages/sdk/src/host` - on a session's default chat it is said as `session/isArchivedChanged` on the session channel and nothing on the chat channel (host/44 p3, a7343dc1), so the client's own dispatch is never answered.
-- `rg "backgroundMcpServerStartup" packages` - no first-party backend has it, so the host says nothing; the nested proxy hands it inside with `deliver`, which never pairs the answer inside with the client outside.
+- The case driver, made to number its dispatches and count the envelopes carrying each one's origin, ran over every case on 08b1d57a.
+  Four cases go unanswered: `272-chat-isarchivedchanged-archives-chat`, and `274`, `275`, `276` (`session/mcpServerBackgroundRequested`).
+  The audit's 043, 044, 050 and 051 are answered at this commit.
+- `rg "chat/isArchivedChanged" packages/sdk/src/host` - on a session's default chat it is said as `session/isArchivedChanged` on the session channel.
+  Nothing is said on the chat channel (host/44 p3, a7343dc1), so the client's own dispatch is never answered.
+- `rg "backgroundMcpServerStartup" packages` - no first-party backend has it, so the host says nothing.
+  The nested proxy hands it inside with `deliver`, which never pairs the answer inside with the client outside.
 - `rg "'chat/toolCallComplete'" packages/sdk/src/host` - the completion the session reports later goes out with no origin: `owed` holds only turn starts, stops and queued messages.
 - `rg "automationRun/cancelRequested" packages/sdk/src docs` - a cancel the store takes is never answered; AUTOMATIONS.md calls it refused, AHP.md says the store answers it.
 
@@ -54,7 +58,9 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Proposed architecture
 
-- **Event flow** - each of these dispatches reaches the host, which takes it or refuses it; taken, it is answered at once to its sender where nothing it changes is said with its origin, or by the action that reports its outcome where one does.
+- **Event flow** - each of these dispatches reaches the host, which takes it or refuses it.
+  Taken, it is answered at once to its sender where nothing it changes is said with its origin.
+  Where an action reports its outcome, that action answers it.
 - **Layer responsibilities** - the host: answering; the nested proxy: carrying a client's action inside.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts), [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/sessions/nested.ts`](../../../../packages/sdk/src/sessions/nested.ts)
 
@@ -70,14 +76,17 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Risks and tradeoffs
 
-- The sender of a default-chat archive applies its own echo to its chat, while the host keeps the bit on the session alone (host/44 p3: the chat's entry repeating the session's bit "says one thing twice"). The sender's chat holds the bit until its next snapshot; the session it names is archived and put to sleep at once.
+- The sender of a default-chat archive applies its own echo to its chat, while the host keeps the bit on the session alone.
+  host/44 p3 gives the reason: the chat's entry repeating the session's bit "says one thing twice".
+  The sender's chat holds the bit until its next snapshot; the session it names is archived and put to sleep at once.
 
 ## Resume state
 
 - **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
 - **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** an answer said by a later action needs that action to carry the origin, which `owed` gives only for what it is told to hold.
+- **Watch out for:** an answer said by a later action needs that action to carry the origin.
+  `owed` gives the origin only for what it is told to hold.
 
 ## Final verification checklist
 

@@ -8,7 +8,7 @@ import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
 import { CLOSING, NO_AGENT } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
-import { chatIdFor, named, ROOT, schemeOf } from './channels.js';
+import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { startsRead } from './chatactions.js';
 import { SEEDS } from './sessionconfig.js';
@@ -56,14 +56,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const { connection } = conn;
   const {
     about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat,
-    charged, chatAgent, chatConfig, chatIdOf, chatOf,
+    charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, drafts, dropChat, flushDeltas,
-    forWhom, forgetSendersIn, formOrdered, heldAs, hold,
+    forWhom, forgetSendersIn, formOrdered, hold,
     isolating, isolated, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
     movable, movableMoved, openSession, openedBy, options, orderChats,
-    ownerFor, owners, past, placedIn, presence, replayable, removeSession, respell, retool, scoping, seeded,
-    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionOfChat, sessionSchema, sessions, settle,
-    snapshotOf, spawn, spellingOf, subagentSummary, subagents, summaryMoved, unheld, waitingFor, wake, watches,
+    ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
+    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
+    snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake, watches,
     withSender,
   } = ctx;
 
@@ -404,6 +404,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * a word it was handed.
        */
       flushDeltas();
+      /*
+       * A channel an older VS Code window may not see is refused, before
+       * anything is read for it, as the reference host refuses it.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1270-L1273
+       */
+      if (!visible(connection, meantBy(channel))) throw new RpcError(-32001, `Resource not available to this client: ${channel}`);
       // What it means here, and what it was called there. The snapshot is
       // taken of the channel and returned under the name the client used -
       // a client that asked about one URI and was answered about another
@@ -418,17 +424,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const asked = params.view;
       const view = typeof asked === 'object' && asked !== null ? asked as SubscribeView : undefined;
-      const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection, view);
-      /*
-       * Resolved again, after the snapshot rather than before it.
-       *
-       * Opening a browsed row is what makes this host ask its backend for
-       * a catalogue, and until it has asked there is no name for the row
-       * to be an alias *of* - so a name resolved beforehand came back
-       * unchanged, no alias was recorded, and every action about that
-       * session afterwards went out under a name this client was not
-       * watching.
-       */
+      const snapshot = await snapshotOf(meantBy(channel), connection, view);
+      // Answered to this connection after the snapshot is taken: the root's
+      // other spelling recorded, a session's chats the ones it may see.
       const meant = answeredAs(connection, channel, snapshot);
       connection.watching.add(channel);
       // A client is now in this session, which is the moment a plugin that
@@ -466,30 +464,30 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * others would never learn.
      */
     fetchTurns: async (params) => {
-      // Under whatever spelling the client used: a chat may be addressed
-      // by a URI this host did not mint, and a page of turns asked for
-      // under that name is the same chat.
       const channel = meantBy(String(params.channel ?? ''));
       /*
        * A chat's or a session's, and never another kind of name that carries
        * an id.
        *
-       * The transcript a page is read from is chosen by the id inside the
-       * channel, so a terminal, a file or a watch called after a session's id
-       * would be answered with that session's turns - sent, as `turnsLoaded`
-       * is, to everyone watching *that* name. Never a session's id read out
-       * of a file, a terminal or a watch, which is the guard `snapshotOf`
-       * makes and this is the same one.
+       * The transcript a page is read from is chosen by the id of the session
+       * behind the channel, so a terminal, a file or a watch called after a
+       * session's id would be answered with that session's turns - sent, as
+       * `turnsLoaded` is, to everyone watching *that* name. Never a session's
+       * id read out of a file, a terminal or a watch, which is the guard
+       * `snapshotOf` makes and this is the same one. A chat no session holds
+       * or records is no chat here.
        */
-      if (!sessionChannel(sessionOfChat(channel) ?? channel))
+      if (!sessionChannel(channel))
         throw new RpcError(INVALID_PARAMS, `${channel} is not a session or a chat`);
       const live = byChat.get(channel);
+      const owning = live?.uri ?? sessionFor(channel);
+      if (spaceOf(owning) === 'chat') throw new RpcError(-32001, `No chat at ${channel}`);
       // Asked before the transcript, so a page asked for out of a session
       // waiting for its agent names that agent rather than saying the
       // session is nowhere.
-      const missing = waitingFor(idOf(sessionFor(channel)));
+      const missing = waitingFor(idOf(owning));
       if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
-      const all = live ? live.chat.allTurns() : await past(idOf(sessionFor(channel)));
+      const all = live ? live.chat.allTurns() : await past(idOf(owning));
       if (!all)
         throw new RpcError(-32001, `No agent for session ${channel}`);
       const asked = typeof params.cursor === 'string' ? params.cursor : undefined;
@@ -512,7 +510,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // The action declares no `_meta` of its own, so the turns are the
         // whole of it: a client paging back through a conversation must not
         // find the sender gone on the oldest page.
-        turns: withSender(idOf(sessionFor(channel)), page.turns),
+        turns: withSender(idOf(owning), page.turns),
         ...(page.turnsNextCursor ? { turnsNextCursor: page.turnsNextCursor } : {}),
       });
       return {};
@@ -617,18 +615,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
            * folding them onto one value.
            */
           const current = here === undefined ? held_.defaultChat : asking;
-          /*
-           * The name this connection knows the session by, which is not always
-           * the one this host holds it under.
-           *
-           * A chat a client opened is its own name and comes back unchanged,
-           * but the session's default chat is derived from the session URI -
-           * and a client was told the one built from the name it created the
-           * session with. A resource naming the host's own spelling is a chat
-           * that client cannot open, so the list goes through the same
-           * respelling every action on this channel does.
-           */
-          const spelling = spellingOf(connection, asking);
           // Case blind, on the title as it will be written: what a person reads
           // in the list is what they can match, and an empty filter keeps all.
           const filter = oneLine(wanted).toLowerCase();
@@ -675,7 +661,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
                 rangeEnd: offset,
                 attachment: {
                   type: 'chat',
-                  resource: spelling === undefined ? uri : respell(uri, spelling.held, spelling.asked),
+                  resource: uri,
                   label: title,
                   ...(endTurn === '' ? {} : { endTurn }),
                 },
@@ -719,29 +705,23 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
         return children.length > 0 ? children : [entry];
       });
-      /*
-       * A leaf's argument hint, wherever its kind keeps one.
-       *
-       * `PromptCustomization` declares `argumentHint` and `SkillCustomization`
-       * does not, so a skill's travels as `_meta['ahpd.argumentHint']`.
-       */
-      const hintOf = (entry: Bag): string | undefined => {
-        if (typeof entry.argumentHint === 'string') return entry.argumentHint;
-        const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
-        return typeof hint === 'string' ? hint : undefined;
-      };
       const own = leaves
         // Skills as well as prompts, and not the ones the CLI keeps for
         // the agent: offering one it will refuse is worse than not
         // offering it.
         .filter((entry) => (entry.type === 'prompt' || entry.type === 'skill')
           && entry.disableUserInvocation !== true)
-        .map((entry) => ({
-        name: String(entry.name),
-        description: typeof entry.description === 'string' ? entry.description : undefined,
-        argumentHint: hintOf(entry),
-        isSkill: entry.type === 'skill',
-      }));
+        .map((entry) => {
+          // Under `_meta`, which is where a leaf's argument hint travels:
+          // neither `PromptCustomization` nor `SkillCustomization` declares one.
+          const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
+          return {
+            name: String(entry.name),
+            description: typeof entry.description === 'string' ? entry.description : undefined,
+            argumentHint: typeof hint === 'string' ? hint : undefined,
+            isSkill: entry.type === 'skill',
+          };
+        });
       /*
        * Which of the backend-wide commands are skills.
        *
@@ -896,11 +876,23 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         askedOwner === undefined ? '' : `owner=${encodeURIComponent(String(askedOwner))}`,
         connection.principal,
       );
-      const rows = owner === undefined
+      const owned = owner === undefined
         ? every
         : owner === null
           ? []
           : every.filter((row) => kept.owner(idOf(row.resource)) === owner);
+      /*
+       * And the rows this connection may see: an older VS Code window is
+       * listed no session it may not see, and of each it may see only the
+       * chats it may see, as the reference host lists for it. Every other
+       * client is listed every row whole.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2383-L2392
+       */
+      const rows = owned
+        .filter((row) => sessionVisible(connection, row.resource, row.defaultChat))
+        .map((row) => (row.chats === undefined || connection.legacyChatUris !== true
+          ? row
+          : { ...row, chats: row.chats.filter((chat) => chatShown(connection, chat.resource, row.resource)) }));
       /*
        * And a refresh behind that answer.
        *
@@ -943,16 +935,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * what makes the session addressable before this host has answered, so
      * the client can subscribe to it without a round trip in between.
      *
-     * Held under the name the decision gives: a session on `ahp-session:` or
-     * on the scheme of the provider the request names keeps that URI, and one
-     * on any other channel is held as `ahp-session:/<id>` with the client's
-     * URI an alias. `heldAs` resolves either spelling and a connection
-     * subscribed under the other is answered in its own -
-     * decision `a-new-session-is-held-under-the-protocols-uri`.
+     * Held under that URI and answered under it alone, whatever scheme it
+     * takes, as the reference host holds a client's new session under the
+     * channel it named: `ahp-session:/<id>` from a VS Code window that
+     * declares it can address one, `<provider>:/<id>` from an older one.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221
      */
     createSession: async (params) => {
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
-      const given = named(String(params.channel ?? ''), 'session');
+      const uri = named(String(params.channel ?? ''), 'session');
       const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
       if (provider === undefined) throw new RpcError(-32002, NO_AGENT);
       /*
@@ -965,18 +956,30 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         hasDirectory: options.users !== undefined,
       }))
         throw new RpcError(-32002, `No provider called ${provider}`);
-      const scheme = schemeOf(given);
-      const uri = scheme === 'ahp-session' || scheme === provider ? given : uriFor(idOf(given));
-      unheld(uri, given);
       /*
-       * Both names, claimed before anything is made for the session, so a
-       * second creation of either while this one waits on a worktree or
-       * a machine is refused; let go again unless the session was made.
+       * The creator's entry names the creator. The protocol says its
+       * `clientId` MUST match the one this connection gave at `initialize`,
+       * and VS Code's host refuses a request whose entry names another client,
+       * before anything is made for it.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
+       */
+      const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
+        ? params.activeClient as Bag
+        : undefined;
+      const clientId = connection.clientId || 'anonymous';
+      if (typeof claimed?.clientId === 'string' && claimed.clientId !== clientId)
+        throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
+      unheld(uri);
+      /*
+       * The name, claimed before anything is made for the session, so a second
+       * creation of it while this one waits on a worktree or a machine is
+       * refused; let go again unless the session was made.
        */
       const pending: Claimed = { kind: 'session', of: uri };
-      for (const one of new Set([uri, given])) claims.set(one, pending);
+      claims.set(uri, pending);
       const release = (): void => {
-        for (const one of [uri, given]) if (claims.get(one) === pending) claims.delete(one);
+        if (claims.get(uri) === pending) claims.delete(uri);
       };
       try {
         const config = configOf(params) as Record<string, string>;
@@ -1059,18 +1062,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * The announcement is dispatched after, because a session nobody can
          * subscribe to yet has nobody to tell.
          *
-         * The `clientId` is this connection's, not the one in the payload.
-         * The protocol says the two MUST match, and forcing it is what the
-         * dispatch path does for the same reason: a client naming somebody
-         * else is announcing a presence that is not theirs.
+         * The entry is the one the creator sent, `tools` included or left
+         * out, as the reference host holds a creator's entry. A `clientId` it
+         * left out is this connection's, as a set's is.
+         * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
-        const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
-          ? params.activeClient as Bag
-          : undefined;
-        const clientId = connection.clientId || 'anonymous';
-        const activeClient: Bag | undefined = claimed === undefined
-          ? undefined
-          : { ...claimed, clientId, tools: Array.isArray(claimed.tools) ? claimed.tools : [] };
+        const activeClient: Bag | undefined = claimed === undefined ? undefined : { ...claimed, clientId };
         let here: Map<string, Bag> | undefined;
         if (activeClient !== undefined) {
           here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
@@ -1092,7 +1089,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           if (here?.size === 0) presence.delete(idOf(uri));
           throw error;
         }
-        if (!claims.has(given)) claims.set(given, { kind: 'session', of: uri });
         // Complete, which the protocol spells as `progress === total`.
         along(2, 'Ready');
         if (activeClient !== undefined) {
@@ -1113,7 +1109,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * turn's text on its first prompt.
      */
     createChat: async (params) => {
-      const uri = heldAs(String(params.channel ?? ''));
+      const uri = String(params.channel ?? '');
       const chatUri = String(params.chat ?? '');
       const held = sessions.get(uri);
       /*
@@ -1170,7 +1166,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // turn" about it would send somebody looking at the turn.
         if (kind !== 'fork' && kind !== 'sideChat')
           throw new RpcError(INVALID_PARAMS, `${kind} is not a chat source this host knows`);
-        const from = byChat.get(chatOf(String(source.chat ?? '')));
+        const from = byChat.get(String(source.chat ?? ''));
         if (!from || from.uri !== uri)
           throw new RpcError(INVALID_PARAMS, `${String(source.chat ?? '')} is not a chat in ${uri}`);
         fromChat = from.chat.chatUri;
@@ -1222,7 +1218,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           && typeof picked.text === 'string' && picked.text !== ''
           ? { text: picked.text, ...(typeof picked.responsePartId === 'string' ? { responsePartId: picked.responsePartId } : {}) }
           : undefined;
-        origin = { kind, chat: chatOf(String(source.chat ?? '')), turnId, ...(selection !== undefined ? { selection } : {}) };
+        origin = { kind, chat: String(source.chat ?? ''), turnId, ...(selection !== undefined ? { selection } : {}) };
       }
       /*
        * The directories this chat is about, when it is about fewer.
@@ -1325,8 +1321,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * were - so a chat that cannot move is a chat nothing happened to.
      */
     moveChat: async (params) => {
-      // Either spelling, like `disposeChat`.
-      const chatUri = chatOf(String(params.channel ?? ''));
+      const chatUri = String(params.channel ?? '');
       const found = byChat.get(chatUri);
       if (!found)
         throw new RpcError(-32001, `No chat at ${chatUri}`);
@@ -1363,12 +1358,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           ? 'a move needs a destination'
           : `a ${kind} destination is not one this host serves yet`);
       }
-      /*
-       * The anchor, which the protocol requires to be another chat of the
-       * destination and never the chat itself. Read through `chatOf` for the
-       * same reason the source is: a client may name either spelling.
-       */
-      const anchor = destination.after === undefined ? undefined : chatOf(String(destination.after));
+      // The anchor, which the protocol requires to be another chat of the
+      // destination and never the chat itself.
+      const anchor = destination.after === undefined ? undefined : String(destination.after);
       if (anchor !== undefined && anchor === chatUri)
         throw new RpcError(INVALID_PARAMS, `${chatUri} cannot be placed after itself`);
       // A session made for the chat, which has no chats to be placed among yet.
@@ -1378,7 +1370,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * between sessions, and this host makes one only where it can start the
        * chat there - which is a session of the same agent, on the same machine.
        */
-      const to = heldAs(String(destination.session ?? ''));
+      const to = String(destination.session ?? '');
+      /*
+       * A session this client may not see is not one it can move a chat
+       * into, as the reference host answers an older VS Code window.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2348-L2350
+       */
+      if (!sessionVisible(connection, to)) throw new RpcError(-32001, `Session not found: ${to}`);
       if (to === found.uri) {
         if (anchor !== undefined && !held.chats.has(anchor))
           throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${found.uri}`);
@@ -1432,8 +1430,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       return await movedTo(chatUri, found, held, to, anchor);
     },
     disposeChat: async (params) => {
-      // Either spelling, like `subscribe` and a dispatch.
-      const chatUri = chatOf(String(params.channel ?? ''));
+      const chatUri = String(params.channel ?? '');
       const found = byChat.get(chatUri);
       if (!found)
         throw new RpcError(-32001, `No chat at ${chatUri}`);
@@ -1467,10 +1464,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const own = found.chat.agentId() ?? ctx.recordedChat(idOf(found.uri), chatUri)?.backendId;
       dropChat(found.uri, chatUri);
-      // And the outputs its terminals kept and its local turns: a chat that is
-      // gone names nothing.
+      // And the outputs its terminals kept, its local turns and the state its
+      // channel held: a chat that is gone names nothing, a default chat's
+      // derived URI included once the role has moved on.
       ctx.forgetChatOutputs(found.uri, chatUri);
       ctx.forgetChatLocalTurns(found.uri, chatUri);
+      ctx.closeState(chatUri);
       /*
        * And what the backend holds of it, when a closed chat is deleted rather
        * than hidden. The chat
@@ -1502,6 +1501,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // Last, and once: the row's chat list and its default chat both just
       // moved, and one notification carries both rather than one per change.
       summaryMoved(found.uri);
+      // A chat closed while its turn ran leaves the root's count of sessions
+      // running a turn, as the reference host drops it there.
+      // https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1881-L1887
+      activeSessionsMoved();
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.
       movableMoved(chatUri);
@@ -1511,7 +1514,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // The caller, because a delete is not a write: `session:write` lets a
       // member change their own sessions and says nothing about ending
       // somebody else's, and this one cannot be undone.
-      await removeSession(heldAs(String(params.channel ?? '')), connection.principal);
+      await removeSession(String(params.channel ?? ''), connection.principal);
       return null;
     },
     /**

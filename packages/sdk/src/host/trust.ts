@@ -5,10 +5,10 @@ import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 
 /*
- * Whether a client trusts a folder, read from the `workspaceTrust` value it
- * pushed - and
- * from the folders it said yes to one at a time, which are kept on its
- * connection until it pushes a new value.
+ * Whether a folder is trusted, read from the host's `workspaceTrust` value,
+ * which the last push from any client set - and from the folders a window said
+ * yes to one at a time, which are kept on its connection until it pushes a new
+ * value.
  *
  * VS Code's own reading of the same value, `codexAgent.ts:8074-8090`: nothing
  * pushed is untrusted, a falsy `enabled` trusts everything, and otherwise a
@@ -113,8 +113,8 @@ export const sameFolder = (one: string, two: string): boolean => {
 };
 
 /**
- * Whether one folder is trusted under one pushed `workspaceTrust` value, or
- * under the folders the same connection said yes to one at a time.
+ * Whether one folder is trusted under the host's pushed `workspaceTrust` value,
+ * or under the folders one connection said yes to one at a time.
  *
  * `value` is what a client put in root config, which is `unknown` because a
  * client can send anything: anything that is not an object trusts nothing, and
@@ -129,10 +129,10 @@ export const sameFolder = (one: string, two: string): boolean => {
  * said of the window rather than of the folder, so it is answered before the
  * folder is looked at, exactly as VS Code reads it.
  *
- * `said` is the folders this connection answered yes to when the host asked it,
+ * `said` is the folders that connection answered yes to when the host asked it,
  * settled when they were recorded. They are read beside the pushed value rather
- * than folded into it, because a push replaces the window's whole answer and a
- * question answered folder by folder is not part of that answer.
+ * than folded into it, because a push replaces the whole value and a question
+ * answered folder by folder is not part of it.
  */
 export const trusted = (folder: string | undefined, value: unknown, said?: string[]): boolean => {
   if (folder === undefined || folder === '') return false;
@@ -165,8 +165,7 @@ export const trustRefused = (folder: string): string => `Workspace trust was not
  *
  * `config` is the session's value in effect, defaults and all, and `rootConfig`
  * is the host's own record, which is where a pushed `globalAutoApproveEnabled`
- * lands: it is a setting about the host rather than about one window, unlike
- * `workspaceTrust` beside it.
+ * lands, one setting about the whole host.
  */
 export const autoApproved = (config: Record<string, unknown>, rootConfig: Record<string, unknown>): boolean =>
   rootConfig.globalAutoApproveEnabled === true || config.autoApprove === 'autoApprove';
@@ -196,10 +195,10 @@ const granted = async (sender: Connection, folder: string): Promise<boolean> => 
 /**
  * The question, put to whoever asked for the move, or a refusal.
  *
- * A folder this window already pushed as trusted, or said yes to when it was
- * asked about another one, is not asked about again: the answer is on its
- * connection, and asking a window what it has already said is a round trip for
- * nothing. A folder no window asked about at all - an automation's session, a
+ * A folder the host's `workspaceTrust` already trusts, which `trust` carries,
+ * or one this window said yes to when it was asked about it, is not asked about
+ * again: asking a window what has already been said is a round trip for
+ * nothing. Any other folder no window asked about - an automation's session, a
  * host tool acting for nobody - is refused without a question, because there is
  * nobody to vouch for it and a folder nobody vouched for is untrusted.
  *
@@ -212,6 +211,7 @@ const granted = async (sender: Connection, folder: string): Promise<boolean> => 
 export const requireTrust = async (asked: {
   folder: string;
   sender: Connection | undefined;
+  trust: unknown;
   autoApproved: boolean;
 }): Promise<void> => {
   if (asked.autoApproved) return;
@@ -224,7 +224,7 @@ export const requireTrust = async (asked: {
    */
   const folder = settled(asked.folder) ?? asked.folder;
   const sender = asked.sender;
-  if (sender !== undefined && trusted(folder, sender.config?.workspaceTrust, sender.trustedFolders)) return;
+  if (trusted(folder, asked.trust, sender?.trustedFolders)) return;
   if (sender === undefined || !(await granted(sender, folder))) throw new Error(trustRefused(folder));
   const vouched = settled(folder);
   if (vouched !== undefined) sender.trustedFolders = [...(sender.trustedFolders ?? []), vouched];

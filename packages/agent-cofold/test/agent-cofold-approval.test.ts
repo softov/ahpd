@@ -382,9 +382,9 @@ it('denies a tool, carries the reason and does not run it', async () => {
 
   expect(ran).toEqual([]);
   const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
-  // The reason the model is given, said back as well so the client can draw
-  // why the row was cancelled rather than only that it was.
-  expect(String(confirmed?.action.reason)).toContain('declined');
+  // Said back as the client sent it, its reason with it, and the model is
+  // given cofold's own words for a declined call.
+  expect(confirmed?.action.reason).toBe('denied');
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
 
   const { chat, session } = reduced(p, uri, chatUri);
@@ -393,6 +393,31 @@ it('denies a tool, carries the reason and does not run it', async () => {
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string };
   expect(call.status).toBe('cancelled');
   expect(types(p, chatUri)).toContain('chat/turnComplete');
+});
+
+/*
+ * A refusal a client sends without its reason is said back as `denied`, the
+ * protocol's word for a person who turned a call down; cofold's sentence is
+ * the model's alone.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
+ */
+it('says a refusal with no reason back as denied, and gives the model its sentence', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: false } },
+  });
+  await until(() => ended(p, chatUri));
+
+  const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
+  expect(confirmed?.action.reason).toBe('denied');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
 });
 
 it('keeps two open approvals independent, each answered by its own call id', async () => {
@@ -558,6 +583,18 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   expect(entry.request.questions[0]?.options.map((one) => one.label)).toEqual(['monday', 'tuesday']);
   await settle();
   expect(ended(p, chatUri)).toBe(false);
+  /*
+   * The chat holds the request, which is the part a client answers: put there
+   * by `chat/inputRequested`, as the protocol's request lifecycle puts one.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
+   */
+  const requested = (state: Record<string, unknown>, turn: 'activeTurn' | 'last'): Record<string, unknown>[] => {
+    const held = turn === 'activeTurn' ? state.activeTurn : (state.turns as Record<string, unknown>[] | undefined)?.at(-1);
+    return (((held as Record<string, unknown> | undefined)?.responseParts ?? []) as Record<string, unknown>[])
+      .filter((part) => part.kind === 'inputRequest');
+  };
+  const asked = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
+  expect(requested(asked.snapshot.state, 'activeTurn').map((part) => (part.request as { id?: unknown }).id)).toEqual([entry.request.id]);
 
   await client.handle({
     method: 'dispatchAction',
@@ -577,6 +614,9 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('monday');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // And the chat's request carries the answer it was completed with.
+  const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
+  expect(requested(after.snapshot.state, 'last').map((part) => part.response)).toEqual(['accept']);
 });
 
 it('declines cofold\'s own ask tool as a denial the model reads', async () => {

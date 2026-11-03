@@ -2,7 +2,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { Status, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { flag, optional, required, when } from '../utils/toolinput.js';
-import type { HostTool, ToolCall } from '../types/host.js';
+import type { HostTool, SessionlessToolCall, ToolCall } from '../types/host.js';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { Grant } from '../types/users.js';
@@ -48,6 +48,21 @@ export const sessionMeant = (asked: string, rows: Summary[]): { session: Summary
   }
   const row = rows.find((one) => one.resource === asked);
   return row === undefined ? undefined : { session: row };
+};
+
+/**
+ * A session's settings, as the object a backend's schema is checked against.
+ *
+ * A tool's input arrives as JSON, so anything that is not an object - a
+ * string, a number, a list - is refused here rather than handed to a
+ * backend as settings it cannot read. An absent value and a null both mean
+ * none were asked for.
+ */
+const settingsOf = (value: unknown, tool: string): Record<string, unknown> | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Invalid ${tool} input: config must be an object.`);
+  return value as Record<string, unknown>;
 };
 
 /** A title fit to keep: non-blank, two hundred characters at most, one space between words. */
@@ -243,23 +258,40 @@ export const serializeContext = (
   };
 };
 
-/** Where a message came from, in the reference client's spelling. */
-const delegated = (at: ToolCall): Bag => ({
+/**
+ * A call from either place a tool runs: a chat, or a person with no session.
+ *
+ * All the host's answers a tool reads - the catalogue, the models, a chat's
+ * conversation - are the same either way; which one it was is asked of the
+ * session the call names, where it names one.
+ */
+type AnyToolCall = ToolCall | SessionlessToolCall;
+
+/**
+ * Where a message came from, in the reference client's spelling.
+ *
+ * A call with no session behind it has no chat to name as the source, so it
+ * carries the origin alone: there is nothing a window could open the message
+ * from, and a source it never had would be one it could not.
+ */
+const delegated = (at: AnyToolCall): Bag => ({
   origin: { kind: 'agent' },
-  _meta: {
-    'vscode.chat.delegation': {
-      sourceSession: at.session,
-      sourceChat: at.chat,
-      ...(at.turn() !== undefined ? { sourceTurnId: at.turn() } : {}),
+  ...(at.session === undefined || at.chat === undefined ? {} : {
+    _meta: {
+      'vscode.chat.delegation': {
+        sourceSession: at.session,
+        sourceChat: at.chat,
+        ...(at.turn() !== undefined ? { sourceTurnId: at.turn() } : {}),
+      },
     },
-  },
+  }),
 });
 
-/** The row of the calling session, from the catalogue. */
-const self = async (at: ToolCall): Promise<Summary | undefined> =>
+/** The row of the calling session, from the catalogue; nothing when there is none. */
+const self = async (at: AnyToolCall): Promise<Summary | undefined> =>
   (await at.sessions()).find((row) => row.resource === at.session);
 
-const known = async (at: ToolCall, asked: string, tool: string): Promise<{ session: Summary; chatId?: string }> => {
+const known = async (at: AnyToolCall, asked: string, tool: string): Promise<{ session: Summary; chatId?: string }> => {
   const found = sessionMeant(asked, await at.sessions());
   if (found === undefined)
     throw new Error(`Invalid ${tool} input: session must match the URI of a known session (see list_sessions).`);
@@ -277,12 +309,26 @@ const known = async (at: ToolCall, asked: string, tool: string): Promise<{ sessi
  * users directory refuses nothing and this passes everything, which is what the
  * tools did before there was anybody to ask.
  */
-const allowed = (at: ToolCall, grant: Grant): void => {
+const allowed = (at: AnyToolCall, grant: Grant): void => {
   if (!at.may(grant)) throw new Error(at.refusal(grant));
 };
 
+/**
+ * The session a tool is about, when the call itself has to be the one.
+ *
+ * A tool that runs from a session and from a person has no session to fall
+ * back on in the second place, so the caller has to name one and this says so
+ * in words a model can act on. It is also what says a chat-only tool cannot be
+ * called by a window that is not in a chat.
+ */
+const sessionOf = (at: AnyToolCall, tool: string, hint: string): string => {
+  if (at.session === undefined)
+    throw new Error(`Invalid ${tool} input: session is required when there is no calling session. ${hint}`);
+  return at.session;
+};
+
 /** A model by id or by name, and the provider it belongs to. */
-const modelMeant = (at: ToolCall, asked: string | undefined, tool: string, provider?: string): { id: string; provider: string } | undefined => {
+const modelMeant = (at: AnyToolCall, asked: string | undefined, tool: string, provider?: string): { id: string; provider: string } | undefined => {
   if (asked === undefined) return undefined;
   const pool = at.models().filter((one) => provider === undefined || one.provider === provider);
   const found = pool.find((one) => one.id === asked) ?? pool.find((one) => one.name.toLowerCase() === asked.toLowerCase());
@@ -380,10 +426,14 @@ export const sessionTools = (): HostTool[] => [
       annotations: { title: 'List Sessions', readOnlyHint: true, openWorldHint: false },
     },
     /*
-     * No grant is asked for here, and none is needed: the catalogue a tool
-     * reads is already cut down to what this turn's person may read, so the
-     * answer is the person's own listing whatever they hold.
+     * The one tool a person with no session reaches first, and the only one
+     * they need to name a session for anything else. The catalogue is already
+     * cut down to what this call's person may read, so no grant is asked for
+     * when it runs - what the grant here decides is whether they are offered
+     * the tool at all, which is what a window that may not read gets.
      */
+    sessionless: true,
+    grant: 'session:read',
     run: async (input, at) => JSON.stringify({ sessions: filterSessions(await at.sessions(), input).map(serializeSession) }),
   },
   {
@@ -455,11 +505,15 @@ export const sessionTools = (): HostTool[] => [
           worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
           title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
           model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
+          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current session\'s.' },
+          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them.' },
         },
         required: ['relationship', 'prompt', 'title'],
       },
       annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
     },
+    sessionless: true,
+    grant: 'session:write',
     run: async (input, at) => {
       const tool = 'create_session';
       allowed(at, 'session:write');
@@ -468,18 +522,35 @@ export const sessionTools = (): HostTool[] => [
         throw new Error(`Invalid ${tool} input: relationship must be "currentSession" or "independent".`);
       const prompt = required(input.prompt, 'prompt', tool);
       const title = titled(input.title, tool);
+      const agent = optional(input.agent, 'agent', tool);
+      if (agent !== undefined) {
+        const offers = at.providers();
+        if (!offers.includes(agent))
+          throw new Error(`Invalid ${tool} input: agent "${agent}" is not one this host offers${offers.length > 0 ? `; it offers ${offers.join(', ')}` : ''}.`);
+      }
+      const config = settingsOf(input.config, tool);
       const rows = await at.sessions();
-      const mine = rows.find((row) => row.resource === at.session);
+      const calling = at.session;
+      const mine = calling === undefined ? undefined : rows.find((row) => row.resource === calling);
       if (relationship === 'currentSession') {
+        if (calling === undefined)
+          throw new Error('currentSession needs a calling session; use independent');
         if (input.workspace !== undefined || input.worktree !== undefined)
           throw new Error(`Invalid ${tool} input: workspace and worktree are only valid with relationship "independent".`);
-        const model = modelMeant(at, optional(input.model, 'model', tool), tool, mine?.provider);
-        const made = await at.createChat(at.session, { title, prompt, ...(model ? { model: model.id } : {}), from: delegated(at) });
-        return `Chat created in the current session (${openLink(at.session, mine?.provider ?? 'claude', idOf(made.chat))}).`;
+        const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent ?? mine?.provider);
+        const made = await at.createChat(calling, {
+          title,
+          prompt,
+          ...(agent !== undefined ? { provider: agent } : {}),
+          ...(config !== undefined ? { config } : {}),
+          ...(model ? { model: model.id } : {}),
+          from: delegated(at),
+        });
+        return `Chat created in the current session (${openLink(calling, agent ?? mine?.provider ?? 'claude', idOf(made.chat))}).`;
       }
       const workspace = workspaceMeant(required(input.workspace, 'workspace', tool), rows, tool);
       const worktree = flag(input.worktree, 'worktree', tool);
-      const model = modelMeant(at, optional(input.model, 'model', tool), tool);
+      const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent);
       // What was asked; else the caller's own arrangement for its own
       // directory, which is the folder it is in; else a worktree, which is
       // what keeps two sessions from editing one checkout.
@@ -489,13 +560,15 @@ export const sessionTools = (): HostTool[] => [
         : own === workspace ? 'folder' : 'worktree';
       const made = await at.create({
         workingDirectory: workspace,
+        ...(agent !== undefined ? { provider: agent } : {}),
+        ...(config !== undefined ? { config } : {}),
         ...(model ? { provider: model.provider, model: model.id } : {}),
         isolation,
         title,
         prompt,
         from: delegated(at),
       });
-      return `New session created (${openLink(made.session, model?.provider ?? mine?.provider ?? 'claude')}).`;
+      return `New session created (${openLink(made.session, agent ?? model?.provider ?? mine?.provider ?? 'claude')}).`;
     },
   },
   {
@@ -515,12 +588,14 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Create Chat', readOnlyHint: false, destructiveHint: true },
     },
+    sessionless: true,
+    grant: 'session:write',
     run: async (input, at) => {
       const tool = 'create_chat';
       allowed(at, 'session:write');
       const asked = optional(input.session, 'session', tool);
       const target = asked === undefined ? (await self(at)) : (await known(at, asked, tool)).session;
-      const session = target?.resource ?? at.session;
+      const session = target?.resource ?? sessionOf(at, tool, 'Pass `session` from list_sessions.');
       const provider = target?.provider ?? 'claude';
       const title = input.title === undefined ? undefined : titled(input.title, tool);
       const model = modelMeant(at, optional(input.model, 'model', tool), tool, provider);
@@ -545,6 +620,8 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Rename Chat', readOnlyHint: false, destructiveHint: false },
     },
+    sessionless: true,
+    grant: 'session:write',
     /*
      * What a session's strategy asks of this tool. A utility strategy withholds
      * it whole, which the host does by leaving it out of the list; a deferred
@@ -585,6 +662,8 @@ export const sessionTools = (): HostTool[] => [
         if (target === undefined) throw new Error(`Invalid ${tool} input: ${asked} is not a chat this host is running.`);
         chat = target.resource;
       }
+      if (session === undefined || chat === undefined)
+        throw new Error(`Invalid ${tool} input: session is required when there is no calling session. Pass \`session\` from list_sessions.`);
       at.rename(session, chat, title);
       return flag(input.automatic, 'automatic', tool) === true ? 'Renaming chat.' : `Renamed chat to "${title}".`;
     },
@@ -604,6 +683,8 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Send Message', readOnlyHint: false, destructiveHint: true },
     },
+    sessionless: true,
+    grant: 'session:write',
     run: async (input, at) => {
       const tool = 'send_message';
       allowed(at, 'session:write');
@@ -611,7 +692,7 @@ export const sessionTools = (): HostTool[] => [
       const found = await known(at, required(input.session, 'session', tool), tool);
       const chats = at.chats(found.session.resource);
       const target = found.chatId === undefined ? chats[0]?.resource : chats.find((one) => idOf(one.resource) === found.chatId)?.resource;
-      if (target === at.chat)
+      if (at.chat !== undefined && target === at.chat)
         throw new Error(`Invalid ${tool} input: refusing to send a message to the current chat.`);
       const what = await at.send(found.session.resource, found.chatId, message, delegated(at));
       return `Message ${what} (${openLink(found.session.resource, found.session.provider, found.chatId)}).`;
@@ -633,6 +714,8 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Get Session Context', readOnlyHint: true, openWorldHint: false },
     },
+    sessionless: true,
+    grant: 'session:read',
     run: async (input, at) => {
       const tool = 'get_session_context';
       allowed(at, 'session:read');
@@ -668,11 +751,13 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Delete Session', readOnlyHint: false, destructiveHint: true },
     },
+    sessionless: true,
+    grant: 'session:write',
     run: async (input, at) => {
       const tool = 'delete_session';
       allowed(at, 'session:write');
       const found = await known(at, required(input.session, 'session', tool), tool);
-      if (found.session.resource === at.session)
+      if (at.session !== undefined && found.session.resource === at.session)
         throw new Error(`Invalid ${tool} input: refusing to delete the current session.`);
       await at.remove(found.session.resource);
       return `Deleted session ${found.session.resource}. Reply with one short sentence confirming the session was deleted.`;

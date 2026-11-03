@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { trusted } from '../src/host/trust.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -19,9 +20,11 @@ import type { Worktrees } from '../src/types/worktrees.js';
  *
  * A folder VS Code has not vouched for is a folder whose project files an
  * agent must not load, and the host is the only thing that knows which those
- * are: trust arrives on a connection, from a window, and belongs to the person
- * whose session it is. So the start carries the answer, and this is what that
- * answer is in each of the cases the decision names.
+ * are: trust arrives from a window as one value for the whole host, which the
+ * last push sets, and on a host with people it answers the turns the session's
+ * owner sends. So the start carries the answer, and this is what that answer is
+ * in each of the cases the decision names.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
  */
 
 const DIR = mkdtempSync(join(tmpdir(), 'ahpd-trust-'));
@@ -200,7 +203,7 @@ const opening = async (client: Client, name: string, folder: string): Promise<vo
   await client.handle({ method: 'subscribe', params: { channel: uri } });
 };
 
-it('tells a backend its own person trusted the folder, and nothing else', async () => {
+it('tells a backend the folders the last trust push names, whichever window pushed it', async () => {
   const { signedIn, told } = serving();
   const ana = await signedIn('ana');
   const bo = await signedIn('bo');
@@ -208,16 +211,18 @@ it('tells a backend its own person trusted the folder, and nothing else', async 
   await trusting(bo, []);
   await settle();
 
-  // B trusts nothing, so B's session in the folder A trusts is in a folder B
-  // does not: trust is the window's, and one person's vouching is not
-  // another's.
-  await opening(bo, 'bo-one', A);
+  // B's push is the host's trust now: one value, which the last push set, so
+  // A's session in the folder she trusted is in a folder the host does not.
+  await opening(ana, 'ana-one', A);
   await settle();
   expect(about(told(), A)).toBe(false);
   expect(about(told(), AB)).toBe(false);
 
-  // A trusts it, and the folder inside it with it.
-  await opening(ana, 'ana-one', A);
+  // A pushes it again, and the folder and the one inside it are trusted for a
+  // session of B's as well.
+  await trusting(ana, [A]);
+  await settle();
+  await opening(bo, 'bo-one', A);
   await settle();
   expect(about(told(), A)).toBe(true);
   expect(about(told(), AB)).toBe(true);
@@ -235,7 +240,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   // than a session it has never heard of.
   await bo.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/bo-one', action: { type: 'chat/turnStarted', turnId: 't0', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', message: { text: 'hello' } } },
   });
   await settle(60);
 
@@ -250,7 +255,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   await settle();
   await ana.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/bo-one', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
   });
   await settle(60);
 
@@ -287,8 +292,9 @@ it('tells an automation nothing is trusted, since no window sent it', async () =
   });
   await settle(60);
 
-  // The automation is ana's - she wrote it and it runs as her - and it is
-  // still nobody's window that sent it, which is the whole of what trust is.
+  // The automation is ana's - she wrote it and it runs as her - and no window
+  // sent it, so on a host with people it reads no trust: only a turn the
+  // session's owner sends does.
   expect(about(told(), A)).toBe(false);
 });
 
@@ -298,9 +304,8 @@ it('tells an automation nothing is trusted, since no window sent it', async () =
  * a session on such a host has no owner either. Comparing the two would refuse
  * every folder, which would make the value a window pushes dead on exactly the
  * deployment - one person, one machine - most likely to have anything to
- * trust. So the
- * sender decides, and an automation, which has no sender at all, still decides
- * nothing.
+ * trust. So every start reads the host's value, an automation's among them, as
+ * the reference host reads it for every session it starts.
  */
 it('reads a window\'s push on a host with no people directory', async () => {
   const { connect, told } = serving({ people: false });
@@ -315,7 +320,7 @@ it('reads a window\'s push on a host with no people directory', async () => {
   expect(about(told(), B)).toBe(false);
 });
 
-it('tells an automation on a host with no people directory nothing is trusted', async () => {
+it('tells an automation on a host with no people directory the folders the host trusts', async () => {
   const { connect, told } = serving({ people: false, automations: true });
   const window = await connect();
   await trusting(window, [A]);
@@ -343,9 +348,10 @@ it('tells an automation on a host with no people directory nothing is trusted', 
   });
   await settle(60);
 
-  // No connection sent it, so there is nobody whose answer it could be - the
-  // same on this host as on one with people.
-  expect(about(told(), A)).toBe(false);
+  // No connection sent it, and the host's trust is one value for every
+  // session: the folder the window pushed is trusted, and a sibling is not.
+  expect(about(told(), A)).toBe(true);
+  expect(about(told(), B)).toBe(false);
 });
 
 /*

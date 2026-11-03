@@ -245,6 +245,10 @@ const root = async (host: Host): Promise<{ agents?: { provider?: string }[]; act
   return ready.snapshots[0]!.state;
 };
 
+/** Whether the root told a client the live session is gone. */
+const ended = (said: ReturnType<typeof peer>): boolean => said.notes
+  .some((note) => note.method === 'root/sessionRemoved' && (note.params as { session?: string }).session === 'ahp-session:/live');
+
 /** The tools the last `session/serverToolsChanged` named. */
 const told = (said: ReturnType<typeof peer>): string[] => {
   const sent = said.notes
@@ -376,15 +380,15 @@ it('ends the sessions of a plugin agent when the plugin unloads, and drops the a
   expect(loaded.restart).toBe(false);
   expect((await root(host)).agents?.map((one) => one.provider)).toContain('live');
 
-  await session(host, 'live');
-  expect((await root(host)).activeSessions).toBe(1);
+  const { said } = await session(host, 'live');
+  expect(ended(said)).toBe(false);
 
   configured({ name: file, options, enabled: false });
   const unloaded = await apply();
 
   expect(unloaded.problems).toEqual([]);
   expect(unloaded.restart).toBe(false);
-  expect((await root(host)).activeSessions).toBe(0);
+  expect(ended(said)).toBe(true);
   expect((await root(host)).agents?.map((one) => one.provider)).not.toContain('live');
   await close();
 });
@@ -395,8 +399,8 @@ it('ends an agent plugin its sessions before a reload runs its closers', async (
   const echo = pathToFileURL(join(REPO, 'examples/echo/agent.ts')).href;
   configured({ name: file, options: { echo, dir: home, tag: 'one' } });
   expect((await apply()).restart).toBe(false);
-  await session(host, 'live');
-  expect((await root(host)).activeSessions).toBe(1);
+  const { said } = await session(host, 'live');
+  expect(ended(said)).toBe(false);
 
   configured({ name: file, options: { echo, dir: home, tag: 'two' } });
   const answer = await apply();
@@ -405,7 +409,7 @@ it('ends an agent plugin its sessions before a reload runs its closers', async (
   expect(answer.restart).toBe(false);
   // The backend is loaded again under the same provider, and its old session is gone.
   expect((await root(host)).agents?.map((one) => one.provider)).toContain('live');
-  expect((await root(host)).activeSessions).toBe(0);
+  expect(ended(said)).toBe(true);
   await close();
 });
 

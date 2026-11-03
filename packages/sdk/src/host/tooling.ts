@@ -10,18 +10,19 @@ import { BINDINGS_KEY } from '../connectors/bindings.js';
 import { actionTools } from '../connectors/actions.js';
 import { SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
-import { bag, reason, str } from '../utils/values.js';
+import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { ROOT, chatIdFor, chatUriFor } from './channels.js';
 import { NO_AGENT, need } from './common.js';
 import { preambleOf } from './preamble.js';
-import { startsRead } from './chatactions.js';
+import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
+import type { Owner } from '../types/usage.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
-import type { HostTool, ToolCall, TitleStrategy } from '../types/host.js';
+import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy } from '../types/host.js';
 import type { Agent, BoundTool, McpServer } from '../types/agent.js';
 import type { Session, TurnOptions } from '../types/session.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
@@ -286,10 +287,19 @@ export interface Tooling {
   chatMeant(held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined;
   /** A move a session's agent asked for, waiting for its turn to end. */
   moving: Map<string, Move>;
-  /** Give a chat a title, and say so. */
+  /** Give a chat a title, its held state and its row together, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
+  /** Give a session a title from its own channel, and its sole chat with it, and say so. */
+  renameSession(uri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
+  /**
+   * What a host tool sees of this host with no session behind the call.
+   *
+   * The same host, with the two facts about where the call ran left absent and
+   * the caller as the person it acts for. A tool that needs a session throws.
+   */
+  sessionlessContext(caller: ToolCaller): SessionlessToolCall;
   /**
    * The client plugins a chat's agent is being handed, and a note of which they are.
    *
@@ -326,6 +336,14 @@ export interface Tooling {
    * `provider` is the agent they are bound for, which each call carries.
    */
   boundTools(uri: string, chatUri: string, provider?: string): BoundTool[];
+  /**
+   * The tools a person may call with no session behind the call, bound for them.
+   *
+   * The sessionless half of `boundTools`: the tools that say `sessionless: true`
+   * and whose grant the caller holds, in the order this host contributes them,
+   * with the caller as the person each one acts for.
+   */
+  sessionlessTools(caller: ToolCaller): BoundTool[];
   /**
    * What the model is told when a chat of this session begins.
    *
@@ -372,7 +390,7 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, heldAs, ownerOf, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, ownerOf, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
     isolated, settle, openSession, backendsOwn, removeSession, spawn,
@@ -658,7 +676,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * the set it starts with.
    */
   const folderOf = (uri: string): string | undefined => {
-    const held = sessions.get(heldAs(uri));
+    const held = sessions.get(uri);
     if (held === undefined) return undefined;
     const lead = leadOf(held)?.workingDirectories()[0];
     if (lead !== undefined) return lead;
@@ -749,12 +767,11 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const tellOff = (uri: string, reported: Bag[]): void => {
     if (store === undefined) return;
-    const session = heldAs(uri);
-    const held = sessions.get(session);
+    const held = sessions.get(uri);
     const lead = held === undefined ? undefined : leadOf(held);
     if (lead === undefined) return;
-    const said = told.get(session) ?? new Set<string>();
-    told.set(session, said);
+    const said = told.get(uri) ?? new Set<string>();
+    told.set(uri, said);
     /** Say every customization in a reported list, and in what each of them holds. */
     const walk = (list: Bag[], owner?: string): void => {
       for (const one of list.map(bag)) {
@@ -774,7 +791,7 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /** Forget what a session's backends were told, called where a chat starts. */
-  const forgetTold = (uri: string): void => { told.delete(heldAs(uri)); };
+  const forgetTold = (uri: string): void => { told.delete(uri); };
 
   /** What a plugin carries as its decisions for a session, most specific first. */
   const decisionsOf = (uri: string, one: HeldPlugin): Bag[] =>
@@ -815,7 +832,7 @@ export function createTooling(ctx: HostContext): Tooling {
   const byScope = (decisions: Bag[]): Bag[] => [...decisions].sort((a, b) => specificityOf(a) - specificityOf(b));
 
   /** What a session decided about one customization for itself, if it decided. */
-  const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(heldAs(uri))?.get(id);
+  const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(uri)?.get(id);
 
   /**
    * Keep a session's own decision about one customization.
@@ -825,9 +842,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * no entry to read it off, and what it keeps is its own to report.
    */
   const keepDecision = (uri: string, id: string, enabled: boolean): void => {
-    const session = heldAs(uri);
-    const held = decided.get(session) ?? new Map<string, boolean>();
-    decided.set(session, held);
+    const held = decided.get(uri) ?? new Map<string, boolean>();
+    decided.set(uri, held);
     held.set(id, enabled);
   };
 
@@ -1025,8 +1041,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * answer its snapshot gives, so a `customizationsChanged` and a snapshot of
    * the same session say the same thing.
    */
-  const reportedBy = (uri: string): Bag[] => {
-    const name = heldAs(uri);
+  const reportedBy = (name: string): Bag[] => {
     const held = sessions.get(name);
     const lead = held === undefined ? undefined : leadOf(held);
     if (lead !== undefined) return lead.customizations();
@@ -1314,12 +1329,26 @@ export function createTooling(ctx: HostContext): Tooling {
   const moving = new Map<string, { chat: string; directory: string; isolation: boolean }>();
 
   /**
+   * A chat's held state given a title, and its row in the session said with
+   * it, as the reference host's `updateChatTitle` does: no chat action carries
+   * a title, so the held state is set here, and every row read off it after
+   * says the same.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2316-L2331
+   */
+  const updateChatTitle = (uri: string, chatUri: string, title: string): void => {
+    const open = ctx.heldStates.get(chatUri);
+    if (open !== undefined) open.state = { ...open.state, title };
+    dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
+  };
+  /**
    * Give a chat a title, and say so.
    *
-   * The session's title is its default chat's and goes out as
-   * `session/titleChanged`; a peer chat's is its own and goes out as
-   * `session/chatUpdated`. A client renaming a row and an agent calling
-   * `rename_chat` come to the same place.
+   * The chat's held state and its row take the title together, as the
+   * reference host renames a chat. The default chat's title is its session's
+   * too, said as `session/titleChanged` after the row. A client renaming a chat
+   * on its own channel and an agent calling `rename_chat` come to the same
+   * place.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L58-L71
    */
   const renameChat = (uri: string, chatUri: string, title: string): void => {
     const held = sessions.get(uri);
@@ -1329,11 +1358,34 @@ export function createTooling(ctx: HostContext): Tooling {
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
     keepTitle(uri, chatUri, title);
+    updateChatTitle(uri, chatUri, title);
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
-    else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     summaryMoved(uri);
     // The session's title is the subject a commit would use, so the question
     // the changeset's commit asks names a different line now.
+    operationsMoved(uri);
+  };
+  /**
+   * Give a session a title from its own channel, and say so.
+   *
+   * The session's title is its default chat's: the chat's backend is handed
+   * it and the store keeps it under that chat, and it goes out as
+   * `session/titleChanged` on the session. A session that counts one chat or
+   * none in its `readAggregate` has its default chat's held state and row
+   * take the title after, as the reference host carries a session's rename
+   * down onto a sole default chat; with peer chats, the default chat's held
+   * state and row keep the title they have.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+   */
+  const renameSession = (uri: string, title: string): void => {
+    const held = sessions.get(uri);
+    const found = held?.chats.get(held.defaultChat);
+    if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
+    found.setTitle?.(title);
+    keepTitle(uri, held.defaultChat, title);
+    dispatch(uri, { type: 'session/titleChanged', title });
+    if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
+    summaryMoved(uri);
     operationsMoved(uri);
   };
 
@@ -1353,7 +1405,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * bound for, else the held session's.
    */
   const providerOf = (uri: string, bound?: string): { provider?: string } => {
-    const provider = bound ?? sessions.get(heldAs(uri))?.agent.provider;
+    const provider = bound ?? sessions.get(uri)?.agent.provider;
     return provider === undefined ? {} : { provider };
   };
 
@@ -1549,11 +1601,10 @@ export function createTooling(ctx: HostContext): Tooling {
    * a tool is counted where it runs, and a plugin has no turn to be charged.
    */
   const openChat = async (
-    session: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
+    at: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
   ): Promise<{ chat: string }> => {
-    const at = heldAs(session);
     const held = sessions.get(at);
-    if (!held) throw new Error(`${session} is not a session this host is running`);
+    if (!held) throw new Error(`${at} is not a session this host is running`);
     /*
      * The tree the call is made from, which is the one it is counted against.
      *
@@ -1581,7 +1632,7 @@ export function createTooling(ctx: HostContext): Tooling {
       chat: chatUri,
       chats: [...held.chats].map(([one, chat]) => chatSummary(at, one, chat) as unknown as ChatSummary),
     }, log);
-    if (sessions.get(at) !== held) throw new Error(`${session} is not a session this host is running`);
+    if (sessions.get(at) !== held) throw new Error(`${at} is not a session this host is running`);
     /*
      * Read until something is said in it, and named, both written before its
      * state opens: `spawn` hands the backend the name it finds kept.
@@ -1606,6 +1657,51 @@ export function createTooling(ctx: HostContext): Tooling {
     return { chat: chatUri };
   };
 
+  /**
+   * The chats of a running session, in the order a client reads them.
+   *
+   * The same answer whichever road asks - a tool in a session and a person
+   * with no session behind the call - because neither changes what a session
+   * holds.
+   */
+  const chatsOf = (session: string): { resource: string; title: string }[] => {
+    const held = sessions.get(session);
+    if (!held) return [];
+    const rows = [...held.chats].map(([at, chat]) => ({ resource: at, title: chat.title() }));
+    // The default first, since that is the one a link without a chat opens.
+    rows.sort((a_, b_) => Number(b_.resource === held.defaultChat) - Number(a_.resource === held.defaultChat));
+    return rows;
+  };
+
+  /** Models any session here can run on, each with the provider it belongs to. */
+  const modelsKnown = (): { id: string; name: string; provider: string }[] =>
+    [...learned].flatMap(([provider, known]) => known.models.map((model) => ({
+      id: model.id, name: model.name, provider,
+    })));
+
+  /** Every backend this host offers, whether or not it has named a model yet. */
+  const providersKnown = (): string[] => [...ctx.agents.keys()];
+
+  /** A chat's conversation, as its channel snapshot carries it. */
+  const contextOf = async (
+    session: string, chatId?: string,
+  ): Promise<{ turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean } | undefined> => {
+    const held = sessions.get(session);
+    const found = held === undefined ? undefined : chatMeant(held, chatId);
+    if (found === undefined) return undefined;
+    const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
+    /*
+     * Frozen copies of the turns, for the same reason a tool definition is
+     * one: this leaves the host with whichever host tool asked, and a tool
+     * that rewrote a turn would be rewriting the conversation.
+     */
+    return frozenCopy({
+      turns: Array.isArray(state.turns) ? state.turns as Bag[] : [],
+      ...(typeof state.activeTurn === 'object' && state.activeTurn !== null ? { activeTurn: state.activeTurn as Bag } : {}),
+      hasMoreHistory: state.turnsNextCursor !== undefined,
+    });
+  };
+
   const toolContext = (uri: string, chatUri: string, provider?: string): ToolCall => ({
     session: uri,
     chat: chatUri,
@@ -1628,35 +1724,11 @@ export function createTooling(ctx: HostContext): Tooling {
       const rows = await allRows();
       return mayDo(chatUri, 'session:read') ? rows : [];
     },
-    chats: (session) => {
-      const held = sessions.get(heldAs(session));
-      if (!held) return [];
-      const rows = [...held.chats].map(([at, chat]) => ({ resource: at, title: chat.title() }));
-      // The default first, since that is the one a link without a chat opens.
-      rows.sort((a_, b_) => Number(b_.resource === held.defaultChat) - Number(a_.resource === held.defaultChat));
-      return rows;
-    },
-    models: () => [...learned].flatMap(([provider, known]) => known.models.map((model) => ({
-      id: model.id, name: model.name, provider,
-    }))),
-    context: async (session, chatId) => {
-      const held = sessions.get(heldAs(session));
-      const found = held === undefined ? undefined : chatMeant(held, chatId);
-      if (found === undefined) return undefined;
-      const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
-      /*
-       * Frozen copies of the turns, for the same reason a tool definition is
-       * one: this leaves the host with whichever host tool asked, and a tool
-       * that rewrote a turn would be rewriting the conversation.
-       */
-      return frozenCopy({
-        turns: Array.isArray(state.turns) ? state.turns as Bag[] : [],
-        ...(typeof state.activeTurn === 'object' && state.activeTurn !== null ? { activeTurn: state.activeTurn as Bag } : {}),
-        hasMoreHistory: state.turnsNextCursor !== undefined,
-      });
-    },
-    send: async (session, chatId, text, from) => {
-      const at = heldAs(session);
+    chats: chatsOf,
+    models: modelsKnown,
+    providers: providersKnown,
+    context: contextOf,
+    send: async (at, chatId, text, from) => {
       /*
        * The tree the call is made from, which is the one it is counted against.
        *
@@ -1675,7 +1747,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (!sessions.has(at) && ctx.owners.has(at)) await ctx.wake(at);
         const held = sessions.get(at);
         const found = held === undefined ? undefined : chatMeant(held, chatId);
-        if (found === undefined) throw new Error(`${session} is not a session this host is running`);
+        if (found === undefined) throw new Error(`${at} is not a session this host is running`);
         const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
         const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
           || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
@@ -1714,9 +1786,26 @@ export function createTooling(ctx: HostContext): Tooling {
       }
       const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
       if (provider === undefined) throw new Error(NO_AGENT);
-      // Named the way a client's `createSession` names a session.
-      const made = uriFor(crypto.randomUUID());
+      const agent = ctx.agents.get(provider);
+      if (agent === undefined) throw new Error(`No provider called ${provider}`);
+      /*
+       * Named for the client whose turn made it: `<provider>:/<uuid>` when an
+       * older VS Code window sent the running turn, so that window sees the
+       * session, and `ahp-session:/<uuid>` otherwise, as the reference host
+       * mints a session for the client that initiated its creation.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108
+       */
+      const turn = activeTurnOf(chatUri);
+      const older = turn !== undefined && sentBy.get(turn)?.legacySessionUris === true;
+      const made = older ? `${provider}:/${crypto.randomUUID()}` : uriFor(crypto.randomUUID());
+      /*
+       * What the backend is given, checked against its own schema and under
+       * the keys this call owns: `isolation` and `model` are the two the call
+       * was made with, and a value of the same name inside `config` would be
+       * the tool arguing with which session it asked for.
+       */
       const config: Record<string, unknown> = {
+        ...(checkedConfig(agent, asked.config) ?? {}),
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
         ...(asked.model !== undefined ? { model: asked.model } : {}),
       };
@@ -1751,7 +1840,7 @@ export function createTooling(ctx: HostContext): Tooling {
       return { session: made, chat: chatUriFor(made) };
     },
     createChat: async (session, asked) => await openChat(session, asked, { uri, chatUri }),
-    rename: (session, chat, title) => { renameChat(heldAs(session), chat, title); },
+    rename: (session, chat, title) => { renameChat(session, chat, title); },
     /*
      * A session deleted from inside another one, by whoever is asking.
      *
@@ -1778,7 +1867,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const turn = activeTurnOf(chatUri);
       const asking = turn === undefined ? undefined : senderOf(turn);
       const by = asking === undefined ? forWhom(kept.owner(idOf(uri))) : forWhom(asking);
-      await removeSession(heldAs(session), by?.principal ?? by?.owner);
+      await removeSession(session, by?.principal ?? by?.owner);
     },
     setWorkspace: (directory, isolation) => {
       /*
@@ -1838,6 +1927,196 @@ export function createTooling(ctx: HostContext): Tooling {
       return bodyText({ data, encoding: held.encoding === 'base64' ? 'base64' : 'utf-8' });
     },
   });
+
+  /**
+   * Who a call with no session is made by, as an owner.
+   *
+   * The owner a session made by them is opened under, and the sender a turn
+   * they begin is sent by. A root caller is this host's own connection and owns
+   * what it makes under `root:`, the way a session this host opens for itself
+   * is owned; a caller with no principal on a host with no users directory owns
+   * nothing, as a session opened there is owned by nobody.
+   */
+  const ownerOfCaller = (caller: ToolCaller): Owner | undefined => {
+    if (caller.root === true) return `root:${options.hostName ?? 'host'}`;
+    return caller.principal === undefined ? undefined : ownerOfPrincipal(caller.principal);
+  };
+
+  /**
+   * Whether a call with no session may do `grant` here.
+   *
+   * A root caller is refused nothing, as `admit` refuses it nothing on the
+   * wire; a host with no users directory has nobody to ask and answers as it
+   * answered before there was anybody; and a caller who signed in is answered
+   * by what they hold.
+   */
+  const callerMay = (caller: ToolCaller, grant: Grant): boolean => {
+    if (options.users === undefined || caller.root === true) return true;
+    return caller.principal?.can(grant) === true;
+  };
+
+  /** Who a call with no session acts for: the caller's id, or the host for root. */
+  const callerPerson = (caller: ToolCaller): string | undefined =>
+    (caller.root === true ? 'host' : caller.principal?.id);
+
+  /** The refusal a sessionless tool throws when it needs a chat it has none of. */
+  const needsSession = (): never => {
+    throw new Error('This needs a session');
+  };
+
+  /**
+   * What a host tool sees of this host when a person asks with no session.
+   *
+   * The same host as `toolContext`, and the same operations, reached by
+   * somebody who is not in a chat: what a tool does to another session - a
+   * message, a chat, a session, a title, a deletion - is done as the caller,
+   * and what it does to its own chat throws instead of guessing one. Nothing
+   * is counted against a tree, because a person with no session is not a tree.
+   */
+  const sessionlessContext = (caller: ToolCaller): SessionlessToolCall => {
+    const sender = ownerOfCaller(caller);
+    const person = callerPerson(caller);
+    /** Who the turn a tool begins was sent by, written under the id it will carry. */
+    const sent = (turnId: string): void => { if (sender !== undefined) senders.set(turnId, sender); };
+    return {
+      turn: () => undefined,
+      person: () => person,
+      may: (grant) => callerMay(caller, grant),
+      refusal: (grant) => refusalReason(person ?? 'host', grant),
+      sessions: async () => (callerMay(caller, 'session:read') ? await allRows() : []),
+      chats: chatsOf,
+      models: modelsKnown,
+      providers: providersKnown,
+      context: contextOf,
+      send: async (at, chatId, text, from) => {
+        // A session asleep in the catalogue is woken for the message, and held
+        // awake until it has begun - the same road a call from a session takes.
+        const release = ctx.hold(at);
+        try {
+          if (!sessions.has(at) && ctx.owners.has(at)) await ctx.wake(at);
+          const held = sessions.get(at);
+          const found = held === undefined ? undefined : chatMeant(held, chatId);
+          if (found === undefined) throw new Error(`${at} is not a session this host is running`);
+          const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+          const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
+            || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
+          if (busy) {
+            const waiting = crypto.randomUUID();
+            sent(waiting);
+            found.chat.queue(waiting, text, undefined, from, undefined, turnInstructions(at));
+            return 'queued';
+          }
+          const first = crypto.randomUUID();
+          sent(first);
+          found.chat.begin(first, text, undefined, from, undefined, turnInstructions(at));
+          return 'sent';
+        } finally {
+          release();
+        }
+      },
+      create: async (asked) => {
+        // No chain and no tree: a session made here belongs to the caller, has
+        // no parent, and spends no budget kept for one.
+        const provider = asked.provider ?? ctx.first?.provider;
+        if (provider === undefined) throw new Error(NO_AGENT);
+        const agent = ctx.agents.get(provider);
+        if (agent === undefined) throw new Error(`No provider called ${provider}`);
+        const made = uriFor(crypto.randomUUID());
+        // The backend's own settings, checked, and the two keys this call owns
+        // over them, as a session made from a turn builds them.
+        const config: Record<string, unknown> = {
+          ...(checkedConfig(agent, asked.config) ?? {}),
+          ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
+          ...(asked.model !== undefined ? { model: asked.model } : {}),
+        };
+        const where = await isolated(made, config, asked.workingDirectory);
+        await settle(made, asked.workingDirectory, config);
+        openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
+          sender === undefined ? undefined : forWhom(sender, caller.principal));
+        const lead = byChat.get(chatUriFor(made));
+        if (lead === undefined) throw new Error(`${made} did not start`);
+        const first = crypto.randomUUID();
+        sent(first);
+        lead.chat.begin(
+          first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
+          undefined, turnInstructions(made),
+        );
+        return { session: made, chat: chatUriFor(made) };
+      },
+      createChat: async (session, asked) => await openChat(session, asked),
+      rename: (session, chat, title) => { renameChat(session, chat, title); },
+      remove: async (session) => {
+        // The caller's own reference is who may dispose of it: the principal
+        // they signed in as, or the `root:` owner this host's own connection is.
+        await removeSession(session, caller.root === true ? sender : caller.principal ?? sender);
+      },
+      setWorkspace: needsSession,
+      scheduleWake: needsSession,
+      cancelWake: needsSession,
+      artifacts: needsSession,
+      setArtifacts: needsSession,
+      terminals: needsSession,
+      read: needsSession,
+    };
+  };
+
+  /**
+   * The tools a person may call with no session behind the call.
+   *
+   * The other list, for the other place tools run: the tools that say
+   * `sessionless: true`, in the order this host contributes them, less the
+   * advanced ones unless the host permits them - `ctx.contributing` is already
+   * that set - and less the opt-in ones, which are offered to one kind of
+   * session by name and never to a call with no session at all.
+   *
+   * A tool's `grant` decides the rest: a caller who may not do it is not
+   * offered the tool, which is how a window that may read is offered
+   * `list_sessions` and not `delete_session`. The list is built for one caller
+   * and not kept, because the principal is both what it is cut by and the
+   * person each bound tool answers to.
+   */
+  const sessionlessTools = (caller: ToolCaller): BoundTool[] =>
+    ctx.contributing.flatMap((one): BoundTool[] => {
+      if (one.sessionless !== true || one.optIn === true) return [];
+      if (one.grant !== undefined && !callerMay(caller, one.grant)) return [];
+      // No session means no strategy of its own: the deferred one this host
+      // gives every session is the one a person is offered.
+      const asked = one.forSession?.({ titleStrategy: strategyOf('') });
+      if (asked?.offered === false) return [];
+      const definition = asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
+      const person = callerPerson(caller);
+      return [{
+        /*
+         * A frozen copy, as for a session: this one leaves the host with a
+         * window, and one that changed the wording would be changing what the
+         * next caller is offered.
+         */
+        definition: frozenCopy(definition),
+        // The call and its outcome are one event, raised after the tool is
+        // done, so a handler knows whether it answered and not only that it
+        // ran. A call with no session names the person it was made by instead.
+        run: async (input: Record<string, unknown>): Promise<string> => {
+          try {
+            const answer = await one.run(input, sessionlessContext(caller));
+            void fire({ type: 'tool_call', tool: definition.name, ok: true, ...(person === undefined ? {} : { person }) });
+            return answer;
+          }
+          catch (error) {
+            void fire({
+              type: 'tool_call',
+              tool: definition.name,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+              ...(person === undefined ? {} : { person }),
+            });
+            throw error;
+          }
+        },
+        ...(one.effects !== undefined ? { effects: frozenCopy(one.effects) } : {}),
+        ...(one.confirm !== undefined ? { confirm: one.confirm } : {}),
+        ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
+      }];
+    });
 
   /**
    * The MCP servers one plugin copy declares, by name.
@@ -2071,9 +2350,9 @@ export function createTooling(ctx: HostContext): Tooling {
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
     clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision,
-    retool, pluginsSettled, chatMeant, renameChat, toolContext,
+    retool, pluginsSettled, chatMeant, renameChat, renameSession, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
-    toolsServersGone, boundTools, instructions, turnInstructions, openChat,
+    toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,
     moving, served,
   };
 }

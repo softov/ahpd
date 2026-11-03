@@ -56,6 +56,8 @@ export interface Catalogue {
   chatMoved(chat: string): void;
   /** An answer typed into a chat's question, carried into the session's entry for it. */
   answerMirrored(chat: string, requestId: string): void;
+  /** The session's entries for a chat that its running turn no longer holds open, taken down. */
+  askedLeft(chat: string): void;
   /** What a running session's state holds of its folder and its backend, said by action where it moved. */
   factsMoved(uri: string): void;
   activityOf(held: Held): string | undefined;
@@ -86,8 +88,12 @@ export interface Catalogue {
   learnAccount(provider: string, account: Account): void;
   /** Every backend's rows, with what a refusing backend had last time carried over. */
   listing(before?: Summary[]): Promise<Summary[]>;
-  /** Record one listed row and build it, as a listing does for every row it finds. */
-  adopt(agent: Agent, row: Listed, waiting?: string): Summary;
+  /**
+   * Record one listed row and build it, as a listing does for every row it
+   * finds. `stored` says this host keeps a record for the row, which is what
+   * names an old row in its provider's scheme.
+   */
+  adopt(agent: Agent, row: Listed, waiting?: string, stored?: boolean): Summary;
   /** Tell every client about a listed row this host did not have. */
   rowAdded(summary: Summary): void;
   /**
@@ -416,7 +422,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * back to unread the moment anything else about it changes.
    */
   const statusOf = (uri: string): number => {
-    const held = sessions.get(ctx.heldAs(uri));
+    const held = sessions.get(uri);
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
     return drivingOf(held).status | kept.flags(idOf(uri));
@@ -452,25 +458,28 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }),
   ];
   /**
-   * The chat that decides a session's status and activity, by the protocol's
-   * rules for a session made of chats.
+   * The chat that decides a session's status and activity, as the reference
+   * host aggregates a session made of chats.
    *
-   * The activity bits are the default chat's, promoted to `InputNeeded` when
-   * any chat needs input and to `Error` when any chat failed. The activity is
-   * the chat that contributes the bits: the default chat's, or the one that
-   * won the promotion. A worker chat is a chat of the session and counts.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
+   * A chat that needs input makes the session need input; else a chat that
+   * runs makes it run; else the activity bits are the default chat's, or the
+   * most recently modified chat's when it has none, and a failed chat stays on
+   * its own row. `InputNeeded` carries `InProgress`, so a chat that runs is one
+   * whose bits under `InputNeeded` are `InProgress` alone. The activity is the
+   * deciding chat's. A worker chat is a chat of the session and counts.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
    */
   const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
     const chats = chatsOf(held);
     const base = chats.find((one) => one.uri === held.defaultChat)
       ?? [...chats].sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))[0];
-    const promoted = chats.find((one) => activityBits(one.status) === Status.InputNeeded)
-      ?? chats.find((one) => activityBits(one.status) === Status.Error);
-    const deciding = promoted ?? base;
-    return deciding === undefined
+    const asking = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
+    const running = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
+    if (asking !== undefined) return { status: Status.InputNeeded, activity: asking.activity };
+    if (running !== undefined) return { status: Status.InProgress, activity: running.activity };
+    return base === undefined
       ? { status: Status.Idle, activity: undefined }
-      : { status: activityBits(deciding.status), activity: deciding.activity };
+      : { status: activityBits(base.status), activity: base.activity };
   };
   /** The most recent change across every chat of a session, as the protocol aggregates `modifiedAt`. */
   const modifiedOf = (held: Held): string => chatsOf(held)
@@ -482,21 +491,27 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
 
   /**
-   * How many sessions this host holds open: the protocol's "active
-   * (non-disposed) sessions".
-   *
-   * Every session this host started and has not disposed, a running one and
-   * one it put to sleep alike - a sleep lets the agent go and keeps the
-   * session. A transcript on disk is a row somebody can open, and it counts
-   * from the moment this host runs it.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-root/state.ts#L39
+   * How many sessions are running a turn, as the reference host counts its
+   * active sessions: a session counts while any of its chats, a worker's
+   * included, has an active turn in the state the chat's reducer made. A
+   * session asleep, or awake with nothing running, counts nothing.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3262
    */
-  const activeCount = (): number => sessions.size + [...ctx.asleep].filter((uri) => !sessions.has(uri)).length;
-  /** Say how many sessions this host holds open, when the number moved. */
+  const activeCount = (): number => [...sessions.values()].filter((held) => [
+    ...held.chats.keys(),
+    ...[...subagents].filter(([, one]) => sessions.get(one.session) === held).map(([one]) => one),
+  ].some((chat) => typeof ctx.stateOf(chat)?.activeTurn === 'object' && ctx.stateOf(chat)?.activeTurn !== null)).length;
+  /**
+   * Say how many sessions are running a turn, when the root's clients hold
+   * another number: the one the root's state holds, or the last said while no
+   * client has the root's state.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
+   */
   let announced = -1;
   const activeSessionsMoved = (): void => {
     const now = activeCount();
-    if (now === announced) return;
+    const held = ctx.stateOf(ROOT)?.activeSessions;
+    if (now === (typeof held === 'number' ? held : announced)) return;
     announced = now;
     ctx.dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: now });
   };
@@ -1447,7 +1462,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `resource`. The session's `activity` takes the activity of the chat that
    * now decides it, as `session/activityChanged`. And the catalogue row moves
    * with both. Each is said only when the session's state is held: a session
-   * nothing holds opens with what its chats say then.
+   * nothing holds opens with what its chats say then. The root's count of
+   * sessions running a turn is read again too, since a turn's start and end
+   * are chat actions.
    *
    * A row's `activity` the chat cleared stays as it was: the action merges what
    * it carries, and the protocol's summary has no value that clears it. The
@@ -1479,6 +1496,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       }
     }
     summaryMoved(session);
+    activeSessionsMoved();
   };
 
   /**
@@ -1507,9 +1525,52 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (JSON.stringify(request) !== JSON.stringify(entry)) ctx.dispatch(session, { type: 'session/inputNeededSet', request });
   };
 
+  /**
+   * The session's entries for one chat that no longer stand, taken down.
+   *
+   * An entry stands while the chat's running turn holds open what it names: a
+   * question with no response, a call not yet past its confirmation, a call a
+   * client has yet to finish, a call awaiting authentication. A call still
+   * being announced has not reached any of them yet, so it holds its entry.
+   * Read after each of the chat's actions, so an entry goes once its request
+   * resolves and every entry of the chat goes with its turn, as the reference
+   * host keeps the session's entries; "the host ... removes them with
+   * `session/inputNeededRemoved` once the underlying request resolves".
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L243-L245
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L40-L157
+   */
+  const askedLeft = (chat: string): void => {
+    const session = sessionHolding(chat);
+    const state = session === undefined ? undefined : ctx.stateOf(session);
+    const own = ctx.stateOf(chat);
+    if (session === undefined || state === undefined || own === undefined) return;
+    const turn = own.activeTurn as Bag | undefined;
+    const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
+    const call = (entry: Bag): Bag | undefined => (String(entry.turnId ?? '') === String(turn?.id ?? '')
+      ? parts.map((part) => part.toolCall as Bag | undefined)
+        .find((one) => one !== undefined && one.toolCallId === (entry.toolCall as Bag | undefined)?.toolCallId)
+      : undefined);
+    const stands = (entry: Bag): boolean => {
+      if (turn === undefined) return false;
+      if (entry.kind === 'chatInput') {
+        return parts.some((part) => part.kind === 'inputRequest' && part.response === undefined
+          && (part.request as Bag | undefined)?.id === (entry.request as Bag | undefined)?.id);
+      }
+      const status = String(call(entry)?.status ?? '');
+      if (entry.kind === 'toolConfirmation') return ['streaming', 'pending-confirmation', 'pending-result-confirmation'].includes(status);
+      if (entry.kind === 'toolClientExecution') return ['streaming', 'pending-confirmation', 'running'].includes(status);
+      if (entry.kind === 'toolAuthentication') return ['streaming', 'auth-required'].includes(status);
+      return true;
+    };
+    for (const entry of Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : []) {
+      if (entry.chat !== chat || stands(entry)) continue;
+      ctx.dispatch(session, { type: 'session/inputNeededRemoved', id: entry.id });
+    }
+  };
+
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf, chatMoved, answerMirrored, factsMoved, activeCount,
+    chatCatalogOf, chatMoved, answerMirrored, askedLeft, factsMoved, activeCount,
     activityOf, sessionComing, sessionAdded, summaryMoved, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };

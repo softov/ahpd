@@ -21,7 +21,7 @@ import type { StartSession } from '../types/automations.js';
 import type { ChatRequest, PluginContracts, PortKey } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
 import { SUBJECTS, isGrant } from '../access/users.js';
-import { secretFields } from '../channels/owners.js';
+import { isSecret, secretFields } from '../channels/owners.js';
 import { RECORD_SLUG, isRecordSlug } from '../resources/records.js';
 import { schemaGaps, type SchemaGap } from './schemagaps.js';
 
@@ -676,12 +676,14 @@ export const checkIcons = (value: unknown, by: string, method = 'registerAdapter
 };
 
 /**
- * Check a `signIn` against `SignIn`, and that its field is one the schema keeps.
+ * Check a `signIn` against `SignIn`, and that its fields are ones the schema keeps.
  *
  * A sign-in is served as commands of its own, so every member the host calls
  * has to be there and be the right kind. The field is checked against the
  * schema here: only a field the vault keeps is moved there, and a sign-in
- * filling any other would leave the key in the record a client reads.
+ * filling any other would leave the key in the record a client reads. A
+ * device-code sign-in fills several fields, so its `account` field is checked
+ * too: it is a field the schema describes, and one it does not mark `secret`.
  */
 const checkSignIn = (value: unknown, schema: Record<string, unknown>, by: string): void => {
   if (value === undefined) return;
@@ -692,14 +694,44 @@ const checkSignIn = (value: unknown, schema: Record<string, unknown>, by: string
   if (typeof signIn.field !== 'string' || signIn.field === '') {
     throw new Error(miss(by, 'registerAdapter', 'signIn.field', 'a non-empty string, naming a field the schema marks secret'));
   }
-  for (const member of ['url', 'exchange']) {
-    if (typeof signIn[member] !== 'function') {
-      throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a sign-in the host calls'));
+  if (signIn.flow !== undefined && signIn.flow !== 'code' && signIn.flow !== 'device') {
+    throw new Error(miss(by, 'registerAdapter', 'signIn.flow', 'code or device, or nothing for the pasted code'));
+  }
+  if (signIn.flow === 'device') {
+    for (const member of ['start', 'poll']) {
+      if (typeof signIn[member] !== 'function') {
+        throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a device sign-in the host calls'));
+      }
+    }
+    if (signIn.switchAccount !== undefined && typeof signIn.switchAccount !== 'boolean') {
+      throw new Error(miss(by, 'registerAdapter', 'signIn.switchAccount', 'true or false, or nothing'));
+    }
+    checkSignInAccount(signIn.account, schema, by);
+  } else {
+    for (const member of ['url', 'exchange']) {
+      if (typeof signIn[member] !== 'function') {
+        throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a sign-in the host calls'));
+      }
     }
   }
   const field = signIn.field;
   if (!secretFields(schema).includes(field)) {
     throw new Error(miss(by, 'registerAdapter', field, `a field the schema marks secret, so the exchanged value is kept in the vault`));
+  }
+};
+
+/** Check the plain field a device sign-in keeps its account in, when it names one. */
+const checkSignInAccount = (value: unknown, schema: Record<string, unknown>, by: string): void => {
+  if (value === undefined) return;
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(miss(by, 'registerAdapter', 'signIn.account', 'a non-empty string, naming a field the schema describes'));
+  }
+  const properties = schema['properties'];
+  if (!right(properties, 'object') || !(value in (properties as Record<string, unknown>))) {
+    throw new Error(miss(by, 'registerAdapter', value, 'a field the schema describes, so the account is kept in the record'));
+  }
+  if (isSecret((properties as Record<string, unknown>)[value])) {
+    throw new Error(miss(by, 'registerAdapter', value, 'a field the schema does not mark secret, so the account is kept in the record'));
   }
 };
 
@@ -818,4 +850,87 @@ export const checkEngine = (value: unknown, by: string): { name: string; checked
     throw new Error(miss(by, 'registerEngine', 'open', 'a function building the backend for one record'));
   }
   return { name, checked: [{ where: `engine ${name}`, gaps: schemaProblems(object.schema) }] };
+};
+
+/**
+ * The operation ids the host serves for every kind of tunnel.
+ *
+ * They are the four verbs of the list and the two of a record's switch, and a
+ * kind may not take one of their names for its own: two operations with one id
+ * is a client asking for one and the host running the other.
+ */
+const TUNNEL_OPERATIONS: readonly string[] = ['create', 'update', 'remove', 'enable', 'disable'];
+
+/**
+ * Check one `registerTunnelKind` value against `TunnelKind`, and answer its
+ * name and its schemas' gaps.
+ *
+ * The name is a slug and the schema an object, because those are the two the
+ * host acts on: the name is what every stored tunnel carries, and the schema is
+ * what a client draws and what a tunnel's own settings are checked against.
+ * The handlers are required because the host calls them rather than reading
+ * what they return, and `update` and `system` are checked only when given.
+ *
+ * An operation's id is checked against the host's own before the duplicates
+ * are, so the message says the host serves that verb rather than that the kind
+ * wrote it twice. Its `input` is walked as a form of its own, under a name that
+ * says which operation it is.
+ */
+export const checkTunnelKind = (value: unknown, by: string): { name: string; checked: CheckedSchema[] } => {
+  const object = asObject(value, by, 'registerTunnelKind', 'tunnel kind');
+  for (const member of ['name', 'title', 'description']) stringy(object, member, by, 'registerTunnelKind');
+  const name = object.name as string;
+  if (!isRecordSlug(name)) {
+    throw new Error(miss(by, 'registerTunnelKind', name, `a slug, ${RECORD_SLUG}`));
+  }
+  if (!right(object.schema, 'object')) {
+    throw new Error(miss(by, 'registerTunnelKind', 'schema', 'an object, the JSON Schema a client draws the form from'));
+  }
+  checkIcons(object.icons, by, 'registerTunnelKind');
+  for (const member of ['create', 'remove', 'invoke']) {
+    if (typeof object[member] !== 'function') {
+      throw new Error(miss(by, 'registerTunnelKind', member, 'a function the host calls'));
+    }
+  }
+  for (const member of ['update', 'system']) {
+    if (object[member] !== undefined && typeof object[member] !== 'function') {
+      throw new Error(miss(by, 'registerTunnelKind', member, 'a function, or nothing'));
+    }
+  }
+  const checked: CheckedSchema[] = [{ where: `tunnel kind ${name}`, gaps: schemaProblems(object.schema) }];
+  if (object.operations === undefined) return { name, checked };
+  if (!Array.isArray(object.operations)) {
+    throw new Error(miss(by, 'registerTunnelKind', 'operations', 'a list of operations, or nothing'));
+  }
+  const ids = new Set<string>();
+  for (const held of object.operations) {
+    const operation = asObject(held, by, 'registerTunnelKind', 'an operation');
+    stringy(operation, 'id', by, 'registerTunnelKind');
+    const id = operation.id as string;
+    if (TUNNEL_OPERATIONS.includes(id)) {
+      throw new Error(miss(by, 'registerTunnelKind', `operation ${id}`, `an id other than ${TUNNEL_OPERATIONS.join(', ')}, which the host serves for every kind`));
+    }
+    if (ids.has(id)) {
+      throw new Error(miss(by, 'registerTunnelKind', `operation ${id}`, 'an id no other operation of this kind uses'));
+    }
+    ids.add(id);
+    for (const member of ['label', 'description', 'icon', 'confirmation']) {
+      if (operation[member] === undefined) continue;
+      if (typeof operation[member] !== 'string') {
+        throw new Error(miss(by, 'registerTunnelKind', `operation ${id} ${member}`, 'a string, or nothing'));
+      }
+    }
+    if (operation.input !== undefined) {
+      if (!right(operation.input, 'object')) {
+        throw new Error(miss(by, 'registerTunnelKind', `operation ${id} input`, 'an object, the JSON Schema a client draws the form from, or nothing'));
+      }
+      checked.push({ where: `tunnel kind ${name} operation ${id} input`, gaps: schemaProblems(operation.input) });
+    }
+    if (operation.grant !== undefined) {
+      if (typeof operation.grant !== 'string' || !isGrant(operation.grant)) {
+        throw new Error(miss(by, 'registerTunnelKind', `operation ${id} grant`, `a grant, <subject>:<operation>, and ${String(operation.grant)} is not one`));
+      }
+    }
+  }
+  return { name, checked };
 };

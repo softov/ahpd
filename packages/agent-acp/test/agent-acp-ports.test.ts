@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -166,7 +167,7 @@ async function talking(options: {
   });
   await signIn(client);
   const uri = 'ahp-session:/ports';
-  const chatUri = 'ahp-chat:/ports';
+  const chatUri = chatUriFor(uri);
   // The window says which folders it trusts, and a session of a folder nobody
   // vouched for is refused rather than started.
   await client.handle({
@@ -331,7 +332,14 @@ it('sends calls as the protocol declares them, and a late client reads them the 
     .map((part) => String((part.toolCall as Bag).toolCallId));
   expect(calls).toEqual(expect.arrayContaining(['call-1', 'call-perm']));
   expect(calls.length).toBe(3);
-  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  // The session too, which holds the server's commands as prompts and its
+  // options as controls.
+  const session = await client.handle({ method: 'subscribe', params: { channel: uri } });
+  expect(undeclaredIn([
+    ...p.notes,
+    { asked: 'subscribe', params: { channel: chatUri }, result: late },
+    { asked: 'subscribe', params: { channel: uri }, result: session },
+  ])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 });
 
@@ -914,17 +922,14 @@ it('carries a page rather than a form, and the server\'s own completion ends it'
   // An accept with nothing in it, which is what the server's own word is worth:
   // nobody typed anything, so there is no content to hand back.
   expect(prose(p, chatUri)).toContain('elicit=accept|content=none');
-  // The chat is told the request is over, so the page is not left standing in
-  // front of a client that would go on offering it.
-  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/inputCompleted')?.action as
-    { requestId?: string; response?: string } | undefined;
-  expect(done?.requestId).toBe('url-1');
-  expect(done?.response).toBe('accept');
+  // No completion in nobody's name, as the reference host says none: the page
+  // stays in its turn, and its entry went with the turn that ended.
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/inputCompleted')).toBe(false);
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === 'url-1'))
     .toBe(true);
 });
 
-it('takes a question the server withdrew off the chat, and completes the request', async () => {
+it('answers a question the server withdrew with cancel, and says nothing to the chat', async () => {
   const { client, peer: p, uri, chatUri, log } = await talking();
   begin(client, chatUri, 't1', 'elicitwithdraw please');
   await until(() => types(p, chatUri).includes('chat/inputRequested'));
@@ -940,17 +945,9 @@ it('takes a question the server withdrew off the chat, and completes the request
    */
   await until(() => readFileSync(log, 'utf8').includes('"action":"cancel"'));
   expect(readFileSync(log, 'utf8')).toContain('"action":"cancel"');
-  // The chat is told the request is over, because nobody was going to answer
-  // it and a client left drawing it would go on offering an answer.
-  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/inputCompleted')?.action as
-    { requestId?: string; response?: string } | undefined;
-  expect(done?.requestId).toBe('call-withdrawn:elicitation');
-  expect(done?.response).toBe('cancel');
-  // And the entry goes with it, so the session is not left saying somebody is
-  // needed for a question that has stopped being asked.
-  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'call-withdrawn:elicitation')).toBe(true);
-  expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
+  // The chat is told nothing in nobody's name, as the reference host tells it
+  // nothing: the question stays in its turn until the turn ends.
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/inputCompleted')).toBe(false);
 
   // The turn is stopped, because the fixture holds its prompt until a cancel
   // ends it, the way a server whose question was taken back is still working.
@@ -959,6 +956,9 @@ it('takes a question the server withdrew off the chat, and completes the request
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => readFileSync(log, 'utf8').includes('"method":"session/cancel"'));
+  // And the session's entry for the question goes with the turn.
+  await until(() => actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'));
+  expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
 });
 
 it('answers a withdrawal that beats the question, and draws nothing', async () => {
@@ -1043,18 +1043,14 @@ it('answers the question a stopped turn left standing with `cancel`', async () =
   // that never happened.
   await until(() => readFileSync(log, 'utf8').includes('"action":"cancel"'));
   expect(readFileSync(log, 'utf8')).toContain('"action":"cancel"');
-  // The entry goes with it, so a client is not left asking a question that can
-  // no longer be answered.
+  // The entry goes with the turn the stop ended, so a client is not left asking
+  // a question that can no longer be answered.
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
     && e.action.id === 'elicitation:1')).toBe(true);
   expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
-  // And the chat is told the request is over, which nothing else would say: the
-  // stop is the ending, so no client sent the `chat/inputCompleted` for it and
-  // the question would otherwise stand on every screen with no answer coming.
-  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/inputCompleted')?.action as
-    { requestId?: string; response?: string } | undefined;
-  expect(done?.requestId).toBe('elicitation:1');
-  expect(done?.response).toBe('cancel');
+  // And no completion in nobody's name: the stop is the ending, and the turn it
+  // ends closes the question in every client's state.
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/inputCompleted')).toBe(false);
   // And the stop reached the server, which is what ends the prompt it was held
   // on rather than a turn that waits for a person for ever.
   expect(readFileSync(log, 'utf8')).toContain('"method":"session/cancel"');

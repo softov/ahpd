@@ -257,7 +257,7 @@ export interface ConnectorHealth {
 }
 
 /**
- * How a person signs in to a provider, as one adapter declares it.
+ * A sign-in where a person pastes a code the vendor's page shows.
  *
  * The host builds the PKCE values: a verifier it keeps, the S256 challenge and
  * a state. The adapter puts the challenge in its vendor's sign-in URL, and
@@ -269,7 +269,9 @@ export interface ConnectorHealth {
  * stays in the host's memory, and the key is answered once and stored as
  * `{ "$secret": "<name>" }`.
  */
-export interface SignIn {
+export interface CodeSignIn {
+  /** Which flow this is. Absent, it is the pasted code. */
+  flow?: 'code';
   /** What a client prints on the button. */
   title: string;
   /** The field of the adapter's schema the exchange fills: one marked `secret`. */
@@ -286,6 +288,94 @@ export interface SignIn {
    */
   exchange(code: string, verifier: string): Promise<string>;
 }
+
+/** What a device-code sign-in's `start` answers. */
+export interface DeviceSignInStart {
+  /** The code a person types on the vendor's page, which the host shows. */
+  code: string;
+  /** Where a person types it, which the host shows. */
+  url: string;
+  /** How long the code lasts, in seconds. */
+  expires: number;
+  /** How long the host waits between polls, in seconds. */
+  interval: number;
+  /**
+   * What the adapter's `poll` takes.
+   *
+   * The host keeps it and sends it to nothing else: it is a credential of the
+   * pending sign-in, so no answer, row, error or log carries it.
+   */
+  handle: string;
+}
+
+/** What one poll of a device-code sign-in answers. */
+export type DeviceSignInPoll =
+  | {
+    /**
+     * The values the approval answered, by the field of the adapter's schema.
+     *
+     * The host runs the put with them once the owner's rule and the account
+     * rule pass. A field the schema marks `secret` goes to the vault and the
+     * record keeps a reference; every other value stays in the record.
+     */
+    values: Record<string, string>;
+  }
+  | {
+    /** How long to wait before the next poll, in seconds. */
+    wait: number;
+  };
+
+/**
+ * A sign-in where the host shows a code and waits for the approval.
+ *
+ * The adapter starts the flow on its vendor's service, and the host polls it
+ * every `interval` seconds until the approval, a refusal or the expiry. The
+ * person approves on their own device, so the client that started the sign-in
+ * does not have to stay open: the host keeps polling and writes the connector
+ * when the values arrive.
+ *
+ * The values may fill several fields. A field marked `secret` is moved to the
+ * vault; the rest stay in the record. When `account` names a plain field, a
+ * second sign-in that answers a different account is refused, unless the
+ * adapter sets `switchAccount`.
+ */
+export interface DeviceSignIn {
+  /** This flow, which is what makes it a device-code sign-in. */
+  flow: 'device';
+  /** What a client prints on the button. */
+  title: string;
+  /** The field of the adapter's schema the token is written to: one marked `secret`. */
+  field: string;
+  /**
+   * The field of the adapter's schema the account is written to.
+   *
+   * It is a plain field, so the record keeps the account a person signed in
+   * as, and a second sign-in that answers a different one is refused.
+   */
+  account?: string;
+  /** Whether a second sign-in may replace the connector's account. */
+  switchAccount?: boolean;
+  /** Start the flow on the vendor's service, and answer its code, URL and timing. */
+  start(): Promise<DeviceSignInStart>;
+  /**
+   * Ask the vendor once whether the person approved.
+   *
+   * It answers the values, or how long to wait before asking again. A refusal
+   * throws, and the host ends the sign-in. A message is never shown to the
+   * caller unless it is `HTTP <status>` alone, so it may name the vendor but
+   * never the handle, a value it answered or a secret it saw.
+   */
+  poll(handle: string): Promise<DeviceSignInPoll>;
+}
+
+/**
+ * How a person signs in to a provider, as one adapter declares it.
+ *
+ * A `signIn` with no `flow` is the pasted code, so an adapter written before
+ * the device flow keeps working unchanged. A `signIn` with `flow: 'device'`
+ * is a code the host shows and waits on.
+ */
+export type SignIn = CodeSignIn | DeviceSignIn;
 
 /**
  * One adapter a plugin offers.
@@ -337,8 +427,9 @@ export interface Adapter {
    * How a person signs in to this adapter's provider, when it has one.
    *
    * The field it names is one the schema marks `secret`, and a sign-in fills
-   * it with the value the exchange answers. Absent, a connector of this adapter
-   * is made by a put alone.
+   * it with the value the exchange or the device flow answers. A device flow
+   * may fill more fields, whose secret values the put moves to the vault.
+   * Absent, a connector of this adapter is made by a put alone.
    */
   signIn?: SignIn;
   /**

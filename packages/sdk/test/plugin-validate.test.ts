@@ -37,6 +37,18 @@ const tool = (name: string): HostTool => ({
   run: () => name,
 });
 
+/** A tunnel kind with the handlers every kind has, which each case changes. */
+const tunnelKind = (parts: Record<string, unknown> = {}): Record<string, unknown> => ({
+  name: 'devtunnel',
+  title: 'Dev Tunnel',
+  description: 'A tunnel through the Dev Tunnels service.',
+  schema: { type: 'object', properties: {} },
+  create: () => {},
+  remove: () => {},
+  invoke: () => {},
+  ...parts,
+});
+
 /** A provider with the one member the contract requires. */
 const provider = { read: (): void => {} };
 
@@ -341,5 +353,89 @@ describe('pluginHost', () => {
     const { routes, problems } = foldHostOptions(base(), [one.contribution, other.contribution]);
     expect(problems).toEqual([]);
     expect(Object.keys(routes)).toEqual(['alpha', 'beta']);
+  });
+
+  it('refuses a device sign-in with no poll, naming the plugin, the method and the member', () => {
+    const { host } = pluginHost('alpha', context());
+    const adapter = {
+      name: 'device',
+      title: 'Device',
+      description: 'An account that signs in on another device.',
+      schema: { type: 'object', properties: { token: { type: 'string', secret: true } } },
+      capabilities: [],
+      open: () => {},
+      signIn: {
+        flow: 'device',
+        title: 'Sign in with Device',
+        field: 'token',
+        start: async () => ({ code: 'the-code', url: 'https://vendor.test/device', expires: 900, interval: 5, handle: 'h' }),
+      },
+    };
+
+    expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*signIn\.poll/);
+  });
+
+  it('refuses an account field the schema marks secret, so the account stays in the record', () => {
+    const { host } = pluginHost('alpha', context());
+    const adapter = {
+      name: 'device',
+      title: 'Device',
+      description: 'An account that signs in on another device.',
+      schema: {
+        type: 'object',
+        properties: {
+          token: { type: 'string', secret: true },
+          account: { type: 'string', secret: true },
+        },
+      },
+      capabilities: [],
+      open: () => {},
+      signIn: {
+        flow: 'device',
+        title: 'Sign in with Device',
+        field: 'token',
+        account: 'account',
+        start: async () => ({ code: 'the-code', url: 'https://vendor.test/device', expires: 900, interval: 5, handle: 'h' }),
+        poll: async () => ({ wait: 5 }),
+      },
+    };
+
+    expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*does not mark secret/);
+  });
+
+  it('refuses a tunnel kind with no invoke, naming the plugin, the method and the member', () => {
+    const { host } = pluginHost('alpha', context());
+    const kind = tunnelKind();
+    delete kind.invoke;
+
+    expect(() => host.registerTunnelKind(kind as never)).toThrow(/alpha.*registerTunnelKind.*invoke/);
+  });
+
+  it('refuses a tunnel operation the host already serves, naming it', () => {
+    const { host } = pluginHost('alpha', context());
+    const kind = tunnelKind({ operations: [{ id: 'create', label: 'Make a tunnel' }] });
+
+    expect(() => host.registerTunnelKind(kind as never)).toThrow(/alpha.*registerTunnelKind.*operation create/);
+  });
+
+  it('refuses two tunnel operations with one id', () => {
+    const { host } = pluginHost('alpha', context());
+    const kind = tunnelKind({ operations: [{ id: 'restart' }, { id: 'restart' }] });
+
+    expect(() => host.registerTunnelKind(kind as never)).toThrow(/alpha.*registerTunnelKind.*operation restart/);
+  });
+
+  it('refuses a tunnel operation whose input is not an object schema', () => {
+    const { host } = pluginHost('alpha', context());
+    const kind = tunnelKind({ operations: [{ id: 'restart', input: 'a port' }] });
+
+    expect(() => host.registerTunnelKind(kind as never)).toThrow(/alpha.*registerTunnelKind.*restart input/);
+  });
+
+  it('refuses a tunnel operation whose grant is not <subject>:<operation>', () => {
+    const { host } = pluginHost('alpha', context());
+    const kind = tunnelKind({ operations: [{ id: 'restart', grant: 'restart' }] });
+
+    expect(() => host.registerTunnelKind(kind as never)).toThrow(/alpha.*registerTunnelKind.*restart grant/);
   });
 });

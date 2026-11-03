@@ -123,17 +123,13 @@ const enter = async (client: Client, id: string, tools: unknown[] = []): Promise
 };
 
 /*
- * A client reconciles what it contributes whenever the session state moves,
- * and this host's echo *is* the state moving. So an echo of an announcement
- * that changed nothing was itself the change that prompted the next
- * announcement - a loop the two ran three hundred times in a few seconds,
- * burning a `serverSeq` apiece.
- *
- * The announcement is still answered, to the client that sent it and to that
- * one alone: it is holding the action until an echo carrying its `clientSeq`
- * comes back, and no other client applied anything that has to be put back.
+ * An announcement that changes nothing is still a session action this host
+ * accepted, so it goes to every client of the session, sequenced: "Host
+ * sequences it - assigns a `serverSeq`, applies it to the authoritative state,
+ * broadcasts the action envelope to all subscribed clients."
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/ahp-and-acp.md#how-they-compose
  */
-it('echoes an unchanged announcement to its sender, and to nobody else', async () => {
+it('says an unchanged announcement to every client, each time at the next sequence', async () => {
   const held = host();
   const { client, peer: one } = await joins(held, 'one');
   const { client: second, peer: two } = await joins(held, 'two');
@@ -147,30 +143,26 @@ it('echoes an unchanged announcement to its sender, and to nobody else', async (
   });
   await announce(1);
   await settle();
-  // The sequence the change left this host at, and the one an echo of a later
-  // announcement carries: saying again is not state moving.
-  const at = envelopes(one, URI).at(-1)?.serverSeq;
   await announce(2);
   await announce(3);
   await settle();
 
-  // Once for the one thing that changed, and once for each announcement that
-  // changed nothing. `serverSeq` advances with state and never with messages.
-  const said = envelopes(one, URI).filter((e) => e.action.type === 'session/activeClientSet');
-  expect(said).toHaveLength(3);
-  expect(said.slice(1).map((e) => e.origin?.clientSeq)).toEqual([2, 3]);
-  expect(said.slice(1).map((e) => e.serverSeq)).toEqual([at, at]);
-  // The other client heard the change and nothing else.
-  const heard = envelopes(two, URI).filter((e) => e.action.type === 'session/activeClientSet');
-  expect(heard).toHaveLength(1);
+  for (const p of [one, two]) {
+    const said = envelopes(p, URI).filter((e) => e.action.type === 'session/activeClientSet');
+    expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2, 3]);
+    const seqs = said.map((e) => e.serverSeq);
+    expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  }
+  // Said again, the entry is the one the session already held.
+  expect(await clientsIn(second, URI)).toEqual(['one']);
 });
 
 /*
- * A read or archived bit set to what it already is changes nothing, and is
- * answered as an unchanged announcement is: to its sender, at the sequence
- * this host is already at.
+ * A read or archived bit set to what it already is changes nothing in the
+ * catalogue, and goes to every client as an unchanged announcement does.
  */
-it('echoes a session flag set again to its sender, and to nobody else', async () => {
+it('says a session flag set again to every client, at the next sequence', async () => {
   const held = host();
   const { client, peer: one } = await joins(held, 'one');
   const { client: second, peer: two } = await joins(held, 'two');
@@ -186,15 +178,75 @@ it('echoes a session flag set again to its sender, and to nobody else', async ()
   // and the second says it again.
   await read(1);
   await settle();
-  const at = envelopes(one, URI).at(-1)?.serverSeq;
+  const at = envelopes(one, URI).at(-1)?.serverSeq ?? 0;
   await read(2);
   await settle();
 
-  const said = envelopes(one, URI).filter((e) => e.action.type === 'session/isReadChanged');
-  expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2]);
-  expect(said.at(-1)?.serverSeq).toBe(at);
-  const heard = envelopes(two, URI).filter((e) => e.action.type === 'session/isReadChanged');
-  expect(heard).toHaveLength(1);
+  for (const p of [one, two]) {
+    const said = envelopes(p, URI).filter((e) => e.action.type === 'session/isReadChanged');
+    expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2]);
+    expect(said.at(-1)?.serverSeq).toBeGreaterThan(at);
+  }
+});
+
+/*
+ * A client reconciles what it contributes whenever the session's state moves,
+ * and an echo is the state moving. One that sent its set again on every move
+ * would run a loop with any host that echoes; VS Code's session handler
+ * compares what it would send with the entry the state holds and with what it
+ * sent last, so an echo of somebody's unchanged set moves it to nothing.
+ * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253
+ */
+it('leaves a client that reconciles on every move, as VS Code does, sending its set once', async () => {
+  const held = host();
+  const reconciling = peer();
+  const client = held.accept(reconciling);
+  await client.handle({ method: 'initialize', params: { clientId: 'one', protocolVersions: ['0.9.0'] } });
+  const { client: second } = await joins(held, 'two');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  await second.handle({ method: 'subscribe', params: { channel: URI } });
+
+  // The client's half, as VS Code's handler keeps it: the entries the state
+  // holds, what it means to publish, and what it published last.
+  let entries = opened.snapshot.state.activeClients;
+  const wanted = { clientId: 'one', tools: [] };
+  let last: unknown;
+  let sent = 0;
+  let seq = 0;
+  const reconcile = (): void => {
+    const existing = entries.find((one) => one.clientId === 'one');
+    if (JSON.stringify(existing) === JSON.stringify(wanted)) { last = undefined; return; }
+    if (JSON.stringify(last) === JSON.stringify(wanted)) return;
+    sent += 1;
+    seq += 1;
+    void client.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq: seq, action: { type: 'session/activeClientSet', activeClient: wanted } } });
+    last = wanted;
+  };
+  const notify = reconciling.notify;
+  reconciling.notify = (method, params) => {
+    notify(method, params);
+    const envelope = params as { channel: string; action: Record<string, unknown> };
+    if (method !== 'action' || envelope.channel !== URI) return;
+    if (envelope.action.type === 'session/activeClientSet') {
+      const entry = envelope.action.activeClient as Record<string, unknown>;
+      entries = [...entries.filter((one) => one.clientId !== entry.clientId), entry];
+    }
+    reconcile();
+  };
+  reconcile();
+  await settle();
+
+  // The other client says its set, then says it again unchanged.
+  for (const clientSeq of [1, 2, 3]) {
+    await second.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } } });
+    await settle();
+  }
+
+  expect(sent).toBe(1);
+  expect(actions(reconciling, URI).filter((a) => a.type === 'session/activeClientSet')).toHaveLength(4);
 });
 
 it('says so again when what a client contributes has changed', async () => {
@@ -261,7 +313,11 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
   expect(await clientsIn(a.client, URI)).toEqual(['two']);
 });
 
-it('takes the client id from the connection, not from the action', async () => {
+/*
+ * A client announces itself and no other: an entry naming another client would
+ * have that client's tools called, and its leaving would remove that client.
+ */
+it('refuses an entry that names another client, and holds nothing of it', async () => {
   const held = host();
   const a = await joins(held, 'honest');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
@@ -270,12 +326,15 @@ it('takes the client id from the connection, not from the action', async () => {
     method: 'dispatchAction',
     params: {
       channel: URI,
-      // A client naming somebody else is a client announcing a presence that
-      // is not theirs.
-      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [{ name: 'openFile' }] } },
     },
   });
-  expect(await clientsIn(a.client, URI)).toEqual(['honest']);
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+  const refused = a.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: { type: string }; rejectionReason?: string })
+    .find((one) => one.action.type === 'session/activeClientSet');
+  expect(refused?.rejectionReason).toContain('somebody-else is another client');
 });
 
 it('replaces what a client contributes rather than merging it', async () => {
@@ -295,6 +354,52 @@ it('replaces what a client contributes rather than merging it', async () => {
   // Re-announcing is how a client refreshes what it offers, so a tool taken
   // away has to be able to go.
   expect(opened.snapshot.state.activeClients[0]?.tools).toEqual([{ name: 'a' }]);
+});
+
+/*
+ * The entry as the client sent it, `tools` left out included: the reference
+ * host reduces a set as sent, and a VS Code window reads `tools` of every
+ * client in the session, so a list this host made up would read as one the
+ * client never sent.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2750-L2752
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostCustomizationService.ts#L1083-L1101
+ */
+it('holds an entry that names no tools as it was sent, and its client provides none', async () => {
+  const { agent, offered } = watched();
+  const held = createHost({ path: DIR, agents: [agent] });
+  const a = await joins(held, 'one');
+  const b = await joins(held, 'two');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await enter(b.client, 'two', [{ name: 'openFile', inputSchema: { type: 'object' } }]);
+  await a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', displayName: 'cli' } } },
+  });
+  await settle();
+
+  const said = actions(b.peer, URI).filter((one) => one.type === 'session/activeClientSet');
+  expect(said.at(-1)?.activeClient).toEqual({ clientId: 'one', displayName: 'cli' });
+  const opened = await b.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.activeClients.find((one) => one.clientId === 'one')).toEqual({ clientId: 'one', displayName: 'cli' });
+  // The other client's tool is all the chat is offered.
+  expect(offered.at(-1)).toEqual(['two__openFile']);
+});
+
+it('holds a creator\'s entry that names no tools as it was sent', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  await a.client.handle({
+    method: 'createSession',
+    params: { channel: URI, provider: 'echo', activeClient: { displayName: 'cli' } },
+  });
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.activeClients).toEqual([{ displayName: 'cli', clientId: 'creator' }]);
 });
 
 it('takes a client out on unsubscribe, on disconnect, and on a reconnect that drops it', async () => {
@@ -461,15 +566,29 @@ it('leaves no wait running when the host closes', async () => {
   a.client.close();
 });
 
-it('says how many sessions it is running when that changes', async () => {
+/*
+ * The sessions running a turn, said as a turn starts and ends: a session
+ * created with nothing running, and its disposal after its turn, move nothing.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
+ */
+it('says how many sessions are running a turn when that changes', async () => {
   const held = host();
   const a = await joins(held, 'one');
   await a.client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
-  await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
-  expect(actions(a.peer, 'ahp-root://')
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { defaultChat: string } } };
+  await a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: opened.snapshot.state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+  });
+  await settle();
+  const said = (): unknown[] => actions(a.peer, 'ahp-root://')
     .filter((one) => one.type === 'root/activeSessionsChanged')
-    .map((one) => one.activeSessions)).toEqual([1, 0]);
+    .map((one) => one.activeSessions);
+  // The turn's start and its end.
+  expect(said()).toEqual([1, 0]);
+  await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
+  expect(said()).toEqual([1, 0]);
 });
 
 /*
@@ -501,17 +620,20 @@ it('takes the creator into the session it created, without a second round trip',
   expect(seen[0]?.tools.map((one) => one.name)).toEqual(['openBrowserPage']);
 });
 
-it('takes the creator in under its own name, not the one it typed', async () => {
+/*
+ * The protocol says the creator's `clientId` MUST match the connection's, and
+ * VS Code's host refuses a request whose entry names another, before the
+ * session is made.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
+ */
+it('refuses a creator that names another client, and makes nothing', async () => {
   const held = host();
   const a = await joins(held, 'creator');
-  await a.client.handle({
+  await expect(a.client.handle({
     method: 'createSession',
     params: { channel: URI, provider: 'echo', activeClient: { clientId: 'somebody-else', tools: [] } },
-  });
-  // The protocol says the two MUST match. Honouring the payload instead would
-  // let a client announce a presence that is not theirs - and the dispatch
-  // path already forces this for the same reason.
-  expect(await clientsIn(a.client, URI)).toEqual(['creator']);
+  })).rejects.toMatchObject({ code: -32602, message: 'createSession.activeClient.clientId must match the connection\'s clientId' });
+  await expect(a.client.handle({ method: 'subscribe', params: { channel: URI } })).rejects.toThrow();
 });
 
 it('leaves a session nobody claimed empty', async () => {

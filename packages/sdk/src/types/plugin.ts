@@ -24,6 +24,7 @@ import type { Host, HostOptions, HostTool, NodeRegistry } from './host.js';
 import type { MachineNeed } from './machine.js';
 import type { CollectionOptions, RecordCollection } from './records.js';
 import type { ResourceProvider } from './resources.js';
+import type { TunnelKind, ServedTunnelKind } from './tunnels.js';
 import type { Owner, UsageEntry } from './usage.js';
 import type { Grant, Principal } from './users.js';
 import type { SecretWork } from './vault.js';
@@ -1453,6 +1454,17 @@ export interface PluginHost extends PluginContext {
    */
   registerEngine(engine: Engine): void;
   /**
+   * Offer one kind of tunnel a person can make.
+   *
+   * The name is a slug and is what a stored tunnel record carries, so a kind
+   * is registered once: a name this plugin already used is refused here, and
+   * one another plugin took is reported by the fold. The schema is the form a
+   * client draws for a tunnel's own settings, the `operations` are the verbs
+   * the host lists beside its own, and the handlers are what the host calls
+   * to make, change, run and remove one.
+   */
+  registerTunnelKind(kind: TunnelKind): void;
+  /**
    * Subscribe to one of the host's own moments.
    *
    * The one method not named `register*`, because it contributes nothing to
@@ -1475,10 +1487,10 @@ export interface PluginLink {
  * The registrations a plugin declares, by kind.
  *
  * A key is the plural of the register method of that kind - `agents`, `tools`,
- * `channels`, `methods`, `routes`, `triggerTypes`, `adapters`, `engines` -
- * and its entries are the names the method may be called with. `ports` holds
- * the singleton ports a plugin sets, such as `vault`. A registration its
- * contracts do not list is refused.
+ * `channels`, `methods`, `routes`, `triggerTypes`, `adapters`, `engines`,
+ * `tunnelKinds` - and its entries are the names the method may be called with.
+ * `ports` holds the singleton ports a plugin sets, such as `vault`. A
+ * registration its contracts do not list is refused.
  */
 export type PluginContracts = Record<string, string[]>;
 
@@ -1656,6 +1668,14 @@ export interface Contribution {
    * registered none.
    */
   engines?: Record<string, ServedEngine>;
+  /**
+   * The kinds of tunnel this plugin offers, keyed by name.
+   *
+   * Each entry carries the plugin that registered it, as an engine does, so
+   * the fold can report a name two plugins both took. Absent when the plugin
+   * registered none.
+   */
+  tunnelKinds?: Record<string, ServedTunnelKind>;
   /** The commands this plugin serves, keyed by name. */
   methods: Record<string, ServedMethod>;
   /**

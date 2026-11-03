@@ -79,18 +79,22 @@ interface Recorded {
   notices: string[];
   /** One entry per ending, which is the only way a handle says it was used. */
   endings: string[];
+  /** What the turn failed with. */
+  failures: string[];
 }
 
 const turn = (): Recorded => {
   const replies: string[] = [];
   const notices: string[] = [];
   const endings: string[] = [];
+  const failures: string[] = [];
   const handle: TurnHandle = {
     reply: (text) => { replies.push(text); },
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },
+    fail: (message) => { failures.push(message); },
   };
-  return { handle, replies, notices, endings };
+  return { handle, replies, notices, endings, failures };
 };
 
 /**
@@ -300,15 +304,30 @@ it('starts a back session on the first message, and says the second in it', asyn
   expect([...first.endings, ...second.endings]).toEqual([]);
 });
 
+/*
+ * The back session is handed the person's message whole: the model and agent
+ * they named, and what they attached, beside their words.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+ */
+it('hands the back session the model, the agent and the attachments the message carried', async () => {
+  const one = await sitting();
+  const attachments = [{ type: 'resource', uri: 'file:///tmp/notes.md', label: 'notes.md' }] as NonNullable<ChatMessage['attachments']>;
+  await one.wake.woken({ ...message('t1', 'read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments }, turn().handle);
+  expect(one.sent).toMatchObject([{
+    channel: 'ahp-chat:/1',
+    action: { type: 'chat/turnStarted', message: { text: carrying('read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments } },
+  }]);
+});
+
 it('steers a message into the back session that is already working', async () => {
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
   one.working.add('ahp-session:/1');
 
-  // The main chat's steer is a turn of its own, and the message wakes the
+  // The main chat's steer goes into its open turn, and the message wakes the
   // working session again rather than starting it.
-  await one.wake.woken(message('t2', 'stop that'), said.handle);
+  await one.wake.woken(message('t1', 'stop that'), said.handle);
 
   expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/turnStarted', 'chat/pendingMessageSet']);
   expect(one.sent[1]).toMatchObject({
@@ -317,8 +336,8 @@ it('steers a message into the back session that is already working', async () =>
   });
   // The entry is the sender's own, which is what the protocol asks of a steer.
   expect(typeof one.sent[1]?.action['id']).toBe('string');
-  // The answer follows the steered turn, which is the one the person waits in.
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't2', handle: said.handle });
+  // The answer lands in the steered turn, which is the one the person waits in.
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
   expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
   expect(said.replies).toEqual(['done']);
   expect(said.notices).toEqual([]);

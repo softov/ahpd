@@ -78,6 +78,8 @@ export interface Options {
   resource?: string;
   /** The origins this host also answers to, beside its own names. */
   origins?: string[];
+  /** Whether the API answers to the tunnels' host names. Off unless the file says. */
+  tunnelHosts: boolean;
   /** An authorization server whose tokens this host also accepts. */
   issuer?: string;
   /** How a token from that issuer is checked, absent when the deployment said nothing. */
@@ -187,6 +189,15 @@ export interface Options {
    * decision put it in the configuration.
    */
   httpApi?: HttpSetting;
+  /**
+   * What `/mcp` serves to a person's MCP client.
+   *
+   * `none`, the default, answers 404 there. `all` serves the tools that need no
+   * session and that the caller's grants allow. It is read when the run starts
+   * and has no flag, because it is the deployment's choice rather than one
+   * run's.
+   */
+  mcpTools: 'none' | 'all';
   /**
    * Where the plugins' routes are served.
    *
@@ -562,6 +573,11 @@ export const serverFields = {
     description: 'An origin this host also answers to, such as http://203.0.113.5:9187. Repeatable.',
     cli: { flag: '--origin', value: 'URL' },
   },
+  tunnelHosts: {
+    type: 'boolean',
+    title: 'Tunnel host names',
+    description: 'Answer the HTTP API to the host names of the tunnels this host keeps, as the plugin routes always do. Off by default: a tunnel is a fresh name on every start, and the API is an administration surface. Set in the configuration file only.',
+  },
   issuer: {
     type: 'string',
     description: 'An authorization server whose tokens are also accepted: github, or an OpenID Connect issuer.',
@@ -711,6 +727,12 @@ export const serverFields = {
     },
     description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
   },
+  mcpTools: {
+    type: 'string',
+    enum: ['none', 'all'],
+    title: 'MCP tools',
+    description: "What /mcp serves to a person's MCP client: none, the default, answers 404 there; all serves every tool the caller's grants allow that needs no session. Needs httpApi. Set in the configuration file only.",
+  },
   routes: {
     type: 'object',
     title: 'Plugin routes',
@@ -752,7 +774,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser'] as const;
+const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1211,6 +1233,7 @@ const noCwd = input['noCwd'] === true;
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
   const httpApi = httpOf(file.httpApi, source('httpApi'));
+  const mcpTools = given('mcpTools') ?? 'none';
   const routes = routesOf(file.routes, source('routes'));
   const modelProxy = proxyConfiguration(given('modelProxy'));
 
@@ -1229,6 +1252,7 @@ const noCwd = input['noCwd'] === true;
     ...(users === undefined ? {} : { users }),
     ...(resource === undefined ? {} : { resource }),
     ...(origins.length === 0 ? {} : { origins }),
+    tunnelHosts: given('tunnelHosts') ?? false,
     ...(issuer === undefined ? {} : { issuer }),
     ...(issuerVerify === undefined ? {} : { issuerVerify }),
     requireIssuer: given('requireIssuer') ?? false,
@@ -1258,6 +1282,7 @@ const noCwd = input['noCwd'] === true;
     ...(serviceName === undefined ? {} : { serviceName }),
     ...(wire === undefined ? {} : { wire }),
     ...(httpApi === undefined ? {} : { httpApi }),
+    mcpTools,
     ...(routes === undefined ? {} : { routes }),
     modelProxy,
     mcpServers: mcp.servers,

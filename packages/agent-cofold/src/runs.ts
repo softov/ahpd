@@ -134,7 +134,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     };
     for (const action of mapped.actions) {
       const type = str(action.type) ?? '';
-      if (type === 'session/inputNeededSet') hold();
+      if (type === 'session/inputNeededSet' || type === 'chat/inputRequested') hold();
       const ending = type === 'chat/turnComplete' ? 'complete'
         : type === 'chat/turnCancelled' ? 'cancelled'
           : type === 'chat/error' ? 'error'

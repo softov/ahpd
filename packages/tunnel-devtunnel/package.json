@@ -55,6 +55,13 @@
     "prepack": "tsc -p .",
     "test": "cd ../.. && vitest run packages/tunnel-devtunnel/test"
   },
+  "dependencies": {
+    "@microsoft/dev-tunnels-connections": "^1.3.61",
+    "@microsoft/dev-tunnels-contracts": "^1.3.61",
+    "@microsoft/dev-tunnels-management": "^1.3.61",
+    "@microsoft/dev-tunnels-ssh": "^3.12.42",
+    "@microsoft/dev-tunnels-ssh-tcp": "^3.12.42"
+  },
   "peerDependencies": {
     "@ahpd/sdk": ">=0.14 <1"
   },
@@ -72,13 +79,19 @@
       { "src": "./icon.svg", "theme": "light" },
       { "src": "./icon-dark.svg", "theme": "dark" }
     ],
-    "contracts": {},
+    "contracts": {
+      "adapters": ["devtunnel"],
+      "closers": ["the relay hosts this plugin opened"],
+      "tunnelKinds": ["devtunnel"]
+    },
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "name": { "type": "string", "description": "What the tunnel is called in a client's list. This machine's hostname by default." },
+        "connector": { "type": "string", "minLength": 1, "description": "The devtunnel connector this host's own tunnel uses. Absent, no tunnel is opened until one is set." },
+        "name": { "type": "string", "description": "What a Dev Tunnel this plugin makes is called in a client's list. This machine's hostname by default." },
         "keep": { "type": "boolean", "description": "Whether the tunnel outlives the daemon. true by default." },
-        "anonymous": { "type": "boolean", "description": "Whether somebody not signed in to this account may reach it. false by default." }
+        "anonymous": { "type": "boolean", "description": "Whether somebody not signed in to this account may reach it. false by default." },
+        "allowAccountChange": { "type": "boolean", "description": "Whether a second sign-in may replace a connector's GitHub account. false by default." }
       }
     }
   }

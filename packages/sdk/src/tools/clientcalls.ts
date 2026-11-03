@@ -52,6 +52,12 @@ export interface ClientCall {
   toolCall: Bag;
   /** The client that must answer, and the only one that may. */
   owner: string;
+  /**
+   * The chat the call is in, where it is not the holder's own: a worker's,
+   * for a call its worker made. The entry names it, since a client answers on
+   * the chat an entry names.
+   */
+  chat?: string;
 }
 
 /** What a holder was built from. */
@@ -171,8 +177,8 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
    * matters is that one call has one id, and that opening it twice is the same
    * entry rather than a second one.
    */
-  const entryId = (turnId: string, toolCallId: string): string =>
-    `toolClientExecution:${options.chat}:${turnId}:${toolCallId}`;
+  const entryId = (chat: string, turnId: string, toolCallId: string): string =>
+    `toolClientExecution:${chat}:${turnId}:${toolCallId}`;
 
   /**
    * End a call, once.
@@ -214,7 +220,10 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
 
   const open = (call: ClientCall): string => {
     const toolCallId = String(call.toolCall.toolCallId ?? '');
-    const id = entryId(call.turnId, toolCallId);
+    // The chat the call is in, which every entry carries.
+    // https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L118
+    const chat = call.chat ?? options.chat;
+    const id = entryId(chat, call.turnId, toolCallId);
     // An upsert keyed by id: the second announcement of a call is the call
     // again, and the first one is the one holding the answer. A call that was
     // held rather than finished is raised again: what it was waiting on is
@@ -228,7 +237,7 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     const entry: Bag = {
       id,
       kind: 'toolClientExecution',
-      chat: options.chat,
+      chat,
       turnId: call.turnId,
       clientId: call.owner,
       toolCall: {

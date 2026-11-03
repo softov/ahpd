@@ -199,6 +199,16 @@ export interface Config {
    */
   origins?: string[];
   /**
+   * Whether the HTTP API answers to the host names of the tunnels on the list.
+   *
+   * Off, the API answers only to the names above and the ones derived from the
+   * bound address, while the plugin routes answer to a tunnel's URL either
+   * way, because that is the webhook a route is usually reached through. On,
+   * each tunnel's host is a `Host` the API accepts too. A tunnel's name is a
+   * fresh one on every start, which is why this is the list's, not a name.
+   */
+  tunnelHosts?: boolean;
+  /**
    * An authorization server whose tokens this host also accepts.
    *
    * `github`, or an issuer URL this host may reach. Absent, the host is its own
@@ -366,6 +376,15 @@ export interface Config {
    * asked for an API keeps.
    */
   httpApi?: boolean | HttpSetting;
+  /**
+   * What `/mcp` serves to a person's MCP client.
+   *
+   * `none`, the default, answers 404 there and leaves the path to nobody.
+   * `all` serves every tool the caller's grants allow that needs no session,
+   * which is the session tools first. The door needs `httpApi` on, because
+   * `/mcp` is served on the same listener as `/api`.
+   */
+  mcpTools?: 'none' | 'all';
   /** Where the plugins' routes are served. Absent is the daemon's own listener. */
   routes?: RoutesSetting;
   /**

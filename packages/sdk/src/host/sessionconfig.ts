@@ -311,8 +311,10 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * Two fields and no more: `sessionMutable`, which the protocol already
    * declares, and `scope`, which it does not - the protocol's schema is
    * deliberately generic and says nothing about whether a key belongs to a
-   * session or to one chat inside it. A backend that says neither gets the
-   * safe answers: mutable, and the session's.
+   * session or to one chat inside it. A key that says neither stays as the
+   * session started it, since only `sessionMutable: true` lets a key move
+   * after the session is created, and is the session's.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L622-L623
    *
    * A key a plugin contributed is found here too, which is what makes a
    * key like `computer` obey the schema it was declared with. The backend's
@@ -433,7 +435,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    *
    * `sessionMutable: true` is not literally true - this host still refuses a
    * change after the first turn, because `propertyOf` reads the schema before
-   * this rewrite, where the key is still `sessionMutable: false`. It is the
+   * this rewrite, where the key does not say `sessionMutable: true`. It is the
    * flag that makes the chip appear.
    *
    * Only the backend's and a plugin's keys pass through here. This host's
@@ -459,7 +461,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
         if (typeof value !== 'object' || value === null) return [key, value];
         const one = value as Bag;
-        if (one.sessionMutable !== false) return [key, value];
+        if (one.sessionMutable === true) return [key, value];
         return [key, { ...one, sessionMutable: true, readOnly: true }];
       })),
     });

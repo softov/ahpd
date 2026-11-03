@@ -16,7 +16,10 @@ refs:
 
 ## Goal
 
-A client's `session/customizationToggled` is said back to every client of the session with its sender's origin, carrying the switch as this host made it, whether the backend switches the customization or this host switches a client's plugin; a switch the backend cannot make stays a refusal.
+A client's `session/customizationToggled` is said back to every client of the session with its sender's origin.
+It carries the switch as this host made it.
+The backend switches a customization of its own, and this host switches a client's plugin.
+A switch the backend cannot make stays a refusal.
 
 ## Reconnaissance
 
@@ -41,7 +44,9 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Proposed architecture
 
-- **Event flow** - the client's switch reaches the host, which keeps or hands it on; once it is made, the host says the switch back with the client's origin and then the list, or the plugin's entry, that it reads from.
+- **Event flow** - the client's switch reaches the host, which keeps or hands it on.
+  Once it is made, the host says the switch back with the client's origin.
+  The list, or the plugin's entry, that it reads from follows.
 - **Layer responsibilities** - the host: answering the switch.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts)
 
@@ -60,7 +65,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 - **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
 - **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** the switch said back carries the enablement this host applied, which is the session's own decision for a sender who may not keep one for every session.
+- **Watch out for:** the switch said back carries the enablement this host applied.
+  That is the session's own decision, for a sender who may not keep one for every session.
 
 ## Final verification checklist
 

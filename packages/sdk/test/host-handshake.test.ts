@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@microsoft/agent-host-protocol';
 import { ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { sdkVersion } from '../src/version.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk, serving, sessionQueries,
@@ -271,14 +272,14 @@ describe('what it will not pretend', () => {
   });
 
   it('refuses an action a client is not allowed to originate, and says which', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, chatUri } = await running();
     // `chat/delta` is this host telling clients what it did. One arriving
     // *from* a client is a client lying about what happened - and it is told
     // so, because a dispatch dropped in silence leaves the client's
     // optimistic state diverged with nothing to reconcile against.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/delta', turnId: 't1', partId: 'p', content: 'x' } },
+      params: { channel: chatUri, action: { type: 'chat/delta', turnId: 't1', partId: 'p', content: 'x' } },
     });
     expect(sdk.said).toEqual([]);
     const refused = p.notes.filter((note) => note.method === 'action').at(-1);
@@ -288,9 +289,10 @@ describe('what it will not pretend', () => {
   });
 
   it('tells a host-only action apart from one it has not got round to', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    // Each on the channel its prefix names.
     const why = (action: Record<string, unknown>) => {
-      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      client.handle({ method: 'dispatchAction', params: { channel: String(action.type).startsWith('chat/') ? chatUri : uri, action } });
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
@@ -306,9 +308,9 @@ describe('what it will not pretend', () => {
   });
 
   it('says what is actually wrong with a dispatch, not only that it is unserved', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     const why = (action: Record<string, unknown>) => {
-      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      client.handle({ method: 'dispatchAction', params: { channel: chatUri, action } });
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
@@ -361,9 +363,9 @@ describe('a client that dropped, coming back', () => {
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    await a.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+    await a.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } });
 
-    const seen = actions(first, 'ahp-chat:/live');
+    const seen = actions(first, chatUriFor('ahp-session:/live'));
     const upTo = seen.at(-1)?.serverSeq ?? 0;
 
     // The socket goes. The host forgets this client's subscriptions with it,
@@ -371,7 +373,7 @@ describe('a client that dropped, coming back', () => {
     a.close();
     a.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
     });
     await settle();
 
@@ -383,7 +385,7 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: upTo,
-        subscriptions: ['ahp-root://', 'ahp-session:/live', 'ahp-chat:/live'],
+        subscriptions: ['ahp-root://', 'ahp-session:/live', chatUriFor('ahp-session:/live')],
       },
     }) as { type: string; actions: { serverSeq: number; action: { type: string } }[]; missing: string[] };
 
@@ -428,15 +430,15 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: 0,
-        subscriptions: ['ahp-chat:/live'],
+        subscriptions: [chatUriFor('ahp-session:/live')],
       },
     });
     back.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
     });
     await settle();
-    expect(actions(p, 'ahp-chat:/live').some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
+    expect(actions(p, chatUriFor('ahp-session:/live')).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
   });
 
   it('hands back snapshots when the gap is longer than the buffer', async () => {

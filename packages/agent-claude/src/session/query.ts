@@ -853,6 +853,13 @@ export function createQuery(ctx: SessionContext): Query {
          * on any action that carries one, so the kind stamped at the start
          * is carried along rather than lost. The same line twice is said
          * once.
+         *
+         * The reducer replaces a running call's whole `content` too, and the
+         * host wrote the worker's `subagent` link there when the worker's
+         * chat opened, so the line carries that link after the call's own
+         * content, where the host put it: the protocol has hosts keep the
+         * call's link and the worker chat's origin consistent.
+         * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L162
          */
         if (type === 'system' && str(message.subtype) === 'task_progress') {
           const id = str(message.tool_use_id);
@@ -867,11 +874,12 @@ export function createQuery(ctx: SessionContext): Query {
             && scope !== undefined
             && str(bag(call._meta).progressMessage) !== line) {
             call._meta = { ...bag(call._meta), progressMessage: line };
+            const worker = id === undefined ? undefined : ctx.workerBlock(id);
             ctx.emitOn(scope, {
               type: 'chat/toolCallContentChanged',
               turnId: scope.turn?.id,
               toolCallId: id,
-              content: list(call.content),
+              content: [...list(call.content), ...(worker !== undefined ? [worker] : [])],
               _meta: call._meta,
             });
           }

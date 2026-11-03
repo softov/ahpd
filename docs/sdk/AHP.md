@@ -71,19 +71,19 @@ and `dispatchAction`. The protocol names the channel `ahp-automations://`, and
 for two weeks the reference host spelt it with an authority so the URI survived
 a round trip through its own URI class; Insiders builds from that window still
 subscribe under it, and were refused here with `-32001` about a session nobody
-had named. Answered under whichever spelling the client used, the way a chat
-is.
+had named. Answered under whichever spelling the client used, the way the root
+is: the root and the automations catalogue are this host's own channels.
 
 | command | ahpd | Notes |
 | --- | :---: | --- |
-| `initialize` | ✅ | Answers with the highest version the client offered that it speaks; a refusal carries `supportedVersions` to retry with, and an entry that is not a `MAJOR.MINOR.PATCH` version is `-32602` naming it. `initialSubscriptions` come back as snapshots in the same response, and a channel is on the watch list only once its snapshot has been taken - one that could not be is not subscribed, and the client is told if it asks. That order is why the reference host's reconnect fix of September 2026 has nothing to fix here: it registers a channel at `initialize` before any snapshot exists, so a client coming back across a host restart could replay deltas onto the state it held before, and draw a finished turn as one still running; it now keeps a per-client "baseline debt" and forces snapshots. A channel here has a baseline or is not a channel. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and it carries `create` and `schedules`, and `customizations` as well when this host was given a directory to copy client plugins into, because a template may then name one; `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port, and a `!command` on a session whose backend implements no `ran` is refused with the reason rather than sent to the model as a question. |
+| `initialize` | ✅ | Answers with the highest version the client offered that it speaks; a refusal carries `supportedVersions` to retry with, and an entry that is not a `MAJOR.MINOR.PATCH` version is `-32602` naming it. `initialSubscriptions` come back as snapshots in the same response, and a channel is on the watch list only once its snapshot has been taken - one that could not be is not subscribed, and the client is told if it asks. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and it carries `create` and `schedules`, and `customizations` as well when this host was given a directory to copy client plugins into, because a template may then name one; `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port, and a `!command` on a session whose backend implements no `ran` is refused with the reason rather than sent to the model as a question. |
 | `ping` | ✅ | A round trip, and the one method the specification says works before the handshake - a liveness check that needed one first could not tell a half-open socket from a busy one. |
 | `subscribe` | ✅ | The snapshot is taken *at* a `serverSeq`, and anything dispatched while it was being taken is replayed on top of it. Subscribing twice to one channel is answered twice, including while the first snapshot is still in flight; the reference host cancels the earlier subscribe and answers it `-32001`, so a client written against that one may never send the second. A chat snapshot carries every turn the host keeps when the subscribe names no `view`, and then no `turnsNextCursor`. A `view.turns` that is a positive integer is answered with the newest that many turns, and with a cursor while older ones are left; any other count gets the newest `PAGE`. |
 | `unsubscribe` | ✅ | A notification, so it carries no id and gets no reply. Per connection: one client unsubscribing does not stop another's stream. |
-| `reconnect` | ✅ | Replays what a dropped client missed from its `lastSeenServerSeq`, or hands back whole snapshots when the gap is longer than the buffer. The buffer holds the last 1000 envelopes, or `replayBytes` of them, whichever comes first, so a handful of large actions shorten it below the count - see [A client that stops reading](#a-client-that-stops-reading). Stateless notifications - the OTLP channels - are never replayed, because they carry no `serverSeq` to have been missed from. |
+| `reconnect` | ✅ | Replays what a dropped client missed from its `lastSeenServerSeq`, or hands back whole snapshots when the gap is longer than the buffer. A channel it resumes whose state this host let go of since the client was served it, a session asleep that nobody watched, opens again from its record, and the client is handed the snapshots: the actions since apply to that state and not to the one it holds. The reference keeps the same per-client [baseline debt](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701). The buffer holds the last 1000 envelopes, or `replayBytes` of them, whichever comes first, so a handful of large actions shorten it below the count - see [A client that stops reading](#a-client-that-stops-reading). Stateless notifications - the OTLP channels - are never replayed, because they carry no `serverSeq` to have been missed from. |
 | `dispatchAction` | 🚧 | A notification. The echo carries `origin` - the `clientId` and `clientSeq` the dispatch came with - and one this host will not act on comes back carrying `rejectionReason` instead. See [state actions](#state-actions) for which. |
 | `listSessions` | ✅ | Most-recently-modified first, live sessions included. Pages when a client sends `limit` and answers the whole catalogue when it does not, because neither client that connects here reads `nextCursor` and a default page size would be a catalogue silently cut down to it. A cursor this host did not issue is `-32602`. |
-| `createSession` | ✅ | Takes the URI the client chose, under whatever scheme it chose it. `activeClient` puts the creating client into the session as it is made, under the `clientId` it introduced itself with rather than the one in the payload. |
+| `createSession` | ✅ | Takes the URI the client chose, under whatever scheme it chose it. `activeClient` puts the creating client into the session as it is made. Its `clientId` is the one the client introduced itself with, and a request whose entry names any other is refused with `-32602` before anything is made, as [VS Code's host](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213) refuses it. |
 | `disposeSession` | ✅ | Closes every chat, the terminals the session claimed, and its worktree - unless somebody's work is still in it, which is the one thing a daemon cannot judge the value of. A dirty tree is kept where it is and the path is logged. The backend is told too, and deletes its own copy of the conversation: Claude its transcript, pi its session file, cofold its store's record, and an ACP server its session when the server advertised `session/delete`. A row this host only listed is deleted the same way, without a teardown, and a backend whose store cannot delete is left to keep the conversation, which the host says once per provider. Nothing here can be undone. |
 | `createChat` | ✅ | Each chat is its own agent process on one directory set and one config. A `fork` source continues the conversation from a named turn under a new backend id, carrying the turns through as visible history; a `sideChat` copies nothing and hands the model what that turn said, on its first prompt and nowhere else. |
 | `disposeChat` | ✅ | The last chat cannot be disposed, and the refusal says to dispose the session instead - a session with nothing to talk to is not a state a client should be able to reach. |
@@ -91,9 +91,9 @@ is.
 | `createTerminal` | 🧩 | The `terminals` port. Opens in a directory this host serves, under the URI the client chose. |
 | `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
-| `fetchTurns` | ✅ | Walks back from the `turnsNextCursor` a snapshot carries, which is there only when a `view` left older turns behind. With no cursor it answers nothing older, because the host keeps no record of which window a connection was given. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
+| `fetchTurns` | ✅ | Walks back from the `turnsNextCursor` a snapshot carries, which is there only when a `view` left older turns behind. With no cursor it answers nothing older, because the host keeps no record of which window a connection was given. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Answered for the chat under the URI it is held by. |
 | `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@`, and every `#` that is not a chat, against the files this host serves, relative to the session's own directory. `#chat:` against the other chats of the session, filtered case blind on the title, newest first and capped at twenty - each item a `chat` attachment naming the chat and pinning `endTurn` to its last completed turn, which is absent for a chat that has not finished one. A `#` still on its way to `#chat:` - `#`, `#ch`, `#chat` - is answered with those chats and then the files both, because VS Code asks every provider at once and its client shows the merged list; only a word that already says `chat:` is answered with chats alone. A chat a tool started is not offered, and neither is the chat the text is being typed in; a session's chat is answered under the name the client knows it by, which for the default chat is the one built from the session channel it created. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message) - and a skill carries `_meta.isSkill: true` beside it, which is what keeps one in an automation's text in the reference client's editor. |
-| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions, which for an MCP server are the sessions it watches under any spelling of their names. `ahpd://users` is the one resource whose token this host verifies itself, against its own user directory; every other resource keeps the unverified pass-through a backend or an MCP server needs. A `target` names one MCP server of one session, and the token is that server's alone: no server beside it, no other session and no backend's own resource is given it, and a target this host does not publish, or whose server is not waiting for that resource, is `-32602`. An empty token takes it back, which is the protocol's word for signing out, and with a target takes back only that server's; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. A token the directory does not know answers `-32007`. See [Users](USERS.md). |
+| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions, which for an MCP server are the sessions it watches. `ahpd://users` is the one resource whose token this host verifies itself, against its own user directory; every other resource keeps the unverified pass-through a backend or an MCP server needs. A `target` names one MCP server of one session, and the token is that server's alone: no server beside it, no other session and no backend's own resource is given it, and a target this host does not publish, or whose server is not waiting for that resource, is `-32602`. An empty token takes it back, which is the protocol's word for signing out, and with a target takes back only that server's; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. A token the directory does not know answers `-32007`. See [Users](USERS.md). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes seven worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key of this host's own with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. A plugin's key is answered by whoever registered it - `@ahpd/computer` lists the machines it made - and `resolveSessionConfig` asks that answerer once with an empty query to seed the property's `enum`, so a client can label the value it holds before opening anything. A key with nobody registered is an enum a client already has, answered with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status. A result may carry a `followUp`. An operation that writes needs no grant, exactly as the resource half does not. |
@@ -157,7 +157,7 @@ handed them again as if it had not.
 | `root/sessionRemoved` | ✅ | Carries `session`. |
 | `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. `activity` is `null` when there is none: a partial is spread over the row a client holds, so a key left off is a field that did not move, and a row that went idle kept saying what its last tool was doing. The type says `string`; the reference host sends `null` and its client reads it as cleared. `chats` carries the session's whole compact chat catalogue and replaces the list a client holds, and `defaultChat` names the chat a client gets when it names none. A row and the state it opens build that list with one function, so they cannot disagree about which chats a session has. |
 | `root/progress` | ✅ | Only when the request carried a `progressToken`, and only to the client that sent it: the token is that request's and means nothing to anybody else. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree on a large repository is seconds somebody otherwise waits through with nothing on screen. |
-| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, each under the spelling of its name that connection watches, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does, naming a session it watches whose server waits for that resource, or the root channel: nothing here verifies a token, but `authenticate` carries `expiresIn`, so when one goes stale is a fact this host holds. |
+| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, under the session's URI, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does, naming a session it watches whose server waits for that resource, or the root channel: nothing here verifies a token, but `authenticate` carries `expiresIn`, so when one goes stale is a fact this host holds. |
 | `otlp/exportLogs` | ✅ | `ahp-otlp://logs/{level}`, a template a client expands before subscribing - a literal URI would mean every subscriber got every line. Carries an OTLP/JSON `ExportLogsServiceRequest` verbatim, the same lines the daemon writes to stdout. |
 | `otlp/exportTraces` | ✅ | `ahp-otlp://traces`, a literal channel: the protocol defines template variables for `logs` alone, and one of this host's invention would be a channel nobody can expand. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, joined by `traceId` and sent as each ends. |
 | `otlp/exportMetrics` | ✅ | `ahp-otlp://metrics`. Cumulative sums against the process start, so a collector arriving late reads totals rather than a difference it missed the beginning of. |
@@ -185,16 +185,16 @@ which is a different complaint from an action nobody has served.
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
-| `root/activeSessionsChanged` | host | ✅ | A count, not a list: the sessions this host holds open, a running one and one put to sleep alike, as the protocol counts its "active (non-disposed) sessions". Moves when a session is created, opened from the catalogue or disposed. |
+| `root/activeSessionsChanged` | host | ✅ | A count, not a list: the sessions running a turn in any of their chats, a worker's included, as VS Code's host counts its active sessions and its Sessions window reads them, as a host's running sessions. The protocol's text counts "active (non-disposed) sessions". A session asleep, or awake with nothing running, counts nothing. Moves when a turn starts or ends, and when a chat or a session goes while its turn runs; said only when the number the root's clients hold is another. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
-| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Five keys are the connection's own and are kept on it rather than on the host: `defaultShell`, `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)), and `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, which need a sign-in and no grant except that a `/.../` key in `terminalAutoApproveRules` that VS Code's default table does not carry needs `config:change`. |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes its window's keys at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Each key is one value for the whole host, which the last push from any window sets and every client reads, as [VS Code's host](https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostConfigurationSync.ts#L47-L55) keeps one root config for every window: the window's own five among them, `defaultShell`, `workspaceTrust`, `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`. A push needs `config:change`, and a push of `workspaceTrust` alone `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)). |
 
 The schema a client draws its controls from holds three kinds of key: the ones VS Code's client pushes, this host's own, and the daemon's.
 `packages/sdk/src/vscoderootconfig.ts` holds the first, one property per key as VS Code's agent host declares it at `7516b04bc94`, out of `common/agentHostSchema.ts`, `common/agentMerge.ts` and `common/automationConfig.ts`.
 Two entries resolve a constant from `src/vs/platform/chat/common/chatSettings.ts` and write the literal it holds, naming the file by URL.
-This host acts on `defaultShell`, on `workspaceTrust` through the connection that pushed it, on `globalAutoApproveEnabled`, on `eligibleForAutoApproval`, on `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns` through the connection that owns the session, and on three of its own: `changeWords`, which says where a commit message and a pull request's words come from, `clientQueueBytes` and `replayBytes`, which bound what the host holds for a client that is not reading ([A client that stops reading](#a-client-that-stops-reading)); nothing else it declares changes what it does.
+This host acts on `defaultShell`, which a client's terminal opens, on `workspaceTrust`, on `globalAutoApproveEnabled`, on `eligibleForAutoApproval`, on `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, and on three of its own: `changeWords`, which says where a commit message and a pull request's words come from, `clientQueueBytes` and `replayBytes`, which bound what the host holds for a client that is not reading ([A client that stops reading](#a-client-that-stops-reading)); nothing else it declares changes what it does.
 `eligibleForAutoApproval` is VS Code's map of tool name to boolean, where `false` means the tool asks every time.
-It is the host's own key, kept for every connection rather than one, and setting it needs `config:change`.
+It is one value for every connection, and setting it needs `config:change`.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A tool this host offers is `ahp/<name>` in every backend.
 A backend's own tool keeps its own name, such as Claude's `Bash` or pi's `bash`.
@@ -203,15 +203,15 @@ A `dontAsk` session refuses the call instead of asking.
 The question offers no "always" option, so an answer applies to that call alone.
 cofold may still hold an approval it remembered before the rule was set, and the host cannot revoke that memory.
 An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
-The three terminal keys are the window's, and the rules a session runs under are its owner's connection's.
-That is the connection whose turn started or restarted the backend, and the connection `workspaceTrust` is read from.
+The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
+On a host with people, they answer only the turns the session's owner sends, as `workspaceTrust` does.
 A shell command runs without a question when the rules allow every sub-command and deny none.
 A deny rule makes the call ask rather than refusing it.
 A rule is `true` to approve, `false` to deny, `null` for no rule, or `{ approve, matchCommandLine }`.
 A key written `/.../flags` is a regular expression where any other is a prefix of a sub-command.
 A line the rules cannot read asks as well, which is what `unanalyzable` says.
 A write redirect is allowed only inside the session's working folder and when `editAutoApprovePatterns` matches the target; any other redirect asks.
-A window that pushed no `terminalAutoApproveRules` gets the daemon's `terminalAutoApproveDefaults`.
+Where no window pushed `terminalAutoApproveRules`, the daemon's `terminalAutoApproveDefaults` applies.
 Under `vscode`, the default, that is VS Code's table; under `none` it is no rule at all.
 An empty table that a window pushed approves nothing and is not replaced by either.
 Only an approved command is said with `confirmed: not-needed`, and `terminalAutoApproveEnabled: false` turns the check off.
@@ -232,13 +232,13 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/chatUpdated` | host | ✅ | Only when the row actually moved, read off the chat's own state after each of its actions, and carrying only the fields that moved: `title`, `status`, `modifiedAt`, `activity`, `interactivity`, `origin` or `movable`. `resource` names the row and is never among them, because the protocol says a sender MUST omit it. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
 | `session/defaultChatChanged` | host | ✅ | When the chat that was the default is disposed and another takes over. |
 | `session/chatsReordered` | host | ✅ | The whole order a session's chats end up in after a move inside that session, and never what a client sends - the host is the one that knows the order. Every chat the session holds is named exactly once, which the canonical reducer checks before it applies anything. Written to the stored chat list as well, so a restart rebuilds the chats where the move left them. |
-| `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames one with `rename_chat`. |
+| `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. On a chat's channel the client's action goes out on that channel, then the chat's held title and its row in the session take the title together, with this host's `session/chatUpdated`, and a default chat renames its session after, with this host's `session/titleChanged`; no chat action carries a title, so a client already holding the chat reads the new one in its row and in its next snapshot. On the session's channel the client's action goes out there, and a session that counts one chat or none (every chat but a tool's, a worker's and a hidden one, as its read state counts them) has its default chat's held title and row take the title after it, with this host's `session/chatUpdated`, as the reference host carries a session's rename down; a session with peer chats keeps its default chat's. The protocol's text has no client rename of a chat. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames a chat with `rename_chat` the same way. |
 | `session/serverToolsChanged` | host | ✅ | Full replacement, which is what the action means: it carries the new set rather than a difference. Sent to every running session when `host.setTools()` is called. |
-| `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made - under the `clientId` it introduced itself with rather than the one in the payload. The `customizations` it carries are read as well: each plugin is copied into this host's own directory and reported on the session. A run announces one of these too, as a client called `Automation`, carrying the copies its template named - which is how a plugin a template named reaches a session nobody is connected to. |
+| `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made. An entry naming another client's `clientId` is refused; a `clientId` the entry leaves out is the sender's, and the rest is held, echoed and shown as the client sent it, `tools` included or left out, as the reference host holds it. A client that names no tools provides none. The entry leaves with the connection that announced it. The `customizations` it carries are read as well: each plugin is copied into this host's own directory and reported on the session. A run announces one of these too, as a client called `Automation`, carrying the copies its template named - which is how a plugin a template named reaches a session nobody is connected to. |
 | `session/activeClientRemoved` | both | ✅ | Host-managed on the way out: a client that unsubscribes, drops without reconnecting in time, or reconnects without resubscribing is removed by this host rather than left in the list. |
-| `session/workingDirectorySet` | client | ✅ | The SDK takes its directories when the CLI starts and offers no way to add one after, so a change starts the backend again *resumed*: the same conversation in a wider place. Refused while a turn is running. A folder the set holds already is answered to its sender alone. |
-| `session/workingDirectoryRemoved` | client | ✅ | Index 0 is the process root and the protocol says a client MUST NOT remove it, so this host refuses a removal of it. A folder the set does not hold is answered to its sender alone. |
-| `session/workingDirectoryReplaced` | both | ✅ | `directory` names the entry and `replacement` the folder put in its place, a replacement the set holds already keeping the earlier of its two places, as the protocol's reducer applies it. The only way index 0 may move, which is why this host advertises `primaryReplacement` beside `immutablePrimary`: a new first folder is a move, which this host says from the folder it was to the folder it is, a worktree of it when the session is isolated, before the client's own action comes back. A replacement of a folder the set does not hold is answered to its sender alone. |
+| `session/workingDirectorySet` | client | ✅ | The SDK takes its directories when the CLI starts and offers no way to add one after, so a change starts the backend again *resumed*: the same conversation in a wider place. Refused while a turn is running. A folder the set holds already starts nothing and goes to every client of the session. |
+| `session/workingDirectoryRemoved` | client | ✅ | Index 0 is the process root and the protocol says a client MUST NOT remove it, so this host refuses a removal of it. A folder the set does not hold starts nothing and goes to every client of the session. |
+| `session/workingDirectoryReplaced` | both | ✅ | `directory` names the entry and `replacement` the folder put in its place, a replacement the set holds already keeping the earlier of its two places, as the protocol's reducer applies it. The only way index 0 may move, which is why this host advertises `primaryReplacement` beside `immutablePrimary`: a new first folder is a move, which this host says from the folder it was to the folder it is, a worktree of it when the session is isolated, before the client's own action comes back. A replacement of a folder the set does not hold starts nothing and goes to every client of the session. |
 | `session/inputNeededSet` | host | ✅ | Carries `request`, not a bare entry. Four kinds reach it: a chat elicitation, a tool confirmation, a client-executed tool, and a tool blocked on an MCP sign-in. |
 | `session/inputNeededRemoved` | host | ✅ | Carries the `id` alone, which is the upsert key the set half used. |
 | `session/customizationsChanged` | host | ✅ | The whole list, seeded from the boot probe so a session is not empty for its first several seconds, then replaced when its own CLI answers. The plugins a session's clients handed it are laid after the backend's own, here and in the snapshot alike. Each customization carries the decision this host keeps for the folder the session works in, and the one for every session. A decision made in one session therefore reaches a session that has decided nothing. A customization kept off there is said to the backend as well, when that backend reports what it found for itself. |
@@ -248,47 +248,47 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/mcpServerStateChanged` | host | ✅ | The protocol's words, not the SDK's: `ready`, `stopped`, `error`, `authRequired`, `starting`. Each kind carries different required fields, and only the last two carry any. |
 | `session/mcpServerStartRequested` | both | ✅ | Said back with the client's origin, which answers it, and followed by `session/mcpServerStateChanged` carrying the state the CLI reports once it has tried, the state the server was in included, as the protocol's guide has a host follow a start; a reconnect that throws is answered the same way. Also how a server nobody has signed into is signed into, because lifting the disabled flag alone brings it straight back needing one. A server a stop switched off has the CLI's disabled flag lifted before it reconnects. |
 | `session/mcpServerStopRequested` | both | ✅ | The CLI's own disabled flag stops the server, and the customization keeps the enablement it had, since a stop manages the process and leaves the enabled intent where it was. Said back with the client's origin, which answers it, and followed by the state the CLI reports whenever that is other than `stopped`, as after a toggle that throws. |
-| `session/mcpServerBackgroundRequested` | client | ✅ | A server starting with `blocking: true` holds a turn back until it is ready, and this asks for the turn to go on while the server keeps starting. A backend that takes the request says it, then the server's `session/mcpServerStateChanged` with `blocking: false`. No backend that ships here holds a turn on a starting server: the Claude CLI has no seam for it and reports no `blocking`. So the host answers the request from the state the server has. A server starting with `blocking: true` keeps it, and the host declines the request in the protocol's words, "MAY restore `blocking: true` via `session/mcpServerStateChanged` to reject the request": the request goes to every client of the session with its sender's origin, and the server's state follows it. On any other server the request changes nothing, and its sender alone is answered. A nested host carries it inside, where whether the server blocks is the inner session's own state, and the answer from inside reaches the client that sent it. |
-| `session/isReadChanged` | client | ✅ | This host's own bit, kept per session and never seen by a backend. It marks the session alone: each chat's read state is its own `chat/isReadChanged`, and in the protocol's words "neither action implies the other". This host sends it too, as the reference host does: a turn's end marks a read session unread, after the turn's chat, unless that chat is a tool's or hidden. So a worker's end, and a `!` command's, leave the session's bit as it is. |
+| `session/mcpServerBackgroundRequested` | client | ✅ | A server starting with `blocking: true` holds a turn back until it is ready, and this asks for the turn to go on while the server keeps starting. A backend that takes the request says it, then the server's `session/mcpServerStateChanged` with `blocking: false`. No backend that ships here holds a turn on a starting server: the Claude CLI has no seam for it and reports no `blocking`. So the host answers the request from the state the server has. A server starting with `blocking: true` keeps it, and the host declines the request in the protocol's words, "MAY restore `blocking: true` via `session/mcpServerStateChanged` to reject the request": the request goes to every client of the session with its sender's origin, and the server's state follows it. On any other server the request changes nothing, and goes to every client of the session alone. A nested host carries it inside, where whether the server blocks is the inner session's own state, and the answer from inside reaches the client that sent it. |
+| `session/isReadChanged` | client | ✅ | This host's own bit, kept per session and never seen by a backend, and moved with its chats' bits as the reference host moves them. The chats it is made of are the session's open chats but a tool's and a hidden one. A session marked read while one of two or more of those chats is unread stays unread, and the client's own action goes out saying so. A session of one such chat takes that chat to its new bit, read or unread, with this host's `chat/isReadChanged` after the session's action. The protocol's text keeps the two apart ("neither action implies the other"), and VS Code's host couples them, which is the behavior this host follows. This host sends it too: a turn's end marks a read session unread, after the turn's chat, unless that chat is a tool's or hidden, so a worker's end, and a `!` command's, leave the session's bit as it is; and a chat's read action moves it, as `chat/isReadChanged` says. |
 | `session/isArchivedChanged` | client | ✅ | The same, and the reason a row with no agent running still has a status to report. The session's default chat carries the bit as well, since the protocol makes archiving that chat the same act: a session archived or restored, by a client or by this host, says `chat/isArchivedChanged` on its default chat to every client of the chat, and the bit is projected into the chat's `ChatSummary.status` and `SessionChatSummary.status`. |
 | `session/activityChanged` | host | ✅ | What the session is doing in one line, taken from whichever chat is driving it. Absent means idle, which is a field left off rather than an empty string. |
 | `session/changesetsChanged` | host | ✅ | The catalogue of changesets a client may subscribe to. A template with no variables is the whole scope; the `{turnId}` ones are not served. |
-| `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
+| `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. One answer for the action: every key as the session took it, a key the backend took under keys of its own as those keys, or one refusal in the backend's own words, with each key taken before it put back. Sent on a chat's channel, it is answered on that channel. |
 | `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
 
 ### `chat/*` — 35 of 35
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `chat/turnStarted` | both | ✅ | A client starts a turn; this host also starts one when a queued message is taken up, and then carries `queuedMessageId` so the client can retire its own row. A `!` command a client sends as a turn while another turn runs waits as a queued message under the turn's id, and the `chat/pendingMessageSet` that holds it carries the client's origin - [TERMINALS.md](TERMINALS.md#who-opens-one). A Claude turn opened for a steering message that a stopped or failed turn left with the CLI, and a cofold turn opened for one its run never read, carry the steering message's id the same way, as AHP 1.1.0 shows a steering message taken in by a turn of its own - [CHATS.md](CHATS.md#turns). A cofold session still reading the conversation it resumes, forks or rewinds holds the turns it is handed until it has read it, and refuses one that then finds a turn running, the one that opened before it or a paused run the resume reopened, with "A turn is running in this chat", the host's own words for a chat with an active turn. Carries `_meta['ahpd.sender']` - the typed reference naming who asked, `user:<id>` for somebody who signed in and `root:<host>` for a turn the deployment's own token started - and only where the host was given a users directory. A host with none has no person to name, and sends the action as the protocol has it. |
+| `chat/turnStarted` | both | ✅ | A client starts a turn; this host also starts one when a queued message is taken up, and then carries `queuedMessageId` so the client can retire its own row. A turn a client sends while another turn runs is refused, a `!` command's as much as a question's; a message that waits its turn is a queued `chat/pendingMessageSet` - [TERMINALS.md](TERMINALS.md#who-opens-one). The start a client is answered with is its own action, the start time and the message it sent, with the backend's word only for a field it left out. A Claude turn opened for a steering message that a stopped or failed turn left with the CLI, and a cofold turn opened for one its run never read, carry the steering message's id the same way, as AHP 1.1.0 shows a steering message taken in by a turn of its own - [CHATS.md](CHATS.md#turns). A cofold session still reading the conversation it resumes, forks or rewinds holds the turns it is handed until it has read it, and refuses one that then finds a turn running, the one that opened before it or a paused run the resume reopened, with "A turn is running in this chat", the host's own words for a chat with an active turn. Carries `_meta['ahpd.sender']` - the typed reference naming who asked, `user:<id>` for somebody who signed in and `root:<host>` for a turn the deployment's own token started - and only where the host was given a users directory. A host with none has no person to name, and sends the action as the protocol has it. |
 | `chat/delta` | host | ✅ | Appends to a `markdown` part. The part is opened first, always - a delta naming a part nobody opened is text the client has nowhere to put. |
 | `chat/responsePart` | host | ✅ | Opens a part. Also how a complete block arrives when it did not stream. |
 | `chat/toolCallStart` | host | ✅ | As soon as the model names the tool, before its arguments exist. Carries a `ToolCallMcpContributor` for anything named `mcp__<server>__<tool>`, and `_meta.toolKind` - `terminal`, `read`, `search`, `subagent` - from the harness's own tool names: not protocol, but the one key the reference client routes a row's renderer by, and without it every call is a name in a box. A tool with no kind here carries no `_meta` rather than a guess. The same hint is on the call in a snapshot and on one read back from a transcript. A `Task` or `Agent` call also carries the reference's `subagentDescription` and `subagentAgentName` from its input, and `subagentChatUri`, the worker chat's URI, which the host stamps on every call whose kind is `subagent`, on the wire and in a snapshot. |
 | `chat/toolCallDelta` | host | ✅ | Appends the arguments' JSON to `partialInput` as it arrives, so a row is drawn while the call is still being written rather than after. |
 | `chat/toolCallReady` | host | ✅ | Closes a streaming call with the parsed input. `confirmed: not-needed` unless `canUseTool` actually asked - without it the reducer draws every call in the transcript as a question nobody put. A Claude `Write`, `Edit` or `MultiEdit` waiting for approval also carries `edits`: one `FileEdit` whose `before` is the file as it is and whose `after` content the host serves under `ahp-edit://pending/...` until the call is settled, so the diff is drawn before the person decides. No `diff` counts, because the SDK sends no unified diff to count, and none of it holds the confirmation back. |
 | `chat/toolCallConfirmed` | both | ✅ | A client answering; and this host saying what was answered, for the other clients watching. |
-| `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. From a client too, for a tool that client provides: that is what unblocks the agent, and only the client the call was reported against may send one. The result goes back to the harness, the harness writes the tool result, and the completion everybody sees comes off that, the same path every other call takes; it carries the origin of the client that gave the result, which is that client's answer. A Claude `Bash` result too large to send carries a `terminal` block after its text, which is the notice Claude gave the model: the terminal this host rebuilds, exited, from the output Claude saved, `isPty: false`, with Claude's preview and `truncated: true`, as the reference's Claude agent does. The call read back from Claude's transcript carries it again while the output is kept - [TERMINALS.md](TERMINALS.md#a-terminal-a-tool-result-names). |
+| `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. From a client too, for a tool that client provides: that is what unblocks the agent, and only the client the call was reported against may send one. Once the backend takes it, the client's own result is said to every client of the chat with that client's origin, and the result goes on to the harness; what the harness says of the call afterwards is not said again. A Claude `Bash` result too large to send carries a `terminal` block after its text, which is the notice Claude gave the model: the terminal this host rebuilds, exited, from the output Claude saved, `isPty: false`, with Claude's preview and `truncated: true`, as the reference's Claude agent does. The call read back from Claude's transcript carries it again while the output is kept - [TERMINALS.md](TERMINALS.md#a-terminal-a-tool-result-names). |
 | `chat/toolCallResultConfirmed` | client | 🚫 | Refused, and genuinely inapplicable rather than unwritten: it belongs to a call completed with `requiresResultConfirmation`, the SDK's only approval moment is `canUseTool` *before* a tool runs, and there is no after-the-fact gate to reflect. A host could invent a policy of its own here; that would be this host asking a question the backend never asked. |
-| `chat/toolCallContentChanged` | both | ✅ | Streaming into a call while it runs, which is the *contributor's* to do. Relayed rather than reduced: what a tool prints as it runs is the running client's to say and this host holds none of it. Refused from anyone but the client named in the call's `ToolCallClientContributor`, and for a call no client is running - a call of the agent's own has no contributor to be. From this host too, for a running subagent: the harness's `task_progress` line goes out as `_meta.progressMessage` - the reference client's key for a line on a running row - never into `content`, which is what the tool answered and not what it was doing on the way. The same line twice is said once, and the completion takes it off again. And for a `!` command, the terminal it runs in, as soon as the terminal opens and with no `_meta`, so a client watches the output arrive, as the reference host names its own: the terminal is what the call shows, and the completion names it again - [TERMINALS.md](TERMINALS.md#who-opens-one). |
+| `chat/toolCallContentChanged` | both | ✅ | Streaming into a call while it runs, which is the *contributor's* to do. What a tool prints as it runs is the running client's to say: it goes to every client of the chat with that client's origin, and the chat's held state folds it into the call, so a client that subscribes afterwards is served it. Refused from anyone but the client named in the call's `ToolCallClientContributor`, and for a call no client is running - a call of the agent's own has no contributor to be. From this host too, for a running subagent: the harness's `task_progress` line goes out as `_meta.progressMessage` - the reference client's key for a line on a running row - never into `content`, which is what the tool answered and not what it was doing on the way. The same line twice is said once, and the completion takes it off again. And for a `!` command, the terminal it runs in, as soon as the terminal opens and with no `_meta`, so a client watches the output arrive, as the reference host names its own: the terminal is what the call shows, and the completion names it again - [TERMINALS.md](TERMINALS.md#who-opens-one). |
 | `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
 | `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
 | `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
-| `chat/turnCancelled` | both | ✅ | Also carries a required `duration` - a missing number here is `NaN`, which throws inside the reducer rather than drawing anything. A stop on a chat that runs no turn is refused, as the protocol's validation table has a server refuse it; a session asleep in the catalogue runs none, and stays asleep. A stop that names no turn stops the running one, and the backend is handed that turn's id. |
+| `chat/turnCancelled` | both | ✅ | Also carries a required `duration` - a missing number here is `NaN`, which throws inside the reducer rather than drawing anything. A stop of no running turn stops nothing and goes to every client of the chat as the client's own action, which the reducer leaves as nothing, as VS Code's host takes it ("Ignoring cancellation of an inactive turn"): a stop on a chat that runs no turn, a stop that names a turn other than the running one, a worker's chat included, and a stop on a session asleep in the catalogue, which runs none and stays asleep. The protocol's validation table has a server refuse a stop with no active turn. A stop of the running turn is said to every client when it is taken, so the turn ends in their state at once, and the backend is then told; what the backend says of that turn afterwards is not said again, as the reference host ends the turn and then aborts the agent. An action a client sends on the chat before the backend has let the stopped turn go is sent to an idle chat, and is applied once the backend says that turn's end: a turn is begun and answered by its own start, and a queued message runs. A stop that names no turn stops the running one, and is said and handed to the backend under that turn's id. |
 | `chat/error` | host | ✅ | The ending, not a message beside one: it carries the `turnId` and the duration the completion would have. |
 | `chat/turnResume` | client | ✅ | The protocol's conditions - latest, errored, message and parts intact - are the backend's to check, because only it knows what its last turn was. A backend that cannot re-run one says so rather than being asked to. pi continues from the model call that failed, so the tools the turn already ran are not run again, and it marks a failed model call `resumable` on the turn's error part, also on the last turn read back from its file. Claude cuts the conversation back to the end of the turn before, with `resumeSessionAt`, and sends the prompt again; a conversation whose first turn failed is deleted and started over under its id. The calls the failed turn ran are run again, because the cut drops them with the prompt. It marks a failed model call `resumable` only when there is a turn to cut back to, so a turn refused before the CLI, a CLI that is gone and a refused login carry none. Cofold cuts its store through the last message of the turn before, with `sessions.truncate`, and runs the prompt again under the turn's own message id; a conversation whose first turn failed has its session deleted, and `run()` makes it again on the same workspace. The calls the failed turn ran are run again. It marks a failed run `resumable` unless the run never started (`start_failed`) and when the turn before has a point this process watched run, or there is no turn before. |
 | `chat/activityChanged` | host | ✅ | What this chat is doing, in the tool's own words while one runs. Sent with no `activity` to clear it. |
-| `chat/isReadChanged` | client | ✅ | Marks one chat read or unread, and only that chat: the session's own read state is `session/isReadChanged`, and a sibling chat's is its own. The bit is kept per chat, so a chat comes back read when a client opens it again, and it survives a restart. It is projected into the chat's `ChatSummary.status` and into its `SessionChatSummary.status`, which is what the protocol asks a host to synchronize. Setting what is already set is answered to its sender only. This host marks a chat unread too: as a turn starts, which is where a client's reducer clears the bit, and as a turn ends, as the reference host does, a worker's chat included. A `!` command's turn ends with the bit its chat had when it started, since the person watched it run. |
-| `chat/isArchivedChanged` | client | ✅ | Archives one chat, or restores it. The bit is kept per chat and goes out to every client of the chat, the sender's copy carrying its origin, and it is projected into the chat's `ChatSummary.status` and its `SessionChatSummary.status`, as the read bit is. On the session's default chat it archives or restores the session as well, since the protocol makes the two "equivalent": `session/isArchivedChanged` follows on the session channel as this host's action. A chat archived on its own is marked read too, since nobody comes back to a chat filed away for what is new in it. Setting what is already set is answered to its sender only. |
-| `chat/workingDirectorySet` | client | ✅ | A chat may hold any subset of its session's directories and never more, so a folder outside that set is refused. The change starts that one chat again, resumed. A folder the chat holds already is answered to its sender alone. |
-| `chat/workingDirectoryRemoved` | client | ✅ | The primary cannot be removed, for the reason the session's cannot: it is where the process is rooted. A folder the chat does not hold is answered to its sender alone. |
+| `chat/isReadChanged` | client | ✅ | Marks one chat read or unread, and moves its session's read bit after it as the reference host does: a chat of the session's read state, which every open chat is but a tool's and a hidden one, marked unread marks a read session unread, and the last of them read marks an unread session read, with this host's own `session/isReadChanged`. A chat that was read already and has a sibling moves nothing of the session's, and a sibling chat's bit is its own. The bit is kept per chat, so a chat comes back read when a client opens it again, and it survives a restart. It is projected into the chat's `ChatSummary.status` and into its `SessionChatSummary.status`, which is what the protocol asks a host to synchronize. Setting what is already set moves nothing and goes to every client of the chat. This host marks a chat unread too: as a turn starts, which is where a client's reducer clears the bit, and as a turn ends, as the reference host does, a worker's chat included. A `!` command's turn ends with the bit its chat had when it started, since the person watched it run. |
+| `chat/isArchivedChanged` | client | ✅ | Archives one chat, or restores it. The bit is kept per chat and goes out to every client of the chat, the sender's copy carrying its origin, and it is projected into the chat's `ChatSummary.status` and its `SessionChatSummary.status`, as the read bit is. On the session's default chat it archives or restores the session as well, since the protocol makes the two "equivalent": `session/isArchivedChanged` follows on the session channel as this host's action. A chat archived on its own is marked read too, since nobody comes back to a chat filed away for what is new in it, and that read moves its session as any chat's read does. Setting what is already set moves nothing and goes to every client of the chat. |
+| `chat/workingDirectorySet` | client | ✅ | A chat may hold any subset of its session's directories and never more, so a folder outside that set is refused. The change starts that one chat again, resumed. A folder the chat holds already starts nothing and goes to every client of the chat. |
+| `chat/workingDirectoryRemoved` | client | ✅ | The primary cannot be removed, for the reason the session's cannot: it is where the process is rooted. A folder the chat does not hold starts nothing and goes to every client of the chat. |
 | `chat/usage` | host | ✅ | Tokens and the model that spent them, at the end of the turn. What the protocol names no field for rides `_meta` where a backend reports it: `ahpd.cacheWriteTokens`, `ahpd.reasoningTokens`, `ahpd.context` (`{ used, size }`) and `ahpd.cost` (`{ amount, currency }`, never the reference host's bare number). |
 | `chat/reasoning` | host | ✅ | Appends to a `reasoning` part. Defined against that kind specifically - the canonical reducer returns the state unchanged for a `chat/delta` naming one, which draws a thinking header with nothing under it. |
-| `chat/pendingMessageSet` | both | ✅ | Both kinds: a `queued` message waits for the running turn, a `steering` one goes into it - the prompt handed to the CLI is a generator that stays open for the life of the session. A steering message is said back as the chat's steering message as the backend takes it, which answers the client that sent it, and taken out as the agent reads it - [CHATS.md](CHATS.md#turns). A steering message Claude's CLI answers after the turn's last answer is answered in that turn, which stays open for it, and reads back there after a restart - [CHATS.md](CHATS.md#turns). |
-| `chat/pendingMessageRemoved` | both | ✅ | When the client withdraws one, and when this host takes one up into a turn. A removal of a message the chat does not hold, matched on its id and its kind, is refused. |
+| `chat/pendingMessageSet` | both | ✅ | Both kinds: a `queued` message waits for the running turn, a `steering` one goes into it - the prompt handed to the CLI is a generator that stays open for the life of the session. A steering message is said back as the chat's steering message as the backend takes it, which answers the client that sent it, and taken out as the agent reads it - [CHATS.md](CHATS.md#turns). A steering message Claude's CLI answers after the turn's last answer is answered in that turn, which stays open for it, and reads back there after a restart - [CHATS.md](CHATS.md#turns). A steering message sent with no turn running is answered and runs as a turn of its own, named by its `queuedMessageId`, as VS Code's host runs steering that came too late to steer a turn; the protocol's text has a host store it until a turn starts. The steering message a running turn holds, sent again under its id, is answered and not handed to the agent twice when it is the same message, and refused with "Cannot change a steering message while it is being processed." when it is another, as AHP 1.1.0 has a host reject an edit it can no longer honor. |
+| `chat/pendingMessageRemoved` | both | ✅ | When the client withdraws one, and when this host takes one up into a turn. A removal of a message the chat does not hold, matched on its id and its kind, is refused. A steering message is taken back while the agent has not been handed it; one the agent holds while a turn runs is refused with "Cannot change a steering message while it is being processed.", the reference host's words, as AHP 1.1.0 has a host reject a removal it can no longer honor - [CHATS.md](CHATS.md#turns). |
 | `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
-| `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. The draft the chat already holds is answered to its sender alone. |
+| `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. The draft the chat already holds goes to every client of the chat and is not handed to the backend again. |
 | `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
-| `chat/inputAnswerChanged` | client | ✅ | One question of an open request, as somebody types the answer. Held on the request this host already keeps open and echoed to everyone watching the chat, for the reason `chat/draftChanged` is: two people answering one elicitation are answering one form. Kept on the request rather than beside it, so a client that arrives mid-question reads what is already filled in from `session.inputNeeded` - and so `chat/inputCompleted` carrying no answers of its own is completed with what was synced, which the protocol says is where they are. |
+| `chat/inputAnswerChanged` | client | ✅ | One question of an open request, as somebody types the answer. Held on the request this host already keeps open and echoed to everyone watching the chat, for the reason `chat/draftChanged` is: two people answering one elicitation are answering one form. Kept on the request rather than beside it, so a client that arrives mid-question reads what is already filled in from `session.inputNeeded` - and so `chat/inputCompleted` carrying no answers of its own is completed with what was synced, which the protocol says is where they are. Taken on a worker's chat too, and for a backend that keeps no drafts, whose clients then hold the draft the host says. A draft or submitted answer whose value lacks the payload its kind names is refused, and so is an acceptance that leaves a required question with no answer, synced or carried, as the protocol's validation table asks. |
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
 | `chat/truncated` | client | ✅ | Drops the turns after a named one - the edit-and-resend flow, and nothing to do with the harness compacting its own context. Served as a rewind, because dropping them from the screen alone would leave the agent answering the message that was edited away: the CLI is started again resumed at the kept turn's *last* chain entry, the turns up to there are handed over as the seed, and the session id is kept so a later resume reaches the truncated conversation rather than the one this dropped. A turn whose backend names no rewind point for it, one read back by a backend that names points only for the turns it watches run, is refused rather than half-done; the Claude backend names the end of each turn it reads back. The action's `turnId` is optional, meaning "clear everything", which as a rewind is a cut before the first prompt and names no entry at all; that form starts the chat over instead, as VS Code's agent host does: the backend stops, its conversation is deleted through the backend's `delete`, and a new one starts for the same chat with nothing to resume. A backend with no `delete` cannot forget the conversation, and is refused. Compaction *is* handled and is a different thing: the harness announces it as `compact_boundary`, and this host turns it into a `systemNotification` response part saying how many tokens went where - the turns it compacted are all still in the transcript, so dropping them would be untrue. |
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. The action declares no `_meta` of its own, so who sent each turn rides on the turn's message - `turn.message._meta['ahpd.sender']` - and a page of older turns reads the same as the tail window that came before it. |
@@ -320,10 +320,10 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
 | `terminal/data` | host | ✅ | Every byte the shell wrote except its OSC 133 and OSC 7 marks, which the protocol keeps out of the output, and the same bytes are kept as scrollback so a client subscribing late sees what happened. Capped, because a terminal left running `tail -f` is a host holding a day of output for a client that may never come back. |
-| `terminal/input` | client | ✅ | Under pipes a `^C` is turned into a signal to the process group, the work a line discipline does under a pseudoterminal, where the byte is written through. Side-effect only, so it is answered to its sender alone; input to a shell that has exited, or to a command's output terminal, has no process to reach and is refused. |
+| `terminal/input` | client | ✅ | Under pipes a `^C` is turned into a signal to the process group, the work a line discipline does under a pseudoterminal, where the byte is written through. Side-effect only and still a terminal action, so it goes to every client of the terminal and is held for replay, as [Every accepted action](#every-accepted-action-goes-to-every-client-of-its-channel) says. Input to a shell that has exited, or to a command's output terminal, goes out too and reaches no process, as [VS Code's host](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527) writes input only to a running process. |
 | `terminal/resized` | both | ✅ | A pseudoterminal is told and sends `SIGWINCH` itself. Without one, a command's output terminal included, the size is kept because the state reports it and a client draws to it. |
 | `terminal/claimed` | both | ✅ | Who the terminal belongs to: a client, or a session that opened it for a `!` command. A claim that names neither is refused. |
-| `terminal/titleChanged` | both | ✅ | Set by a client, or defaulted to the shell's own name. The title it already has is answered to its sender alone. |
+| `terminal/titleChanged` | both | ✅ | Set by a client, or defaulted to the shell's own name. The title it already has moves nothing and goes to every client of the terminal. |
 | `terminal/cwdChanged` | host | ✅ | Read out of the shell's own OSC 7, so it is a fact rather than a guess. Under a pseudoterminal only. |
 | `terminal/exited` | host | ✅ | Announced when the pipes drain rather than when the process goes: between the two there is output written and not yet read, which is exactly what a `!` command reads back. A terminal a tool call names is still a channel once nothing live answers for it: a subscribe gets the exited state rebuilt from the output this host kept, and nothing after it - [TERMINALS.md](TERMINALS.md#a-terminal-a-tool-result-names). |
 | `terminal/cleared` | both | ✅ | Drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up. Nothing reaches the process, which has no notion of its own output being discarded. |
@@ -364,10 +364,10 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `automation/createRequested` | client | ✅ | A request, not a fact: what goes back is `automation/set` saying what this host actually holds, which is not an echo of what was asked for. `disableConditions` is checked before the store is asked: a kind named twice, a condition that is neither of the two kinds, an `afterRuns` whose `max` is not a whole number of one or more, and an `afterDate` that is not a timestamp are each refused with the reason. A template whose `session.customizations` is a non-empty list is copied while the client that named it is still connected, when this host has a directory to copy client plugins into, and the copies go on the entry; a host with none refuses it rather than keeping a definition whose every run loads nothing. A list is refused before the store is asked when a plugin in it names no id, names an id another in the same list names, or names no URI. |
+| `automation/createRequested` | client | ✅ | A request: what follows it is `automation/set` saying what this host actually holds, and then the request itself, the client's answer, which reduces to nothing. `disableConditions` is checked before the store is asked: a kind named twice, a condition that is neither of the two kinds, an `afterRuns` whose `max` is not a whole number of one or more, and an `afterDate` that is not a timestamp are each refused with the reason. A template whose `session.customizations` is a non-empty list is copied while the client that named it is still connected, when this host has a directory to copy client plugins into, and the copies go on the entry; a host with none refuses it rather than keeping a definition whose every run loads nothing. A list is refused before the store is asked when a plugin in it names no id, names an id another in the same list names, or names no URI. |
 | `automation/updateRequested` | client | ✅ | A patch. Absent keys are left alone, so one client does not revert another. A patch that names `disableConditions` is held to the same rules a create is, and one that names none is a patch about something else. A patch that names `session.customizations` is held to the same rules a create is: the copies it names are made and a list it cannot honour refuses the patch whole, an empty list says the template has no plugins and drops the copies it had, and a patch that says nothing about them leaves them where they are. |
-| `automation/set` | host | ✅ | The answer to both requests, and how a store with a clock announces one that fired on its own. |
-| `automation/removed` | both | ✅ | Refused when the catalogue says `remove` is not among the operations, rather than done anyway. |
+| `automation/set` | host | ✅ | What this host holds after either request, each request answered by itself after it, and how a store with a clock announces one that fired on its own. |
+| `automation/removed` | both | ✅ | Refused when the catalogue says `remove` is not among the operations. A removal of an automation the store does not hold is the protocol's idempotent no-op, and comes back to every client of the catalogue as it was sent. |
 
 ### `automationRun/*` — 5 of 5 🧩
 
@@ -401,16 +401,26 @@ nothing.
 
 ### What a refusal is
 
-Anything dispatched that this host will not act on is **refused**, not dropped:
-an envelope carrying `rejectionReason` goes back to the connection that sent it,
-naming the action and saying what would not have it. A client applies an action
-before sending it, so a host that stayed silent left that client holding a
-change this host never made.
+Anything dispatched that this host will not act on is **refused**: an envelope
+carrying `rejectionReason` names the action and says what would not have it. A
+client applies an action before sending it, and the refusal is what tells it to
+put its own state back. The one action dropped is a session's read or archive
+toggle naming a session this host does not know, which no client holds pending:
+see [an action naming nothing here](#an-action-naming-nothing-here).
 
-A refusal moves no `serverSeq` and is not buffered for replay, because it moves
-no state; and it goes to the one connection that dispatched it rather than to
-everyone watching, because nobody else applied it optimistically and a client
-that reduced one would apply the very change this host declined to make.
+A refusal is an action envelope like any other. It takes the next `serverSeq`,
+is held for replay, and goes to every client subscribed to the channel the
+action was sent on, as the
+[specification](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143)
+sends an action and as the reference host records and broadcasts a rejection.
+The client that sent it is told even where it watches no such channel. No state
+takes a refusal: the client that sent the action drops it from what it holds
+pending, and the others hold nothing of it.
+
+A refusal reaches only who the accepted action would reach. A request on
+`ahp-automations://?owner=me` goes to its sender and its owner, as its echo
+does. A refusal to a client the gate has not passed goes to that client alone
+and is not held for replay, since that client may not write to the channel.
 
 ## Behaviour worth knowing
 
@@ -464,7 +474,7 @@ down to 1 MiB and no further, and pushing one needs `config:write`
 | a part exists before it streams | `chat/responsePart` creates it, `chat/delta` appends to it |
 | the append action follows the part | `chat/delta` is defined against a *markdown* part and `chat/reasoning` against a *reasoning* one, and the canonical reducer returns the part unchanged when they do not match. Thinking sent as a `chat/delta` opens a part and never fills it |
 | one action ends a turn | `chat/turnComplete` when it worked, `chat/error` when it did not - and `chat/error` *is* the ending, carrying `turnId`, a required `duration` and the error part it appends. Both `chat/turnComplete` and `chat/turnCancelled` carry a required `duration` too: a client clamps it with `Math.max(0, duration)`, so an absent one is `NaN` rather than a missing number and throws inside the reducer |
-| `serverSeq` moves with state | never with messages. A snapshot is taken at a sequence number and every action after it carries a greater one, which is how a client knows it missed nothing |
+| `serverSeq` moves with every envelope | a refusal included. A snapshot is taken at a sequence number and every action after it carries a greater one, which is how a client knows it missed nothing |
 
 ### Tool calls
 
@@ -584,77 +594,92 @@ the CLI's shell tool is bash everywhere; an empty list clears the file.
 
 ### Chat URIs
 
-A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, and the
-older `ahp-chat:/<sessionId>` still resolves to the same chat.
+A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, the
+shape VS Code's host builds and an older VS Code window computes from the
+session. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
+chat by that one URI, so a client that computed it and a client that read it
+hold the same string.
 
-That is the reference implementation's shape rather than the one the
-specification illustrates, and it is a deliberate retreat. The specification
-documents `ahp-chat:/<uuid>` and says the owning session is "**not** encoded in
-the chat URI - the relationship is expressed via the session's `chats`
-catalogue". This host published exactly that. VS Code's client computes the
-other shape from the session rather than reading the catalogue, so it subscribed
-to a channel that did not exist while the conversation sat on the one it had
-been told about, and its pane stayed empty against a host that was working.
+That URI is the session's chat while the session records no other default
+chat, or records that one, as VS Code's host gives a derived default chat an
+owner only while the session's record agrees
+([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
 
-Answering *both* was tried first and is not enough. The disagreement is not only
-about which channel to open: `defaultChat`, every entry in `chats`, and
-`ChatState.resource` name a chat too, and a client that subscribed to one string
-and is then told the chat is at another cannot pair them up. One name has to win
-everywhere, and it has to be the one the only other implementation computes.
-
-`default` is a **role**, not an identity: it means whichever chat a client gets
-when it names none. Dispose that chat and the name follows the default to its
-successor. A second chat is named by whoever created it and is not derived from
-anything.
+`default` is a **role**: it means whichever chat a client gets when it names
+none. Dispose that chat and the role moves to another chat of the session, under
+that chat's own URI, and the disposed chat's URI names nothing. A second chat is
+named by whoever created it, and `ahp-chat:/<id>` is a chat of that URI and of
+no session `<id>`. A chat moved to another session keeps its URI
+([chat-channel.md#L203-L204](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L203-L204)).
 
 ### Session URIs
 
 The protocol names a session `ahp-session:/<uuid>`, and keeps its provider on
-`SessionSummary.provider` rather than in the URI. This host therefore names
-every session it makes `ahp-session:/<uuid>`.
+`SessionSummary.provider`. This host names every session it makes
+`ahp-session:/<uuid>`, as VS Code's host does since commit `bd64649be19`, with
+the one exception below.
 
-VS Code did the same on 2026-10-05, in commit `bd64649be19` ("Use proper
-ahp-session: scheme URIs for new AH sessions"). Its older reading of the scheme
-is now a fallback that returns nothing for `ahp-session`. The reason this host
-used `<provider>:/<uuid>` is gone, and that name disagreed with the protocol.
+A session is held under one URI, and answered under that URI alone, for every
+client, as VS Code's host keys a session by the URI a client sends
+([agentService.ts#L11472-L11490](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490)):
 
-A session that already exists keeps the `<provider>:/<uuid>` name it has, as
-VS Code keeps its legacy names. The host stores each session's URI in its row,
-so a name survives a restart. A session listed from a backend's disk that this
-host never made is `ahp-session:/<id>`.
+- A session a client creates is held under the channel it named:
+  `ahp-session:/<uuid>`, `<provider>:/<uuid>`, or a scheme of the client's own
+  ([protocolServerHandler.ts#L2213-L2221](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221)).
+- A session that already exists keeps the `<provider>:/<uuid>` name it has. The
+  host stores each session's URI in its row, so a name survives a restart, and a
+  row a client marks or configures keeps the name it was listed by.
+- A session listed from a backend's disk that this host keeps no record of is
+  `ahp-session:/<id>`, whether a listing or a lookup by id found it.
+- A session an agent's tool makes during a turn an older VS Code window sent is
+  `<provider>:/<uuid>`, so that window can address it
+  ([agentService.ts#L10074-L10108](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108)).
 
-A session URI is the **client's** to name and this host's to echo, and only the
-id inside one is ever read. A client may still create a session on
-`<provider>:/<uuid>`, and that session keeps that URI as its name. Any other
-spelling is an alias.
-
-Both are also *keyed* as one now. They were not: who owns a session, where it
-ran, the bits a client set on it and the settings chosen for it before it starts
-were all stored under the catalogue's name, and a lookup under the client's name
-found nothing - a row marked read that came back unread, and a browsed session
-that could not be continued because no backend owned a name nobody had stored.
-
-And a session answered under an alias has **every** URI in it spelled from that
-alias, because a chat URI and a changeset URI both contain a session URI. Told
-otherwise, a client subscribes to the chat it computed, reads a `defaultChat`
-naming another, and cannot pair the two: it holds a subscription nothing refers
-to and a reference nothing is subscribed to, and draws an empty conversation
-with no error.
-
-A `changesets` template is the subtler half of that, and it is how the held
-spelling escaped. A client resolves a changeset channel back to the session
-that owns it, so a template naming `ahp-session:/x` teaches a client that asked
-about `claude:/x` a second name for the same session - and it then addresses
-the session, its chat and its annotations under that one. Which name the
-conversation ends up keyed by is whichever subscription happened to land
-first, so it drew sometimes and not others.
+The id inside a session's URI keys what the store holds of the session, and is
+read only from the URI the session is held under. A URI no session is held under
+is no session here, whatever id it carries: a subscribe to it answers `-32001`
+([agentService.ts#L14083](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083)).
+A read or archive flag or a mark dispatched on it is dropped with nothing said,
+as the protocol has a server ignore an action naming a session that does not
+exist
+([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)).
+So is a config change, a draft or a turn under another spelling of a session
+held here, or of a chat of one
+([chat-channel.md#L351](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351)):
+a VS Code window dispatches only on the URIs this host gave it, so none sends
+one. Under a URI whose id no session here carries, a config change, a draft or
+a turn is refused as one for a session nobody has is. Nothing of any session
+changes.
 
 A session a client creates is stored under the id the client chose, by naming
-it to the backend. Left to itself the backend invents an id and writes the
-transcript under that, so while this daemon ran it answered to both names and
-the moment it restarted the client's own URI was dead - `No agent for session`,
-about a session that was still there. Only where the client named a UUID, which
-is what the backend will take.
+it to the backend, so the backend writes its transcript under that id and the
+session's URI opens it after a restart. Only where the client named a UUID,
+which is what the backend will take.
+
+### An older VS Code window
+
+A VS Code window names itself `vscode-editor-window` or `vscode-agents-window`
+in `clientInfo`. One that does not declare `vscode.ahpSessionUris` in the
+`_meta` of `initialize` cannot address an `ahp-session:` session, and one that
+does not declare `vscode.ahpChatUris` cannot address an opaque chat. This host
+reads both at `initialize`, and at `reconnect` from the name given at
+`initialize` and the reconnect's own `_meta`, as VS Code's host does
+([protocolServerHandler.ts#L1054-L1055](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055),
+[#L1350-L1351](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351)).
+Such a window is shown what it can address
+([protocolServerHandler.ts#L4326-L4355](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4326-L4355)):
+
+- A window without `vscode.ahpSessionUris` is listed no `ahp-session:` session,
+  told nothing of one in the root, and refused one as a subscription with
+  `-32001`. One in its first subscriptions is left out, and at `reconnect` it is
+  reported missing.
+- A window without `vscode.ahpChatUris` sees only the shaped chats that name
+  their session, in a snapshot's `chats` and in the chat list actions, and no
+  session whose default chat is another.
+- Neither receives an envelope on a channel it may not see, and a move of a chat
+  to a session it may not see is refused as a session not found.
+
+Every other client sees every session and every chat.
 
 ### A slash command is a message
 
@@ -726,66 +751,53 @@ counts and the model on every assistant frame.
 This matters more than it looks: every session a client opens after this daemon
 restarts is a rebuilt one.
 
-### An action that changes nothing is not a change
+### Every accepted action goes to every client of its channel
 
-`serverSeq` advances with **state** and never with messages, so a dispatch
-saying what this host already held is answered with silence rather than an
-echo. `session/activeClientSet` once did not do this, and the omission was a
-loop: a client reconciles what it contributes whenever the session state moves,
-this host's echo *is* the state moving, and so the echo was the change that
-prompted the next announcement. Three hundred
-round trips in a few seconds, a sequence number apiece.
+A client's action this host accepts is sequenced, applied to the channel's
+state and sent to every client subscribed to the channel, the sender's copy
+included, with the sender's `origin`. That is the protocol's order for a
+dispatch: "**Host sequences it** - assigns a `serverSeq`, applies it to the
+authoritative state, broadcasts the action envelope to all subscribed clients"
+([AHP and ACP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/ahp-and-acp.md#how-they-compose)),
+and "Session actions go to all clients subscribed to that session's URI", the
+same for root, chat and terminal actions
+([subscriptions](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md)).
 
-Silence is for the other clients; the sender is answered. A client applies its
-action as it sends it and holds it until this host answers to the `clientSeq`
-that action carried, so a sender told nothing is a sender holding a change
-nobody will ever confirm, until it reconnects. The action therefore comes back
-to that one client with its own `origin` and no `rejectionReason`, which is the
-answer that lets it drop what it holds. It comes back at the `serverSeq` this
-host is already at, and is not buffered for replay, so it is not state moving,
-not a reason for any other client to reconcile, and not the start of another
-loop.
+An action the reducer leaves as it was is one of them. A bit set to what it
+already is, a folder the set holds already, the draft the chat holds, a review
+of files already ticked, a cancel naming a turn other than the running one, a
+background request for a server that is not holding a turn back, the title a
+terminal has, and an active client set as the session holds it, each go out
+as the client sent them, at the next `serverSeq`, and move nothing. Nothing is
+started again for them and no backend is told. So does `terminal/input`, a
+side-effect-only action that is still a terminal action, and
+`automationRun/cancelRequested`, whose run's lifecycle follows it.
 
-Whether an action changes anything is the protocol's reducer's to say, on the
-sender's own state. The sender applies this host's answer to its confirmed
-state, as it applies every echo of its own action ("the server's echo is the
-source of truth",
-[reconciliation](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md)),
-so an action is answered to its sender alone only where the reducer leaves that
-state as it was. An action the reducer would apply goes to every client of the
-channel. A request the protocol has a host decline by restoring the state, as
-`session/mcpServerBackgroundRequested` is, goes to every client the same way,
-and the restored state follows it.
+Every client of a terminal is sent the input any client types into it, and a
+client that reconnects within the replay buffer is sent it again, as the
+[reference host](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4215-L4253)
+records and broadcasts it. That includes a password typed at a prompt that
+does not echo it. Every client reads what the input did in the `terminal/data`
+that follows.
 
-A cancel is the same case while the chat runs a turn. `chat/turnCancelled`
-naming another turn than the running one stops nothing, so it changes nothing,
-and its sender is answered as an unchanged set is. A cancel that names the
-running turn, or no turn, stops it, which is a change, and goes out to every
-client as one. A cancel on a chat that runs no turn is refused: the protocol's
+A client that announces itself whenever the session's state moves reads such
+an echo as the state moving. One that compares what it would send with the
+entry the state holds and with what it sent last, as
+[VS Code's session handler](https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253)
+does, sends its set once.
+
+A refusal goes to every client of its channel and is held for replay, except
+where [What a refusal is](#what-a-refusal-is) says otherwise. It takes the next `serverSeq`,
+because a client that has just subscribed holds a snapshot taken at the number
+this host was at, and "Subsequent actions will have `serverSeq > fromSeq`"
+([state](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357)).
+
+A request the protocol has a host decline by restoring the state, as
+`session/mcpServerBackgroundRequested` is on a server starting with
+`blocking: true`, goes to every client the same way, and the restored state
+follows it. A cancel on a chat that runs no turn is refused: the protocol's
 validation table has the server reject it
 ([chat channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md)).
-
-A flag is the same case too. `session/isReadChanged`,
-`session/isArchivedChanged`, `chat/isReadChanged` and `chat/isArchivedChanged`
-setting a bit to what it already is move nothing, so the catalogue does not
-move and the sender alone is answered.
-
-So is a working directory. A set of a folder the set holds already, a removal
-of one it does not hold, and a replacement of one it does not hold change
-nothing, on a session or on a chat, and the sender alone is answered. An action
-of these that names no folder is refused.
-
-A review is the same case. `changeset/filesReviewChanged` ticking files
-already ticked, or naming only files the changeset does not hold, moves
-nothing, and the sender alone is answered.
-
-A draft is the same case. `chat/draftChanged` naming the draft the chat
-already holds moves nothing, and the sender alone is answered, for a running
-chat and for one this host holds a draft for while nothing runs it.
-
-A background request is the same case. `session/mcpServerBackgroundRequested`
-moves nothing unless its server is starting with `blocking: true`, and on any
-other server the sender alone is answered.
 
 ### The snapshot and the actions have to agree
 
@@ -807,7 +819,7 @@ catalogue's row.
 | --- | --- |
 | past sessions | every catalogue row opens from its transcript - a file read, no CLI - and is resumed only when somebody starts a turn on it |
 | capabilities | models, skills, slash commands, subagents and MCP servers are read from the CLI's *control* protocol at startup, so they are known before any turn. A composer that waited for the first session could only offer them once the conversation had started |
-| skills | told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash. A skill's argument hint is `_meta['ahpd.argumentHint']`, because `SkillCustomization` declares none, and reaches the slash menu as the completion item's `argumentHint` |
+| skills | told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash. A skill's or a prompt's argument hint is `_meta['ahpd.argumentHint']`, because neither `SkillCustomization` nor `PromptCustomization` declares one, and reaches the slash menu as the completion item's `argumentHint` |
 | toggling a skill or prompt | refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | toggling a plugin | through the CLI's `enabledPlugins`, then read back. A session switch stays where the client put it, which the host keeps by id, because `reloadPlugins` answers only the plugins the CLI is loading and a switched-off one is not among them |
 | toggling an MCP server | through the CLI, then read back. Switching on one that is not ready reconnects it, which is how signing in happens |
@@ -820,6 +832,33 @@ catalogue's row.
 | pull request | Published twice when the host was given `githubPullRequests()`: under `_meta.githubData[key]`, with the key named by `_meta.workingDirectoryKeys[workingDirectory]`, and beside it under `_meta.github`. The key is the working directory's own `file://` URI, which is what the row's `project.uri` already spells it, and publishing it is what makes it authoritative - a window that has no key for a working directory derives one, and one that does takes the host's. The state itself is `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. `_meta.github` is still there for a client that reads that one, and is the same object. `_meta.git` is unchanged and is not per folder: a session here has one folder, and the window still reads `_meta.git` for it. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
 | what the agent recorded | `_meta['agentHost/sessionArtifacts']` on the session and its row: the artifacts and references the agent recorded with the reference host's `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references`, offered under those names with its schemas and answers, and kept by the session store across a restart. The window draws them as pills beside the input, and takes one off with its own request, `vscode/removeSessionArtifact`, which `initialize` says it may make under `_meta['vscode.removeSessionArtifact']`. The reference host's instruction for when to record one goes into the agent's system prompt, since the CLI's prompt takes an `append` |
 | when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
+
+### An action naming nothing here
+
+A session this host knows is one it is running, one the catalogue lists, or one
+its store records as started here. A chat it knows is one a running session
+holds, one the store records a session for, or one whose URI names a session it
+knows. A target none of these knows is looked for in the catalogue before it is
+called unknown. An action on an unknown target is answered as
+[VS Code's host](https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12531)
+answers it:
+
+| Target | Action | Answer |
+| --- | --- | --- |
+| a session | `session/isReadChanged`, `session/isArchivedChanged` | dropped: nothing is kept for the session, and nothing is said to the sender or to anybody |
+| a session | any other | refused |
+| a chat, named in `ahp-chat:` | `chat/isReadChanged` | refused "Only a known chat can change its read state." |
+| a chat | `chat/isArchivedChanged` | refused "Only a known independently manageable non-default chat can be archived." |
+| a chat | any other | said back on the channel the client named, with its origin, to the clients that watch that channel; nothing is kept, reduced or run for it |
+
+The protocol's text has a server ignore every action naming a session or a chat
+that does not exist, with no echo
+([session channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166),
+[chat channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351)).
+VS Code's host refuses and accepts as the table says, and its client rolls a
+refused action back and keeps an accepted one. A session's toggle is the one it
+ignores, and a client keeps nothing pending for a session it watches no channel
+of.
 
 ### Changesets
 

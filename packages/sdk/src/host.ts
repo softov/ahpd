@@ -6,9 +6,9 @@
  *
  * Rules that govern anything answering AHP:
  *
- * - `serverSeq` advances when state changes, not per message. A snapshot is
- *   taken at a sequence number and every action after it carries a greater
- *   one, which is how a client knows it missed nothing.
+ * - `serverSeq` advances with every action envelope this host sends. A
+ *   snapshot is taken at a sequence number and every action after it carries
+ *   a greater one, which is how a client knows it missed nothing.
  * - Notifications carry no id and get no reply. `unsubscribe` and
  *   `dispatchAction` are notifications.
  * - Subscriptions are per connection. Dropping one client's subscription must
@@ -51,14 +51,14 @@ import { bag, ownerFilter, ownerOfPrincipal } from './utils/values.js';
 import { reason } from './host/common.js';
 import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
-  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, URI_KEYS, named,
+  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
 import type { Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
-import { GREETINGS, UNGATED, PER_CONNECTION, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
+import { GREETINGS, UNGATED, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
 import type { Home } from './host/gate.js';
 import { createChatRecord } from './host/chatrecord.js';
 import { createRouting } from './host/routing.js';
@@ -421,6 +421,8 @@ export function createHost(options: HostOptions): Host {
   const holders = new Map<string, string>();
   /** The last locale each client sent, by client id. */
   const locales = new Map<string, string>();
+  /** The name each client gave in `clientInfo` at `initialize`, by client id. */
+  const clientNames = new Map<string, string>();
   const learned = new Map<string, Learned>();
   const about = (provider: string): Learned => {
     const held = learned.get(provider);
@@ -443,8 +445,8 @@ export function createHost(options: HostOptions): Host {
    * length of a daemon's life.
    */
   const REPLAY = 1000;
-  /** The last `REPLAY` action envelopes, oldest first. */
-  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions }[] = [];
+  /** The last `REPLAY` action envelopes, refusals among them, oldest first. */
+  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions; rejectionReason?: string }[] = [];
   /**
    * What each held envelope's text weighs in bytes, in step with `replayable`.
    *
@@ -470,6 +472,8 @@ export function createHost(options: HostOptions): Host {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2971
    */
   const states = new Map<string, HeldState>();
+  /** The channels each client was served a state of that has gone since, by client id. */
+  const lapsed = new Map<string, Set<string>>();
   /**
    * One action through the protocol's reducer for the kind of state it lands
    * on. A type the reducer does not know is said in this host's log, which is
@@ -503,9 +507,8 @@ export function createHost(options: HostOptions): Host {
    * Kept, not computed. Annotations are the one channel whose state is
    * entirely a client's: nothing here produces a mark, and what this host
    * contributes is that a mark one client made is a mark every other client
-   * in the session can see. Keyed by id rather than by URI for the reason the
-   * flags are - a session is addressable under more than one spelling and
-   * there is only one set of marks.
+   * in the session can see. Keyed by the session's id, as the flags are: the
+   * id is what the store keeps everything of a session under.
    */
   const marks = new Map<string, AnnotationsState>();
 
@@ -594,19 +597,51 @@ export function createHost(options: HostOptions): Host {
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
   /**
+   * A root notification about a session, as one connection receives it.
+   *
+   * An older VS Code window is told nothing about a session it may not see,
+   * and of one it may see only the chats it may see, as the reference host
+   * filters each notification for it. Every other notification, and every
+   * other connection, gets it as it is.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4412-L4443
+   */
+  const noticeFor = (connection: Connection, method: string, params: unknown): unknown => {
+    if (connection.legacySessionUris !== true && connection.legacyChatUris !== true) return params;
+    const notice = bag(params);
+    if (method === 'root/sessionAdded') {
+      const summary = bag(notice.summary);
+      const session = String(summary.resource ?? '');
+      if (!sessionVisible(connection, session, typeof summary.defaultChat === 'string' ? summary.defaultChat : undefined)) return undefined;
+      return Array.isArray(summary.chats)
+        ? { ...notice, summary: { ...summary, chats: (summary.chats as Bag[]).filter((chat) => chatShown(connection, chat.resource, session)) } }
+        : params;
+    }
+    if (method === 'root/sessionSummaryChanged') {
+      const session = String(notice.session ?? '');
+      if (!sessionVisible(connection, session)) return undefined;
+      const changes = bag(notice.changes);
+      return Array.isArray(changes.chats)
+        ? { ...notice, changes: { ...changes, chats: (changes.chats as Bag[]).filter((chat) => chatShown(connection, chat.resource, session)) } }
+        : params;
+    }
+    if (method === 'root/sessionRemoved') return sessionVisible(connection, String(notice.session ?? '')) ? params : undefined;
+    return params;
+  };
+  /**
    * One message, to everyone watching that channel.
    *
    * Addressed to each connection the way that connection asked: a client
-   * watching an alias of this channel is sent the same payload under the name
-   * it used, because its subscription is keyed by that name and it would drop
-   * anything else.
+   * watching a host channel under another spelling is sent the same payload
+   * under the name it used, because its subscription is keyed by that name and
+   * it would drop anything else. A root notification about a session goes
+   * through `noticeFor`.
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
       const alias = connection.aliases.get(channel);
       const aliased = alias !== undefined && connection.watching.has(alias);
       if (!connection.watching.has(channel) && !aliased) continue;
-      const said = per === undefined ? params : per(connection);
+      const said = per === undefined ? noticeFor(connection, method, params) : per(connection);
       // Nothing for this connection: a plugin's action it may not see.
       if (said === undefined) continue;
       if (connection.watching.has(channel)) connection.peer.notify(method, said);
@@ -627,22 +662,20 @@ export function createHost(options: HostOptions): Host {
    * An action envelope as one connection receives it.
    *
    * Two actions are not the same for every connection. `root/configChanged`
-   * carries `PER_CONNECTION` keys that belong to the client that sent them:
-   * the sender gets its echo whole, and every other connection gets the same
-   * envelope and `serverSeq` without those keys, with its own values in their
-   * place when the action replaces the config. It carries the daemon's own keys
-   * too, which are dropped for a connection without `config:read`, and the
-   * agents' accounts, which are dropped for one without `account:read` - the
-   * email is the operator's, and the root config is read before anybody signs
-   * in. A dropped key is absent rather than emptied, the same shape the
-   * snapshot leaves it in.
+   * carries the daemon's own keys, which are dropped for a connection without
+   * `config:read`, and the agents' accounts, which are dropped for one without
+   * `account:read` - the email is the operator's, and the root config is read
+   * before anybody signs in. A dropped key is absent rather than emptied, the
+   * same shape the snapshot leaves it in.
    * `root/agentsChanged` carries
    * the root agent list, whose sign-in resource says `required: true` for a
    * connection that must sign in and `false` for one the host already treats
-   * as somebody. An action on a session, chat or annotations channel this
-   * connection knows the session by another name for carries the session's
-   * URIs in that name, the same as its snapshot. Every other envelope is
+   * as somebody. An older VS Code window is sent nothing on a channel it may
+   * not see, and a session's chat list actions only about the chats it may
+   * see, as the reference host projects each for it. Every other envelope is
    * delivered as it is.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4362-L4401
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4547-L4553
    *
    * A plugin's action carries its `audience`, and is nothing for a
    * connection the audience leaves out: one `to` does not name, or one
@@ -692,10 +725,17 @@ export function createHost(options: HostOptions): Host {
       && PROTOCOL_ACTIONS.has(String(action.type))
       && !isActionKnownToVersion(action as unknown as StateAction, connection.protocolVersion)) return undefined;
     if (!isRootChannel(envelope.channel)) {
-      const spelling = spellingOf(connection, envelope.channel);
-      return spelling === undefined
-        ? envelope
-        : { ...envelope, action: respelledIn(action, spelling.held, spelling.asked) };
+      if (!visible(connection, envelope.channel)) return undefined;
+      if (connection.legacyChatUris !== true) return envelope;
+      const session = envelope.channel;
+      if (action.type === 'session/chatAdded') return chatShown(connection, bag(action.summary).resource, session) ? envelope : undefined;
+      if (action.type === 'session/chatUpdated' || action.type === 'session/chatRemoved') {
+        return chatShown(connection, action.chat, session) ? envelope : undefined;
+      }
+      if (action.type === 'session/chatsReordered' && Array.isArray(action.chats)) {
+        return { ...envelope, action: { ...action, chats: action.chats.filter((chat) => chatShown(connection, chat, session)) } };
+      }
+      return envelope;
     }
     if (action.type === 'root/agentsChanged') {
       return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
@@ -723,17 +763,7 @@ export function createHost(options: HostOptions): Host {
     const shown = seesAccount(connection)
       ? mine
       : Object.fromEntries(Object.entries(mine).filter(([key]) => !isAccountKey(key)));
-    const echo = (config: Record<string, unknown>): E => ({ ...envelope, action: { ...action, config } });
-    if (envelope.origin !== undefined && envelope.origin.clientId === connection.clientId) {
-      return shown === config ? envelope : echo(shown);
-    }
-    const theirs = Object.keys(shown).filter((key) => PER_CONNECTION.has(key));
-    const own = action.replace === true
-      ? Object.fromEntries(Object.entries(connection.config ?? {}).filter(([key]) => PER_CONNECTION.has(key)))
-      : {};
-    if (theirs.length === 0 && Object.keys(own).length === 0) return shown === config ? envelope : echo(shown);
-    const kept = Object.fromEntries(Object.entries(shown).filter(([key]) => !PER_CONNECTION.has(key)));
-    return { ...envelope, action: { ...action, config: { ...kept, ...own } } };
+    return shown === config ? envelope : { ...envelope, action: { ...action, config: shown } };
   };
   /**
    * The dispatch being applied right now, and whether it has been said back.
@@ -743,13 +773,17 @@ export function createHost(options: HostOptions): Host {
    * back carrying that number. Without the echo a client cannot tell its own
    * write from somebody else's, and cannot do the optimistic half at all.
    *
-   * The echo is the one action that is the client's own: its type, and its
-   * turn when the client named one. Everything else the dispatch causes - the
-   * title a first turn gives a session, a chat's row, what the agent says - is
-   * this host's, and carries no origin: the protocol reads an origin as the
-   * client that produced the action, and a client that found its own on an
-   * action it never sent would take that action for its own.
+   * The echo is the one action that is the client's own: on the channel the
+   * client sent it on, of its type, naming the turn, call, request or message
+   * the client named. Everything else the dispatch causes - the title a first
+   * turn gives a session, a chat's row, what the agent says - is this host's,
+   * and carries no origin: the protocol reads an origin as the client that
+   * produced the action, and a client that found its own on an action it
+   * never sent would take that action for its own. Each client holds its
+   * pending actions per subscription, so an answer on another channel answers
+   * nothing it holds.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
    *
    * A variable rather than an argument threaded through everything, because
    * the echo is usually several layers down: a client's `chat/turnStarted`
@@ -767,69 +801,76 @@ export function createHost(options: HostOptions): Host {
    * (`Start.handed`), which is why the sender, the channel and the action are
    * held beside the origin, here and in `owed`.
    */
-  let applying: (Dispatched & { type: string; turnId: string; answered: boolean }) | undefined;
+  let applying: (Dispatched & { answered: boolean }) | undefined;
   /**
-   * The echoes a backend still owes, by the chat, the action and what it names.
+   * The echoes a backend still owes, by the channel each dispatch came on, the
+   * action and what it names.
    *
-   * A turn begun or stopped, a message queued, and a client's result for a
-   * tool call it runs are said back by the backend, and a backend says it when
-   * it is ready: once a policy check or a machine has answered, once Claude
-   * has switched models, once pi, cofold or ACP has let the cancelled prompt
-   * go, once the host inside a machine has answered the proxy, once the
-   * harness has written the tool's result. The turn id, the queued message's
-   * own id, or the tool call's, is the one thing that action carries that
-   * names the client's dispatch, the way `senders` follows a turn by its id.
-   * A client names its own turns and messages, so two chats can each hold one
-   * of the same id, and the chat is part of the key. Let go of once said, once
-   * refused, and once the turn has ended.
+   * A turn begun and a message queued are said back by the backend, and a
+   * backend says it when it is ready: once a policy check or a machine has
+   * answered, once Claude has switched models, once the host inside a machine
+   * has answered the proxy. The turn id, or the queued message's own id, is the
+   * one thing that action carries that names the client's dispatch, the way
+   * `senders` follows a turn by its id. A client names its own turns and
+   * messages, so two chats can each hold one of the same id, and the channel
+   * is part of the key. Let go of once said, once refused, and once the turn
+   * has ended.
    */
   const owed = new Map<string, Dispatched>();
-  const owedKey = (chat: string, type: string, name: string): string => `${chat}\n${type}\n${name}`;
+  const owedKey = (channel: string, type: string, name: string): string => `${channel}\n${type}\n${name}`;
   /**
-   * The chat a chat action on `channel` is about, as a dispatch reads it: a
-   * chat channel names that chat, and a session channel its default chat,
-   * which is the chat the backend says the answer on.
-   */
-  const chatAbout = (channel: string): string => {
-    if (byChat.has(channel)) return channel;
-    const holding = sessions.get(channel);
-    return (holding === undefined ? undefined : leadOf(holding)?.chatUri) ?? channel;
-  };
-  /**
-   * Where the dispatch an action says back is owed: under the chat it is about,
-   * the action's kind, and the queued message it is, the tool call it
-   * completes, or the turn it names.
-   *
-   * A queued message is also what a client's turn of the same id became. A
-   * command sent as a turn while another turn runs waits behind it as a queued
-   * message under the turn's id, and runs as any queued message runs once the
-   * turn in front of it ends, so the client is told of its turn by that
-   * message. An absent `kind` is `queued`, as the protocol reads one.
+   * Where the dispatch an action says back is owed: under its channel, the
+   * action's kind, and the queued message it is or the turn it names.
    */
   const owedUnder = (channel: string, action: Record<string, unknown>): string | undefined => {
-    const queued = action.type === 'chat/pendingMessageSet';
-    const named = queued ? action.id
-      : action.type === 'chat/toolCallComplete' ? action.toolCallId
-        : action.turnId;
+    const named = action.type === 'chat/pendingMessageSet' ? action.id : action.turnId;
     if (typeof named !== 'string' || named === '') return undefined;
-    const chat = chatAbout(channel);
-    const own = owedKey(chat, String(action.type ?? ''), named);
-    const turn = owedKey(chat, 'chat/turnStarted', named);
-    return queued && action.kind !== 'steering' && !owed.has(own) && owed.has(turn) ? turn : own;
+    return owedKey(channel, String(action.type ?? ''), named);
   };
+  /** The fields that name what a client's action is about: a turn, a tool call, an input request, a pending message. */
+  const NAMING = ['turnId', 'toolCallId', 'requestId', 'id'] as const;
   /**
    * The client's dispatch an action says back: the dispatch being applied,
-   * when the action is of its kind and about its turn, or one a backend owes
-   * in the action's chat under what the action names.
+   * when the action is on its channel, of its kind, and names each thing the
+   * client's names, or one a backend owes on the action's channel under what
+   * the action names.
    */
   const answering = (channel: string, action: Record<string, unknown>): Dispatched | undefined => {
-    const type = String(action.type ?? '');
-    const turnId = typeof action.turnId === 'string' ? action.turnId : '';
-    if (applying !== undefined && !applying.answered && applying.type === type
-      && (applying.turnId === '' || applying.turnId === turnId)) return applying;
+    const sent = applying?.action;
+    if (applying !== undefined && sent !== undefined && !applying.answered && applying.channel === channel && sent.type === action.type
+      && NAMING.every((key) => typeof sent[key] !== 'string' || sent[key] === '' || sent[key] === action[key])) return applying;
     const key = owedUnder(channel, action);
     return key === undefined ? undefined : owed.get(key);
   };
+  /**
+   * The dispatches answered already, by the origin each carries: an echo, a
+   * refusal, or an answer a backend said later. A dispatch is answered once,
+   * and a host that applied one and then refused it would leave the client
+   * reverted and itself moved.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
+   */
+  const said = new WeakSet<Origin>();
+  /**
+   * The connections waiting on a dispatch's answer before they apply their
+   * next, by the dispatch's origin: what `applyNow` returns for a dispatch a
+   * backend answers later.
+   */
+  const awaited = new Map<Origin, () => void>();
+  /** A dispatch answered: held in `said`, and the connection waiting on it let go. */
+  const told = (origin: Origin): void => {
+    said.add(origin);
+    const next = awaited.get(origin);
+    if (next === undefined) return;
+    awaited.delete(origin);
+    next();
+  };
+  /**
+   * The dispatches waiting on a chat whose backend still runs a turn the chat
+   * has ended, by the chat's channel: a client's stop is said when it is
+   * taken, and the backend lets the turn go when it can. Each is let go by
+   * the backend's end of that turn.
+   */
+  const stopping = new Map<string, (() => void)[]>();
   /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
@@ -839,6 +880,7 @@ export function createHost(options: HostOptions): Host {
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
     owed.delete(owedUnder(channel, action) ?? '');
+    told(answered.origin);
     return answered.origin;
   };
   /**
@@ -851,6 +893,7 @@ export function createHost(options: HostOptions): Host {
    */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
+    told(origin);
     if (applying?.origin === origin) applying.answered = true;
     const key = owedUnder(channel, action) ?? '';
     const held = owed.get(key)?.origin;
@@ -859,14 +902,33 @@ export function createHost(options: HostOptions): Host {
   /**
    * One state action, to everyone watching that channel.
    *
-   * `serverSeq` moves here and only here. A snapshot is taken *at* a sequence
+   * `serverSeq` moves here, once for each envelope, and in `refuse` for a
+   * refusal said to its sender alone. A snapshot is taken *at* a sequence
    * number and every action after it carries a greater one, which is how a
-   * client knows it missed nothing - so the counter has to advance with state,
-   * never with messages.
+   * client knows it missed nothing.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
+   *
+   * An action refused carries `rejectionReason`, and is sequenced, held for
+   * replay and sent the same way to every other client of the channel; its
+   * sender is answered by `refuse`, and no state takes it.
    */
-  const emit = (channel: string, action: Record<string, unknown>, origin: Origin | undefined, audience?: PublishOptions): void => {
+  const emit = (
+    channel: string,
+    action: Record<string, unknown>,
+    origin: Origin | undefined,
+    audience?: PublishOptions,
+    refused?: { reason: string; by: Peer },
+  ): void => {
     ctx.serverSeq += 1;
-    const envelope = { channel, action, serverSeq: ctx.serverSeq, origin, ...(audience === undefined ? {} : { audience }) };
+    const rejectionReason = refused?.reason;
+    const envelope = {
+      channel,
+      action,
+      serverSeq: ctx.serverSeq,
+      origin,
+      ...(audience === undefined ? {} : { audience }),
+      ...(rejectionReason === undefined ? {} : { rejectionReason }),
+    };
     // Kept whether or not anyone was listening: a client that dropped is by
     // definition not listening, and it is the one that will ask for these.
     //
@@ -894,20 +956,22 @@ export function createHost(options: HostOptions): Host {
      * action sets, upserts or removes what it names, so on a seed that already
      * carries it the action leaves it as it was.
      */
-    if (!states.has(channel) && sessions.has(channel)) ctx.sessionStateOf(channel);
-    const open = states.get(channel);
-    if (open !== undefined) {
-      const type = String(action.type ?? '');
-      if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
-      else {
-        try { open.state = reduced(open, held.action); }
-        catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+    if (rejectionReason === undefined) {
+      if (!states.has(channel) && sessions.has(channel)) ctx.sessionStateOf(channel);
+      const open = states.get(channel);
+      if (open !== undefined) {
+        const type = String(action.type ?? '');
+        if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
+        else {
+          try { open.state = reduced(open, held.action); }
+          catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+        }
       }
+      ctx.telemetered(channel, action);
+      ctx.asking(channel, action);
+      ctx.links.observe(channel, action);
+      ctx.sessionEvents.observe(channel, action);
     }
-    ctx.telemetered(channel, action);
-    ctx.asking(channel, action);
-    ctx.links.observe(channel, action);
-    ctx.sessionEvents.observe(channel, action);
     replayable.push(held);
     // Measured once, here, as the text this envelope will go out as.
     const size = JSON.stringify(held).length;
@@ -925,7 +989,7 @@ export function createHost(options: HostOptions): Host {
       replayable.shift();
       weight -= weights.shift() ?? 0;
     }
-    broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
+    broadcast(channel, 'action', envelope, (connection) => (connection.peer === refused?.by ? undefined : seenBy(connection, envelope)));
   };
   /**
    * The window a streamed delta waits in, which `dispatch` sends through.
@@ -949,18 +1013,50 @@ export function createHost(options: HostOptions): Host {
     answeredBy(channel, named, action);
     const origin = named ?? originOf(channel, action);
     /*
-     * A turn that has ended owes nothing more: a stop the backend never said
-     * because the turn finished first, or a start a backend refused in a turn
-     * of its own, would otherwise wait here for an action that is not coming.
+     * A turn that ends before its backend said its start owes its client that
+     * start, the client's own action under its origin, "echoed back ... once
+     * accepted". It goes out ahead of the end, so the reducer has the turn the
+     * end closes.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
      */
     if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
-      const turnId = String(action.turnId ?? '');
-      const chat = chatAbout(channel);
-      owed.delete(owedKey(chat, 'chat/turnStarted', turnId));
-      owed.delete(owedKey(chat, 'chat/turnCancelled', turnId));
-      for (const [key, held] of owed) {
-        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) owed.delete(key);
+      const key = owedKey(channel, 'chat/turnStarted', String(action.turnId ?? ''));
+      const started = owed.get(key);
+      owed.delete(key);
+      if (started !== undefined) dispatch(started.channel, started.action, started.origin);
+      /*
+       * A backend's end of a turn the chat has ended is not said: the turn
+       * ended when a client's stop was taken, and a turn ends once. The
+       * reference host ends the turn on the client's cancel and then aborts
+       * the agent. The end is what the dispatches sent since wait on: a
+       * backend leaves a turn before it says its end, so each is applied to a
+       * backend that runs nothing.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+       */
+      const held = states.get(channel);
+      if (origin === undefined && held?.kind === 'chat'
+        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) {
+        const waiting = stopping.get(channel) ?? [];
+        stopping.delete(channel);
+        for (const go of waiting) go();
+        return;
       }
+    }
+    /*
+     * A backend's result for a call the chat holds completed is not said
+     * either: the call was completed by its client's own result, said when the
+     * host took it, and a call completes once.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L631-L635
+     */
+    if (action.type === 'chat/toolCallComplete' && origin === undefined) {
+      const held = states.get(channel);
+      const turn = held?.kind === 'chat' ? held.state.activeTurn as Record<string, unknown> | undefined : undefined;
+      const call = turn?.id === action.turnId
+        ? (Array.isArray(turn?.responseParts) ? turn.responseParts as Record<string, unknown>[] : [])
+          .map((part) => part.toolCall as Record<string, unknown> | undefined)
+          .find((one) => one?.toolCallId === action.toolCallId)
+        : undefined;
+      if (held?.kind === 'chat' && !['running', 'pending-confirmation', 'auth-required'].includes(String(call?.status))) return;
     }
     /*
      * A session's customizations are two halves, and one action carries both.
@@ -996,11 +1092,13 @@ export function createHost(options: HostOptions): Host {
     }
     ctx.stirred(channel, action);
     if (deltas.push(channel, action, origin)) return;
-    emit(channel, action, origin);
+    emit(channel, action, origin, requestAudience(channel, action, origin));
     // What the chat's state moved, said on its session: a streamed delta moves
-    // nothing a session reads, which is why only this road says it.
-    if (states.get(channel)?.kind === 'chat') {
+    // nothing a session reads, which is why only this road says it, and an
+    // action of another kind moves no chat state at all.
+    if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
+      ctx.askedLeft(channel);
       ctx.chatMoved(channel);
     }
     /*
@@ -1039,6 +1137,29 @@ export function createHost(options: HostOptions): Host {
     }
   };
   /**
+   * Who hears a client's request about one automation, said back on the
+   * catalogue narrowed to the caller's own.
+   *
+   * The request carries the definition or the patch, which is the owner's to
+   * read, and every client watching `?owner=me` is watching a channel of that
+   * name. So it goes to the client that sent it, and to the automation's owner
+   * on any connection, and to no other owner. A request on the plain catalogue,
+   * which every reader holds whole, goes to everyone.
+   */
+  const requestAudience = (channel: string, action: Record<string, unknown>, origin: Origin | undefined): PublishOptions | undefined => {
+    if (channel !== AUTOMATIONS_ME) return undefined;
+    if (action.type !== 'automation/createRequested' && action.type !== 'automation/updateRequested') return undefined;
+    const held = options.automations?.get(String(action.resource ?? ''));
+    const owner = held === undefined ? undefined : automationOwner(held);
+    return {
+      visible: (reader, client) => {
+        if (origin !== undefined && client === origin.clientId) return true;
+        const mine = ownerFilter('owner=me', reader);
+        return mine !== undefined && mine !== null && owner !== undefined && mine === owner;
+      },
+    };
+  };
+  /**
    * A session's customizations as a client reads them: a backend's, then its
    * clients', with nothing said about a session that has no client plugins.
    *
@@ -1069,37 +1190,43 @@ export function createHost(options: HostOptions): Host {
   /**
    * The name one connection watches a channel by, or the channel itself.
    *
-   * A client that subscribed under a spelling of its own is sent everything
-   * under that name - its subscription is keyed by it and it would drop
-   * anything else - and one that uses the held name is sent the held name.
+   * A client that subscribed to a host channel under another spelling is sent
+   * everything under that name - its subscription is keyed by it and it would
+   * drop anything else - and every other client is sent the channel's name.
    */
   const watchedAs = (peer: Peer, channel: string): string =>
     [...connections].find((one) => one.peer === peer)?.aliases.get(channel) ?? channel;
   /**
-   * A client's action, refused in that client's hearing.
+   * A client's action, refused.
    *
    * The other half of the write-ahead loop. A client applies an action before
    * sending it, so a host that decides not to apply one has to *say so*: an
    * envelope carrying `rejectionReason` is what tells the client to put its own
-   * state back. Dropping it - which is what every one of these sites used to do
-   * - leaves the client holding a change this host never made, with nothing
-   * anywhere to correct it. The log line goes to the daemon's stdout, where no
-   * client is looking.
+   * state back. The log line goes to the daemon's stdout, where no client is
+   * looking.
    *
-   * Three things it deliberately does not do.
+   * An action envelope like any other: it takes the next `serverSeq`, is held
+   * for replay, and goes to every client subscribed to its channel, as the
+   * specification sends an action and lists `rejectionReason` among its
+   * fields, and as the reference host records and broadcasts a rejection. No
+   * state takes it, here or in a client: a client holding the action pending
+   * drops it, and the others hold nothing of it.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/lifecycle.md#L109
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L766
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4183-L4210
    *
-   * `serverSeq` does not move, because no state did. The counter's whole job is
-   * to let a client tell what it has already seen from what is still to come,
-   * and a refusal is neither: it carries the sequence this host is *still* at.
+   * It reaches only who the accepted action would reach: a request on the
+   * automations channel goes through `requestAudience`, as its echo does.
+   * One said `alone` goes to its sender and nobody else, and is not held for
+   * replay: a refusal from a client the gate has not passed yet, which may not
+   * write to the channel.
    *
-   * It is not buffered for replay, for the same reason. A client that comes
-   * back is asking what it missed of the state, and this changed none of it.
-   *
-   * It goes to the one connection that sent it rather than to everyone watching
-   * the channel. A refusal answers one client's dispatch; nobody else applied
-   * it optimistically, so nobody else has anything to put back - and a client
-   * that reduced a rejected envelope would apply the very change this host
-   * refused.
+   * The client that sent it is told in every case, under the name it watches
+   * the channel by where it watches one, since an invalid action is echoed
+   * back to the client that sent it with its reason, whichever channels and
+   * versions it watches.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L162
    */
   const refuse = (
     peer: Peer,
@@ -1107,37 +1234,14 @@ export function createHost(options: HostOptions): Host {
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
+    alone = false,
   ): void => {
     log(`${channel}: ${reason}`);
     answeredBy(channel, origin, action);
+    deltas.flush();
+    if (alone) ctx.serverSeq += 1;
+    else emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
-  };
-  /**
-   * A client's action, accepted, echoed in that client's hearing alone.
-   *
-   * The other half of the loop `refuse` is half of. A client applies its own
-   * action before it sends it and holds it pending until the host says what
-   * became of it - an echo carrying the `clientSeq` it sent, or a refusal. An
-   * action that leaves this host's state exactly as it was gets neither on the
-   * ordinary path, and the client sits on it until it reconnects.
-   *
-   * The same three things `refuse` deliberately does not do, for the same
-   * reasons. `serverSeq` does not move, because no state did. It is not
-   * buffered for replay, because a client that comes back is asking what it
-   * missed of the state and this changed none of it. And it goes to the one
-   * connection that sent it rather than to everyone watching the channel: the
-   * others applied nothing and so have nothing pending to drop, while an
-   * action echoed back to *them* is a state action on the session, which is
-   * what sent the loop round three hundred times.
-   */
-  const echoTo = (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
-  ): void => {
-    answeredBy(channel, origin, action);
-    peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin });
   };
   /**
    * Let a watch go once nobody is listening to it.
@@ -1176,6 +1280,9 @@ export function createHost(options: HostOptions): Host {
    * still looking at it. The reference host lets a session's state go on the
    * same terms, never while a client is subscribed to it.
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   *
+   * Each client that was served a state let go is owed the state its channel
+   * opens with next, since what it holds is the state let go.
    */
   const statesUnwatched = (channel: string): void => {
     const open = states.get(channel);
@@ -1186,12 +1293,15 @@ export function createHost(options: HostOptions): Host {
       .filter(([one, held]) => one === session || (held.kind === 'chat' && sessionFor(one) === session))
       .map(([one]) => one);
     for (const connection of connections) {
-      for (const one of its) {
-        const alias = connection.aliases.get(one);
-        if (connection.watching.has(one) || (alias !== undefined && connection.watching.has(alias))) return;
-      }
+      if (its.some((one) => connection.watching.has(one))) return;
     }
-    for (const one of its) states.delete(one);
+    for (const one of its) {
+      for (const client of states.get(one)?.baselines ?? []) {
+        const channels = lapsed.get(client) ?? new Set<string>();
+        lapsed.set(client, channels.add(one));
+      }
+      states.delete(one);
+    }
   };
 
   /** Who this session currently has in it. Always a list, because the field is required. */
@@ -1205,20 +1315,19 @@ export function createHost(options: HostOptions): Host {
    * same condition seen from three places: no connection with that client id
    * is watching that session any more. Checked rather than assumed, because
    * one person can have two windows open on one session and closing the first
-   * must not remove them from it. Any spelling of the session counts, and
-   * the removal is said under the name it is held by.
+   * must not remove them from it.
    */
-  const leaves = (asked: string, clientId: string): void => {
-    const uri = heldAs(asked);
+  const leaves = (uri: string, clientId: string): void => {
     const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
     for (const connection of connections) {
-      if (connection.clientId !== clientId) continue;
-      if ([...connection.watching].some((channel) => heldAs(channel) === uri)) return;
+      if (connection.clientId === clientId && connection.watching.has(uri)) return;
     }
+    // The entry it announced, under the client id that entry carries.
+    const named = held.get(clientId)?.clientId;
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
-    dispatch(uri, { type: 'session/activeClientRemoved', clientId });
+    dispatch(uri, { type: 'session/activeClientRemoved', clientId: typeof named === 'string' ? named : clientId });
     /*
      * And the tools it was providing, which leave with it.
      *
@@ -1252,7 +1361,7 @@ export function createHost(options: HostOptions): Host {
    * session itself, and either one means the client is here for both.
    */
   const waitingOver = (channel: string, clientId: string): void => {
-    const key = waitKey(heldAs(channel), clientId);
+    const key = waitKey(channel, clientId);
     const timer = graces.get(key);
     if (timer === undefined) return;
     clearTimeout(timer);
@@ -1270,8 +1379,7 @@ export function createHost(options: HostOptions): Host {
    * running: what is being measured is how long this client has been gone, and
    * a second window closing is a client that is still here until it does.
    */
-  const waitsOut = (channel: string, clientId: string): void => {
-    const uri = heldAs(channel);
+  const waitsOut = (uri: string, clientId: string): void => {
     if (!presence.get(idOf(uri))?.has(clientId)) return;
     waitingOver(uri, clientId);
     graces.set(waitKey(uri, clientId), setTimeout(() => {
@@ -1313,7 +1421,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, locales, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -1323,7 +1431,7 @@ export function createHost(options: HostOptions): Host {
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
-    logs, detached, refuse, echoTo,
+    logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
     watches, marksOf, resumedSessions, activeClientsOf, drafts,
@@ -1335,20 +1443,29 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
+    owe: (type: string, name: string) => {
+      if (applying === undefined || applying.answered) return;
+      applying.owed = true;
+      owed.set(owedKey(applying.channel, type, name), applying);
+    },
     answering,
+    unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
+    letGo: (chat: string) => new Promise<void>((resolve) => {
+      stopping.set(chat, [...(stopping.get(chat) ?? []), resolve]);
+    }),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
       const open = states.get(channel);
       if (open !== undefined) return open.state;
       const state = options.opening?.(channel, kind) ?? seed;
-      states.set(channel, { kind, state });
+      states.set(channel, { kind, state, baselines: new Set() });
       return state;
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,
     statesUnwatched,
+    lapsed,
     asleep: new Set<string>(),
   } as HostContext;
   // Before any area is built, because everything a person or a backend does
@@ -1400,12 +1517,11 @@ export function createHost(options: HostOptions): Host {
   const backendSnapshot = ctx.snapshotOf;
   ctx.snapshotOf = async (
     channel: string,
-    mine?: Record<string, unknown>,
     connection?: Connection,
     view?: SubscribeView,
   ): Promise<Record<string, unknown>> => {
     if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
-    return backendSnapshot(channel, mine, connection, view);
+    return backendSnapshot(channel, connection, view);
   };
   /*
    * A session's customizations as its state opens with them: the backend's,
@@ -1418,9 +1534,9 @@ export function createHost(options: HostOptions): Host {
     return halves.length === 0 ? undefined : halves;
   };
   const {
-    spaceHere, heldAs, nameOf, ownName, sessionOfChat, sessionFor, chatOf, meantBy,
-    sessionHolding, channelKind, sessionChannel, homeOf, spelledFor, respell, respelledIn,
-    spellingOf, answeredAs, claimable, unheld, ownId, ownerOf, elsewhere, relayed, clients,
+    spaceHere, nameOf, sessionOfChat, sessionFor, meantBy,
+    sessionHolding, channelKind, sessionChannel, homeOf,
+    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, ownerOf, elsewhere, relayed, clients,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
     changesetsOf, operationContext, opKey, inFlight, lastError, shown,
     describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
@@ -1690,6 +1806,11 @@ export function createHost(options: HostOptions): Host {
       for (const uri of sessions.keys())
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
+    /*
+     * Built per caller and not kept: the principal cuts the list and is the
+     * person each tool acts for, so two callers asking at once get two lists.
+     */
+    sessionlessTools: (caller) => ctx.sessionlessTools(caller),
     replace: (folded) => {
       /*
        * A port or a scheme the host was built over is not swapable while
@@ -1954,8 +2075,9 @@ export function createHost(options: HostOptions): Host {
        * whether it is one. Each is applied once what it waits on answers, and
        * every dispatch this connection sends meanwhile goes behind it: a
        * client that changes the config and then starts a turn means that
-       * order. Undefined when nothing waits, which is when a dispatch is
-       * applied at once.
+       * order. A dispatch a backend answers later holds the next one the same
+       * way, until it is answered. Undefined when nothing waits, which is when
+       * a dispatch is applied at once.
        */
       let waiting: Promise<void> | undefined;
       /**
@@ -1969,20 +2091,44 @@ export function createHost(options: HostOptions): Host {
           (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
         );
       });
-      /** A dispatch applied now, as the one this host is applying. */
+      /**
+       * A dispatch applied now, as the one this host is applying.
+       *
+       * One a backend answers later, owed or taken, holds this connection's
+       * next dispatch until it is answered: a client holds its actions pending
+       * in the order it sent them and matches each answer at the head of that
+       * list, so the answers go out in the same order.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
+       *
+       * Held for `WAIT_LIMIT` at most, and then let go of with its answer still
+       * to come: the backend may still give it, and a dispatch is answered once.
+       */
       const applyNow = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
-        applying = {
+        const held: Dispatched & { answered: boolean } = {
           origin,
-          type: String(action.type ?? ''),
-          turnId: typeof action.turnId === 'string' ? action.turnId : '',
           answered: false,
           peer: connection.peer,
           channel: meantBy(String(params.channel ?? '')),
           action,
         };
-        try { return applyDispatch(params, origin); }
+        applying = held;
+        let later: Promise<void> | undefined;
+        try { later = applyDispatch(params, origin); }
         finally { applying = undefined; }
+        if (said.has(origin) || (held.owed !== true && held.taken !== true)) return later;
+        const answered = new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            awaited.delete(origin);
+            resolve();
+          }, WAIT_LIMIT);
+          timer.unref?.();
+          awaited.set(origin, () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        return later === undefined ? answered : later.then(() => answered);
       };
       /**
        * A dispatch whose apply failed, logged and refused to the client that
@@ -1990,12 +2136,14 @@ export function createHost(options: HostOptions): Host {
        *
        * One that failed at once and one that failed after waiting are told the
        * same way: the client holds its action until it hears an echo or a
-       * refusal, and the error's own words are the reason it is given.
+       * refusal, and the error's own words are the reason it is given. One
+       * already answered is answered once: what failed after its answer is
+       * this host's to log.
        */
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
         log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
-        if (!connections.has(connection)) return;
+        if (!connections.has(connection) || said.has(origin)) return;
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };

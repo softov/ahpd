@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chatUriFor } from '../src/host/channels.js';
 import { Status } from '../src/sessions/catalog.js';
 import { uriOf } from '../src/resources/resources.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -43,29 +44,33 @@ describe('the catalogue', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/new');
   });
 
-  it('counts the sessions it is running, not the transcripts beside them', async () => {
-    // The protocol asks for the active, non-disposed sessions *on the server*.
-    // A transcript on disk is a row somebody can open, not a session this host
-    // is holding - counting those meant a host running nothing claimed two.
+  /*
+   * The sessions running a turn, as the reference host counts its active
+   * sessions: a session counts while one of its chats has an active turn. A
+   * transcript on disk, and a session awake with nothing running, count
+   * nothing.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3262
+   */
+  it('counts the sessions running a turn, not the sessions it holds or the transcripts beside them', async () => {
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
     sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
-    const client = open();
-    const first = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
-      snapshots: { state: { activeSessions: number } }[];
-    };
-    expect(first.snapshots[0]?.state.activeSessions).toBe(0);
-
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    const again = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+    const { client, peer: p, uri, chatUri } = await running();
+    const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { activeSessions: number } };
-    };
-    expect(again.snapshot.state.activeSessions).toBe(1);
+    }).snapshot.state.activeSessions;
+    expect(await count()).toBe(0);
 
-    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/live' } });
-    const after = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { activeSessions: number } };
-    };
-    expect(after.snapshot.state.activeSessions).toBe(0);
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } } });
+    await settle();
+    expect(await count()).toBe(1);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    expect(await count()).toBe(0);
+    // Said as it moved, once each way, and never while the number stood still.
+    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions))
+      .toEqual([1, 0]);
+
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    expect(await count()).toBe(0);
   });
 
   it('refuses a session channel it has no agent for', async () => {
@@ -247,7 +252,7 @@ describe('a session that already happened', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat:/older',
+        channel: chatUriFor('ahp-session:/older'),
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
       },
     });
@@ -260,7 +265,7 @@ describe('a session that already happened', () => {
     expect(sdk.said).toEqual(['and now?']);
 
     // And the channel does not open empty while it resumes.
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/older' } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/older') } }) as {
       snapshot: { state: { turns: unknown[]; activeTurn?: unknown } };
     }).snapshot.state;
     expect(chat.turns.length).toBeGreaterThan(0);
@@ -288,6 +293,9 @@ describe('paging a long history', () => {
 
   interface Loaded { turns: { message: { text: string } }[]; turnsNextCursor?: string }
 
+  /** The default chat of the long session, the chat every case here pages. */
+  const LONG = chatUriFor('ahp-session:/long');
+
   /**
    * The session opened, with the window the paging cases page from.
    *
@@ -306,11 +314,11 @@ describe('paging a long history', () => {
     await client.handle(hello(['0.9.0']));
     const chat = (await client.handle({
       method: 'subscribe',
-      params: { channel: 'ahp-chat:/long', ...(view === null ? {} : { view }) },
+      params: { channel: LONG, ...(view === null ? {} : { view }) },
     }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
-    const pages = () => actions(p, 'ahp-chat:/long')
+    const pages = () => actions(p, LONG)
       .filter((e) => e.action.type === 'chat/turnsLoaded')
       .map((e) => e.action as unknown as Loaded);
     return { client, chat, pages };
@@ -353,13 +361,13 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/long', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
 
     // Live now, so the state is the backend's rather than the transcript's.
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/long' } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: LONG } }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
     expect(chat.turns).toHaveLength(121);
@@ -370,7 +378,7 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/long', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -378,7 +386,7 @@ describe('paging a long history', () => {
     // The backend gives every turn, so the host is the one that cuts.
     const chat = (await client.handle({
       method: 'subscribe',
-      params: { channel: 'ahp-chat:/long', view: { turns: 20 } },
+      params: { channel: LONG, view: { turns: 20 } },
     }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
@@ -391,7 +399,7 @@ describe('paging a long history', () => {
     const { client, pages } = await opened();
     const result = await client.handle({
       method: 'fetchTurns',
-      params: { channel: 'ahp-chat:/long', cursor: '70' },
+      params: { channel: LONG, cursor: '70' },
     });
     // Empty on purpose: the turns arrive as an action on the channel, so
     // every client watching the chat gets them - not only the one that asked.
@@ -408,7 +416,7 @@ describe('paging a long history', () => {
     const { client, chat, pages } = await opened();
     let cursor = chat.turnsNextCursor;
     for (let i = 0; i < 6 && cursor !== undefined; i++) {
-      await client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor } });
+      await client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor } });
       cursor = pages().at(-1)?.turnsNextCursor;
     }
 
@@ -428,7 +436,7 @@ describe('paging a long history', () => {
     // No cursor asks for whatever is next, and a snapshot that named a view
     // carries the cursor that names the page before it. The host keeps no
     // record of which window a client got, so there is nothing to guess at.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG } }))
       .resolves.toEqual({});
     expect(pages()).toHaveLength(0);
   });
@@ -441,7 +449,7 @@ describe('paging a long history', () => {
     // and nothing is refused. Refusing here is what reached a reader as
     // `RPC error -32602: Unrecognised cursor undefined` at the top of a
     // transcript that was already whole.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG } }))
       .resolves.toEqual({});
     expect(pages()).toHaveLength(0);
   });
@@ -450,10 +458,38 @@ describe('paging a long history', () => {
     const { client } = await opened();
     // Guessing would answer a question about old turns with new ones, and the
     // client would page for ever without noticing.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor: 'banana' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor: 'banana' } }))
       .rejects.toMatchObject({ code: -32602 });
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor: '9999' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor: '9999' } }))
       .rejects.toMatchObject({ code: -32602 });
+  });
+});
+
+/*
+ * A session's row reads its default chat unless another chat needs input or
+ * runs, and a failed chat stays on its own row, as the reference host
+ * aggregates a session made of chats.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
+ */
+describe('a session row\'s status', () => {
+  it('reads its idle default chat when a second chat fails, and the failure on that chat\'s own row', async () => {
+    const { client, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['no'], duration_ms: 4 });
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; status: number; chats?: { resource: string; status?: number }[] }[];
+    };
+    const row = listed.items.find((one) => one.resource === uri);
+    expect((row?.chats?.find((one) => one.resource === second)?.status ?? 0) & 31).toBe(Status.Error);
+    expect((row?.status ?? 0) & 31).toBe(Status.Idle);
   });
 });
 
@@ -499,12 +535,15 @@ describe('the flags a client sets', () => {
 });
 
 /*
- * A chat's read bit and its session's, each moved by its own action alone:
- * "The action toggles `SessionStatus.IsRead` only on the addressed
- * `ChatState`; it does not change the read state of the owning session or
- * sibling chats ... `session/isReadChanged` independently changes the owning
- * session's read state; neither action implies the other."
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
+ * A chat's read bit and its session's, moving each other as the reference
+ * host couples them: a session read is said unread while one of its two or
+ * more chats is unread, a session of one chat moves that chat with it, a chat
+ * marked unread marks a read session unread, and the last chat read marks an
+ * unread session read. A tool's chat and a hidden one move nothing of the
+ * session's.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2869-L2878
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2912-L2918
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2993-L3008
  */
 describe('a chat\'s read bit and its session\'s', () => {
   type Client = Awaited<ReturnType<typeof running>>['client'];
@@ -545,19 +584,23 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(chat.status & Status.IsRead).toBe(Status.IsRead);
   });
 
-  it('leaves the session and the other chat as they are when a chat turns unread', async () => {
+  it('marks a read session unread when one of its chats turns unread, and leaves the other chat as it is', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     p.notes.length = 0;
     await send(client, second, chatRead(false));
     expect(await isRead(client, second)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+    // This host's own action, after the chat's and its row, so a client applies those first.
+    const marked = actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged');
+    expect(marked.map((e) => [e.action.isRead, e.origin])).toEqual([[false, undefined]]);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
     // The chat's row in its session moves with the chat, which keeps the list in step.
     expect(actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated').map((e) => e.action.chat)).toEqual([second]);
   });
 
-  it('leaves an unread session unread when its chats are read', async () => {
+  it('marks an unread session read when its last unread chat is read', async () => {
     const { client, uri, chatUri } = await twoChats();
     await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
@@ -565,16 +608,49 @@ describe('a chat\'s read bit and its session\'s', () => {
     await send(client, second, chatRead(true));
     expect(await isRead(client, second)).toBe(true);
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
   });
 
-  it('leaves the one chat read when a session with one chat is marked unread', async () => {
+  /*
+   * A read said again keeps a session of several chats unread: only a chat
+   * that was unread, or a sole one, reads its session read.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3002-L3003
+   */
+  it('keeps a session of two chats unread when a chat that is read is read again', async () => {
+    const { client, peer: p, uri, chatUri } = await twoChats();
+    await send(client, uri, sessionRead(false));
+    p.notes.length = 0;
+
+    await send(client, chatUri, chatRead(true));
+    expect(await isRead(client, uri)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+  });
+
+  it('marks the one chat unread after the session when a session with one chat is marked unread', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     p.notes.length = 0;
     await send(client, uri, sessionRead(false));
     expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(false);
+    // This host's own action on the chat, after the client's on the session.
+    expect(actions(p, chatUri).map((e) => [e.action.type, e.action.isRead, e.origin])).toEqual([['chat/isReadChanged', false, undefined]]);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`session/isReadChanged ${uri}`)).toBeLessThan(said.indexOf(`chat/isReadChanged ${chatUri}`));
+  });
+
+  it('marks the one chat read when its session is marked read, though the session was read already', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    // A turn's start makes the chat unread and leaves the session read.
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    expect(await isRead(client, chatUri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
+    p.notes.length = 0;
+
+    await send(client, uri, sessionRead(true));
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(actions(p, chatUri)).toEqual([]);
+    expect(await isRead(client, uri)).toBe(true);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`session/isReadChanged ${uri}`)).toBeLessThan(said.indexOf(`chat/isReadChanged ${chatUri}`));
   });
 
   it('leaves each chat as it is when a session with two chats is marked unread', async () => {
@@ -584,24 +660,26 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(await isRead(client, second)).toBe(true);
   });
 
-  it('leaves unread chats unread when the session is marked read, and says the session once', async () => {
+  it('says a session read as unread while one of its two chats is unread, under the client\'s own origin', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
-    await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
-    await send(client, chatUri, chatRead(false));
     p.notes.length = 0;
 
-    await send(client, uri, sessionRead(true));
-    expect(await isRead(client, uri)).toBe(true);
-    expect(await isRead(client, chatUri)).toBe(false);
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 5, action: sessionRead(true) } });
+    await settle();
+    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(true);
     expect(await isRead(client, second)).toBe(false);
-    expect(actions(p).map((e) => e.action.type)).toEqual(['session/isReadChanged']);
+    // The session's bit did not move, so the answer is the one action, carrying the bit it holds.
+    expect(actions(p).map((e) => [e.channel, e.action, e.origin])).toEqual([
+      [uri, { type: 'session/isReadChanged', isRead: false }, { clientId: 'probe', clientSeq: 5 }],
+    ]);
 
-    // Said again, nothing moved: the sender alone is answered.
+    // Said again, nothing moved: the action goes out, and no row with it.
     const said = p.notes.length;
     await send(client, uri, sessionRead(true));
     expect(p.notes.slice(said).map((one) => one.method)).toEqual(['action']);
-    expect(actions(p, uri).at(-1)?.action.type).toBe('session/isReadChanged');
+    expect(actions(p, uri).at(-1)?.action).toEqual({ type: 'session/isReadChanged', isRead: false });
   });
 
   it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
@@ -680,13 +758,13 @@ describe('a chat\'s read bit and its session\'s', () => {
   };
 
   /*
-   * A stop with no turn running is one the protocol has the server refuse:
-   * "`chat/turnCancelled` | No active turn | Server MUST reject the action".
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
-   * A refusal goes to its sender, who drops the stop it holds; no other client
-   * applied it, so no other client hears of it.
+   * A stop with no turn running stops nothing, and the reference host takes
+   * it as the client's own action, said to every client of the chat: "Ignoring
+   * cancellation of an inactive turn". The chat's reducer leaves the chat as
+   * it was, and no backend is asked to stop anything.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
    */
-  it('refuses a cancel with no turn running, whatever turn it names, to its sender alone', async () => {
+  it('says a cancel with no turn running to every client, whatever turn it names, and stops nothing', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
     started.peer.notes.length = 0;
@@ -700,13 +778,14 @@ describe('a chat\'s read bit and its session\'s', () => {
       await settle();
     }
 
-    const said = actions(started.peer, started.chatUri);
-    expect(said.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }, { clientId: 'probe', clientSeq: 8 }]);
-    expect(said.map((e) => e.rejectionReason)).toEqual([
-      `Nothing is running on ${started.chatUri} to stop`,
-      `Nothing is running on ${started.chatUri} to stop`,
-    ]);
-    expect(actions(two)).toEqual([]);
+    for (const p of [started.peer, two]) {
+      const said = actions(p, started.chatUri);
+      expect(said.map((e) => [e.action, e.origin, e.rejectionReason])).toEqual([
+        [{ type: 'chat/turnCancelled', turnId: 't1' }, { clientId: 'probe', clientSeq: 7 }, undefined],
+        [{ type: 'chat/turnCancelled', turnId: '' }, { clientId: 'probe', clientSeq: 8 }, undefined],
+      ]);
+    }
+    expect(sdk.interrupted).toBe(0);
   });
 
   it('stops the running turn when the cancel names it, and tells every client', async () => {
@@ -742,10 +821,11 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   /*
-   * A chat archived on its own is marked read, as the reference host marks it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+   * A chat archived on its own is marked read, as the reference host marks it,
+   * with the read action that moves its session after it.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
    */
-  it('marks an unread chat read when it is archived, after the archive', async () => {
+  it('marks an unread chat read when it is archived, after the archive, and keeps its session unread while another chat is', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     await send(client, chatUri, chatRead(false));
     await send(client, second, chatRead(false));
@@ -755,10 +835,10 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(actions(p, second).map((e) => e.action.type)).toEqual(['chat/isArchivedChanged', 'chat/isReadChanged']);
     expect(await isRead(client, second)).toBe(true);
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
   });
 
-  it('leaves an unread session unread when its last unread chat is archived', async () => {
+  it('marks an unread session read when its last unread chat is archived', async () => {
     const { client, peer: p, uri } = await twoChats();
     await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
@@ -766,8 +846,9 @@ describe('a chat\'s read bit and its session\'s', () => {
 
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
     expect(await isRead(client, second)).toBe(true);
-    expect(await isRead(client, uri)).toBe(false);
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+    expect(await isRead(client, uri)).toBe(true);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
   it('changes no read bit when a chat is taken out of the archive', async () => {
@@ -805,7 +886,7 @@ describe('a session read from its transcript', () => {
     );
     const client = open();
     await client.handle(hello(['0.9.0']));
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/old' } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/old') } }) as {
       snapshot: { state: { turns: { usage?: Record<string, unknown>; responseParts: { toolCall?: Record<string, unknown> }[] }[] } };
     };
     const turn = opened.snapshot.state.turns[0];
@@ -876,7 +957,7 @@ describe('a session read from its transcript', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/old', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/old'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
     });
     await settle(8);
     // Most of what the schema offers is fixed when the query is built, so a
@@ -891,7 +972,7 @@ describe('a session read from its transcript', () => {
 
     // Nothing in the transcript yet, which is the answer a read that failed
     // and a session nobody has written both give.
-    const first = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+    const first = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } }) as {
       snapshot: { state: { turns: unknown[] } };
     };
     expect(first.snapshot.state.turns).toEqual([]);
@@ -901,7 +982,7 @@ describe('a session read from its transcript', () => {
     // the empty answer it kept, which is what made one bad read permanent for
     // the life of the process.
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'now' } });
-    const second = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+    const second = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } }) as {
       snapshot: { state: { turns: { message: { text: string } }[] } };
     };
     expect(sdk.reads).toBe(2);
@@ -909,7 +990,7 @@ describe('a session read from its transcript', () => {
 
     // And a read that has turns is still kept, which is the large transcript
     // this cache was added for: a third open does not read at all.
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } });
     expect(sdk.reads).toBe(2);
   });
 
@@ -920,7 +1001,7 @@ describe('a session read from its transcript', () => {
 
     const client = open();
     await client.handle(hello(['0.9.0']));
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/flaky' } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/flaky') } }) as {
       snapshot: { state: { turns: { message: { text: string } }[] } };
     };
     // The first read threw and the second answered, so the client is drawn a
@@ -1033,7 +1114,7 @@ describe("a row lists the session's chats", () => {
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
     });
     await settle(8);
     // Subscribing again is what reads the backend's record of the workers it

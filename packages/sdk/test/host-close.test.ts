@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOST_CLOSE_WAIT_MS, createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -287,10 +288,10 @@ describe('Host.close refuses what would start', () => {
     });
     const client = await hello(host);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/one' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/one') } });
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/one', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!ls' } } },
+      params: { channel: chatUriFor('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!ls' } } },
     });
     expect(run).toBeDefined();
     await host.close();

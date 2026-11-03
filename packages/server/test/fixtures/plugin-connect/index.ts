@@ -26,8 +26,11 @@ export const name = 'plugin-connect';
 
 /** The session this plugin opens, as a client names one. */
 const SESSION = 'ahp-session:/connect';
-/** The chat its turn is sent in, which is the session's own. */
-const CHAT = 'ahp-chat:/connect';
+/**
+ * The chat its turn is sent in, which is the session's own: its default chat,
+ * named after the session as the reference host names one.
+ */
+const CHAT = `ahp-chat://default/${Buffer.from(SESSION, 'utf8').toString('base64url')}`;
 /** What this connection calls itself, which is how it knows its own frames. */
 const CLIENT = 'plugin-connect';
 /** The host's automation channel, which is the one `runAutomation` is sent on. */

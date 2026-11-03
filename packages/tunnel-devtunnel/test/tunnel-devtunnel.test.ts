@@ -1,49 +1,31 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
-import { createServer } from 'node:net';
+import { connect, createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { connect } from 'node:net';
-import { EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
 import { afterEach, expect, it } from 'vitest';
-import { pluginHost, raise } from '../../sdk/src/plugins/plugins.js';
-import type { Alert, LoaderContext } from '../../sdk/src/types/plugin.js';
+import { pluginHost } from '../../sdk/src/plugins/plugins.js';
+import type { Alert, LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
+import type { Tunnel, TunnelReport } from '../../sdk/src/types/tunnels.js';
 import {
-  deriveConnectionToken, displayLabel, nameLabel, LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT,
+  deriveConnectionToken, displayLabel, IDENTITY_LABEL, nameLabel,
+  LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT,
 } from '../src/discovery.js';
-import { create, find, prepare, run as runCli, TunnelError } from '../src/devtunnel.js';
-import type { Result, Runner } from '../src/devtunnel.js';
 import { forward } from '../src/forward.js';
-import { posix } from '../../../tools/posix.ts';
+import { devtunnelKind } from '../src/kind.js';
+import type { KindOptions } from '../src/kind.js';
 import { apply } from '../src/plugin.js';
+import { labelsOf, sdkService } from '../src/service.js';
+import type { Cloud, Host, Remote, Service } from '../src/service.js';
 
 /*
- * The convention, the CLI and the plugin, without a `devtunnel` on the machine.
+ * The convention, the hop and the kind, with a fake SDK instead of an account.
  *
  * The convention is the half that has to be right, so it is checked against
  * what it is a convention *for* rather than against itself: the token is
  * recomputed here from its definition, and the labels are read back through
- * the same rule VS Code's `TunnelTags` applies. The CLI half is driven through
- * a fake runner, which is what the `Runner` seam is for.
+ * the same rule VS Code's `TunnelTags` applies. Below that, a `Cloud` and a
+ * `Host` are arrays and counters: no token is real, no tunnel is opened, and
+ * the SDK is never reached.
  */
-
-const ok = (stdout: string): Result => ({ status: 0, signal: null, stdout, stderr: '' });
-const no = (stderr: string, status = 1): Result => ({ status, signal: null, stdout: '', stderr });
-
-/** A runner that answers each command by its first word, and records the calls. */
-const runner = (answers: Record<string, Result | Result[]>): Runner & { calls: string[][] } => {
-  const calls: string[][] = [];
-  const left = new Map(Object.entries(answers).map(([at, value]) => [at, Array.isArray(value) ? [...value] : [value]]));
-  const one = ((args: readonly string[]) => {
-    calls.push([...args]);
-    const queue = left.get(args[0] ?? '');
-    return (queue !== undefined && queue.length > 1 ? queue.shift() : queue?.[0]) ?? ok('{}');
-  }) as Runner & { calls: string[][] };
-  one.calls = calls;
-  return one;
-};
 
 const context = (over: Partial<LoaderContext> = {}): LoaderContext => ({
   path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: () => {}, say: () => {}, ...over,
@@ -73,8 +55,8 @@ it('never lets a derived token begin with a dash', async () => {
 it('reads the display name the way the client works it out', () => {
   // The first label that is not the launcher, not underscore-prefixed and not
   // a protocol tag. Order matters, and the two markers must not win it.
-  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03'])).toBe('dev03');
-  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd'])).toBeUndefined();
+  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03'])).toBe('dev03');
+  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL])).toBeUndefined();
 });
 
 it('turns a machine name into something that can be a label', () => {
@@ -82,95 +64,8 @@ it('turns a machine name into something that can be a label', () => {
   expect(nameLabel('--dev')).toBe('dev');
   expect(nameLabel('x'.repeat(40))).toHaveLength(20);
   expect(nameLabel('!!!')).toBeUndefined();
-});
-
-// The CLI -----------------------------------------------------------------
-
-it('finds a tunnel this plugin made before, by its own label', async () => {
-  const run = runner({ list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'older', labels: [] }, { tunnelId: 'newest', labels: ['_ahpd'] }] })) });
-  expect((await find(run))?.tunnelId).toBe('newest');
-  expect(run.calls[0]).toEqual(['list', '--labels', '_ahpd', '--json']);
-});
-
-it('reads the older tags spelling as well as labels', async () => {
-  const run = runner({ list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'one', tags: [LAUNCHER_LABEL, 'dev03'] }] })) });
-  expect((await find(run))?.labels).toEqual([LAUNCHER_LABEL, 'dev03']);
-});
-
-it('has no tunnel when the account has none', async () => {
-  expect(await find(runner({ list: ok(JSON.stringify({ tunnels: [] })) }))).toBeUndefined();
-});
-
-it('creates one carrying every label the convention needs', async () => {
-  const run = runner({ create: ok(JSON.stringify({ tunnel: { tunnelId: 'made', labels: [] } })) });
-  expect((await create('dev03', run)).tunnelId).toBe('made');
-  const args = run.calls[0] as string[];
-  expect(args.slice(0, 2)).toEqual(['create', '--json']);
-  expect(args.filter((one, at) => args[at - 1] === '--labels'))
-    .toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03']);
-});
-
-it('refuses output that names no tunnel rather than carrying on without one', async () => {
-  await expect(create(undefined, runner({ create: ok('{"tunnel":{}}') }))).rejects.toThrow(TunnelError);
-  await expect(create(undefined, runner({ create: ok('not json') }))).rejects.toThrow(/did not print JSON/);
-});
-
-it('says the command failed, with what it printed', async () => {
-  await expect(find(runner({ list: no('not logged in') }))).rejects.toThrow(/not logged in/);
-});
-
-it('puts the well-known port on the tunnel and leaves access alone by default', async () => {
-  const run = runner({ port: ok(''), access: ok('') });
-  await prepare({ tunnelId: 'made', labels: [] }, false, run);
-  expect(run.calls).toEqual([['port', 'create', 'made', '-p', String(TUNNEL_PORT), '--protocol', 'http']]);
-});
-
-it('opens it to the signed-out only when asked', async () => {
-  const run = runner({ port: ok(''), access: ok('') });
-  await prepare({ tunnelId: 'made', labels: [] }, true, run);
-  expect(run.calls[1]).toEqual(['access', 'create', 'made', '--anonymous', '-p', String(TUNNEL_PORT)]);
-});
-
-it('treats a port that is already there as prepared, which is what reuse means', async () => {
-  const run = runner({ port: no('Port already exists on tunnel') });
-  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).resolves.toBeUndefined();
-});
-
-it('treats the service\'s conflict on an existing port as prepared too', async () => {
-  const run = runner({
-    port: no('Tunnel service error: Conflict with existing entity. Tunnel port number conflicts with an existing port in the tunnel.'),
-  });
-  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).resolves.toBeUndefined();
-});
-
-it('still fails on a port error that is not a conflict', async () => {
-  const run = runner({ port: no('Tunnel service error: Unauthorized.') });
-  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).rejects.toThrow(/Unauthorized/);
-});
-
-// POSIX-only: the stand-in CLI is a shell script, and on Windows `spawn` runs
-// only a `devtunnel.exe`. The runner it checks is the same on every system.
-it.skipIf(!posix)('lets the daemon go on while the CLI talks to the service', async () => {
-  // One real `devtunnel` call takes seconds; a runner that waited for it
-  // synchronously expired every timer the daemon had running, cofold's
-  // catalogue fetch among them.
-  const bin = mkdtempSync(join(tmpdir(), 'devtunnel-'));
-  const path = process.env.PATH;
-  try {
-    writeFileSync(join(bin, 'devtunnel'), '#!/bin/sh\nsleep 0.3\necho \'{"tunnels":[]}\'\n');
-    chmodSync(join(bin, 'devtunnel'), 0o755);
-    process.env.PATH = `${bin}${delimiter}${path ?? ''}`;
-    let ticked = false;
-    const timer = setTimeout(() => { ticked = true; }, 20);
-    const found = await find(runCli);
-    clearTimeout(timer);
-    expect(found).toBeUndefined();
-    expect(ticked).toBe(true);
-  }
-  finally {
-    process.env.PATH = path;
-    rmSync(bin, { recursive: true, force: true });
-  }
+  // A new tunnel carries every marker the convention needs, then the name.
+  expect(labelsOf('dev03')).toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03']);
 });
 
 // The hop -----------------------------------------------------------------
@@ -198,186 +93,275 @@ it('carries a connection from the well-known port to the one the daemon bound', 
   expect(answer).toBe('seen frame');
 });
 
+// The fake SDK ------------------------------------------------------------
+
+/** A made-up Dev Tunnel, which no service ever made. */
+const REMOTE: Remote = {
+  id: 'otter-1234',
+  labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03'],
+  cluster: 'brs',
+};
+
+/** What the fake SDK was asked to do, so a case can read the calls. */
+interface Calls {
+  found: number;
+  made: number;
+  hosted: number;
+  deleted: number;
+  refreshed: number;
+  restarted: number;
+  closed: number;
+  added: number[];
+  removed: number[];
+  access: [number, boolean][];
+  labels?: string[];
+}
+
+/**
+ * The SDK as two objects of arrays and counters.
+ *
+ * `find` answers what the account already holds, which is what makes a restart
+ * keep the Dev Tunnel's id. The host counts the calls that matter to the
+ * arrangement: one host for a connector, and a refresh after every port.
+ */
+const fakeCloud = (options: { found?: Remote } = {}) => {
+  const calls: Calls = {
+    found: 0, made: 0, hosted: 0, deleted: 0, refreshed: 0, restarted: 0, closed: 0,
+    added: [], removed: [], access: [],
+  };
+  let held: Remote | undefined = options.found;
+  const host: Host = {
+    add: async (port) => { calls.added.push(port); return `https://url-${String(port)}.example.test/`; },
+    access: async (port, on) => { calls.access.push([port, on]); },
+    remove: async (port) => { calls.removed.push(port); },
+    refresh: async () => { calls.refreshed += 1; },
+    restart: async () => { calls.restarted += 1; },
+    close: async () => { calls.closed += 1; },
+  };
+  const cloud: Cloud = {
+    find: async () => { calls.found += 1; return held; },
+    make: async (labels) => {
+      calls.made += 1;
+      calls.labels = labels;
+      held = { id: 'made-1234', labels };
+      return held;
+    },
+    host: async () => { calls.hosted += 1; return host; },
+    show: async (port) => ({
+      id: held?.id ?? 'made-1234',
+      url: `https://url-${String(port)}.example.test/`,
+      hosts: 1,
+      clients: 0,
+    }),
+    delete: async () => { calls.deleted += 1; },
+  };
+  return { cloud, calls };
+};
+
+/** The token a record of this kind would carry, which no call here uses. */
+const TOKEN = 'gho_made-up-token';
+
+/** A service over the real arrangement and the fake SDK. */
+const serviceOver = (cloud: Cloud): Service =>
+  sdkService({ token: () => ({ token: TOKEN }), cloud: () => cloud, name: 'dev03' });
+
+/** A service no case reaches, for the plugin tests that only register. */
+const unusedService = (): Service => ({
+  add: async () => { throw new Error('the fake service was not asked to add a port'); },
+  access: async () => {},
+  replace: async () => undefined,
+  remove: async () => {},
+  restart: async () => {},
+  show: async () => undefined,
+  close: async () => {},
+});
+
+/** A tunnel record as the host hands it to its kind. */
+const tunnel = (over: Partial<Tunnel> = {}): Tunnel => ({
+  id: 'devtunnel-1',
+  kind: 'devtunnel',
+  plugin: 'tunnel-devtunnel',
+  purpose: 'person',
+  enabled: true,
+  settings: { connector: 'mine', port: 9101 },
+  ...over,
+});
+
+/** What the kind reported, so a case reads the last answer. */
+const reporting = () => {
+  const seen: TunnelReport[] = [];
+  return { seen, report: (report: TunnelReport) => { seen.push(report); } };
+};
+
+/** The kind over a service, with the lines, alerts and page it made kept. */
+const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
+  const said: string[] = [];
+  const logged: string[] = [];
+  const alerts: Alert[] = [];
+  const views: PluginView[] = [];
+  const cleared: string[] = [];
+  const { host } = pluginHost('tunnel', context({
+    say: (line) => { said.push(line); },
+    log: (line) => { logged.push(line); },
+  }), {
+    alert: (alert) => { alerts.push(alert); },
+    clearAlert: (ref) => { cleared.push(ref); },
+    showView: (_surface, view) => { views.push(view); },
+    clearView: (surface) => { cleared.push(surface ?? 'main'); },
+  });
+  const kind = devtunnelKind({
+    plugin: host,
+    service,
+    anonymous: false,
+    keep: true,
+    open: () => true,
+    daemonPort: () => TUNNEL_PORT,
+    guarded: () => false,
+    ...over,
+  });
+  return { kind, said, logged, alerts, views, cleared };
+};
+
+// The kind ----------------------------------------------------------------
+
+it('finds the Dev Tunnel it made before by its label, so its id and token stay', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE });
+  const { kind, said } = kindFor(serviceOver(cloud), { connector: 'mine' });
+  const report = reporting();
+
+  await kind.create(tunnel({ purpose: 'system', settings: { connector: 'mine', port: TUNNEL_PORT } }), report.report);
+
+  expect(calls.found).toBe(1);
+  expect(calls.made).toBe(0);
+  // The id a client derives its connection token from is the one it had before.
+  expect(said[0]).toBe(`tunnel ${REMOTE.id} (dev03), port ${TUNNEL_PORT}`);
+  expect(report.seen.at(-1)).toMatchObject({ status: 'running', url: `https://url-${String(TUNNEL_PORT)}.example.test/` });
+});
+
+it('makes one with the convention\'s labels when the account has none', async () => {
+  const { cloud, calls } = fakeCloud();
+  const { kind } = kindFor(serviceOver(cloud));
+
+  await kind.create(tunnel(), reporting().report);
+
+  expect(calls.found).toBe(1);
+  expect(calls.made).toBe(1);
+  expect(calls.labels).toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03']);
+});
+
+it('hosts one Dev Tunnel for a connector, and refreshes it for every port', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE });
+  const { kind } = kindFor(serviceOver(cloud));
+
+  await kind.create(tunnel({ id: 'devtunnel-a', settings: { connector: 'mine', port: 9101 } }), reporting().report);
+  await kind.create(tunnel({ id: 'devtunnel-b', settings: { connector: 'mine', port: 9102 } }), reporting().report);
+
+  // Two tunnels of one connector are two ports on one host.
+  expect(calls.hosted).toBe(1);
+  expect(calls.added).toEqual([9101, 9102]);
+  // The second port was added after the relay connected, so it has to be told.
+  expect(calls.refreshed).toBe(2);
+});
+
+it('closes the host when its last port goes, and deletes the Dev Tunnel only without keep', async () => {
+  const kept = fakeCloud({ found: REMOTE });
+  const first = kindFor(serviceOver(kept.cloud), { keep: true });
+  await first.kind.create(tunnel({ id: 'devtunnel-a', settings: { connector: 'mine', port: 9101 } }), reporting().report);
+  await first.kind.create(tunnel({ id: 'devtunnel-b', settings: { connector: 'mine', port: 9102 } }), reporting().report);
+
+  await first.kind.invoke('stop', tunnel({ id: 'devtunnel-a', settings: { connector: 'mine', port: 9101 } }), reporting().report);
+  expect(kept.calls.removed).toEqual([9101]);
+  expect(kept.calls.closed).toBe(0);
+  expect(kept.calls.deleted).toBe(0);
+
+  await first.kind.invoke('stop', tunnel({ id: 'devtunnel-b', settings: { connector: 'mine', port: 9102 } }), reporting().report);
+  expect(kept.calls.closed).toBe(1);
+  // Kept: a new Dev Tunnel is a new id, and therefore a new token for every client.
+  expect(kept.calls.deleted).toBe(0);
+
+  const gone = fakeCloud({ found: REMOTE });
+  const second = kindFor(serviceOver(gone.cloud), { keep: false });
+  await second.kind.create(tunnel(), reporting().report);
+  await second.kind.invoke('stop', tunnel(), reporting().report);
+  expect(gone.calls.closed).toBe(1);
+  expect(gone.calls.deleted).toBe(1);
+});
+
+it('says the derived token on a guarded daemon, and never the connector\'s', async () => {
+  const { cloud } = fakeCloud({ found: REMOTE });
+  const { kind, said, logged } = kindFor(serviceOver(cloud), { connector: 'mine', guarded: () => true });
+
+  await kind.create(tunnel({ purpose: 'system', settings: { connector: 'mine', port: TUNNEL_PORT } }), reporting().report);
+
+  expect(said[1]).toContain(await deriveConnectionToken(REMOTE.id));
+  expect(said[1]).toContain('this daemon requires its own');
+  for (const line of [...said, ...logged]) expect(line).not.toContain(TOKEN);
+});
+
+it('reports a connector that is not open, and starts nothing', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE });
+  const { kind, said, logged } = kindFor(serviceOver(cloud), { connector: 'mine', open: () => false });
+  const report = reporting();
+
+  await kind.invoke('start', tunnel(), report.report);
+
+  expect(report.seen).toEqual([{
+    status: 'error',
+    error: expect.stringContaining('Sign in to this connector again'),
+  }]);
+  expect(said).toEqual([]);
+  expect(calls.hosted).toBe(0);
+  for (const line of logged) expect(line).not.toContain(TOKEN);
+});
+
+it('changes the access of a running port live, and leaves the port where it is', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE });
+  const { kind } = kindFor(serviceOver(cloud));
+  const report = reporting();
+  await kind.create(tunnel(), report.report);
+
+  await kind.invoke('anonymous', tunnel(), report.report, { on: true });
+
+  expect(calls.access).toEqual([[9101, true]]);
+  expect(calls.added).toEqual([9101]);
+  // The change is kept in the record, so the next start puts it on the port.
+  expect(report.seen.at(-1)).toEqual({ settings: { anonymous: true } });
+});
+
+it('restarts the port in place when a person moves it', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE });
+  const { kind } = kindFor(serviceOver(cloud));
+  const report = reporting();
+  await kind.create(tunnel(), report.report);
+
+  await kind.update!(tunnel({ settings: { connector: 'mine', port: 9200 } }), { connector: 'mine', port: 9200 }, report.report);
+
+  expect(calls.removed).toEqual([9101]);
+  expect(calls.added).toEqual([9101, 9200]);
+  // The host stays: closing it on the moved-away port would delete the tunnel
+  // when `keep` is false, and a new tunnel is a new id.
+  expect(calls.closed).toBe(0);
+  expect(report.seen.at(-1)).toMatchObject({ status: 'running' });
+});
+
 // The plugin --------------------------------------------------------------
 
-/** A `devtunnel host` that does not exist, so nothing is spawned in a test. */
-const spawner = () => {
-  const child = new EventEmitter() as ChildProcess & { killed: boolean };
-  child.killed = false;
-  child.kill = () => { child.killed = true; return true; };
-  return child;
-};
-
-const listening = { type: 'listening', runtime: 'node', host: '127.0.0.1', port: TUNNEL_PORT, guarded: false } as const;
-
-it('announces the tunnel it stood up, so ahpd status carries the address', async () => {
-  const said: string[] = [];
-  const run = runner({
-    list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03'] }] })),
-    port: ok(''),
-  });
-  const { host, contribution } = pluginHost('tunnel', context({ say: (line) => { said.push(line); } }));
-  await apply(host, { runner: run, spawner });
-
-  await raise(contribution.events, listening);
-  expect(said).toEqual([`tunnel kept-one (dev03), port ${TUNNEL_PORT}`]);
-});
-
-it('says which token a client will present when the daemon wants one of its own', async () => {
-  const said: string[] = [];
-  const run = runner({
-    list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: ['_ahpd'] }] })),
-    port: ok(''),
-  });
-  const { host, contribution } = pluginHost('tunnel', context({ say: (line) => { said.push(line); } }));
-  await apply(host, { runner: run, spawner });
-
-  await raise(contribution.events, { ...listening, guarded: true });
-  expect(said[1]).toContain(await deriveConnectionToken('kept-one'));
-  expect(said[1]).toContain('this daemon requires its own');
-});
-
-it('costs the tunnel and not the daemon when the CLI is missing', async () => {
-  const logged: string[] = [];
-  const said: string[] = [];
-  const run: Runner = () => { throw new TunnelError('`devtunnel` was not found on PATH.'); };
-  const { host, contribution } = pluginHost('tunnel', context({
-    log: (line) => { logged.push(line); },
-    say: (line) => { said.push(line); },
-  }));
-  await apply(host, { runner: run, spawner });
-
-  await expect(raise(contribution.events, listening)).resolves.toBeUndefined();
-  expect(said).toEqual([]);
-  expect(logged.some((line) => line.includes('not found on PATH'))).toBe(true);
-});
-
-it('keeps the tunnel across a stop, because the id is what the token comes from', async () => {
-  const run = runner({
-    list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: ['_ahpd'] }] })),
-    port: ok(''),
-  });
+it('registers the connector and the devtunnel kind', async () => {
   const { host, contribution } = pluginHost('tunnel', context());
-  await apply(host, { runner: run, spawner });
+  await apply(host, { service: unusedService() });
 
-  await raise(contribution.events, listening);
-  await raise(contribution.events, { type: 'stopping' });
-  expect(run.calls.some((args) => args[0] === 'delete')).toBe(false);
+  expect(contribution.adapters['devtunnel']?.name).toBe('devtunnel');
+  expect(Object.keys(contribution.tunnelKinds ?? {})).toEqual(['devtunnel']);
+  // The mark in the schema is how a client knows which connector fills it in.
+  expect(contribution.tunnelKinds?.['devtunnel']?.schema).toHaveProperty(
+    'properties.connector.x-ahpd-connector', 'devtunnel',
+  );
 });
 
-it('deletes it on the way down when the run asked not to keep it', async () => {
-  const run = runner({
-    list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: ['_ahpd'] }] })),
-    port: ok(''),
-  });
+it('adds no system tunnel until a connector is set', async () => {
   const { host, contribution } = pluginHost('tunnel', context());
-  await apply(host, { runner: run, spawner, keep: false });
+  await apply(host, { service: unusedService() });
 
-  await raise(contribution.events, listening);
-  await raise(contribution.events, { type: 'stopping' });
-  expect(run.calls.at(-1)).toEqual(['delete', 'kept-one', '--force']);
-});
-
-it('has nothing to take down when it never stood anything up', async () => {
-  const run: Runner = () => { throw new TunnelError('no CLI'); };
-  const { host, contribution } = pluginHost('tunnel', context());
-  await apply(host, { runner: run, spawner, keep: false });
-
-  await raise(contribution.events, listening);
-  await expect(raise(contribution.events, { type: 'stopping' })).resolves.toBeUndefined();
-});
-
-// The alerts --------------------------------------------------------------
-
-/** A plugin host whose alerts are kept as the daemon keeps them: one per `ref`. */
-const alerting = () => {
-  const alerts: Alert[] = [];
-  const made = pluginHost('tunnel', context(), {
-    alert: (alert) => {
-      const at = alerts.findIndex((one) => one.ref === alert.ref);
-      if (at !== -1) alerts.splice(at, 1);
-      alerts.push(alert);
-    },
-    clearAlert: (ref) => {
-      const at = alerts.findIndex((one) => one.ref === ref);
-      if (at !== -1) alerts.splice(at, 1);
-    },
-  });
-  return { alerts, ...made };
-};
-
-/** A spawner that keeps each child it made, so a case can end one. */
-const children = () => {
-  const made: (ChildProcess & { killed: boolean })[] = [];
-  const spawn = () => {
-    const child = spawner();
-    child.kill = () => { child.killed = true; child.emit('exit', null, 'SIGTERM'); return true; };
-    made.push(child);
-    return child;
-  };
-  return { made, spawn };
-};
-
-const hosted = { list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: ['_ahpd'] }] })), port: ok('') };
-
-it('alerts the row when the tunnel cannot be found or made, and clears it once one is hosted', async () => {
-  const { alerts, host, contribution } = alerting();
-  let broken = true;
-  const answer = runner(hosted);
-  const run: Runner = (args) => {
-    if (broken) throw new TunnelError('`devtunnel` was not found on PATH.');
-    return answer(args);
-  };
-  await apply(host, { runner: run, spawner });
-
-  await raise(contribution.events, listening);
-  expect(alerts).toEqual([{ level: 'error', ref: 'tunnel', text: 'The tunnel could not be set up: `devtunnel` was not found on PATH.' }]);
-  await raise(contribution.events, { type: 'stopping' });
-  broken = false;
-  await raise(contribution.events, listening);
-  expect(alerts).toEqual([]);
-});
-
-it('alerts the row when the tunnel cannot be prepared', async () => {
-  const { alerts, host, contribution } = alerting();
-  const run = runner({ ...hosted, port: no('Tunnel service error: Unauthorized.') });
-  await apply(host, { runner: run, spawner });
-
-  await raise(contribution.events, listening);
-  expect(alerts.map((one) => [one.level, one.ref])).toEqual([['error', 'tunnel']]);
-  expect(alerts[0]?.text).toContain('Unauthorized');
-});
-
-it('alerts the row when the well-known port cannot be bound', async () => {
-  const taken = createServer();
-  const bound = await new Promise<boolean>((done) => {
-    taken.once('error', () => { done(false); });
-    taken.listen(TUNNEL_PORT, '127.0.0.1', () => { done(true); });
-  });
-  if (bound) closing.push(() => new Promise<void>((done) => { taken.close(() => done()); }));
-  const { alerts, host, contribution } = alerting();
-  await apply(host, { runner: runner(hosted), spawner });
-
-  // The daemon is elsewhere, so the plugin has to bind the well-known port itself.
-  await raise(contribution.events, { ...listening, port: TUNNEL_PORT + 1 });
-  expect(alerts).toHaveLength(1);
-  expect(alerts[0]?.text).toContain(`could not use port ${TUNNEL_PORT}`);
-});
-
-it('alerts the row when devtunnel host exits on its own, and not when a stop ends it', async () => {
-  const { alerts, host, contribution } = alerting();
-  const { made, spawn } = children();
-  await apply(host, { runner: runner(hosted), spawner: spawn });
-
-  await raise(contribution.events, listening);
-  expect(alerts).toEqual([]);
-  made[0]?.emit('exit', 1, null);
-  expect(alerts).toEqual([{ level: 'error', ref: 'tunnel', text: 'The tunnel stopped unexpectedly, so disable and enable the plugin to start it again.' }]);
-
-  await raise(contribution.events, { type: 'stopping' });
-  expect(alerts).toEqual([]);
-  await raise(contribution.events, listening);
-  await raise(contribution.events, { type: 'stopping' });
-  expect(made[1]?.killed).toBe(true);
-  expect(alerts).toEqual([]);
+  const kind = contribution.tunnelKinds?.['devtunnel'];
+  expect(await kind?.system?.({ port: 9187 })).toBeUndefined();
 });

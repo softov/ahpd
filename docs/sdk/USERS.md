@@ -95,7 +95,7 @@ beside them, every scheme this host serves - `user`, `team`, `project`, `role`,
 operations its provider implements and the groups those fall into. A client
 drawing a role editor reads that one key and has every subject there is.
 
-The subjects the host decides are these fifteen:
+The subjects the host decides are these sixteen:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
@@ -112,15 +112,17 @@ The subjects the host decides are these fifteen:
 | `container` | - | `connect`, `disconnect`, `relay`, `stop`, `remove` | Connecting to dev containers, and stopping or removing one |
 | `node` | `list` | `add`, `remove` | The hosts that joined this one. `node:read` lists them; `node:write` adds a node and mints its token, which is shown once, and takes one away, which refuses its token and drops its connection |
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](../server/PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
-| `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
+| `mcp` | - | `call` | Running the host's tools from a person's MCP client at `/mcp` ([MCP.md](../server/MCP.md)). `mcp:call` is what the door asks; each tool checks its own grants again |
+| `trust` | - | `push` | Pushing the host's answer about the folders sessions load their projects from, which a window sends. A push answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
 | `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
 
-`proxy` and `trust` have no scheme of their own: a client never reads a
-`proxy://` or a `trust://` URI, so nothing asks for a resource operation on
-either. The gate behind them is on two other surfaces - the root config, where
-a push asks for `trust:push`, and the proxy's `/v1`, where a call asks for
-`proxy:call` and a model list asks for `proxy:models`. The gate asks the
-operation, and each subject's group in the table above covers it.
+`proxy`, `mcp` and `trust` have no scheme of their own: a client never reads a
+`proxy://`, an `mcp://` or a `trust://` URI, so nothing asks for a resource
+operation on any of them. The gate behind them is on other surfaces - the root
+config, where a push asks for `trust:push`, the proxy's `/v1`, where a call
+asks for `proxy:call` and a model list asks for `proxy:models`, and `/mcp`,
+where a call asks for `mcp:call`. The gate asks the operation, and each
+subject's group in the table above covers it.
 
 The rest are the people schemes and any plugin's, which share the `file`
 operations under their own name:
@@ -155,7 +157,7 @@ member of. Every other pool is refused until a role names the grant.
 | Role | Has |
 | --- | --- |
 | `admin` | `*:*` |
-| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `trust:write` |
+| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `mcp:call`, `trust:write` |
 | `guest` | `session:read`, `automation:read` |
 
 `guest` is the default for `ahpd user add` with no `--role`, and it is the one
@@ -442,35 +444,29 @@ it, the same way every other refused action is answered. What it is checked
 against is the **channel**, not the action, and a dispatch is always a write: a
 session or a chat needs `session:write`, a terminal needs `terminal:write`, an
 automation needs `automation:write`, and anything else needs `file:read`.
-`ahp-root://` is read with the action: `root/configChanged` that only sets your
-own keys (`defaultShell`) needs a sign-in and no grant, and one that pushes
+`ahp-root://` is read with the action: `root/configChanged` that pushes only
 `workspaceTrust` needs `trust:push`, which the `trust:write` group covers. Any
 other key, or a replacement of the whole config, needs `config:write`, which
-only `admin` has among the built-in roles.
+only `admin` has among the built-in roles: every key is one value for the whole
+host.
 
 That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
 anybody can run.
 
-One key inside `ahp-root://` is not the host's at all. `defaultShell` names the
-binary a host-managed terminal opens, and the host's own note calls these "the
-preferences a *client* holds" - VS Code pushes it out of a per-person setting
-the moment it connects. It is kept on the connection that pushed it and read
-from nowhere else, so two people on one daemon each get their own shell and
-neither can name the binary the other's terminal opens.
+`defaultShell` names the binary a client's terminal opens. It is one value for
+the whole host, which the last push sets, so pushing it needs `config:write`
+like every other key.
 
 The paths with no connection in hand take the daemon's own shell, `$SHELL` and
-then `/bin/sh`, or PowerShell on Windows, and no person's preference at all: a
-`!command` typed in a chat,
-and the factory a backend opens a terminal with during a tool call. That is
-deliberate. It costs an agent's terminal the shell you chose in your client, and
-it closes the path where writing a file and naming it here would have made the
-next tool call in anybody's session run it.
+then `/bin/sh`, or PowerShell on Windows, and not the pushed one: a `!command`
+typed in a chat, and the factory a backend opens a terminal with during a tool
+call. That is deliberate. It costs an agent's terminal the shell you chose in
+your client, and it closes the path where writing a file and naming it here
+would have made the next tool call in anybody's session run it.
 
-Every client watching the root still gets the action, on the same sequence
-number, but only the client that sent it sees `defaultShell` in it. The others
-get it without that key, or with their own shell when the action replaces the
-whole config. A replay after reconnecting reads the same way.
+Every client watching the root gets the action whole, on the same sequence
+number, and a replay after reconnecting reads the same way.
 
 The absent `request` is the point: a grant would resolve the first, and nothing
 resolves the second, so a client that reads the field correctly stops instead of

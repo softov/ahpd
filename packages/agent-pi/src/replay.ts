@@ -14,7 +14,7 @@ import type { AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag, SessionAt } from '@ahpd/sdk';
 import { lookupDirectories } from './catalog.js';
-import { callPartOf, mapEvent, readyRow, usageOf } from './mapping.js';
+import { addUsage, callPartOf, mapEvent, readyRow } from './mapping.js';
 import { loadPi } from './pi.js';
 import type { PiOptions, PiTurn, WatchedTurn } from './types.js';
 
@@ -52,6 +52,8 @@ interface Reading {
   watched: WatchedTurn;
   /** The last assistant message, which is how the turn ended, as live. */
   answered?: AssistantMessage;
+  /** What every answer in the turn used, summed as a live turn sums it. */
+  spent?: Bag;
   /** The model in force when the turn ran, as `provider/modelId`. */
   model?: string;
   /** The last entry that belongs to the turn. */
@@ -78,8 +80,9 @@ const raise = (turn: PiTurn, event: Bag, at?: number): void => {
  * the ready the `tool_call` hook gives a call that runs without asking, and
  * its end with the tool result that follows. The turn ends as the last
  * assistant message in it ended, as a live turn does when pi retried: `error`
- * for an error, `cancelled` for an answer that was aborted, and `complete`
- * otherwise.
+ * for an error, `cancelled` for an answer that was aborted or a call no
+ * result followed, and `complete` otherwise. What it used is every answer's
+ * usage summed, as a live turn says it.
  *
  * Entries with no turn meaning are skipped: pi's leading system message, the
  * model and thinking level changes, context edits, labels, session info and
@@ -105,9 +108,34 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
       watched.parts.push({ kind: 'error', error: { errorType: 'turnFailed', message } });
     }
     watched.state = failed ? 'error' : answered?.stopReason === 'aborted' ? 'cancelled' : 'complete';
+    /*
+     * A call the file holds no result for never finished: the turn ended
+     * around it. It reads back cancelled as skipped, which is how the
+     * protocol's reducer holds a call still open when its turn ends, and the
+     * turn that held it reads back cancelled, as the reference reads a Claude
+     * transcript back.
+     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+     */
+    let unfinished = false;
+    for (const part of watched.parts) {
+      const row = part.kind === 'toolCall' ? part.toolCall as Bag : undefined;
+      if (row === undefined || row.status === 'completed' || row.status === 'cancelled') continue;
+      unfinished = true;
+      part.toolCall = {
+        status: 'cancelled',
+        toolCallId: row.toolCallId,
+        toolName: row.toolName,
+        displayName: row.displayName,
+        invocationMessage: row.invocationMessage ?? row.displayName,
+        ...(row.toolInput === undefined ? {} : { toolInput: row.toolInput }),
+        reason: 'skipped',
+        ...(row._meta === undefined ? {} : { _meta: row._meta }),
+      };
+    }
+    if (unfinished && watched.state === 'complete') watched.state = 'cancelled';
     const duration = Date.parse(open.endedAt) - Date.parse(watched.startedAt);
     watched.duration = Number.isFinite(duration) && duration > 0 ? duration : 0;
-    const used = usageOf(answered);
+    const used = open.spent;
     const ran = open.model;
     if (used !== undefined) watched.usage = used.model === undefined && ran !== undefined ? { ...used, model: ran } : used;
     else if (ran !== undefined) watched.usage = { model: ran };
@@ -173,6 +201,8 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         }
       });
       open.answered = answer;
+      const spent = addUsage(open.spent, answer);
+      if (spent !== undefined) open.spent = spent;
       open.end = entry.id;
       open.endedAt = entry.timestamp;
       continue;
