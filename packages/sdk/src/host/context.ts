@@ -39,6 +39,7 @@ import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
 import type { Merged } from './merged.js';
 import type { Canvases } from './canvases.js';
+import type { Asking } from './asking.js';
 
 /**
  * Everything an area of the host reaches for, in one object.
@@ -411,6 +412,11 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   laidCustomizations: (channel: string, reported: unknown) => Bag[] | undefined;
   /** Every state held, by channel. */
   heldStates: ReadonlyMap<string, HeldState>;
+  /**
+   * The questions host tools are waiting on, by the id this host asked them
+   * under, and what settles or cancels them.
+   */
+  asks: Asking;
   /**
    * Let the state this host holds of a session go, its own and its chats',
    * for a session the residency lets go.

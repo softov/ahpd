@@ -1841,11 +1841,16 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1913-L1919
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L642-L692
        */
+      const request = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+        .map((part) => (part.kind === 'inputRequest' ? part.request as Bag : undefined))
+        .find((one) => one?.id === requestId);
+      const sent = (typeof action.answers === 'object' && action.answers !== null
+        ? action.answers
+        : {}) as Record<string, unknown>;
       if (response === 'accept') {
-        const request = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
-          .map((part) => (part.kind === 'inputRequest' ? part.request as Bag : undefined))
-          .find((one) => one?.id === requestId);
-        const given = { ...(request?.answers ?? {}) as Bag, ...(typeof action.answers === 'object' && action.answers !== null ? action.answers : {}) as Bag };
+        // The request's synced answers with this completion's laid over them,
+        // as the reducer records them.
+        const given = { ...(request?.answers ?? {}) as Bag, ...sent };
         const missing = (Array.isArray(request?.questions) ? request.questions as Bag[] : [])
           .find((question) => question.required === true
             && (given[String(question.id ?? '')] as Bag | undefined)?.state !== 'submitted');
@@ -1854,9 +1859,23 @@ export function chatAction(
           break;
         }
       }
-      session.answer(requestId, accepted, (typeof action.answers === 'object' && action.answers !== null
-        ? action.answers
-        : {}) as Record<string, unknown>, kind);
+      /*
+       * A question this host asked is settled here, and never handed on.
+       *
+       * The backend did not put it, so `session.answer` has no request of that
+       * id to answer: an answer passed on would be for nothing at best, and at
+       * worst for a backend's request that happened to carry the same id. What
+       * the person did goes back to the tool waiting on it, and the action
+       * still goes to every client of the chat so each one's request carries
+       * its response.
+       */
+      if (ctx.asks.settle(requestId, kind ?? (accepted ? 'accept' : 'decline'), {
+        ...(request?.answers ?? {}) as Bag, ...sent,
+      })) {
+        dispatch(worker ? channel : session.chatUri, action, origin);
+        break;
+      }
+      session.answer(requestId, accepted, sent, kind);
       /*
        * Said back to every client of the chat, the answering one included,
        * so each one's `inputRequest` part carries the response now rather
