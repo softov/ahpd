@@ -173,6 +173,8 @@ export function botStore(
    * A record a person edited by hand can say anything, so it is read as any
    * other record is, through `kept`. The two fields a hand edit may not change
    * are refused here, because nothing before this point has seen the record.
+   * So is a bot whose slug has a tombstone: its file came back after the
+   * delete, and the name it would answer to is spent.
    */
   const take = async (change: RecordChange): Promise<void> => {
     if (change.type === 'deleted') {
@@ -188,6 +190,12 @@ export function botStore(
       await bury(change.id);
       dead.add(change.id);
       heard?.({ type: 'deleted', bot: before, before: undefined });
+      return;
+    }
+    // A file that came back after its tombstone is the older copy of a bot
+    // whose name is spent, and nothing of it is a bot this host answers.
+    if (dead.has(change.id)) {
+      onProblem(`bots/${change.id} has a tombstone; the name is spent and it was left out`);
       return;
     }
     const said = await bots.get(change.id);
@@ -284,10 +292,20 @@ export function botStore(
       });
     });
     const yaml = seams.yaml;
+    /*
+     * The tombstones first, so a bot file that came back after its delete is
+     * known to be one before it is read: a tombstone is a record too, and only
+     * its id is read - it says which slug was a bot, never what that bot was.
+     */
+    for (const said of await graves.list()) dead.add(said.id);
     for (const said of await bots.list()) {
       const one = kept(said);
       if (one === undefined) {
         onProblem(`bots/${said.id} is not a bot record; it was left out`);
+        continue;
+      }
+      if (dead.has(one.id)) {
+        onProblem(`bots/${one.id} has a tombstone; the name is spent and it was left out`);
         continue;
       }
       // A record made before the file was the one copy is moved into its file
@@ -295,9 +313,6 @@ export function botStore(
       // a record with no parts.
       held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one));
     }
-    // A tombstone is a record too, and only its id is read: it says which slug
-    // was a bot, never what that bot was.
-    for (const said of await graves.list()) dead.add(said.id);
   };
 
   const ready = (): Promise<void> => {

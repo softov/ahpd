@@ -156,15 +156,28 @@ const botOfLog = (file: string): string | undefined => {
  *
  * A bot that has a tombstone in `bots-gone` is one that was deleted, so what
  * is left of it goes rather than moving into a folder the delete would have
- * removed. A file the move cannot place - it names no bot, or its name is not
- * a bot's - is left where it is and reported, and nothing is deleted on a
- * guess.
+ * removed - but for a folder that still holds its record, which is kept and
+ * reported: the name is spent, and the folder is all that is left of it. A
+ * file the move cannot place - it names no bot, or its name is not a bot's -
+ * is left where it is and reported, and nothing is deleted on a guess.
  */
 export function moveData(configDir: string, yaml: Yaml, problem: (line: string) => void): void {
   const bots = join(configDir, BOTS_DIR);
-  const dead = new Set(filesIn(join(configDir, GONE))
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => name.slice(0, -'.md'.length)));
+  /*
+   * The slugs that had a bot, read off their tombstones. A name that is not a
+   * slug is no bot's name, so it is reported and nothing is looked for under
+   * it: `..md` is a file an editor left, not a bot that went.
+   */
+  const dead = new Set<string>();
+  for (const name of filesIn(join(configDir, GONE))) {
+    if (!name.endsWith('.md')) continue;
+    const slug = name.slice(0, -'.md'.length);
+    if (!isSlug(slug)) {
+      problem(`${join(GONE, name)} was left where it is: ${slug} is not a bot's name`);
+      continue;
+    }
+    dead.add(slug);
+  }
 
   /** Move one file into a folder of a bot's, or say why it stayed. */
   const into = (from: string, folder: string, name: string, relative: string): void => {
@@ -198,9 +211,20 @@ export function moveData(configDir: string, yaml: Yaml, problem: (line: string) 
   /*
    * A tombstoned bot's folder and record go first, so nothing of a deleted
    * bot is moved into a folder and then read as a bot that is there.
+   *
+   * A folder that still holds its record is kept: a delete that died between
+   * its two steps and a file put back after a delete look the same here, and
+   * keeping the folder loses nothing. The name is spent either way, so the
+   * record it holds is refused at the load rather than read as a live bot.
    */
   for (const slug of dead) {
-    rmSync(join(bots, slug), { recursive: true, force: true });
+    const record = join(bots, slug, `${BOT_FILE}.md`);
+    if (existsSync(record)) {
+      problem(`${join(BOTS_DIR, slug)} was kept: ${slug} has a tombstone, so the name is spent`);
+    }
+    else {
+      rmSync(join(bots, slug), { recursive: true, force: true });
+    }
     rmSync(join(bots, `${slug}.md`), { force: true });
   }
 

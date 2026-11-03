@@ -255,6 +255,38 @@ it('buries a bot deleted in the collection, and refuses to make it again', async
   await expect(provider.write('bot://motion', said({ name: 'Another' }))).rejects.toMatchObject({ code: -32010 });
 });
 
+it('refuses a bot file that comes back after its delete', async () => {
+  const { records, bots, store, problems } = await made();
+  await store.ready();
+  await bots.put(bot('motion'));
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  await bots.remove('motion');
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+
+  // The file put back, as an editor's restore or a copy left behind by a
+  // delete that died: the name is spent, so it is no bot this store answers.
+  await bots.put(bot('motion'));
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+
+  expect(store.get('motion')).toBeUndefined();
+  expect(problems.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent/);
+
+  // And a daemon that starts again finds it in the collection, and leaves it
+  // out for the same reason: its folder is kept, and the bot is not.
+  const again: string[] = [];
+  const next = botStore(
+    await records.collection('bots'),
+    await records.collection('bots-gone'),
+    (line) => again.push(line),
+    { yaml, agents },
+  );
+  await next.ready();
+
+  expect(next.get('motion')).toBeUndefined();
+  expect(next.gone('motion')).toBe(true);
+  expect(again.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent/);
+});
+
 it('leaves a bot alone when a hand edit changes its owner', async () => {
   const { bots, store, provider, problems } = await made();
   await provider.write('bot://motion', said({ name: 'Motion' }));
