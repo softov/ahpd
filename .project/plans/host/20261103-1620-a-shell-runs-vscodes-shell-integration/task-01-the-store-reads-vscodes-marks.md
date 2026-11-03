@@ -1,6 +1,6 @@
 ---
 title: The store reads VS Code's marks
-status: todo
+status: implemented
 depends: []
 layer: "@ahpd/sdk machines"
 refs:
@@ -44,3 +44,10 @@ A command line from OSC 633 `E` counts only when it carries the terminal's nonce
 - `pnpm --filter @ahpd/sdk test` passes.
 
 ## Resume
+
+Implemented 2026-11-03.
+`packages/sdk/src/machines/osc633.ts` holds the event types and `osc633Of`, the fork's payload parser with no buffer of its own.
+`MARKS` and `OPENERS` in `machines/terminals.ts` read OSC 633 beside OSC 133 and OSC 7, and `meant` maps each event to its OSC 133 twin: `A` clears the typed line, `E` with the terminal's nonce sets the reported line, `C` opens a command with `reported ?? typed.trim()`, `D` finishes it, and `P;Cwd=` moves the directory.
+`TerminalOptions.nonce` names the nonce, and `createTerminal` generates one when it is absent.
+An `integrated` flag reads only OSC 633 once the shell writes one, so a prompt's own OSC 133 does not report a command twice; both kinds are still stripped from `terminal/data`.
+`packages/sdk/test/pty.test.ts` covers the part and its output, a split mark, a wrong nonce, `P;Cwd` and a shell writing both kinds.

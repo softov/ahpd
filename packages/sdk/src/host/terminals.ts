@@ -362,6 +362,11 @@ export function createTerminals(ctx: HostContext): Terminals {
           outputs.delete(uri);
         },
         waitForExit: () => gone,
+        // No process wrote this, so there is no screen to read and none to
+        // wait on: the text is all there is of it.
+        isInAltBuffer: () => false,
+        isBracketedPasteMode: () => false,
+        whenAltBuffer: () => Promise.resolve(),
       };
 
       outputs.add(uri);

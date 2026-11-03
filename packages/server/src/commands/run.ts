@@ -87,6 +87,8 @@ import { handedAgent } from '../agents/handed.js';
 import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
 import { pty } from '../pty.js';
+import { shellIntegration } from '../shellintegration.js';
+import { screen } from '../screen.js';
 import { realManager } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
@@ -1204,6 +1206,18 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     terminals: shellTerminals({
       ...terminalBinding,
       ...(options.shellEnv === undefined ? {} : { shellEnv: options.shellEnv }),
+      /*
+       * VS Code's scripts, beside the pseudoterminal they need: a shell under
+       * pipes has no prompt to mark, and the store asks the port only for one
+       * under a pseudoterminal.
+       */
+      shellIntegration,
+      /*
+       * The emulated screen each terminal under a pseudoterminal is fed with,
+       * so a tool can tell a full-screen program or bracketed paste, and a
+       * program that asks for the cursor is answered.
+       */
+      screen,
     }),
     directories: gitBranches(),
     changes: gitChanges(),

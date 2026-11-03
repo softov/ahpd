@@ -212,6 +212,9 @@ importers:
       '@microsoft/agent-host-protocol':
         specifier: ^1.0.0
         version: 1.0.0
+      '@xterm/headless':
+        specifier: ^6.0.0
+        version: 6.0.0
     optionalDependencies:
       node-pty:
         specifier: ^1.1.0-beta40
@@ -1378,6 +1381,9 @@ packages:
 
   '@vueuse/shared@12.8.2':
     resolution: {integrity: sha512-dznP38YzxZoNloI0qpEfpkms8knDtaoQ6Y/sfS0L7Yki4zh40LFHEhur0odJC6xTHG5dxWVPiUWBXn+wCG2s5w==}
+
+  '@xterm/headless@6.0.0':
+    resolution: {integrity: sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -3746,6 +3752,8 @@ snapshots:
       vue: 3.5.44(typescript@5.9.3)
     transitivePeerDependencies:
       - typescript
+
+  '@xterm/headless@6.0.0': {}
 
   accepts@2.0.0:
     dependencies:

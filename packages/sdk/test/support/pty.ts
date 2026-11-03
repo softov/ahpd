@@ -22,17 +22,17 @@ export interface FakePty {
   exit: (exitCode?: number) => void;
   /** Everything a client typed, in order. */
   typed: string[];
-  /** The shell and arguments of each start, in order. */
-  started: { shell: string; args: string[] | string }[];
+  /** The shell, arguments and environment of each start, in order. */
+  started: { shell: string; args: string[] | string; env: Record<string, string | undefined> }[];
 }
 
 export function fakePty(): FakePty {
   let listen: ((data: string) => void) | undefined;
   let ended: ((exit: { exitCode: number }) => void) | undefined;
   const typed: string[] = [];
-  const started: { shell: string; args: string[] | string }[] = [];
-  const spawn: SpawnPty = (shell, args) => {
-    started.push({ shell, args });
+  const started: { shell: string; args: string[] | string; env: Record<string, string | undefined> }[] = [];
+  const spawn: SpawnPty = (shell, args, options) => {
+    started.push({ shell, args, env: options.env });
     return {
       onData: (to) => { listen = to; },
       onExit: (to) => { ended = to; },
