@@ -76,6 +76,7 @@ import { createBackground } from './host/background.js';
 import { createCanvases } from './host/canvases.js';
 import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
+import { createAsking } from './host/asking.js';
 import { createTerminalMethods, createTerminals } from './host/terminals.js';
 import { createOutputs } from './host/outputs.js';
 import { createLocalTurns } from './host/localturns.js';
@@ -1048,6 +1049,13 @@ export function createHost(options: HostOptions): Host {
       const held = states.get(channel);
       if (origin === undefined && held?.kind === 'chat'
         && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
+      /*
+       * A question a host tool asked in this turn has nobody left to answer
+       * it: the turn it was asked in is over. Settled as cancelled before the
+       * end goes out, so the tool returns that to the model rather than
+       * waiting on a person a stopped turn no longer has.
+       */
+      asks.cancelTurn(channel, String(action.turnId ?? ''));
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1159,6 +1167,13 @@ export function createHost(options: HostOptions): Host {
       });
     }
   };
+  /**
+   * The questions host tools are waiting on, ended by the person or by a turn.
+   *
+   * Built on the same `dispatch` every other host action goes through, so a
+   * request this host asks reaches clients exactly as a backend's does.
+   */
+  const asks = createAsking({ dispatch: (channel, action) => dispatch(channel, action) });
   /**
    * Who hears a client's request about one automation, said back on the
    * catalogue narrowed to the caller's own.
@@ -1486,6 +1501,7 @@ export function createHost(options: HostOptions): Host {
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,
+    asks,
     letStateGo,
     lapsed,
     asleep: new Set<string>(),

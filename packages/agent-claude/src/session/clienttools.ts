@@ -130,6 +130,18 @@ export const contributed = (
   }),
 }) as unknown;
 
+/**
+ * The host's tools this backend takes, out of the ones it was given.
+ *
+ * `ask_user` is not one of them. This backend has its own question tool, and
+ * a session offered both would put two tools that ask the person in front of
+ * the model. The plan `host/20261103-1620-an-agent-asks-the-person` leaves
+ * Claude on its own tool for now, and its *deferred.md* says what would have
+ * to change before this backend takes the host's.
+ */
+export const takes = (tools: BoundTool[]): BoundTool[] =>
+  tools.filter((one) => one.definition.name !== 'ask_user');
+
 /** What this area offers the rest of the session, and its `Session` methods. */
 export interface ClientTools {
   /**
@@ -466,7 +478,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   };
 
   /** One change of tools, sent to the CLI: `setTools` says when, and why in two declarations. */
-  const retool = async (next: BoundTool[]): Promise<boolean> => {
+  const retool = async (offered: BoundTool[]): Promise<boolean> => {
+    const next = takes(offered);
     const before = ctx.offering.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
     const after = next.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
     if (before === after) return true;
