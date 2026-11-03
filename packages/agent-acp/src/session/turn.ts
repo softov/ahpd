@@ -8,7 +8,7 @@ import type { SessionContext } from './context.js';
 
 /** One prompted turn, from its opening to its ending. */
 export interface Turn {
-  openTurn(turnId: string, text: string, from: MessageFrom | undefined, queuedMessageId: string | undefined): void;
+  openTurn(turnId: string, text: string, from: MessageFrom | undefined, queuedMessageId: string | undefined, said?: Bag): void;
   finish(
     turnId: string,
     ending: 'complete' | 'cancelled' | 'error',
@@ -44,14 +44,18 @@ const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
 export function createTurn(ctx: SessionContext): Turn {
   const { emit, provider, start, inside, turns, doing, touch } = ctx;
 
-  /** Open a turn on the wire, before the prompt is sent. */
+  /**
+   * Open a turn on the wire, before the prompt is sent. `said` is a turn said
+   * while the server ran another, opened now as it was said.
+   */
   const openTurn = (
     turnId: string,
     text: string,
     from: MessageFrom | undefined,
     queuedMessageId: string | undefined,
+    said?: Bag,
   ): void => {
-    ctx.active = {
+    ctx.active = said ?? {
       id: turnId,
       startedAt: new Date().toISOString(),
       message: {
@@ -72,13 +76,15 @@ export function createTurn(ctx: SessionContext): Turn {
       updates: [],
       ...(start.plan === true ? { hostPlan: true } : {}),
     };
-    emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt: ctx.active.startedAt,
-      message: ctx.active.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
+    if (said === undefined) {
+      emit('chat', {
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt: ctx.active.startedAt,
+        message: ctx.active.message,
+        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+      });
+    }
     doing('Thinking');
   };
 
@@ -104,7 +110,10 @@ export function createTurn(ctx: SessionContext): Turn {
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
     turn.duration = duration;
-    turns.push(turn);
+    // A turn a later one took the place of is in no history, as the reducer
+    // keeps none of it, and its failure is not the chat's.
+    const gone = ctx.replaced.delete(turnId);
+    if (!gone) turns.push(turn);
     // The watched turn is sealed here, which is what makes a transcript a
     // record of turns rather than of one long stream of updates.
     if (ctx.watchedTurn !== undefined && ctx.watchedTurn.turnId === turnId) {
@@ -142,7 +151,7 @@ export function createTurn(ctx: SessionContext): Turn {
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
       const message = failure.message === '' ? 'The ACP server did not answer' : failure.message;
-      ctx.failed = message;
+      if (!gone) ctx.failed = message;
       emit('chat', {
         type: 'chat/error',
         turnId,
@@ -152,8 +161,9 @@ export function createTurn(ctx: SessionContext): Turn {
     }
     touch();
     // Somebody stopping a turn is stopping this conversation; a queued message
-    // behind it is the opposite of what they asked for.
-    if (ending !== 'cancelled') ctx.startNext();
+    // behind it is the opposite of what they asked for, and a turn said while
+    // this one ran goes on.
+    if (ending !== 'cancelled' || ctx.waiting.length > 0) ctx.startNext();
   };
 
   /**

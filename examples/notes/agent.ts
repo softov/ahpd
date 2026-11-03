@@ -186,6 +186,10 @@ export function notes(options: NotesOptions): Agent {
     /** Finished turns. The running one is `active` and is deliberately not here. */
     const turns: Bag[] = [...(start.seed ?? [])];
     let active: Bag | undefined;
+    /** The turns said while another ran, each worked once the one in front of it is done. */
+    const handed: { turn: Bag; text: string }[] = [];
+    /** The turns a later one took the place of. */
+    const replaced = new Set<string>();
     let title = 'Notes session';
     let modified = new Date().toISOString();
     let closed = false;
@@ -443,21 +447,36 @@ export function notes(options: NotesOptions): Agent {
       return String(value.optionId ?? value.text ?? answer.value ?? '') || undefined;
     };
 
-    const beginTurn = (turnId: string, text: string, queuedMessageId?: string): void => {
-      if (title === 'Notes session' && text) {
+    /**
+     * Start a turn. One handed while another runs is said now, taking that
+     * one's place in every client's state as the protocol's reducer replaces
+     * the active turn, and worked once that one is done; `said` is such a turn,
+     * worked now as it was said. The turn it replaced runs on, in no history.
+     */
+    const beginTurn = (turnId: string, text: string, queuedMessageId?: string, said?: Bag): void => {
+      if (said === undefined && title === 'Notes session' && text) {
         title = text.slice(0, 60);
         start.emit('session', { type: 'session/titleChanged', title });
       }
       const startedAt = new Date().toISOString();
-      const turn: Bag = { id: turnId, startedAt, message: { text }, responseParts: [] };
+      const turn: Bag = said ?? { id: turnId, startedAt, message: { text }, responseParts: [] };
+      if (said === undefined && (active !== undefined || handed.length > 0)) {
+        replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
+        handed.push({ turn, text });
+        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
+        touch();
+        return;
+      }
       active = turn;
-      start.emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt,
-        message: { text },
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
+      if (said === undefined) {
+        start.emit('chat', {
+          type: 'chat/turnStarted',
+          turnId,
+          startedAt,
+          message: { text },
+          ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+        });
+      }
       doing('Reading what you asked');
       const began = Date.now();
 
@@ -469,7 +488,7 @@ export function notes(options: NotesOptions): Agent {
         }
         if (closed || active !== turn) return;
         turn.duration = Date.now() - began;
-        turns.push(turn);
+        if (!replaced.delete(turnId)) turns.push(turn);
         active = undefined;
         doing(undefined);
         touch();
@@ -538,6 +557,12 @@ export function notes(options: NotesOptions): Agent {
 
     const startNext = (): void => {
       if (active || closed) return;
+      // A turn said while another ran goes first, as it was said.
+      const first = handed.shift();
+      if (first !== undefined) {
+        beginTurn(String(first.turn.id), first.text, undefined, first.turn);
+        return;
+      }
       const next = queued.shift();
       if (!next) return;
       const message = (next.message ?? {}) as Bag;
@@ -584,7 +609,8 @@ export function notes(options: NotesOptions): Agent {
         status: status(),
         modifiedAt: modified,
         turns,
-        ...(active ? { activeTurn: active } : {}),
+        // The last turn said, which may be one still waiting its turn.
+        ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
         // A steering message no turn was running to take waits at the head,
@@ -649,12 +675,16 @@ export function notes(options: NotesOptions): Agent {
        * a promise that is never settled.
        */
       cancel: (turnId) => {
-        const turn = active;
+        // The chat's turn is the last one said; the turns it took the place of
+        // stop with it, in no history.
+        const turn = handed.at(-1)?.turn ?? active;
         for (const held of [...waiting.values()]) {
           wanted(held.id);
           held.settle(false, {});
         }
         if (!turn) return;
+        handed.length = 0;
+        replaced.clear();
         turn.state = 'cancelled';
         // Required, and required in earnest: a client's reducer clamps it with
         // `Math.max(0, duration)` and adds it to the turn's start, so an absent

@@ -470,22 +470,74 @@ it('keeps the turn running when pi will not take a steer, and takes the message 
   }
 });
 
-it('queues a second message and runs it when the first turn ends', async () => {
-  const { session, pi, types, last } = opened();
+/*
+ * A turn handed while one runs takes its place at once, as the reducer replaces
+ * the active turn, and pi runs it once the turn in front of it is over: the
+ * reference host hands a client's start to its agent at once, and its agents
+ * run each in turn.
+ */
+it('says a second turn at once in the first one\'s place, and runs it when the first turn ends', async () => {
+  const { session, pi, types } = opened();
   pi.hold();
   session.begin('t1', 'first');
   await settled();
   session.begin('t2', 'second');
   await settled();
-  expect(types('chat')).toContain('chat/pendingMessageSet');
+  expect(types('chat')).not.toContain('chat/pendingMessageSet');
+  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
 
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
-  // The turn that takes it up names it; nothing is said before that turn.
-  expect(types('chat')).not.toContain('chat/pendingMessageRemoved');
-  expect(last('chat/turnStarted')?.queuedMessageId).toBe('t2');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
+  // Said once, and the turn it took the place of is in no history.
+  expect(types('chat').filter((type) => type === 'chat/turnStarted')).toHaveLength(2);
+  expect((session.chatState().turns as { id: string }[]).map((turn) => turn.id)).not.toContain('t1');
+  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
+});
+
+/*
+ * A stop is said to every client when it is taken, and pi lets the turn go
+ * after. A turn sent between the two is said at once to a chat every client
+ * holds idle, and runs once pi is free, as the reference host hands a client's
+ * turn to its agent while an abort may still be under way.
+ */
+it('says a turn sent while pi lets a stopped turn go at once, and runs it once pi is free', async () => {
+  const { session, pi, types } = opened();
+  pi.hold();
+  pi.holdStops();
+  session.begin('t1', 'first');
+  await settled();
+  session.cancel('t1');
+  await settled();
+  session.begin('t2', 'second');
+  await settled();
+  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
+  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
+
+  pi.raise({ type: 'agent_settled', aborted: true });
+  await settled();
+  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
+  expect(types('chat').filter((type) => type === 'chat/turnStarted')).toHaveLength(2);
+  expect((session.chatState().turns as { id: string; state?: string }[]).map((turn) => [turn.id, turn.state])).toEqual([['t1', 'cancelled']]);
+});
+
+it('takes up a message queued while pi lets a stopped turn go at once, and runs it once pi is free', async () => {
+  const { session, pi, last } = opened();
+  pi.hold();
+  pi.holdStops();
+  session.begin('t1', 'first');
+  await settled();
+  session.cancel('t1');
+  await settled();
+  session.queue('q1', 'later');
+  await settled();
+  expect(last('chat/turnStarted')?.queuedMessageId).toBe('q1');
+  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
+
+  pi.raise({ type: 'agent_settled', aborted: true });
+  await settled();
+  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'later']);
 });
 
 it('takes pi its own name for the conversation as the title', async () => {

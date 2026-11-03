@@ -733,34 +733,44 @@ it('takes a queued message back, and it is never a turn', async () => {
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted')).toHaveLength(1);
 });
 
-it('refuses a second message while the answer is still coming', async () => {
+/*
+ * A second message while the answer is still coming takes the open turn's
+ * place at once, as the reducer replaces the active turn, and is handed on once
+ * the open turn is answered: the reference host hands a client's start to its
+ * agent at once, and its agents run each in turn.
+ */
+it('takes a second message while the answer is still coming, said in the first one\'s place and handed on after it', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
   const chat = turns(HELD);
-  chat.onMessage = () => {};
+  const heard: string[] = [];
+  chat.onMessage = (message) => { heard.push(message.turnId); };
 
   await said(client, 't1', 'hello');
   await said(client, 't2', 'and this');
 
-  /*
-   * The host's own refusal: a client's message never reaches a session with a
-   * turn already open, so it is the host that decides what becomes of it - and
-   * what it decides is that the client is told rather than queued. Which is why
-   * the guard in `begin` is the second line of defence rather than the one a
-   * person meets.
-   */
   const refused = notes
     .map((note) => note.params as { rejectionReason?: string; action?: Bag })
     .find((one) => one.rejectionReason !== undefined);
-  expect(refused?.rejectionReason).toBe('A turn is running in this chat');
-  expect(refused?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
-  // Nothing of it arrived: one turn, still open, and nobody was told of a second.
-  expect((await stateOf(client))['activeTurn']).toMatchObject({ id: 't1' });
+  expect(refused).toBeUndefined();
+  const shown = await stateOf(client);
+  expect(shown['activeTurn']).toMatchObject({ id: 't2' });
+  expect((shown['turns'] as Bag[]).map((turn) => turn['id'])).not.toContain('t1');
+  // The open turn is still the one being answered.
+  expect(heard).toEqual(['t1']);
+
+  chat.reply('one');
+  expect(heard).toEqual(['t1', 't2']);
+  chat.reply('two');
+  const done = await stateOf(client);
+  expect(done['activeTurn']).toBeUndefined();
+  // The turn t2 took the place of is in no history.
+  expect((done['turns'] as Bag[]).map((turn) => turn['id'])).toEqual(['t2']);
 });
 
-it('holds a begin behind the open turn rather than taking its place', async () => {
+it('says a begin at once in the open turn\'s place, and hands it on once the open turn is answered', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);
   // The bot, written the way a person writes one. No session is started here:
@@ -785,31 +795,30 @@ it('holds a begin behind the open turn rather than taking its place', async () =
   };
   const session = agent.create(start);
   // Somebody answers this chat, which is what leaves the first turn open.
-  turns(solo).onMessage = () => {};
-
+  const heard: string[] = [];
+  turns(solo).onMessage = (message) => { heard.push(message.turnId); };
   session.begin('t1', 'hello');
   session.begin('t2', 'and then this');
 
-  // Not replaced: the open turn is still the one that began, and the message
-  // after it is waiting rather than a turn of its own.
-  expect(session.chatState().activeTurn).toMatchObject({ id: 't1', message: { text: 'hello' } });
+  // Said at once, in the open turn's place, as the reducer replaces the active
+  // turn; the open turn is still the one being answered.
+  expect(session.chatState().activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
   expect(session.chatState().turns).toEqual([]);
-  expect(session.chatState().queuedMessages).toMatchObject([{ id: 't2', message: { text: 'and then this' } }]);
+  expect(session.chatState().queuedMessages).toEqual([]);
+  expect(heard).toEqual(['t1']);
 
-  // It begins when the turn in front ends, under the id the client named - the
-  // whole difference between a message that waited and one that was dropped.
+  // Handed on once the open turn is answered, under the id the client named,
+  // and the turn it took the place of is in no history.
   turns(solo).reply('one');
   const next = session.chatState();
-  expect(next.turns).toMatchObject([{ id: 't1', state: 'complete' }]);
+  expect(next.turns).toEqual([]);
   expect(next.activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
-  expect(next.queuedMessages).toEqual([]);
-  expect(sent.map((one) => one['type'])).toEqual([
-    'chat/turnStarted',
-    'chat/pendingMessageSet',
-    'chat/responsePart',
-    'chat/turnComplete',
-    'chat/pendingMessageRemoved',
-    'chat/turnStarted',
+  expect(heard).toEqual(['t1', 't2']);
+  expect(sent.map((one) => [one['type'], one['turnId']])).toEqual([
+    ['chat/turnStarted', 't1'],
+    ['chat/turnStarted', 't2'],
+    ['chat/responsePart', 't1'],
+    ['chat/turnComplete', 't1'],
   ]);
 });
 

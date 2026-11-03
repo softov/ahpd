@@ -354,12 +354,13 @@ describe('a command typed into the conversation', () => {
   });
 
   /*
-   * A turn start is answered by itself or by its refusal, and a chat holds one
-   * active turn: a command sent as a turn while a turn runs is refused, as a
-   * question is, and one that waits its turn is a queued message.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+   * A command sent as a turn while a turn runs is taken: its start takes the
+   * running turn's place, as the reducer replaces the active turn, and Claude
+   * runs it at once, as the reference host runs a `!` command it is handed
+   * without forwarding it to the agent.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
    */
-  it('refuses a command sent as a turn while a turn runs', async () => {
+  it('runs a command sent as a turn while a turn runs, in that turn\'s place', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
@@ -368,13 +369,22 @@ describe('a command typed into the conversation', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
+      params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo took-its-place' } } },
     });
-    await settle();
+    await ended(p, chatUri, 't2');
     const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
     expect(answers).toHaveLength(1);
-    expect(answers[0]).toMatchObject({ action: { type: 'chat/turnStarted', turnId: 't2' }, rejectionReason: 'A turn is running in this chat' });
+    expect(answers[0]).toMatchObject({ action: { type: 'chat/turnStarted', turnId: 't2' } });
+    expect(answers[0]?.rejectionReason).toBeUndefined();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageSet')).toBe(false);
+    const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't2');
+    expect(start?.action).toMatchObject({ toolName: 'terminal', intention: 'echo took-its-place' });
+    // Not handed to the CLI, and the turn it took the place of is in no history.
+    expect(sdk.said).toEqual(['first']);
+    const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
   });
 
   it('refuses a command when the backend cannot hold one, rather than asking it', async () => {

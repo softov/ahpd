@@ -60,13 +60,16 @@ export const createRuns = (ctx: SessionContext): Runs => {
   const settleTurn = (ending: 'complete' | 'cancelled' | 'error', why?: string, part?: Bag): boolean => {
     const turn = ctx.active;
     if (turn === undefined) return false;
-    if (ending === 'error') ctx.failed = why === undefined || why === '' ? 'The turn failed' : why;
+    // A turn a later one took the place of is in no history, as the reducer
+    // keeps none of it, and its failure is not the chat's.
+    const gone = ctx.replaced.delete(String(turn.id));
+    if (ending === 'error' && !gone) ctx.failed = why === undefined || why === '' ? 'The turn failed' : why;
     if (ending === 'error' && part !== undefined && Array.isArray(turn.responseParts)) {
       turn.responseParts.push(part);
     }
     turn.state = ending;
     turn.duration = Date.now() - Date.parse(String(turn.startedAt));
-    turns.push(turn);
+    if (!gone) turns.push(turn);
     ctx.active = undefined;
     ctx.handle = undefined;
     ctx.activeMapping = undefined;
@@ -149,9 +152,10 @@ export const createRuns = (ctx: SessionContext): Runs => {
        */
       start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
       // Somebody stopping a turn is stopping this conversation; a queued
-      // message behind it is the opposite of what they asked for. After the
-      // ending, so the next turn starts after the last one ended.
-      if (ended && ending !== 'cancelled') ctx.startNext();
+      // message behind it is the opposite of what they asked for, and a turn
+      // said while this one ran goes on. After the ending, so the next turn
+      // starts after the last one ended.
+      if (ended && (ending !== 'cancelled' || ctx.waiting.length > 0)) ctx.startNext();
     }
     hold();
     if (mapped.settled !== undefined) pending.delete(mapped.settled);

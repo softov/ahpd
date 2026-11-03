@@ -106,6 +106,19 @@ const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
 };
 
 /**
+ * A turn said while pi ran another: what it runs, the queued message it came
+ * from if it did, and the turn as it was said. A command carries what runs it.
+ */
+interface Waiting {
+  said: Bag;
+  model?: Chosen | undefined;
+  from?: MessageFrom | undefined;
+  queuedMessageId?: string | undefined;
+  attachments?: MessageAttachment[] | undefined;
+  command?: { text: string; run: RunCommand };
+}
+
+/**
  * One conversation over one embedded pi.
  *
  * pi is opened lazily, on the first turn, so a session somebody made and never
@@ -186,16 +199,22 @@ export function piSession(
   let closed = false;
   let cancelled = false;
   /**
-   * Whether a message was queued while a stop was in flight.
+   * The turns said while pi still ran another, in the order they came, each
+   * run once the turn in front of it is over.
    *
-   * A stopped turn starts nothing behind it, as the reference host leaves
-   * queued messages queued, and a message queued after the stop starts the
-   * head of the queue once pi lets the turn go, as the reference host takes the
-   * first queued message once one is set while idle.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+   * A turn a client sends while one runs is said at once, so it takes the place
+   * of the one before it in every client's state, as the protocol's reducer
+   * replaces the active turn; pi runs one prompt at a time, so it runs after.
+   * A message queued while a stopped turn winds down is started the same way:
+   * every client holds the chat idle once the stop is said, and the reference
+   * host takes the head of the queue when a message is set on an idle chat.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L87-L89
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
    */
-  let askedSinceStop = false;
+  const waiting: Waiting[] = [];
+  /** The turns a later one took the place of, which run on and end in no history. */
+  const replaced = new Set<string>();
   /** What it is doing, and the one handle that says it. */
   const activity = activityOf(emit);
   let title = UNTITLED;
@@ -711,7 +730,10 @@ export function piSession(
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
     turn.duration = duration;
-    turns.push(turn);
+    // A turn a later one took the place of is in no history, as the reducer
+    // keeps none of it, and its failure is not the chat's.
+    const gone = replaced.delete(turnId);
+    if (!gone) turns.push(turn);
     seal(ending, duration);
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
@@ -722,7 +744,7 @@ export function piSession(
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
       const message = why === undefined || why === '' ? 'pi did not answer' : why;
-      failed = message;
+      if (!gone) failed = message;
       const part: Bag = {
         kind: 'error',
         error: { errorType: 'turnFailed', message },
@@ -734,9 +756,9 @@ export function piSession(
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
     touch();
-    const asked = askedSinceStop;
-    askedSinceStop = false;
-    if (ending !== 'cancelled' || asked) startNext();
+    // A stop starts nothing behind it, as the reference host leaves the queue
+    // queued at a cancel; a turn said while this one ran goes on.
+    if (ending !== 'cancelled' || waiting.length > 0) startNext();
   };
 
   /**
@@ -1036,7 +1058,62 @@ export function piSession(
     }
   };
 
-  /** Start a turn, once there is nothing else running. */
+  /**
+   * The first message titles a session nobody has named.
+   *
+   * A message of nothing but blanks answers the fallback, which is the title
+   * already held - so nothing moves and nothing is said about it.
+   */
+  const titled = (text: string): void => {
+    if (title !== UNTITLED) return;
+    const said = titleFrom(text, UNTITLED);
+    if (said === title) return;
+    title = said;
+    if (record !== undefined) record.title = title;
+    emit('session', { type: 'session/titleChanged', title });
+  };
+
+  /**
+   * A turn sent while pi runs another, said now as the chat's turn and run
+   * once the turn in front of it is over. The turn it takes the place of, the
+   * running one or one said before it, runs on and ends in no history; a turn
+   * pi still runs after a stop already ended in every client's state.
+   */
+  const hand = (turnId: string, text: string, rest: Omit<Waiting, 'said'>): void => {
+    const shown = waiting.at(-1)?.said ?? (cancelled ? undefined : active);
+    if (shown !== undefined) replaced.add(String(shown.id));
+    const ran = rest.model?.id ?? live?.chosen()?.id ?? options.model;
+    const said: Bag = {
+      id: turnId,
+      startedAt: new Date().toISOString(),
+      message: {
+        text,
+        origin: rest.from?.origin ?? { kind: 'user' },
+        ...(rest.from?._meta !== undefined ? { _meta: rest.from._meta } : {}),
+        ...(rest.attachments !== undefined && rest.attachments.length > 0 ? { attachments: rest.attachments } : {}),
+        ...(rest.command === undefined && ran !== undefined
+          ? { model: { id: ran, ...(rest.model?.config !== undefined ? { config: rest.model.config } : {}) } }
+          : {}),
+      },
+      responseParts: [],
+    };
+    waiting.push({ ...rest, said });
+    titled(text);
+    emit('chat', {
+      type: 'chat/turnStarted',
+      turnId,
+      startedAt: said.startedAt,
+      message: said.message,
+      ...(rest.queuedMessageId !== undefined ? { queuedMessageId: rest.queuedMessageId } : {}),
+    });
+    touch();
+  };
+
+  /**
+   * Start a turn, once there is nothing else running.
+   *
+   * `said` is a turn said while another ran, which runs now as it was said.
+   */
   const begin = (
     turnId: string,
     text: string,
@@ -1044,6 +1121,7 @@ export function piSession(
     from?: MessageFrom,
     queuedMessageId?: string,
     attachments?: MessageAttachment[],
+    said?: Bag,
   ): void => {
     failed = undefined;
     cancelled = false;
@@ -1082,7 +1160,7 @@ export function piSession(
     // No part yet: each is opened when pi starts writing the block it holds.
     // The fields `ActiveTurn` declares; `finish` gives it the `state` a `Turn`
     // carries once it ends.
-    active = {
+    active = said ?? {
       id: turnId,
       startedAt,
       message,
@@ -1097,31 +1175,19 @@ export function piSession(
       calls: new Map(),
       ownerOf: clientOf,
     };
-    watched = { turnId, startedAt, message, parts: active.responseParts as Bag[], state: 'complete' };
+    watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[], state: 'complete' };
     watchedTurns.push(watched);
 
-    /*
-     * The first message titles a session nobody has named.
-     *
-     * A message of nothing but blanks answers the fallback, which is the title
-     * already held - so nothing moves and nothing is said about it.
-     */
-    if (title === UNTITLED) {
-      const said = titleFrom(text, UNTITLED);
-      if (said !== title) {
-        title = said;
-        if (record !== undefined) record.title = title;
-        emit('session', { type: 'session/titleChanged', title });
-      }
+    if (said === undefined) {
+      titled(text);
+      emit('chat', {
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt,
+        message,
+        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+      });
     }
-
-    emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt,
-      message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
     activity.say('Thinking');
     touch();
 
@@ -1176,7 +1242,33 @@ export function piSession(
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2992-L2999
    */
   const startNext = (): void => {
-    if (closed || active !== undefined) return;
+    if (closed) return;
+    /*
+     * While pi still lets a stopped turn go, every client holds the chat idle,
+     * so the head of the queue is said as the chat's turn now, and runs once
+     * pi is free.
+     */
+    if (active !== undefined) {
+      if (!cancelled || waiting.length > 0) return;
+      const head = queued.shift();
+      if (head === undefined) return;
+      const held = bag(head.command);
+      hand(String(head.id), String(bag(head.message).text ?? ''), {
+        queuedMessageId: String(head.id),
+        ...(typeof held.text === 'string'
+          ? { command: { text: held.text, run: held.run as RunCommand } }
+          : { model: head.model as Chosen | undefined, attachments: attachmentsOf(head.message) }),
+      });
+      return;
+    }
+    // A turn said while another ran goes first, as it was said.
+    const first = waiting.shift();
+    if (first !== undefined) {
+      const turnId = String(first.said.id);
+      if (first.command !== undefined) runCommand(turnId, first.command.text, first.command.run, first.queuedMessageId, first.said);
+      else begin(turnId, String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
+      return;
+    }
     const next = queued.shift();
     if (next === undefined) return;
     const id = String(next.id);
@@ -1203,8 +1295,8 @@ export function piSession(
    * pi has a shell of its own, but this turn is not pi's: the person asked the
    * host to run something, and the host owns the terminal a client watches.
    */
-  const runCommand = (turnId: string, command: string, run: RunCommand, queuedMessageId?: string): void => {
-    const startedAt = new Date().toISOString();
+  const runCommand = (turnId: string, command: string, run: RunCommand, queuedMessageId?: string, said?: Bag): void => {
+    const startedAt = said === undefined ? new Date().toISOString() : String(said.startedAt);
     const toolCallId = `${turnId}:shell`;
     const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
     /*
@@ -1218,9 +1310,11 @@ export function piSession(
       kind: 'toolCall',
       toolCall: { toolCallId, ...started, status: 'running' },
     };
-    active = { id: turnId, startedAt, message, responseParts: [part] };
+    // A command said while another turn ran runs as it was said.
+    if (said !== undefined) (said.responseParts as Bag[]).push(part);
+    active = said ?? { id: turnId, startedAt, message, responseParts: [part] };
     mapping = undefined;
-    emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message, ...(queuedMessageId !== undefined ? { queuedMessageId } : {}) });
+    if (said === undefined) emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message, ...(queuedMessageId !== undefined ? { queuedMessageId } : {}) });
     emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
     const held = bag(part.toolCall);
     held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
@@ -1346,7 +1440,8 @@ export function piSession(
       status: statusOf(bits()),
       modifiedAt: modified,
       turns,
-      ...(active !== undefined ? { activeTurn: active } : {}),
+      // The last turn said, which may be one still waiting for pi.
+      ...((waiting.at(-1)?.said ?? active) !== undefined ? { activeTurn: waiting.at(-1)?.said ?? active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       // A steering message no turn was running to take waits at the head of
@@ -1358,36 +1453,30 @@ export function piSession(
       queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
+    // A turn sent while pi runs another is said now and run after it.
     begin: (turnId, text, model, from, attachments) => {
-      if (active !== undefined) {
-        const message: Bag = {
-          text,
-          origin: from?.origin ?? { kind: 'user' },
-          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-        };
-        queued.push({ id: turnId, message, ...(model !== undefined ? { model } : {}) });
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
-        touch();
+      if (active !== undefined || waiting.length > 0) {
+        hand(turnId, text, { model, from, attachments });
         return;
       }
       begin(turnId, text, model, from, undefined, attachments);
     },
 
     ran: (turnId, command, run, queuedAs) => {
-      if (active !== undefined || queuedAs !== undefined) {
-        const id = queuedAs ?? turnId;
-        const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-        const entry: Bag = { id, command: { text: command, run }, message };
-        const at = queued.findIndex((held) => String(held.id) === id);
-        if (at >= 0) queued[at] = entry; else queued.push(entry);
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
-        touch();
-        // At once when nothing runs, as a queued message is.
-        if (cancelled) askedSinceStop = true;
-        startNext();
+      // A command sent as a turn while pi runs another is said now and run after it.
+      if (queuedAs === undefined) {
+        if (active !== undefined || waiting.length > 0) hand(turnId, `!${command}`, { command: { text: command, run } });
+        else runCommand(turnId, command, run);
         return;
       }
-      runCommand(turnId, command, run);
+      const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
+      const entry: Bag = { id: queuedAs, command: { text: command, run }, message };
+      const at = queued.findIndex((held) => String(held.id) === queuedAs);
+      if (at >= 0) queued[at] = entry; else queued.push(entry);
+      emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: queuedAs, message });
+      touch();
+      // At once when nothing runs, as a queued message is.
+      startNext();
     },
 
     /**
@@ -1456,7 +1545,7 @@ export function piSession(
      * applied, so it goes out as that action's echo.
      */
     resume: (turnId) => {
-      if (closed || active !== undefined) return false;
+      if (closed || active !== undefined || waiting.length > 0) return false;
       const last = turns.at(-1);
       if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
       const part = (last.responseParts as Bag[] | undefined)?.at(-1);
@@ -1506,7 +1595,24 @@ export function piSession(
     },
 
     cancel: (turnId) => {
-      if (active === undefined || String(bag(active).id) !== turnId) return;
+      /*
+       * A stop of a turn said while another ran: it ends now, the turns
+       * waiting with it go, and the run in front of it is stopped, as the
+       * reference stop aborts the agent's work in flight and drops the turns
+       * waiting behind it.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
+       */
+      const shown = waiting.at(-1)?.said;
+      if (shown !== undefined && String(shown.id) === turnId) {
+        waiting.length = 0;
+        shown.state = 'cancelled';
+        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
+        turns.push(shown);
+        emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        touch();
+      }
+      else if (active === undefined || String(bag(active).id) !== turnId) return;
+      if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');
       // What a client was running for this turn is not coming back, so pi is
@@ -1534,12 +1640,11 @@ export function piSession(
       emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
       touch();
       /*
-       * At once when nothing runs: "the server SHOULD immediately consume it",
-       * and the reference host starts an accepted queued message while its chat
-       * is idle.
+       * At once when nothing runs, a stopped turn pi still lets go included:
+       * "the server SHOULD immediately consume it", and the reference host
+       * starts an accepted queued message while its chat is idle.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
        */
-      if (cancelled) askedSinceStop = true;
       startNext();
     },
 

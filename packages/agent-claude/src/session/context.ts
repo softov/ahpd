@@ -29,6 +29,8 @@ export interface Owed {
    * nothing yet, `queued` once it holds it, `started` once it took it in.
    */
   cli: 'sent' | 'queued' | 'started';
+  /** A steering message a client took back while the CLI held it, whose answer goes nowhere. */
+  withdrawn?: boolean;
 }
 
 /**

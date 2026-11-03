@@ -7,7 +7,7 @@ import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
 import { ruleName, toolCallPart, toolStartAction } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
-import type { SessionContext } from './context.js';
+import type { SessionContext, Waiting } from './context.js';
 
 /** The attachments a message a client sent carries, where it carries any. */
 const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
@@ -142,6 +142,42 @@ export const createTurns = (
   };
 
   /**
+   * A turn sent while a run holds another, said now as the chat's turn and run
+   * once the turn in front of it is over. The turn it takes the place of, the
+   * running one or one said before it, runs on and ends in no history; a turn
+   * a run still holds after a stop already ended in every client's state.
+   */
+  const hand = (turnId: string, text: string, rest: Omit<Waiting, 'said'>): void => {
+    const shown = ctx.waiting.at(-1)?.said ?? (ctx.cancelRequested ? undefined : ctx.active);
+    if (shown !== undefined) ctx.replaced.add(String(shown.id));
+    const reference = rest.command === undefined ? valuesFor(rest.model).reference : undefined;
+    const said: Bag = {
+      id: turnId,
+      startedAt: new Date().toISOString(),
+      message: {
+        text,
+        ...(rest.from?.origin !== undefined ? { origin: rest.from.origin } : {}),
+        ...(rest.from?._meta !== undefined ? { _meta: rest.from._meta } : {}),
+        ...(rest.attachments !== undefined && rest.attachments.length > 0 ? { attachments: rest.attachments } : {}),
+        ...(reference !== undefined
+          ? { model: { id: reference, ...(rest.model?.config === undefined ? {} : { config: rest.model.config }) } }
+          : {}),
+      },
+      responseParts: [],
+    };
+    ctx.waiting.push({ ...rest, said });
+    start.emit('chat', {
+      type: 'chat/turnStarted',
+      turnId,
+      startedAt: said.startedAt,
+      message: said.message,
+      ...(rest.queuedMessageId !== undefined ? { queuedMessageId: rest.queuedMessageId } : {}),
+    });
+    retitle(text);
+    ctx.touch();
+  };
+
+  /**
    * Open a turn on the wire, before anything runs it.
    *
    * `chat/turnStarted` is emitted here, before `run()` is called, because the
@@ -155,6 +191,8 @@ export const createTurns = (
    * Answers nothing for a session that is closed or already running a turn.
    * Both a turn with a run behind it and one that has to be failed before it
    * starts share this opening, so a client sees the same turn either way.
+   *
+   * `said` is a turn said while a run held another, opened now as it was said.
    */
   const openTurn = (
     turnId: string,
@@ -163,11 +201,19 @@ export const createTurns = (
     from?: MessageFrom,
     queuedMessageId?: string,
     attachments?: MessageAttachment[],
+    said?: Bag,
   ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
     if (ctx.closed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     const { values, reference } = valuesFor(model);
+    if (said !== undefined) {
+      ctx.active = said;
+      ctx.doing('Thinking');
+      const mapping = mappingOn(turnId, said.responseParts as Bag[], Date.parse(String(said.startedAt)), reference);
+      ctx.activeMapping = mapping;
+      return { mapping, values, reference };
+    }
     const began = Date.now();
     // No part yet: each is opened when the model starts writing the block it holds.
     ctx.active = {
@@ -312,8 +358,9 @@ export const createTurns = (
     from?: MessageFrom,
     queuedMessageId?: string,
     attachments?: MessageAttachment[],
+    said?: Bag,
   ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
+    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments, said);
     if (opened === undefined) return;
     if (attachments === undefined || attachments.length === 0) {
       runTurn(turnId, text, opened.values, opened.reference, opened.mapping);
@@ -389,8 +436,9 @@ export const createTurns = (
     queuedMessageId: string | undefined,
     attachments: MessageAttachment[] | undefined,
     why: unknown,
+    said?: Bag,
   ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
+    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments, said);
     if (opened === undefined) return;
     void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
   };
@@ -415,7 +463,7 @@ export const createTurns = (
    * it goes out as that action's echo before the new run's first event.
    */
   const resumeTurn = (turnId: string): boolean => {
-    if (ctx.closed || ctx.active !== undefined || ctx.opening !== undefined) return false;
+    if (ctx.closed || ctx.active !== undefined || ctx.waiting.length > 0 || ctx.opening !== undefined) return false;
     const last = turns.at(-1);
     if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
     const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
@@ -517,13 +565,10 @@ export const createTurns = (
    * asked to carry on from a point, and carrying on from somewhere else
    * without saying so is the one answer that is worse than an error.
    *
-   * A turn that finds another running once the lookup has settled is refused
-   * to the client that sent it, in the words of the host's own guard. That
-   * guard lets a turn through while the chat holds no active one, so a turn
-   * handed during the lookup can meet the one that opened before it, or the
-   * paused run the lookup made the chat's turn again. The client's `handed`
-   * is taken while its dispatch is applied, which is the only time it names
-   * that dispatch.
+   * A turn that finds another running once the lookup has settled, the one
+   * that opened before it or the paused run the lookup made the chat's turn
+   * again, is said at once and run once that one is over, as any turn handed
+   * while a run holds another is. `said` is such a turn, run now.
    */
   const beginTurn = (
     turnId: string,
@@ -532,15 +577,15 @@ export const createTurns = (
     from?: MessageFrom,
     queuedMessageId?: string,
     attachments?: MessageAttachment[],
+    said?: Bag,
   ): void => {
-    const handed = ctx.start.handed?.({ type: 'chat/turnStarted', turnId });
     const start = (): void => {
-      if (ctx.active !== undefined) {
-        handed?.refuse('A turn is running in this chat');
+      if (said === undefined && (ctx.active !== undefined || ctx.waiting.length > 0)) {
+        hand(turnId, text, { model, from, queuedMessageId, attachments });
         return;
       }
       if (ctx.refused !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, attachments, ctx.refused);
+        failTurn(turnId, text, model, from, queuedMessageId, attachments, ctx.refused, said);
         return;
       }
       /*
@@ -551,10 +596,10 @@ export const createTurns = (
        */
       const why = ctx.refreshOptions();
       if (why !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, attachments, new Error(why));
+        failTurn(turnId, text, model, from, queuedMessageId, attachments, new Error(why), said);
         return;
       }
-      startTurn(turnId, text, model, from, queuedMessageId, attachments);
+      startTurn(turnId, text, model, from, queuedMessageId, attachments, said);
     };
     if (ctx.refused !== undefined) {
       start();
@@ -576,7 +621,44 @@ export const createTurns = (
       void ctx.opening.then(startNext, startNext);
       return;
     }
-    if (ctx.active !== undefined || ctx.closed) return;
+    if (ctx.closed) return;
+    /*
+     * While a stopped run still winds down, every client holds the chat idle,
+     * so the head of the queue is said as the chat's turn now, and runs once
+     * the run is over.
+     */
+    if (ctx.active !== undefined) {
+      if (!ctx.cancelRequested || ctx.waiting.length > 0) return;
+      const untaken = ctx.untaken.shift();
+      if (untaken !== undefined) {
+        if (ctx.steering?.id === untaken.id) ctx.steering = undefined;
+        hand(crypto.randomUUID(), untaken.text, { from: untaken.from, queuedMessageId: untaken.id, attachments: untaken.attachments });
+        return;
+      }
+      const head = queued.shift();
+      if (head === undefined) return;
+      const held = bag(head.command);
+      const message = bag(head.message);
+      hand(crypto.randomUUID(), String(message.text ?? ''), {
+        queuedMessageId: String(head.id),
+        ...(typeof held.text === 'string' && typeof held.run === 'function'
+          ? { from: { origin: { kind: 'user' } }, command: { text: held.text, run: held.run as RunCommand } }
+          : {
+            model: head.model as Chosen | undefined,
+            from: head.from as MessageFrom | undefined,
+            attachments: attachmentsOf(message),
+          }),
+      });
+      return;
+    }
+    // A turn said while another ran goes first, as it was said.
+    const first = ctx.waiting.shift();
+    if (first !== undefined) {
+      const turnId = String(first.said.id);
+      if (first.command !== undefined) runCommand(turnId, first.command.text, first.command.run, first.queuedMessageId, first.said);
+      else beginTurn(turnId, String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
+      return;
+    }
     /*
      * A steering message the run it was sent into never took in, before the
      * queue: it was meant for the turn that just ended. Its turn names it in
@@ -635,6 +717,7 @@ export const createTurns = (
     command: string,
     run: RunCommand,
     queuedMessageId?: string,
+    said?: Bag,
   ): void => {
     if (ctx.closed || ctx.active !== undefined) return;
     ctx.cancelRequested = false;
@@ -646,17 +729,21 @@ export const createTurns = (
     // its intention, as the reference host starts its own.
     const part = toolCallPart(toolCallId, 'terminal', 'Terminal', undefined, undefined, command);
     const call = bag(part.toolCall);
-    ctx.active = {
+    // A command said while a run held another runs as it was said.
+    if (said !== undefined) (said.responseParts as Bag[]).push(part);
+    ctx.active = said ?? {
       id: turnId,
       startedAt: new Date(began).toISOString(),
       message: { text: `!${command}`, origin: { kind: 'user' } },
       responseParts: [part],
     };
-    start.emit('chat', {
-      type: 'chat/turnStarted', turnId, startedAt: ctx.active.startedAt, message: ctx.active.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
-    retitle(command);
+    if (said === undefined) {
+      start.emit('chat', {
+        type: 'chat/turnStarted', turnId, startedAt: ctx.active.startedAt, message: ctx.active.message,
+        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+      });
+      retitle(command);
+    }
     start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal', undefined, undefined, command));
     /*
      * The ready the reference host sends for its own: the command is the line
@@ -746,15 +833,31 @@ export const createTurns = (
    * rather than handing `!ping` to a model.
    */
   const ran: Session['ran'] = (turnId, command, run, queuedAs) => {
-    if (ctx.active !== undefined || ctx.opening !== undefined || (queuedAs !== undefined && queued.length > 0)) {
-      const id = queuedAs ?? turnId;
+    /*
+     * A command sent as a turn while a run holds another is said now and run
+     * once that one is over, as any turn handed then is; one sent while the
+     * lookup runs waits for it, as a turn does.
+     */
+    if (queuedAs === undefined) {
+      const go = (): void => {
+        if (ctx.active !== undefined || ctx.waiting.length > 0) {
+          hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
+        }
+        else runCommand(turnId, command, run);
+      };
+      if (ctx.opening === undefined) go();
+      else void ctx.opening.then(go, go);
+      return;
+    }
+    if (ctx.active !== undefined || ctx.opening !== undefined || queued.length > 0) {
       const message = { text: `!${command}`, origin: { kind: 'user' } };
-      const entry = { id, command: { text: command, run }, message };
-      const at = queued.findIndex((held) => String(held.id) === id);
+      const entry = { id: queuedAs, command: { text: command, run }, message };
+      const at = queued.findIndex((held) => String(held.id) === queuedAs);
       if (at >= 0) queued[at] = entry;
       else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: queuedAs, message });
       ctx.touch();
+      startNext();
       return;
     }
     runCommand(turnId, command, run, queuedAs);
@@ -795,9 +898,9 @@ export const createTurns = (
   /*
    * A queued message, or a steering message the run handed back, which waits
    * in `untaken` to be a turn of its own. A steer cofold's submit still holds
-   * is the run's: `RunHandle.submit` takes approve, deny, answer, steer and
-   * cancel, and none of them gives a steer back, so nothing is said here and
-   * the host answers the client.
+   * is withdrawn: `RunHandle.submit` takes approve, deny, answer, steer and
+   * cancel, and none of them takes a steer back, so it is dropped when the run
+   * gives it back, nothing is said here, and the host answers the client.
    */
   const unqueue: Session['unqueue'] = (id) => {
     const left = ctx.untaken.findIndex((held) => held.id === id);
@@ -805,6 +908,12 @@ export const createTurns = (
       ctx.untaken.splice(left, 1);
       if (ctx.steering?.id === id) ctx.steering = undefined;
       start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+      ctx.touch();
+      return;
+    }
+    if (ctx.steering?.id === id) {
+      ctx.withdrawn.add(id);
+      ctx.steering = undefined;
       ctx.touch();
       return;
     }
