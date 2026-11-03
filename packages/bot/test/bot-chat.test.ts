@@ -540,6 +540,36 @@ it('keeps a queued message behind the steered turn', async () => {
   expect(after['queuedMessages'] ?? []).toEqual([]);
 });
 
+/*
+ * A stopped turn starts nothing behind it: the reference host leaves queued
+ * messages queued, and a message set while idle starts the first of them.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+ */
+it('starts nothing behind a stopped turn, and its queue\'s head once a message is queued after it', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await queued(client, 'q1', 'and then this');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  const stopped = await stateOf(client);
+  expect(stopped['activeTurn']).toBeUndefined();
+  expect(stopped['queuedMessages']).toMatchObject([{ id: 'q1' }]);
+
+  await queued(client, 'q2', 'one more');
+  const after = await stateOf(client);
+  expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
+  expect(heard.map((one) => one.text)).toEqual(['hello', 'and then this']);
+});
+
 it('reads an old steering line as a turn of its own', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);

@@ -668,8 +668,22 @@ export interface Session {
    * `options` is what the turn is given beside the message, held with it and
    * read when the turn comes - which is later than this call, so the words
    * are the ones true then rather than the ones true now.
+   *
+   * `kind` is the pending message's, `queued` when absent. A `steering` one is
+   * a steering message no turn was running to take: it is the next turn, ahead
+   * of everything waiting, as the reference host runs steering that came too
+   * late to steer a turn.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
    */
-  queue(id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
+  queue(
+    id: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+    options?: TurnOptions,
+    kind?: 'queued' | 'steering',
+  ): void;
   /**
    * Take one back, while it is still waiting, and say it gone with
    * `chat/pendingMessageRemoved`.

@@ -31,7 +31,15 @@ export interface Turns {
     setTitle: (title: string) => void;
     ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string) => void;
     steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
-    queue: (id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
+    queue: (
+      id: string,
+      text: string,
+      model?: Chosen,
+      from?: MessageFrom,
+      attachments?: MessageAttachment[],
+      options?: TurnOptions,
+      kind?: 'queued' | 'steering',
+    ) => void;
     setDraft: (draft: Bag | undefined) => void;
     unqueue: (id: string) => void;
     reorder: (order: string[]) => void;
@@ -375,9 +383,13 @@ export function createTurns(ctx: SessionContext): Turns {
     if (busy() || ctx.closed)
       return;
     // Nor while the CLI owes an answer: a prompt handed to it now is read after
-    // the one it owes, and that answer would be taken for this one's.
-    if (ctx.owed.size > 0)
+    // the one it owes, and that answer would be taken for this one's. The start
+    // is made once that answer comes.
+    if (ctx.owed.size > 0) {
+      ctx.deferred = true;
       return;
+    }
+    ctx.deferred = false;
     const next = ctx.queued.shift();
     if (!next)
       return;
@@ -697,12 +709,13 @@ export function createTurns(ctx: SessionContext): Turns {
      * immediately started, which is a queue entry a client sees appear and
      * leave rather than one that was never there.
      */
-    queue: (id, text, model, from, attachments, options) => {
+    queue: (id, text, model, from, attachments, options, kind = 'queued') => {
       const entry: Bag = {
         id,
         // Held with the message and read when its turn comes, which is what
         // makes a turn's instruction follow the turn rather than the arrival.
         ...(options !== undefined ? { options } : {}),
+        ...(kind === 'steering' ? { steering: true } : {}),
         message: {
           text,
           origin: from?.origin ?? { kind: 'user' },
@@ -720,9 +733,11 @@ export function createTurns(ctx: SessionContext): Turns {
       const at = ctx.queued.findIndex((held) => str(held.id) === id);
       // The same id again edits what is waiting; a fresh one appends. That is
       // the client's spelling for "change my mind" and it costs nothing here.
+      // A steering message no turn was running to take is the next turn.
       if (at >= 0) ctx.queued[at] = entry;
+      else if (kind === 'steering') ctx.queued.unshift(entry);
       else ctx.queued.push(entry);
-      ctx.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
+      ctx.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message: entry.message });
       ctx.touch();
       ctx.startNext();
     },
@@ -741,8 +756,8 @@ export function createTurns(ctx: SessionContext): Turns {
     unqueue: (id) => {
       const at = ctx.queued.findIndex((held) => str(held.id) === id);
       if (at < 0) return;
-      ctx.queued.splice(at, 1);
-      ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      const [held] = ctx.queued.splice(at, 1);
+      ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
       ctx.touch();
     },
 
