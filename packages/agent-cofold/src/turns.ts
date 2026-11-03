@@ -580,6 +580,7 @@ export const createTurns = (
     said?: Bag,
   ): void => {
     const start = (): void => {
+      if (ctx.stopping.delete(turnId)) return;
       if (said === undefined && (ctx.active !== undefined || ctx.waiting.length > 0)) {
         hand(turnId, text, { model, from, queuedMessageId, attachments });
         return;

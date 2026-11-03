@@ -659,6 +659,14 @@ export interface Session {
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
    *
+   * The turn's start is said in this call, before anything the backend waits
+   * on to begin it, as the reference host applies a client's start at once and
+   * its agent prepares the turn after; a start said later is said by the host
+   * as the client sent it, and the backend's own start of the turn is not said
+   * again. A stop of a turn the backend has not begun yet reaches `cancel`, and
+   * the turn begins nothing.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+   *
    * A turn handed while another runs takes that one's place: its start is said
    * at once, so every client holds it as the chat's turn, as the protocol's
    * reducer replaces the active turn, and it runs once the work in front of it

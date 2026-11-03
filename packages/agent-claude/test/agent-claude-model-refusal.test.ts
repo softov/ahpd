@@ -136,12 +136,12 @@ it('fails the turn on a model the CLI refuses, sends nothing, and stays on the m
   session.begin('t2', 'second', { id: 'claude-2.1' });
   await settle();
 
-  // Started and then failed, both events, so a client clears its own row.
-  expect(chat().slice(-2)).toEqual(['chat/turnStarted', 'chat/error']);
+  // Started as it was begun, before the switch, and then failed.
+  expect(chat().filter((one) => one === 'chat/turnStarted' || one === 'chat/error').slice(-2)).toEqual(['chat/turnStarted', 'chat/error']);
   expect(failure('t2')).toBe("The harness would not take model claude-2.1: Model 'claude-2.1' not found");
-  // Nothing reached the CLI, and the turn is not credited to the model it named.
+  // Nothing reached the CLI; the turn names the model its client asked for, as it was sent.
   expect(prompts).toEqual(['first']);
-  expect(message('t2').model).toBeUndefined();
+  expect(message('t2').model).toEqual({ id: 'claude-2.1' });
 
   session.begin('t3', 'third');
   await settle();
@@ -171,11 +171,11 @@ it('holds the queue behind a turn that is switching models, and sends the prompt
   session.queue('q1', 'second');
   await settle(5);
 
-  // The turn is busy before it has an id the session can report, so the
-  // message behind it waits: nothing of the second turn has reached the CLI,
-  // and it is still a queued message rather than a turn.
+  // The turn is the chat's while it switches, said as it was begun, and the
+  // message behind it waits: nothing of either has reached the CLI, and the
+  // second is still a queued message.
   expect(prompts).toEqual([]);
-  expect(session.chatState().activeTurn).toBeUndefined();
+  expect(session.chatState().activeTurn).toMatchObject({ id: 't1' });
   expect(session.chatState().queuedMessages).toMatchObject([{ id: 'q1' }]);
 
   release();

@@ -432,3 +432,22 @@ it('starts nothing behind a failure a client can resume, a message queued after 
   expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
   expect(((session.chatState() as Bag).queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
 });
+
+/*
+ * A turn's start is said as it is begun, before the model it names is
+ * switched to, as the reference host applies a client's start at once and its
+ * agent prepares the turn after; a stop during the switch ends the turn, and
+ * the CLI is sent nothing of it.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
+ */
+it('says a turn\'s start before it switches the model, and a stop during the switch sends the CLI nothing', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.begin('t1', 'one', { id: 'another-model' });
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
+  session.cancel('t1');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnCancelled').map((one) => one.turnId)).toEqual(['t1']);
+  expect(sdk.said).toEqual([]);
+});

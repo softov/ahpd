@@ -1359,6 +1359,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * it would be a record's key nobody writes.
      */
     let keys: string[] | undefined;
+    /*
+     * The client's dispatch this hands on, which is said as it was sent where
+     * the backend says nothing of it in the same tick and does not relay it.
+     */
+    const asDispatch = ctx.later();
+    const handedOn = queuedAs === undefined ? { type: 'chat/turnStarted', turnId } : { type: 'chat/pendingMessageSet', id: queuedAs };
     const run = (): string | undefined => {
       /*
        * Who sent it, against the id this turn will be known by: the turn id when
@@ -1400,6 +1406,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          */
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments, ctx.turnInstructions(session.uri));
         else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
+        ctx.sayUnanswered(handedOn);
         return undefined;
       }
       if (!session.ran) {
@@ -1418,7 +1425,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         turnId,
         toolCallId,
       }, opened), queuedAs, kind);
+      ctx.sayUnanswered(handedOn);
       return undefined;
+    };
+    /*
+     * A turn's own check and a machine's catch-up answer in a later tick, so
+     * the turn is handed on then as the client's dispatch again: a backend
+     * that says it in the same tick answers the client, one that relays it
+     * takes it, and otherwise the host says it as sent.
+     */
+    const handOn = (): string | undefined => {
+      let why: string | undefined;
+      asDispatch(() => { why = run(); });
+      return why;
     };
     /*
      * The machine the session is in, put where the host's branch is.
@@ -1440,7 +1459,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * every turn of a session on this host.
      */
     const turn = (): string | undefined | Promise<string | undefined> =>
-      (queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run));
+      (queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? handOn() : followOf(session.uri).then(handOn));
     /*
      * The turn's own check, beside the one above.
      *
