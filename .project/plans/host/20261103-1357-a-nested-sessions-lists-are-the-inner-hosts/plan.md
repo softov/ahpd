@@ -1,13 +1,13 @@
 ---
 title: A nested session's lists are the inner host's
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
   - git://c97d8459 - the commit of ahpd this plan was checked at
-  - git://4b2e706f - the commit task 02 was checked at, task 01 built
+  - git://fa9afa9a - the commit task 02 was checked at, task 01 built and merged
   - git://273af282 - the change that kept the inner lists back, so that a nested session names only channels the outer host serves
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55 - a relay forwards a remote host's messages both ways"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228 - a mirror enqueues the source host's own envelopes for a session's chat and changeset channels"
@@ -97,7 +97,7 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The proxy relays the inner lists](task-01-the-proxy-relays-the-inner-lists.md) | done | - |
-| [02 - The lead chat's bits are the inner host's](task-02-the-lead-chats-bits-are-the-inner-hosts.md) | todo | 01 |
+| [02 - The lead chat's bits are the inner host's](task-02-the-lead-chats-bits-are-the-inner-hosts.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -106,13 +106,13 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-03.
-- **Next action:** task 02.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a relayed channel a client still watches when the host inside opens again.
 
 ## Final verification checklist
 
-- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] Each new case of task 01 fails on `c97d8459`'s sources, the one of task 02 on `fa9afa9a`'s, and each passes after its change.
 - [x] The touched files' test files pass, one file at a time.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

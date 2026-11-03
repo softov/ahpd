@@ -1,6 +1,6 @@
 ---
 title: The lead chat's bits are the inner host's
-status: todo
+status: done
 depends: [01]
 layer: host
 refs:
@@ -36,6 +36,6 @@ The outer host keeps them as said, and moves none of them itself.
 
 ## Validation
 
-- The new case fails on `4b2e706f`'s sources and passes after.
+- The new case fails on `fa9afa9a`'s sources and passes after.
 - `nested-proxy.test.ts` passes alone at one worker.
 - `pnpm run typecheck` and `pnpm run boundary` are clean.
