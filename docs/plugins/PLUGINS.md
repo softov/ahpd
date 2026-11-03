@@ -1694,6 +1694,24 @@ The state carries `operations` beside the records. Each operation has an `id` of
 
 After `listening` the host adds each kind's system tunnel, when the list holds none of that kind with `purpose: system`, and starts every enabled record. `disable` stops a tunnel and keeps it with `enabled: false`; `enable` starts it again; a daemon that restarts starts it too.
 
+### `x-ahpd-clients`
+
+One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `watching` (the channels it subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
+
+A row carries `framesIn`, `framesOut`, `bytesIn` and `bytesOut`: the frames its socket has carried in each direction, and the UTF-8 bytes of those frames. A daemon that counts nothing sends no counters.
+
+`forwardedFor` is a claim the client made, kept as it was sent. Nothing in the host parses it into an address or trusts it: `address` is the only one the socket itself reported, and behind a proxy that is the proxy's.
+
+A row exists while its socket is open. Reading the list needs `client:read`.
+
+The counters are sent at most once each 5 seconds, and only while someone reads the list. The timer starts at the first subscriber and stops when the last one unsubscribes or disconnects, so a list nobody watches costs nothing.
+
+The state carries `operations` beside the records, and the list offers one. `drop` has `kind: host`, takes `scopes: ['client']`, asks for `client:drop`, and carries a confirmation. It runs with `x-ahpd/invokeOperation` and `target: { id }`, where the id is the row's. It answers with the row and then closes that connection, so a client that drops its own socket is told what it dropped first.
+
+A drop is not a ban. The client may connect again at once, and is a new row: the id is the socket's number and not the client's id, so a reconnect is a different row with a new number.
+
+`?owner=me` is refused. A connection belongs to the host, and the grant is the whole of who may read the list.
+
 ### `x-ahpd/invokeOperation`
 
 One command runs an operation that a channel's state lists, and the same command serves every channel with operations. It takes `{ channel, operationId, target?, input? }`:
@@ -1702,12 +1720,12 @@ One command runs an operation that a channel's state lists, and the same command
 | --- | --- |
 | `channel` | The channel URI whose state lists the operation, such as `x-ahpd-tunnels://` |
 | `operationId` | The operation's id, such as `devtunnel/create` |
-| `target` | `{ id }` for an operation on one tunnel, and absent for one on the list |
+| `target` | `{ id }` for an operation on one record, such as a tunnel or a client, and absent for one on the list |
 | `input` | The operation's input, checked against the schema it declares |
 
 It needs `operation:invoke`. It also admits a caller who holds the grant the operation itself names, such as `tunnel:delete` for a remove. So a person who may change the tunnels needs no second grant to run one.
 
-It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now. It refuses a target on a list operation, and a tunnel operation with no `target.id`. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
+It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now. It refuses a target on a list operation, and an operation on one record with no `target.id`, naming the scope it runs on. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
 
 The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
 

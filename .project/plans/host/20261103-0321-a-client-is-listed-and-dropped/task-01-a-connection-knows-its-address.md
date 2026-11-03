@@ -1,6 +1,6 @@
 ---
 title: A connection knows its address
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -52,3 +52,11 @@ Each accepted socket arrives at the host with its number, its remote address and
 - On a machine with Bun or Deno, start the daemon on that runtime. Read a row's address by hand, and write the result in *Resume*.
 
 ## Resume
+
+Done, with one departure from *Files* recorded below.
+
+`Opened` carries `socket`, `address` and `forwardedFor`, and `openedOf` takes an object and leaves out each field the runtime did not supply. Node reads `request.socket.remoteAddress` and the `x-forwarded-for` header in the `connection` handler. Bun reads `server_.requestIP(request)?.address` and the header in `fetch`, and carries both on the socket's data. Deno takes the handler's second argument, reading `info.remoteAddr.hostname` when the transport is `tcp` and the header from the request. `overStdio` passes `openedOf({ socket: 1 })`. `accept` takes `opened` as its fourth parameter and sets `socket`, `address` and `forwardedFor` on the connection with `connectedAt: Date.now()`. `run.ts` passes `opened` on both the WebSocket and the stdio path.
+
+Validation passed. The two Node cases in `packages/sdk/test/listen-identity.test.ts` show the loopback address, the socket number `1` and the forwarded text `203.0.113.9`. They show no `forwardedFor` when the header is absent. The case in `packages/sdk/test/host-handshake.test.ts` shows the three fields and a numeric `connectedAt` on an accepted connection. `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and `pnpm --filter @ahpd/sdk test` passes 4056 with 2 skipped. The by-hand Bun and Deno check is waiting: neither runtime is installed on this box.
+
+**Departure:** the handshake case cannot read a `Connection`, which has no public reader. This task also adds the read side, so the validation can see a connection. That is `ConnectedClient` and `ClientRegistry.connected()` in `types/host.ts`, the `clientRow` projection in `host.ts`, and `Host.clientRegistry`. `watch`, `drop`, `ClientChange`, the channel, the grants and the docs stay in task 02. Task 02 asks to add `clients` to `Host`, which already exists as `Clients` and cannot be reused, because `Clients.watch(client, uri, options)` would collide with `ClientRegistry.watch(onChange)`. The name used is `clientRegistry`, after its type. That choice is recorded as an open question in the plan's *Resume state*.

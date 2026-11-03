@@ -10,10 +10,10 @@
  * One command serves every channel that has operations: `x-ahpd/invokeOperation`
  * takes `{ channel, operationId, target?, input? }`. It copies
  * `invokeChangesetOperation`'s checks - the operation has to be one the channel
- * lists *now*, a `tunnel` operation takes `target: { id }`, a `list` operation
- * takes no target - and adds the two a tunnel needs: the `input` is checked
- * against the operation's own schema, and the operation's status is set while it
- * runs, so every subscriber sees the call.
+ * lists *now*, an operation on one record takes `target: { id }`, a `list`
+ * operation takes no target - and adds the two a tunnel needs: the `input` is
+ * checked against the operation's own schema, and the operation's status is set
+ * while it runs, so every subscriber sees the call.
  *
  * The command's own grant is `operation:invoke`, and a caller who holds the
  * operation's grant is let in without it: a person who may change the tunnels
@@ -75,20 +75,26 @@ export interface InvokeOperationOptions {
   onProblem?(message: string): void;
 }
 
-/** The target an operation takes, or a refusal saying which scope it has. */
+/**
+ * The target an operation takes, or a refusal saying which scope it has.
+ *
+ * Every scope but `list` names one thing, so any of them takes `target: { id }`
+ * and no scope is special-cased here: a `tunnel` operation and a `client` one
+ * are checked the same way, and the refusal says which it was.
+ */
 const targetOf = (operation: Operation, asked: unknown): string | undefined => {
-  const onTunnel = operation.scopes.includes('tunnel');
+  const scope = operation.scopes.find((one) => one !== 'list');
   if (asked === undefined) {
-    if (onTunnel) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one tunnel, so it needs target.id`);
+    if (scope !== undefined) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one ${scope}, so it needs target.id`);
     return undefined;
   }
-  if (!onTunnel) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on the list, so it takes no target`);
+  if (scope === undefined) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on the list, so it takes no target`);
   const raw = typeof asked === 'object' && asked !== null && !Array.isArray(asked)
     ? asked as Record<string, unknown>
     : undefined;
   const id = raw?.id;
   if (typeof id !== 'string' || id === '') {
-    throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one tunnel, so it takes target: { id }`);
+    throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one ${scope}, so it takes target: { id }`);
   }
   return id;
 };

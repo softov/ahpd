@@ -60,6 +60,7 @@ function fake(fail?: string) {
       input: { type: 'object', properties: { port: { type: 'integer' } }, required: ['port'] },
     },
     { id: 'fake/restart', kind: 'fake', label: 'Restart', scopes: ['tunnel'], grant: 'tunnel:restart', status: 'idle' },
+    { id: 'fake/drop', kind: 'fake', label: 'Drop', scopes: ['client'], grant: 'client:drop', status: 'idle' },
   ];
   const channel: OperationChannel = {
     uri: URI,
@@ -117,6 +118,13 @@ it('refuses an operation on one tunnel with no target, and runs one with an id',
   expect(await call(one, 'fake/restart', { target: { id: 't1' } })).toEqual({ done: 'fake/restart' });
   expect(one.ran).toEqual([{ id: 'fake/restart', target: 't1' }]);
   expect(one.channel.operations()[1]).toMatchObject({ status: 'idle' });
+});
+
+it('names the scope of an operation that runs on one record, client included', async () => {
+  const one = fake();
+  await expect(call(one, 'fake/drop')).rejects.toThrow('runs on one client, so it needs target.id');
+  expect(await call(one, 'fake/drop', { target: { id: '7' } })).toEqual({ done: 'fake/drop' });
+  expect(one.ran).toEqual([{ id: 'fake/drop', target: '7' }]);
 });
 
 it('refuses an input its schema refuses', async () => {

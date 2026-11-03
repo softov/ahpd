@@ -28,6 +28,7 @@ import type { PayOrder } from '../usage/charge.js';
 import type { RecordStore } from './records.js';
 import type { Vault } from './vault.js';
 import type { Peer, Request } from './rpc.js';
+import type { Opened } from './listen.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
 import type { SessionConfigAnswerer } from './completions.js';
@@ -116,6 +117,63 @@ export interface NodeRegistry {
   connect(id: string, asked: NestedStart): Promise<NestedStarted | undefined>;
   /** Called on each join and each departure, until the handle is closed. */
   watch(onChange: (change: NodeChange) => void): { close(): void };
+}
+
+/**
+ * One open connection, as an operator reads it.
+ *
+ * The socket number is the listener's, so two sockets of one client id during
+ * a reconnect are two of these rather than one. Everything but `socket` and
+ * the two claims is what the connection itself said at `initialize`.
+ */
+export interface ConnectedClient {
+  /** The number the listener gave its socket, the one `Tap` reports its frames under. */
+  socket?: number;
+  /** The identifier the client gave at `initialize`. */
+  clientId: string;
+  /** The name the client last said for itself, when it said one. */
+  name?: string;
+  /** The remote address the listener reported for the socket. */
+  address?: string;
+  /** The `X-Forwarded-For` claim the request carried, kept as sent and never trusted. */
+  forwardedFor?: string;
+  /** The protocol version this connection agreed on at `initialize`. */
+  protocolVersion?: string;
+  /** The BCP 47 tag the client sent, when it sent one. */
+  locale?: string;
+  /** The person this connection signed in as, when it did. */
+  principal?: Principal;
+  /** Channel URIs this client subscribed to. */
+  watching: string[];
+  /** When the connection was accepted, as a wall-clock millisecond. */
+  connectedAt: number;
+}
+
+/** A connection that opened, or one that closed. */
+export type ClientChange =
+  | { socket: number; joined: true }
+  | { socket: number; joined: false };
+
+/**
+ * The clients this host serves, as a live list.
+ *
+ * The rows exist while their sockets do, so a reader is sent an arrival and a
+ * departure rather than a stored list that could fall behind. Reading is one
+ * grant and dropping is another: a socket is the door's to admit and the
+ * host's to end, and nothing else about a connection is a caller's to change.
+ */
+export interface ClientRegistry {
+  /** One entry for each open connection, in the order they were accepted. */
+  connected(): ConnectedClient[];
+  /** Called on each arrival and each departure, until the handle is closed. */
+  watch(onChange: (change: ClientChange) => void): { close(): void };
+  /**
+   * Close the connection on this socket, and answer whether the registry held one.
+   *
+   * A drop is not a ban: the client may connect again at once, and is a new
+   * row, because a row's id is the socket's number and not its client id.
+   */
+  drop(socket: number): boolean;
 }
 
 /** How to construct a host. */
@@ -1303,6 +1361,22 @@ export interface Connection {
   /** The identifier the client gave at `initialize`. */
   clientId: string;
   /**
+   * The number the listener gave this socket, the one `Tap` reports its frames
+   * under. Absent on a connection a caller built without `accept`'s `opened`.
+   */
+  socket?: number;
+  /** The remote address the listener reported for this socket, when it could. */
+  address?: string;
+  /**
+   * The `X-Forwarded-For` text the request carried, as it was sent.
+   *
+   * The client's claim rather than a measurement: nothing in this host trusts
+   * it, and a listener behind a proxy is what makes it worth reading.
+   */
+  forwardedFor?: string;
+  /** When the connection was accepted, as a wall-clock millisecond. */
+  connectedAt: number;
+  /**
    * The protocol version this connection agreed on at `initialize`.
    *
    * Set from what the negotiation answered, so a later delivery can hold back
@@ -1474,8 +1548,13 @@ export interface Host {
    * token passes what it found, so the first command is served as them
    * without an `authenticate`. Absent is a connection that is nobody, which is
    * what the deployment's own token has always produced.
+   *
+   * `opened` is what the listener knew of the socket - its number, the remote
+   * address and the `X-Forwarded-For` claim - and is kept on the connection
+   * for as long as it lasts. A caller that builds a connection by hand passes
+   * none, and the row says nothing about where it came from.
    */
-  accept(peer: Peer, principal?: Principal, root?: boolean): {
+  accept(peer: Peer, principal?: Principal, root?: boolean, opened?: Opened): {
     /** Answer one request from this client. */
     handle(request: Request): Promise<unknown>;
     /** Drop this client's subscriptions and state. */
@@ -1523,6 +1602,15 @@ export interface Host {
    * published, and exposed so an embedder can read one directly.
    */
   clients: Clients;
+  /**
+   * The clients connected now, as rows rather than as resource places.
+   *
+   * `clients` above answers where a client's resources come from; this answers
+   * who is connected, where each socket came from and when it arrived. It is
+   * the source `x-ahpd-clients://` lists, and an embedder may read it to see
+   * what it is serving.
+   */
+  clientRegistry: ClientRegistry;
   /**
    * Replace the tools this host contributes.
    *

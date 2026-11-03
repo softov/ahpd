@@ -1,6 +1,6 @@
 ---
 title: The host lists and drops its clients
-status: todo
+status: implemented
 depends:
   - task-01-a-connection-knows-its-address.md
 layer: "sdk, server, docs"
@@ -72,3 +72,13 @@ Its state offers `drop`, which takes `client:drop`, answers the row and then clo
 - Run `pnpm --filter @ahpd/sdk test`, and then `pnpm --filter @ahpd/server test`. Expect a pass from each.
 
 ## Resume
+
+Done, with two departures from *Files* recorded below.
+
+`ClientChange` and the three calls of `ClientRegistry` are in `types/host.ts`, and `Host.clientRegistry` answers them. `connected()` maps the host's set of connections in arrival order. `watch` keeps a callback until its handle closes. `drop` closes the peer of the connection on that socket, and answers false when no connection is on it. `OperationScope` gained `client`, and `targetOf` now takes a target for every scope but `list` and names the scope in each refusal.
+
+`packages/sdk/src/clients/channel.ts` builds the list from the registry as its records source, with `id` as the socket number and `principal` as the person's id. It needs `client:read`, and it refuses `?owner=me`. It offers one operation: `drop`, `kind: host`, `scopes: ['client']`, grant `client:drop`, with a confirmation. Its `run` finds the row, answers it, and closes the peer on a `setTimeout` of 0 ms. It refuses a socket the registry does not hold with `-32001`. In `run.ts` the channel is built after the tunnels one and served with `servedRecords`. It joins the map behind `x-ahpd/invokeOperation`, now `channelOperations`. The registry is bound after `createHost`, watched, and the watch is closed in `way.down`. `docs/plugins/PLUGINS.md` has the `x-ahpd-clients` section and the generalized `target` wording.
+
+Validation passed. `packages/sdk/test/clients-channel.test.ts` covers the six cases the task names, plus the address and forwarded claim on a row, the `-32001` refusal and the operation's declaration. `packages/sdk/test/kinds-operations.test.ts` has the `client` scope case and its refusal names `client`. `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass. `pnpm --filter @ahpd/sdk test` passes 4066 with 2 skipped, and `pnpm --filter @ahpd/server test` passes 1756 with 2 skipped.
+
+**Departures:** the property is `clientRegistry` and not `clients`, for the reason task 01 gives and the plan's *Resume state* records. An arrival is said where `client_connect` fires, which is in `host/handshake.ts`. This task adds `clientsChanged` to `HostContext` in `host/context.ts`, and one call after each of the two fires. `host.ts` alone cannot see the handshake, and would list a row before it has a client id. Both files are outside this task's *Files* list. The `drop` operation carries `status: 'idle'` for its whole life: it answers as it runs, and no row holds an operation field.

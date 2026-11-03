@@ -50,10 +50,19 @@ const take = (held: Connected | Raw, peer: Peer, text: string): void => {
   else receive(text, peer, (request) => held.handle(request));
 };
 
-/** Where a connection came in and which node it is, as the connection handler is told it. */
-const openedOf = (url: string | undefined, node: string | undefined): Opened => ({
-  ...(url === undefined ? {} : { url }),
-  ...(node === undefined ? {} : { node }),
+/** Where a connection came in, what it is and which node it is, as the connection handler is told it. */
+const openedOf = (seen: {
+  url?: string | undefined;
+  node?: string | undefined;
+  socket?: number | undefined;
+  address?: string | undefined;
+  forwardedFor?: string | undefined;
+}): Opened => ({
+  ...(seen.url === undefined ? {} : { url: seen.url }),
+  ...(seen.node === undefined ? {} : { node: seen.node }),
+  ...(seen.socket === undefined ? {} : { socket: seen.socket }),
+  ...(seen.address === undefined ? {} : { address: seen.address }),
+  ...(seen.forwardedFor === undefined ? {} : { forwardedFor: seen.forwardedFor }),
 });
 
 /**
@@ -226,7 +235,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     const server = Bun.serve({
       port: options.port,
       hostname: host,
-      async fetch(request: Request, server_: { upgrade(r: Request, options?: { data?: unknown }): boolean }) {
+      async fetch(request: Request, server_: {
+        upgrade(r: Request, options?: { data?: unknown }): boolean;
+        requestIP?(r: Request): { address: string } | null;
+      }) {
         // A plain request is the host's own HTTP surface when it has one,
         // answered in full there and never signed in at this door. Without
         // one, it is answered by its token.
@@ -239,22 +251,38 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         }
         // What the door decided rides on the socket, because Bun's `open` is
         // handed the socket and not the request this answer came from.
-        if (server_.upgrade(request, { data: { principal: identity.principal, root: identity.root, node: identity.node, url: request.url } })) return undefined;
+        const data = {
+          principal: identity.principal, root: identity.root, node: identity.node, url: request.url,
+          // Read here because `server_` is the only place either is in hand:
+          // Bun answers the address from the request and nowhere else.
+          address: server_.requestIP?.(request)?.address,
+          forwardedFor: request.headers.get('x-forwarded-for') ?? undefined,
+        };
+        if (server_.upgrade(request, { data })) return undefined;
         return new Response(SPEAKS_AHP, { status: 426, headers: PLAIN_HEADERS });
       },
       websocket: {
         open(ws: BunSocket) {
-          const seen = tapping(options.tap, ++accepted);
+          const number = ++accepted;
+          const seen = tapping(options.tap, number);
           const peer = createPeer({
             send: (text) => { seen.out(text); ws.send(text); },
             close: () => ws.close(),
             isOpen: () => ws.readyState === 1,
             buffered: () => ws.getBufferedAmount(),
           }, bounding);
-          const arrival = ws.data as { principal?: Principal; root?: boolean; node?: string; url?: string } | undefined;
+          const arrival = ws.data as {
+            principal?: Principal; root?: boolean; node?: string; url?: string; address?: string; forwardedFor?: string;
+          } | undefined;
           bound.set(ws, {
             peer,
-            connected: onConnect(peer, arrival?.principal, arrival?.root, openedOf(arrival?.url, arrival?.node)),
+            connected: onConnect(peer, arrival?.principal, arrival?.root, openedOf({
+              url: arrival?.url,
+              node: arrival?.node,
+              socket: number,
+              address: arrival?.address,
+              forwardedFor: arrival?.forwardedFor,
+            })),
             seen,
           });
         },
@@ -290,7 +318,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
 
   if (here === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
-      serve(options: { port: number; hostname: string }, handler: (r: Request) => Response | Promise<Response>): {
+      serve(
+        options: { port: number; hostname: string },
+        handler: (r: Request, info: { remoteAddr: { transport: string; hostname?: string } }) => Response | Promise<Response>,
+      ): {
         shutdown(): Promise<void>;
         addr: { port: number };
       };
@@ -298,17 +329,22 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     } }).Deno;
     /** The upgraded sockets still open, closed first on close: a shutdown waits on each. */
     const sockets = new Set<DenoSocket>();
-    const server = Deno.serve({ port: options.port, hostname: host }, async (request) => {
+    const server = Deno.serve({ port: options.port, hostname: host }, async (request, info) => {
       if (!upgrading(request)) return options.request === undefined ? plainAnswer(identityOf, request) : options.request(request);
       const identity = await identityOf(request.url, request.headers.get('authorization'));
       if (!identity.admitted) {
         return new Response(TOKEN_REQUIRED, { status: 401 });
       }
+      // A unix socket has a path rather than an address, and Deno reports the
+      // transport that tells them apart.
+      const address = info.remoteAddr.transport === 'tcp' ? info.remoteAddr.hostname : undefined;
+      const forwardedFor = request.headers.get('x-forwarded-for') ?? undefined;
       const { socket, response } = Deno.upgradeWebSocket(request);
       sockets.add(socket);
       let held: Bound | undefined;
       socket.onopen = () => {
-        const seen = tapping(options.tap, ++accepted);
+        const number = ++accepted;
+        const seen = tapping(options.tap, number);
         const peer = createPeer({
           send: (text) => { seen.out(text); socket.send(text); },
           close: () => socket.close(),
@@ -317,7 +353,13 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         }, bounding);
         // Closed over rather than carried on the socket: this handler already
         // has the answer the upgrade was decided on.
-        held = { peer, connected: onConnect(peer, identity.principal, identity.root, openedOf(request.url, identity.node)), seen };
+        held = {
+          peer,
+          connected: onConnect(peer, identity.principal, identity.root, openedOf({
+            url: request.url, node: identity.node, socket: number, address, forwardedFor,
+          })),
+          seen,
+        };
       };
       socket.onmessage = (event) => {
         const open = held;
@@ -402,7 +444,8 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   const server: NodeServer = new WebSocketServer({ server: plain, verifyClient });
   plain.listen(options.port, host);
   server.on('connection', (socket, request) => {
-    const seen = tapping(options.tap, ++accepted);
+    const number = ++accepted;
+    const seen = tapping(options.tap, number);
     const peer = createPeer({
       send: (text) => { seen.out(text); socket.send(text); },
       close: () => socket.close(),
@@ -410,7 +453,13 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       buffered: () => socket.bufferedAmount,
     }, bounding);
     const arrival = decided.get(request);
-    const connected = onConnect(peer, arrival?.principal, arrival?.root, openedOf(request.url, arrival?.node));
+    const connected = onConnect(peer, arrival?.principal, arrival?.root, openedOf({
+      url: request.url,
+      node: arrival?.node,
+      socket: number,
+      address: request.socket?.remoteAddress,
+      forwardedFor: request.headers['x-forwarded-for'],
+    }));
     decided.delete(request);
     socket.on('message', (raw) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
@@ -601,7 +650,8 @@ export async function overStdio(options: StdioOptions, onConnect: OnConnect): Pr
     buffered: () => output.writableLength,
   }, boundingOf(options));
   // Never raw: there is no join path over a pipe, so nothing here is a node's.
-  const connected = onConnect(peer, undefined, options.root !== false);
+  // The one pipe is socket one, which is the number its frames are tapped under.
+  const connected = onConnect(peer, undefined, options.root !== false, openedOf({ socket: 1 }));
 
   /** The one ending, so a close and an end cannot both release the connection. */
   const finish = (): void => {
@@ -676,7 +726,9 @@ interface DenoSocket {
 
 interface NodeRequest {
   url?: string;
-  headers: { authorization?: string };
+  headers: { authorization?: string; 'x-forwarded-for'?: string };
+  /** The socket the request came in on, which is where Node reports the peer's address. */
+  socket?: { remoteAddress?: string };
 }
 
 interface NodeOptions {

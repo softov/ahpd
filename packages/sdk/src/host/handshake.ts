@@ -81,7 +81,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
+    clientNames, clientPluginsOf, clientsChanged, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
@@ -332,6 +332,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       markOlder(clientNames.get(connection.clientId), params._meta);
       keepLocale(params.locale, false);
       void fire({ type: 'client_connect', client: connection.clientId });
+      // The client list is told once the connection has said who it is.
+      if (connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: true });
       // Introduced. Said after the version is agreed, so a client this
       // host cannot speak to is not one it has shaken hands with.
       conn.handshook = true;
@@ -558,6 +560,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       // and a client that sends none keeps the one it had.
       keepLocale(params.locale, true);
       void fire({ type: 'client_connect', client: connection.clientId });
+      // The client list is told once the connection has said who it is.
+      if (connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: true });
       // The other way in. A client that dropped resumes with this rather
       // than a fresh `initialize`, and it is as much an introduction.
       conn.handshook = true;
