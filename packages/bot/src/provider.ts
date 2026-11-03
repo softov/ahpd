@@ -3,7 +3,7 @@ import { join, resolve, sep } from 'node:path';
 import { RpcError } from '@ahpd/sdk';
 import { covers, ownerFilter, ownerOfPrincipal } from '@ahpd/sdk';
 import { CHAT_PROVIDER } from './chat.js';
-import { fromAgents, makeFolder, partsOf, writeAgentsFile } from './folder.js';
+import { fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
 import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
@@ -831,15 +831,20 @@ export function botProvider(options: BotOptions): BotProvider {
        * A make leaves a folder behind with its `AGENTS.md` in it, from the
        * template filled with the bot's words, so the file a bot has from its
        * first moment is the one a first wake would have made. An edit writes the
-       * parts into the file that is there and keeps everything else it says.
+       * parts into the file that is there and keeps everything else it says; so
+       * does a make that finds a file already there.
        *
        * A bot on a computer has no folder on this host, so it is the one bot
        * whose record keeps the parts: its file is on a machine this write does
        * not reach.
        */
       if (record.computer === undefined) {
-        if (existing === undefined) makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
-        else writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+        if (existing === undefined && readAgentsFile(record.workspace, options.yaml).kind === 'missing') {
+          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
+        }
+        else {
+          writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+        }
       }
       await store.put(record);
       told(existing === undefined ? 'added' : 'updated', record);

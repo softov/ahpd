@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -177,6 +177,35 @@ it('reads the collections back, as a daemon that started again does', async () =
   expect(again.all().map((one) => one.id)).toEqual(['other']);
   expect(again.gone('motion')).toBe(true);
   expect(problems).toEqual([]);
+});
+
+it('keeps the persona in the record when its AGENTS.md cannot be read', async () => {
+  const { bots, store, problems } = await made();
+  const folder = join(root, 'bots', 'motion');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'AGENTS.md'), '---\nname: Motion\n---\n\n## Instructions\n\nBe brief.\n', { mode: 0o000 });
+  await bots.put(bot('motion', { instructions: 'Be brief.' }));
+
+  await store.ready();
+
+  // The file is the one copy, but a file this host cannot read is not one it
+  // may put the record back without: the persona stays in the record, and the
+  // next load tries again.
+  expect(store.get('motion')).toMatchObject({ instructions: 'Be brief.' });
+  expect((await held(bots, 'motion'))['instructions']).toBe('Be brief.');
+  expect(problems.join('\n')).toMatch(/bots\/motion was left in its record: its AGENTS\.md cannot be read/);
+});
+
+it('keeps the persona when a folder stands where its AGENTS.md should be', async () => {
+  const { bots, store, problems } = await made();
+  mkdirSync(join(root, 'bots', 'motion', 'AGENTS.md'), { recursive: true });
+  await bots.put(bot('motion', { name: 'Motion', instructions: 'Be brief.' }));
+
+  await store.ready();
+
+  expect(store.get('motion')).toMatchObject({ name: 'Motion', instructions: 'Be brief.' });
+  expect((await held(bots, 'motion'))['instructions']).toBe('Be brief.');
+  expect(problems.join('\n')).toMatch(/bots\/motion was left in its record: its AGENTS\.md cannot be read/);
 });
 
 it('reports a record that is not a bot, and keeps every other one', async () => {

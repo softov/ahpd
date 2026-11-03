@@ -1,6 +1,6 @@
-import { makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
+import { AGENTS_FILE, makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
 import { BOT_BODIES, DEFAULT_SESSION, isBotColor, isSlug, withoutParts } from './record.js';
-import type { Yaml } from './agents.js';
+import type { AgentsParts, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
 
@@ -114,6 +114,20 @@ const same = (one: BotRecord, other: BotRecord): boolean => {
   }
   return true;
 };
+
+/**
+ * Whether a file read back holds the parts a write asked it to.
+ *
+ * The instructions are asked for as a prefix rather than as the whole section:
+ * a file with no section gets one above the text the bot already had, and that
+ * text then reads as the rest of the section. The version is the parts' own
+ * where they name one, and the file's otherwise.
+ */
+const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
+  got.name.trim() === wanted.name.trim()
+  && got.description.trim() === wanted.description.trim()
+  && got.instructions.trim().startsWith(wanted.instructions.trim())
+  && (wanted.version === undefined || got.version === wanted.version);
 
 /**
  * What the store reads a bot's folder with.
@@ -239,15 +253,21 @@ export function botStore(
    * folder with no file is made with the bot's template, filled with its words,
    * which is the file a bot made today would have had from its first moment.
    *
-   * The record is put back only once the file has the parts: a write that
-   * failed leaves the record as the copy, and the next load tries again rather
-   * than dropping the persona between the two.
+   * The record is put back only once the file reads back with the parts, and a
+   * file this host cannot read is written over by nothing: either one leaves
+   * the record as the copy, and the next load tries again rather than dropping
+   * the persona between the two.
    */
   const move = async (one: KeptBot, yaml: Yaml): Promise<BotRecord> => {
     const bot = withAgents(yaml, one);
+    const parts = partsOf(bot);
     try {
-      const parts = partsOf(bot);
-      if (readAgentsFile(bot.workspace, yaml) !== undefined) {
+      const file = readAgentsFile(bot.workspace, yaml);
+      if (file.kind === 'unreadable') {
+        onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} cannot be read: ${String(file.error)}`);
+        return bot;
+      }
+      if (file.kind === 'parts') {
         writeAgentsFile(bot.workspace, yaml, parts);
       }
       else if (seams.agents !== undefined) {
@@ -255,6 +275,15 @@ export function botStore(
       }
       else {
         writeAgentsFile(bot.workspace, yaml, parts);
+      }
+      /*
+       * Read back before the record gives the parts up: a write that reached no
+       * file has nothing to answer them, and the record is the only copy left.
+       */
+      const back = readAgentsFile(bot.workspace, yaml);
+      if (back.kind !== 'parts' || !holds(parts, back.parts)) {
+        onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} does not read back with those parts`);
+        return bot;
       }
       // This store's own put, dropped from the watch the way every other put
       // is: the record says what the cache already does.

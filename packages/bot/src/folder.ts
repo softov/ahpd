@@ -85,7 +85,8 @@ export function prepareFolder(folder: string, agents: string): void {
  * section on top, with its text below.
  *
  * Nothing is written over, as `prepareFolder`: a folder that already has a file
- * (a slug made again after a crash between the two writes) keeps it.
+ * keeps it, and the make writes the parts into that file with
+ * `writeAgentsFile`.
  */
 export function makeFolder(folder: string, agents: string, yaml: Yaml, parts: AgentsParts): void {
   mkdirSync(folder, { recursive: true });
@@ -94,17 +95,38 @@ export function makeFolder(folder: string, agents: string, yaml: Yaml, parts: Ag
   written(join(folder, AGENTS_FILE), writeAgents(yaml, text, parts));
 }
 
-/** The parts one bot's `AGENTS.md` says, or nothing where its folder has no file. */
-export function readAgentsFile(folder: string, yaml: Yaml): AgentsParts | undefined {
+/**
+ * What a read of a bot's `AGENTS.md` found.
+ *
+ * The three are kept apart because a load that moves an older record's parts
+ * into the file may write over a file that is there, and never over one it
+ * cannot read: answering nothing for both is how a persona is dropped.
+ */
+export type AgentsFile =
+  | { kind: 'parts'; parts: AgentsParts }
+  | { kind: 'missing' }
+  | { kind: 'unreadable'; error: unknown };
+
+/** The parts one bot's `AGENTS.md` says, which of the three it is, or why it cannot be read. */
+export function readAgentsFile(folder: string, yaml: Yaml): AgentsFile {
+  let text: string;
   try {
-    return readAgents(yaml, readFileSync(join(folder, AGENTS_FILE), 'utf8'));
+    text = readFileSync(join(folder, AGENTS_FILE), 'utf8');
   }
-  catch {
-    // No file, or one this host cannot read: both are a bot whose parts only
-    // its record can answer.
-    return undefined;
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing' };
+    return { kind: 'unreadable', error };
+  }
+  try {
+    return { kind: 'parts', parts: readAgents(yaml, text) };
+  }
+  catch (error) {
+    return { kind: 'unreadable', error };
   }
 }
+
+/** The parts a file this host could read says, or nothing when there is no such file. */
+const partsIn = (file: AgentsFile): AgentsParts | undefined => (file.kind === 'parts' ? file.parts : undefined);
 
 /**
  * Write the parts into a bot's `AGENTS.md`, keeping everything else it says.
@@ -185,7 +207,7 @@ const joined = (bot: KeptBot, first: Words, second: Words): BotRecord => {
  */
 export function withAgents(yaml: Yaml | undefined, bot: KeptBot): BotRecord {
   if (yaml === undefined || bot.computer !== undefined) return joined(bot, saidOf(bot), {});
-  return joined(bot, saidOf(bot), readAgentsFile(bot.workspace, yaml) ?? {});
+  return joined(bot, saidOf(bot), partsIn(readAgentsFile(bot.workspace, yaml)) ?? {});
 }
 
 /**
@@ -197,6 +219,6 @@ export function withAgents(yaml: Yaml | undefined, bot: KeptBot): BotRecord {
  */
 export function fromAgents(yaml: Yaml, bot: BotRecord): BotRecord {
   if (bot.computer !== undefined) return bot;
-  const file = readAgentsFile(bot.workspace, yaml);
+  const file = partsIn(readAgentsFile(bot.workspace, yaml));
   return file === undefined ? bot : joined(bot, file, saidOf(bot));
 }

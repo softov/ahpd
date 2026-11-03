@@ -444,6 +444,32 @@ it('writes a bot\'s persona into its AGENTS.md, and keeps none of it in the reco
   });
 });
 
+it('writes the UI\'s parts into an AGENTS.md a make finds, and keeps the bot\'s own text', async () => {
+  const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
+  const folder = join(bots, 'motion');
+  mkdirSync(folder, { recursive: true });
+  // A file left by a crash between the two writes, or by a hand: the make may
+  // not leave the UI's parts nowhere.
+  writeFileSync(join(folder, 'AGENTS.md'), '# Our rules\n\n## Instructions\n\nThe old words.\n');
+  const soft = await as(host, 'soft');
+
+  await write(soft, 'bot://motion', {
+    name: 'Motion', description: 'Moves things', instructions: 'Be calm',
+  }, { createOnly: true });
+
+  // The parts the UI owns are written into the file, and the bot's own text
+  // around them stays as an edit leaves it.
+  const file = readFileSync(join(folder, 'AGENTS.md'), 'utf8');
+  expect(file).toContain('name: Motion');
+  expect(file).toContain('description: Moves things');
+  expect(file).toContain('Be calm');
+  expect(file).not.toContain('The old words.');
+  expect(file).toContain('# Our rules');
+  expect(await record(soft, 'bot://motion')).toMatchObject({
+    name: 'Motion', description: 'Moves things', instructions: 'Be calm',
+  });
+});
+
 it('answers a read from the bot\'s own file, so its own edit shows on the next read', async () => {
   const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
   const soft = await as(host, 'soft');
