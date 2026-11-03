@@ -16,10 +16,12 @@ A person who uses a bot now sees the bot's work in the main chat, also when the 
 - [`code://packages/bot/src/names.ts`](../../../../packages/bot/src/names.ts) - `BackSessions.of(bot, session)` answers the row a session is named by, which is the other direction of `get`.
 - [`code://packages/bot/src/wake.ts`](../../../../packages/bot/src/wake.ts) - `Wake.began` holds a main turn open on a back turn that the wake did not start. It sets the `answering` entry and shows the back chat as the call. It also sets the `begun` clock that a stop is measured by.
 - [`code://packages/bot/src/plugin.ts`](../../../../packages/bot/src/plugin.ts) - a `turn_start` listener opens the main turn for a back session's turn. It finds the main chat from the back row and the owner's one main chat. It leaves alone a session the wake already holds, a chat this host is not running, and a chat with a turn open.
+- [`code://packages/bot/src/plugin.ts`](../../../../packages/bot/src/plugin.ts) - a back turn can end while the `turn_start` listener still reads the rows and the back chat. The listener keeps a note for each back turn it reads, and `turn_end` stores its event on that note. After `began`, the listener ends the main turn with that event, as `turn_end` ends any other.
 
 ## Verified
 
-- `pnpm --filter @ahpd/bot test`, run alone: 207 tests in 15 files pass.
+- `pnpm --filter @ahpd/bot test`, run alone: 208 tests in 15 files pass.
+- `bot-chat.test.ts`: a `turn_end` that arrives before the `turn_start` listener opens the main turn still ends that turn. The turn shows the back chat as a completed call and the back turn's text. The case fails on the code before this fix, where the main turn stays open.
 - `bot-chat.test.ts`: `begin` opens a turn, leaves it open, tells no listener, and answers `undefined` while a turn is open. The protocol's reducer replays the actions of a withdrawal. A withdrawn call ends `cancelled` with `reason: 'skipped'`, and a withdrawn question carries `response: 'cancel'`.
 - `bot-names.test.ts`: `of` finds the row of a session and answers `undefined` for another bot's session.
 - `bot-wake.test.ts`: `began` holds a main turn that `posted` answers and `finished` ends. It does nothing while the wake waits on that back session. `stopped` cancels the back turn with a duration above zero.

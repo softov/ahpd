@@ -76,6 +76,7 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 | A stop of that main turn stops the back turn too, with the time it ran | (defaulted: since git://020669b1 a stop of a main turn cancels the turn of each back session in `answering`, as VS Code cancels a subagent's turn) | 03 |
 | The main turn's message is the back turn's text, with the back turn's sender when the event names one | (defaulted: the turn shows what the person said, where they said it) | 03 |
 | A main chat that this host is not running opens no turn | (defaulted: `turns` answers only a running chat, and starting one would start a new chat) | 03 |
+| A back turn that ends before its main turn opens still opens the main turn, which then ends at once with the back turn's text or error | Softov, 2026-11-03, chose "Show it as ended" | 03 |
 
 ## Proposed architecture
 
