@@ -1485,7 +1485,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const row = (Array.isArray(state.chats) ? state.chats as Bag[] : []).find((one) => one.resource === chat);
       /*
        * A chat whose backend serves its row says the row itself, all but the
-       * read and archived bits of its status, which this host lays on.
+       * read and archived bits of its status, which this host lays on as it
+       * keeps them.
        */
       const relayed = !subagents.has(chat) && held.chats.get(chat)?.channel !== undefined;
       if (row !== undefined && relayed) {
