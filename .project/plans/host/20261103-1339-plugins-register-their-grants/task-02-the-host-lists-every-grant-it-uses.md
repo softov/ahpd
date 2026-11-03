@@ -1,6 +1,6 @@
 ---
 title: The host lists every grant it uses
-status: todo
+status: implemented
 depends: [task-01-a-plugin-registers-its-grants.md]
 layer: "sdk, server, bot"
 refs:
@@ -42,4 +42,10 @@ A role may hold `plugin:apply` and `plugin:reload`, and `plugin:write` holds bot
 - `pnpm typecheck`, `pnpm --filter @ahpd/sdk test`, `pnpm --filter @ahpd/server test` and `pnpm --filter @ahpd/bot test` pass.
 
 ## Resume
+
+- Built: `apply` and `reload` are `plugin` operations in the `write` group; `run.ts` passes `grants` for `client` and `tunnel`; the bot plugin calls `registerGrants('bot', { operations: ['chat'] })`.
+- The bot's manifest `contracts` needed a `grants: ['bot']` key: `registerGrants` goes through `declared`, as `registerResourceProvider` does, so a plugin may only register names its contracts declare.
+- `docs/sdk/USERS.md` gained `client` and `tunnel` rows and `apply`/`reload` in the `plugin` row; the subject count is now eighteen. The people tables were not touched.
+- `packages/server/test/grants-advertised.test.ts` starts a `--stdio` daemon with the echo backend and the bot plugin and reads `ahpd.grants` off the handshake.
+- Gates: `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary`, and the sdk, server and bot suites pass.
 

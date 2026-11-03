@@ -189,8 +189,8 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
      * code with the daemon's permissions, and only a grant that names this
      * operation, `plugin:*` or admin's `*:*` may do it.
      */
-    operations: ['list', 'enable', 'disable', 'options', 'install'],
-    groups: { read: ['list'], write: ['enable', 'disable', 'options'] },
+    operations: ['list', 'enable', 'disable', 'options', 'install', 'apply', 'reload'],
+    groups: { read: ['list'], write: ['enable', 'disable', 'options', 'apply', 'reload'] },
   },
   connector: {
     title: 'Connectors',

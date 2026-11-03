@@ -84,7 +84,7 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | implemented | - |
-| [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | todo | 01 |
+| [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | implemented | 01 |
 | [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -94,8 +94,8 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 ## Resume state
 
-- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. The sdk gates pass.
-- **Next action:** [task-02-the-host-lists-every-grant-it-uses.md](task-02-the-host-lists-every-grant-it-uses.md).
+- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. Task 02 - the `plugin` row holds `apply` and `reload` in `write`, the daemon registers `client` with `drop` and `tunnel` with `put` and `delete`, and the bot plugin registers `bot` with `chat`. The sdk, server and bot gates pass.
+- **Next action:** [task-03-an-unregistered-grant-is-reported.md](task-03-an-unregistered-grant-is-reported.md).
 - **Open questions:** none.
 - **Watch out for:** a registration must not change what `holds` answers. Take the groups from `operationsOf`, never from the plugin.
 

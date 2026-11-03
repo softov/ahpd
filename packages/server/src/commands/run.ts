@@ -1239,6 +1239,28 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     channels: lists.channels,
     methods: lists.methods,
     /*
+     * The grants the two channels built above require, as `ahpd.grants` lists
+     * them.
+     *
+     * The channel that answers `client:drop` and the one that answers
+     * `tunnel:put` and `tunnel:delete` are the daemon's own, so no plugin
+     * registers these entries: the host says them itself, in the words of each
+     * channel's `describe`. What a client's role editor shows for `client` and
+     * `tunnel` is these operations, and a role may hold any of them.
+     */
+    grants: {
+      client: {
+        title: 'Clients',
+        description: 'The clients this host is serving, and the connection each one holds.',
+        operations: ['drop'],
+      },
+      tunnel: {
+        title: 'Tunnels',
+        description: 'The tunnels this host keeps, and the operations each one takes.',
+        operations: ['put', 'delete'],
+      },
+    },
+    /*
      * The host's own tools, offered to every session's model.
      *
      * What a session cannot see from inside itself: the sessions running beside

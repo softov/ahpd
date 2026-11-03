@@ -725,6 +725,12 @@ it('answers a grant from the group its operation is in, and not from the other o
   expect(holds(set('file:get'), 'file:read')).toBe(false);
   expect(holds(set('user:write'), 'user:put')).toBe(true);
   expect(holds(set('user:put'), 'user:write')).toBe(false);
+  // `plugin:apply` and `plugin:reload` are in the `write` group, so a role
+  // holding `plugin:write` may apply and reload. Neither widens to `install`,
+  // which is in no group.
+  expect(holds(set('plugin:write'), 'plugin:apply')).toBe(true);
+  expect(holds(set('plugin:write'), 'plugin:reload')).toBe(true);
+  expect(holds(set('plugin:apply'), 'plugin:install')).toBe(false);
   // A subject the table does not decide reads the resource operations, so a
   // scheme a plugin may not be loaded for is held by `computer:read` and not by
   // any other subject's.
@@ -810,6 +816,10 @@ it('takes an operation of a subject it decides and any operation word of one it 
   expect(grantProblem('session:launch')).toMatch(/read or write or a \*$/u);
   expect(grantProblem('session')).toBe('session is not <subject>:<operation>');
   expect(grantProblem('notes:something')).toBeUndefined();
+  // The two operations the plugins channel gates were not on the table, and a
+  // role could not name them. They are in the `write` group now.
+  expect(grantProblem('plugin:apply')).toBeUndefined();
+  expect(grantProblem('plugin:reload')).toBeUndefined();
 });
 
 /*

@@ -89,13 +89,13 @@ Every operation is in one of the two groups, with one exception: `plugin:install
 
 The host advertises every subject a grant may name in `_meta['ahpd.grants']` on
 the handshake and on the root state, so a client reads the operations from the
-wire rather than from this page. That map holds the fifteen the host decides and,
+wire rather than from this page. That map holds the eighteen the host decides and,
 beside them, every scheme this host serves - `user`, `team`, `project`, `role`,
 `policy`, `usage` and any plugin's - each under its own name, with the
 operations its provider implements and the groups those fall into. A client
 drawing a role editor reads that one key and has every subject there is.
 
-The subjects the host decides are these sixteen:
+The subjects the host decides are these eighteen:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
@@ -105,7 +105,9 @@ The subjects the host decides are these sixteen:
 | `automation` | `list` | `create`, `update`, `remove`, `run`, `cancel` | Agent runs that start on a schedule or a trigger |
 | `file` | `get`, `list`, `resolve`, `watch` | `put`, `delete`, `mkdir`, `move`, `copy`, `request` | Files and other resources on this host. Every other scheme has the same operations under its own name |
 | `config` | `settings` | `change` | This host's settings |
-| `plugin` | `list` | `enable`, `disable`, `options` | The plugins the configuration names: listing them, turning them on and off, and editing their options. `plugin:install` installs, removes or writes a plugin and is in neither group, so `plugin:write` does not hold it |
+| `plugin` | `list` | `enable`, `disable`, `options`, `apply`, `reload` | The plugins the configuration names: listing them, turning them on and off, editing their options, and applying or reloading a running one. `plugin:install` installs, removes or writes a plugin and is in neither group, so `plugin:write` does not hold it |
+| `client` | - | - | The clients this host is serving, and the connection each one holds. `client:read` lists them and `client:drop` closes a connection; `drop` is in neither group, so a role must name it |
+| `tunnel` | - | `put`, `delete` | The tunnels this host keeps, and the operations each one takes. `tunnel:read` draws them, and `put` and `delete` are in the `write` group |
 | `connector` | `list`, `all` | `put`, `remove`, `host` | The adapters plugins register, and the connectors made from them. `list` reads the caller's own connectors, their teams' and the host's; `all` reads every connector; `host` lets a put or a remove change a connector owned by `host` |
 | `agent` | `list`, `all` | `put`, `remove`, `host` | The engines plugins register, and the agents made from records of them. `list` reads the caller's own agents, their teams' and the host's; `all` reads every agent and lets a remove take any of them, whoever owns it; `host` lets a put or a remove change an agent owned by `host` |
 | `diagnostics` | `logs`, `network`, `fetch` | - | Logs and network details for troubleshooting |
