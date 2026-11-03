@@ -21,6 +21,8 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import type { RecordChange, RecordCollection, RecordStore, StoredRecord } from '../types/records.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '../types/resources.js';
+import type { Owner } from '../types/usage.js';
+import type { Principal } from '../types/users.js';
 
 /**
  * What one of these providers implements.
@@ -33,8 +35,8 @@ export interface RecordsProvider extends ResourceProvider {
   list(uri: string): Promise<Entry[]>;
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
-  write(uri: string, content: Write): Promise<void>;
-  remove(uri: string, recursive?: boolean): Promise<void>;
+  write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
+  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
 }
 
@@ -56,6 +58,18 @@ export interface Records {
   ids(): Promise<string[]>;
   /** One record as it stands, or nothing when the directory holds none. */
   find(id: string): Promise<Record<string, unknown> | undefined>;
+  /**
+   * Whether this caller may write or remove this record, as a refusal if not.
+   *
+   * Asked before `put` and before `drop`, with `body` the record a write would
+   * make and `undefined` for a removal. A scheme whose records hold grants
+   * refuses a caller that would give, or take away, one it does not hold: that
+   * is the whole rule, and it is here rather than in the doors so both of them
+   * - the command and the resource write - keep it. A caller with no principal
+   * is the root connection or a host with no users directory, and is bounded
+   * by nothing.
+   */
+  bound?(reader: Principal | undefined, id: string, body: Record<string, unknown> | undefined): Promise<void>;
   /**
    * Name one, or edit the one already there.
    *
@@ -160,13 +174,25 @@ export const EPOCH = '1970-01-01T00:00:00.000Z';
  *
  * The row that is there is read once, and the store is handed it so a scheme
  * that merges does not have to read it again. `createOnly` refuses an id that
- * is already there, as the protocol's own word for it does.
+ * is already there, as the protocol's own word for it does. `reader` is asked
+ * of the scheme's own `bound` before anything is written, so a door that has
+ * the caller passes it and one that does not is bounded by nothing.
  */
-export const putRecord = async (scheme: string, records: Records, id: string, body: Record<string, unknown>, createOnly = false): Promise<void> => {
+export const putRecord = async (
+  scheme: string,
+  records: Records,
+  id: string,
+  body: Record<string, unknown>,
+  createOnly = false,
+  reader?: Principal,
+): Promise<void> => {
   const was = await records.find(id);
   if (createOnly && was !== undefined) {
     throw new RpcError(-32010, `${id} is already a ${scheme}; edit it or choose another id`);
   }
+  // Asked only where a scheme has one: a scheme with no bound is written
+  // exactly as it was, with no extra turn of the loop between the two doors.
+  if (records.bound !== undefined) await records.bound(reader, id, body);
   await records.put(id, body, was);
 };
 
@@ -174,9 +200,18 @@ export const putRecord = async (scheme: string, records: Records, id: string, bo
  * Take one record out, with the rules a resource delete has.
  *
  * Refused while something still names it, and absent when nothing is there.
- * `uri` is what the refusal names.
+ * `uri` is what the refusal names. `reader` is asked of the scheme's own
+ * `bound` first, with no body: a removal takes away what the record holds now.
  */
-export const removeRecord = async (scheme: string, records: Records, id: string, uri = `${scheme}://${id}`): Promise<void> => {
+export const removeRecord = async (
+  scheme: string,
+  records: Records,
+  id: string,
+  uri = `${scheme}://${id}`,
+  reader?: Principal,
+): Promise<void> => {
+  // Asked only where a scheme has one, as `putRecord` is.
+  if (records.bound !== undefined) await records.bound(reader, id, undefined);
   if (!await records.drop(id)) throw absentResource(scheme, uri);
 };
 
@@ -247,11 +282,11 @@ export const recordsProvider = (scheme: string, records: Records, changed?: () =
      * there is read once, and the store is handed it so a scheme that merges
      * does not have to read it again.
      */
-    write: async (uri, content) => {
+    write: async (uri, content, _owner, _client, reader) => {
       const at = splitResource(uri, scheme);
       if (at.id === '') throw new RpcError(INVALID_PARAMS, `${uri} is not a name for a new ${scheme}; write to ${scheme}://<id>`);
       if (at.leaf !== '') throw new RpcError(INVALID_PARAMS, `${uri} is not something to write; a ${scheme} is written whole, at ${scheme}://<id>`);
-      await putRecord(scheme, records, at.id, jsonBody(content, scheme), content.createOnly === true);
+      await putRecord(scheme, records, at.id, jsonBody(content, scheme), content.createOnly === true, reader);
       changed?.();
     },
 
@@ -262,11 +297,11 @@ export const recordsProvider = (scheme: string, records: Records, changed?: () =
      * record holding a role - and it says who, which is the refusal the command
      * of the same name makes.
      */
-    remove: async (uri) => {
+    remove: async (uri, _recursive, _owner, reader) => {
       const at = splitResource(uri, scheme);
       if (at.id === '') throw new RpcError(INVALID_PARAMS, `${uri} is the ${scheme} directory; remove ${scheme}://<id>`);
       if (at.leaf !== '') throw absentResource(scheme, uri);
-      await removeRecord(scheme, records, at.id, uri);
+      await removeRecord(scheme, records, at.id, uri, reader);
       changed?.();
     },
   };

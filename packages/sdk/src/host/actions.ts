@@ -556,7 +556,17 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/changesets.md
      */
     if (type === 'changeset/filesReviewChanged') {
+      // A changeset a session's backend serves is reviewed there, and answered from there.
+      const backendChannel = ctx.relayedChannel(channel);
+      if (backendChannel !== undefined) {
+        backendChannel.dispatch(action);
+        return;
+      }
       const at = changesetAt(channel);
+      if (at !== undefined && ctx.relaysChangesets(at.owner)) {
+        no(`No changeset at ${channel}`);
+        return;
+      }
       const files = Array.isArray(action.files)
         ? action.files.filter((one): one is string => typeof one === 'string')
         : [];

@@ -286,8 +286,11 @@ const CONFLICT = -32011;
      */
     invokeChangesetOperation: async (params) => {
       const channel = String(params.channel ?? '');
+      // A changeset a session's backend serves runs its operations there.
+      const backendChannel = ctx.relayedChannel(channel);
+      if (backendChannel !== undefined) return await backendChannel.request('invokeChangesetOperation', params);
       const at = changesetAt(channel);
-      if (!at) throw new RpcError(-32001, `No changeset at ${channel}`);
+      if (!at || ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `No changeset at ${channel}`);
       const source = need(options.changes, 'invokeChangesetOperation');
       const operationId = String(params.operationId ?? '');
       const context = operationContext(at.owner, at.dir);

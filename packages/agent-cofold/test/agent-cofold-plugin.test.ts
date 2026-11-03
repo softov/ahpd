@@ -392,7 +392,7 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   // says something on the session the catalogue listed.
   const again = await restarted();
   const second = await again.load([{ name: SOURCE, options: {
-    adapter: createFakeModel({ script: [{ text: 'done' }], stream: true }), store: root, policy: asks,
+    adapter: createFakeModel({ script: [{ text: 'done' }, { text: 'carried on' }], stream: true }), store: root, policy: asks,
   } }], { path: where, tools: [writer] });
   /*
    * The engine and the host come from the fresh copies, so the second process is
@@ -417,7 +417,15 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   };
   const chatUri = session.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  begin(client, chatUri, 't2', 'carry on');
+  /*
+   * A queued message wakes the session and waits behind the run the resume
+   * reopens; a turn sent instead would take that run's place, as a turn sent
+   * while one runs does.
+   */
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'carry on' } } },
+  });
   await until(() => actions(p, 'ahp-session:/one').some((e) => e.action.type === 'session/inputNeededSet'));
 
   /*
@@ -444,5 +452,8 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   });
   await until(() => ended(p, chatUri));
   expect(ran).toEqual(['hi']);
+  // And then the queued message, behind it.
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q2')).toBe(true);
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
 });

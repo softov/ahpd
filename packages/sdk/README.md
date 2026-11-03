@@ -102,7 +102,7 @@ const host = createHost({
 | `clientToolTimeoutMs` | `600000` | How long a tool call a client runs may wait before the host calls it failed, in milliseconds. `0` is no limit |
 | `deltaWindowMs` | `75` | How long a streamed delta waits for the next one before it is sent, in milliseconds. `0` sends every delta as it arrives |
 | `sleepAfterMinutes` | `30` | Minutes a session with nothing in hand stays loaded before its agent is let go. It wakes when something needs it. `0` never lets it go for quiet |
-| `sessionResidencyLimit` | `10` | How many sessions are loaded at most. Over it, the least recently used quiet session is let go first. `0` sets no limit |
+| `sessionResidencyLimit` | `10` | How many sessions are resident at most, running or with their state held. Over it, the least recently used one that nothing holds is let go first, with its state. `0` sets no limit |
 | `now`, `timer` | the system clock, `setTimeout` | The clock and the timer that sleep and agent wakeups read, which a test replaces |
 | `rootConfig` | none | The daemon's own settings, shown in root config beside the host's keys, with writes handed back |
 | `diagnostics` | none | What the host answers when a window asks for its version, logs, network or shutdown. See [What the window asks](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#what-the-window-asks-a-host-about-itself) |

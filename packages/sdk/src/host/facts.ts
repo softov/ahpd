@@ -402,7 +402,7 @@ export function createFacts(ctx: HostContext): Facts {
         if (moved) {
           try {
             for (const uri of toldIn(dir)) {
-              dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+              if (!ctx.relaysChangesets(uri)) dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
               ctx.summaryMoved(uri);
               await contentMoved(uri);
             }
@@ -574,8 +574,9 @@ export function createFacts(ctx: HostContext): Facts {
     const files = (options.changes?.refresh?.(dir) ?? Promise.resolve(false)).then(async (moved) => {
       if (!moved) return false;
       for (const uri of inThere(dir)) {
-        // Asked per session, because two of the scopes are the session's own.
-        dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+        // Asked per session, because two of the scopes are the session's own;
+        // a session whose backend serves its changesets has them said there.
+        if (!ctx.relaysChangesets(uri)) dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
         ctx.summaryMoved(uri);
       }
       /*

@@ -93,7 +93,7 @@ An unknown key is logged and ignored:
 | `worktreesRoot` | `--worktrees-root` | `<repo>.worktrees` beside each repo | Where session worktrees go |
 | `connectionTokenFile` | `--connection-token-file` | | See [Remote access](REMOTE.md#the-connection-token) |
 | `sleepAfterMinutes` | `--sleep-after-minutes` | `30` | Unload a quiet session after this |
-| `sessionResidencyLimit` | `--session-residency-limit` | `10` | Most sessions loaded at once |
+| `sessionResidencyLimit` | `--session-residency-limit` | `10` | Most sessions resident at once, running or with their state held |
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
 | `automations` | `--automations` | `file` | `memory` keeps automations until exit, and fires no schedule |
 | `terminalAutoApproveDefaults` | `--terminal-auto-approve-defaults` | `vscode` | The rules for a session whose window pushed none; `none` approves no command. See [Terminal rules](#terminal-rules) |

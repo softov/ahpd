@@ -133,10 +133,10 @@ operations under their own name:
 
 | Subject | What they cover |
 | --- | --- |
-| `user` | Add, remove and mint for people with `put`, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. `list` answers `user list`, `get` a person's own `user://<id>` record without any grant at all |
+| `user` | Add, remove and mint for people with `put`, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The same bound holds over AHP: `x-ahpd/users/put`, and a write or delete of `user://<id>`, is refused unless the caller holds every grant the person would hold or holds now. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. `list` answers `user list`, `get` a person's own `user://<id>` record without any grant at all |
 | `team` | Teams people belong to. `list` answers `team list`; `put` adds and titles one, `delete` removes it |
 | `project` | The same for the projects, spelled after a membership's colon |
-| `role` | The roles this install defines. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
+| `role` | The roles this install defines. `put` makes or edits one, and only for grants the caller already holds, counting the role's own grants now as well as the ones being written; `delete` is bounded by the role's grants now, so a role holding more than the caller cannot be removed. The same bound holds over AHP, on `x-ahpd/roles/put` and on a write or delete of `role://<id>`. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
 | `policy` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
 | a plugin's scheme | That provider's resources, exactly as before |

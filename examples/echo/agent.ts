@@ -103,6 +103,19 @@ export function echo(options: EchoOptions): Agent {
     let activity: string | undefined;
     /** Messages waiting for the running turn to end. The host's, not a client's. */
     const queued: Bag[] = [];
+    /**
+     * The turns said while another ran, each echoed once the one in front of
+     * it is done.
+     *
+     * Said at once, so each takes the place of the one before it in every
+     * client's state, as the protocol's reducer replaces the active turn: a
+     * backend handed a turn while one runs takes it rather than refusing it,
+     * and runs the turns it is handed one at a time. The turn it replaced runs
+     * on, and is in no history.
+     */
+    const handed: { turn: Bag; text: string }[] = [];
+    /** The turns a later one took the place of. */
+    const replaced = new Set<string>();
     /** What somebody is part-way through typing. */
     let draft: Bag | undefined;
     /** The backend's own id, which is not the URI the client chose. */
@@ -145,6 +158,9 @@ export function echo(options: EchoOptions): Agent {
      * `queuedMessageId` names the waiting message it came from; a client's
      * reducer takes it out of the queue on that word, which is what empties
      * the queue as its turns start.
+     *
+     * One handed while another runs is said now and echoed once that one is
+     * done; `said` is such a turn, echoed now as it was said.
      */
     const beginTurn = (
       turnId: string,
@@ -152,8 +168,9 @@ export function echo(options: EchoOptions): Agent {
       queuedMessageId?: string,
       from?: MessageFrom,
       attachments?: MessageAttachment[],
+      said?: Bag,
     ): void => {
-      if (title === 'Echo session' && text) {
+      if (said === undefined && title === 'Echo session' && text) {
         title = text.slice(0, 60);
         // Said, because a client that opened the session holds the old one.
         start.emit('session', { type: 'session/titleChanged', title });
@@ -170,18 +187,28 @@ export function echo(options: EchoOptions): Agent {
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
-      active = { id: turnId, startedAt, message, responseParts: [] };
-      start.emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt,
-        message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
+      const turn: Bag = said ?? { id: turnId, startedAt, message, responseParts: [] };
+      if (said === undefined && (active !== undefined || handed.length > 0)) {
+        replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
+        handed.push({ turn, text });
+        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
+        touch();
+        return;
+      }
+      active = turn;
+      if (said === undefined) {
+        start.emit('chat', {
+          type: 'chat/turnStarted',
+          turnId,
+          startedAt,
+          message,
+          ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+        });
+      }
       doing('Echoing');
 
       const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: '' };
-      (active.responseParts as Bag[]).push(part);
+      (turn.responseParts as Bag[]).push(part);
       start.emit('chat', { type: 'chat/responsePart', turnId, part });
 
       // A config value is `unknown` on the wire, so a backend narrows the ones
@@ -190,22 +217,24 @@ export function echo(options: EchoOptions): Agent {
       const words = speak(voice, text).split(/\s+/).filter((word) => word !== '');
       const began = Date.now();
       void (async () => {
+        // A turn a stop ended echoes nothing more.
         for (const word of words) {
-          if (closed) return;
+          if (closed || active !== turn) return;
           if (pace > 0) await new Promise((wake) => { setTimeout(wake, pace); });
+          if (closed || active !== turn) return;
           const chunk = part.content === '' ? word : ` ${word}`;
           part.content = `${String(part.content)}${chunk}`;
           start.emit('chat', { type: 'chat/delta', turnId, partId: part.id, content: chunk });
         }
-        if (closed || !active) return;
-        const done = active;
-        done.duration = Date.now() - began;
-        turns.push(done);
+        if (closed || active !== turn) return;
+        turn.duration = Date.now() - began;
+        // A turn a later one took the place of is in no history.
+        if (!replaced.delete(turnId)) turns.push(turn);
         active = undefined;
         doing(undefined);
         touch();
         remember();
-        start.emit('chat', { type: 'chat/turnComplete', turnId, duration: done.duration });
+        start.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
         startNext();
       })();
       touch();
@@ -214,6 +243,12 @@ export function echo(options: EchoOptions): Agent {
     /** The head of the queue, once there is nothing running. */
     const startNext = (): void => {
       if (active || closed) return;
+      // A turn said while another ran goes first, as it was said.
+      const first = handed.shift();
+      if (first !== undefined) {
+        beginTurn(String(first.turn.id), first.text, undefined, undefined, undefined, first.turn);
+        return;
+      }
       const next = queued.shift();
       if (!next) return;
       const message = (next.message ?? {}) as Bag;
@@ -267,7 +302,8 @@ export function echo(options: EchoOptions): Agent {
         status: status(),
         modifiedAt: modified,
         turns,
-        ...(active ? { activeTurn: active } : {}),
+        // The last turn said, which may be one still waiting its turn.
+        ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
         queuedMessages: [...queued],
@@ -350,8 +386,12 @@ export function echo(options: EchoOptions): Agent {
       },
 
       cancel: (turnId) => {
-        const turn = active;
+        // The chat's turn is the last one said; the turns it took the place of
+        // stop with it, in no history.
+        const turn = handed.at(-1)?.turn ?? active;
         if (!turn) return;
+        handed.length = 0;
+        replaced.clear();
         turn.state = 'cancelled';
         /*
          * `duration` is required, and required in earnest.

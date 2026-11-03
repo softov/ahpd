@@ -47,7 +47,15 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
-  if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
+  // Archived: asleep, or its tree given back where it is asleep already, and
+  // let go by the residency where nothing holds it.
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1457-L1464
+  if (bit === Status.IsArchived && on) {
+    queueMicrotask(() => {
+      void ctx.sleep(uri).catch(() => undefined);
+      ctx.reconcile();
+    });
+  }
   // Unarchived: the tree back before anything wakes the session into it, and
   // the session is no longer one the host archived.
   if (bit === Status.IsArchived && !on) {
@@ -379,30 +387,6 @@ export function chatAction(
   const running = restarting.get(sessionFor(channel));
   if (running !== undefined) {
     return conn.bounded(running, `${channel} starting again`).then(
-      () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
-      (error: unknown) => {
-        refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
-      },
-    );
-  }
-  /*
-   * A chat whose backend still runs a turn the chat has ended waits for the
-   * backend's end of that turn.
-   *
-   * A client's stop is said when it is taken and the backend lets the turn go
-   * after it, so between the two the chat is idle to every client and busy to
-   * its backend. An action sent then is applied once the backend has let the
-   * turn go, to the idle chat its clients see: a turn is begun, a queued
-   * message runs, and a steering message the run handed back is taken back.
-   * The reference host hands a client's turn to its agent while an abort may
-   * still be under way. The wait is returned, so this connection's later
-   * dispatches go behind it in `waiting`.
-   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L167
-   */
-  const busy = held === undefined || worker ? undefined : (held.chatState().activeTurn as Bag | undefined)?.id;
-  const ended = ctx.stateOf(channel)?.turns;
-  if (busy !== undefined && Array.isArray(ended) && (ended as Bag[]).some((turn) => turn.id === busy)) {
-    return conn.bounded(ctx.letGo(channel), `${channel} letting its stopped turn go`).then(
       () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
       (error: unknown) => {
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
@@ -1355,6 +1339,15 @@ export function chatAction(
      * its backend said. A stop stops the turn its `turnId` names, which the
      * protocol requires it to carry.
      *
+     * A stop of a turn whose start a backend owes waits for that start. The
+     * reference host applies a client's start at once, and a cancel that comes
+     * before the send reaches the agent drops the send; here the start is the
+     * backend's to say, so the stop is applied again once the start is said,
+     * and stops that turn, or once it is refused, and stops nothing. The wait
+     * is returned, so this connection's later dispatches go behind it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
+     *
      * A stop of no running turn stops nothing: a chat with no turn running, a
      * turn other than the running one, one the client saw end, or no turn at
      * all. It goes to every client of the chat as the client's own action, as
@@ -1367,6 +1360,15 @@ export function chatAction(
      */
     case 'chat/turnCancelled': {
       if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
+        const starting = typeof action.turnId === 'string' && action.turnId !== '' ? ctx.startOwed(channel, action.turnId) : undefined;
+        if (starting !== undefined) {
+          return conn.bounded(starting, `${channel} starting ${String(action.turnId)}`).then(
+            () => conn.applyNow(params, origin),
+            (error: unknown) => {
+              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+            },
+          );
+        }
         dispatch(channel, action, origin);
         break;
       }
@@ -1456,9 +1458,14 @@ export function chatAction(
        *
        * Somebody correcting an agent halfway is the most ordinary thing there
        * is, and queueing it delivered the correction after the thing it was
-       * trying to stop.
+       * trying to stop. Only into a turn the chat holds as running: a backend
+       * still letting a stopped turn go has a run every client holds as over,
+       * and the reference host hands steering to its agent only while the chat
+       * has an active turn.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L193-L195
        */
-      if (kind === 'steering' && session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
+      if (kind === 'steering' && activeHeld !== undefined
+        && session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
       /*
        * A queued message, or a steering message with no turn running to steer.
        *

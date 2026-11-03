@@ -1354,9 +1354,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     /*
      * The keys the turn's check chose, once it has allowed the turn.
      *
-     * Held here rather than in the map until `run` knows the turn will be
-     * begun: a message refused for the turn already running is not a turn, and
-     * a key left behind for it would be a record's key nobody writes.
+     * Held here rather than in the map until `run` hands the turn over: a
+     * message refused on its way there is not a turn, and a key left behind for
+     * it would be a record's key nobody writes.
      */
     let keys: string[] | undefined;
     const run = (): string | undefined => {
@@ -1370,19 +1370,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       /*
-       * One turn at a time in a chat.
-       *
-       * A turn asked for while one is running is refused here, in the words
-       * the client shows, a command's as much as a question's: a client's
-       * `chat/turnStarted` is answered by that action or by its refusal, and
-       * the chat holds one active turn, so a start taken now would end the
-       * one running in every client's state. What waits its turn is a queued
-       * message, which arrives under `queuedAs` and is begun by the backend
-       * when the turn in front of it ends.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L368
+       * A turn asked for while one runs is the backend's to begin, a command's
+       * as much as a question's, with no refusal in between: the backend says
+       * its start at once, so it takes the running turn's place in every
+       * client's state, as the protocol's reducer replaces the active turn, and
+       * runs it once the work in front of it is done. The reference host
+       * refuses a start only while a workspace changes, and otherwise applies
+       * it and hands it to its agent.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13429-L13435
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
        */
-      if (queuedAs === undefined && session.chatState().activeTurn !== undefined) return 'A turn is running in this chat';
       if (who !== undefined) senders.set(queuedAs ?? turnId, who);
       // And the window itself, under the same id, for whatever has to ask it
       // something later - the move an agent asks for in this turn most of all.

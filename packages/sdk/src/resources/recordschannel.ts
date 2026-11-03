@@ -388,7 +388,7 @@ export const recordsMethods = (domain: string, scheme: string, records: Records,
     [put]: {
       grant: `${scheme}:put` as Grant,
       describe: () => ({ title: `Put a ${scheme}`, description: `Makes or edits one ${scheme}.` }),
-      handle: async (params) => {
+      handle: async (params, reader) => {
         const id = idParam(put, scheme, params);
         const record = params.record;
         if (typeof record !== 'object' || record === null || Array.isArray(record)) {
@@ -398,7 +398,7 @@ export const recordsMethods = (domain: string, scheme: string, records: Records,
         if (createOnly !== undefined && typeof createOnly !== 'boolean') {
           throw new RpcError(INVALID_PARAMS, `${put} takes createOnly as true or false`);
         }
-        await putRecord(scheme, records, id, record as Record<string, unknown>, createOnly === true);
+        await putRecord(scheme, records, id, record as Record<string, unknown>, createOnly === true, reader);
         await refresh();
         return {};
       },
@@ -406,9 +406,9 @@ export const recordsMethods = (domain: string, scheme: string, records: Records,
     [remove]: {
       grant: `${scheme}:delete` as Grant,
       describe: () => ({ title: `Remove a ${scheme}`, description: `Takes one ${scheme} out.` }),
-      handle: async (params) => {
+      handle: async (params, reader) => {
         const id = idParam(remove, scheme, params);
-        await removeRecord(scheme, records, id);
+        await removeRecord(scheme, records, id, `${scheme}://${id}`, reader);
         await refresh();
         return {};
       },

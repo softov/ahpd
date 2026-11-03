@@ -130,6 +130,8 @@ export function acpSession(
     modes: undefined,
     heardModes,
     active: undefined,
+    waiting: [],
+    replaced: new Set<string>(),
     mapping: undefined,
     cumulative: undefined,
     live: undefined,
@@ -258,7 +260,8 @@ export function acpSession(
       status: ctx.status(),
       modifiedAt: modified,
       turns,
-      ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
+      // The last turn said, which may be one still waiting for the server.
+      ...((ctx.waiting.at(-1)?.said ?? ctx.active) !== undefined ? { activeTurn: ctx.waiting.at(-1)?.said ?? ctx.active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
@@ -285,10 +288,25 @@ export function acpSession(
      * And so are the calls out with clients, for the same reason: a client is
      * asked for one, the agent is blocked on the request it made for that call,
      * and neither is any longer anything this turn will finish.
+     *
+     * A turn said while the server ran another ends here, as it has no prompt
+     * of its own yet: the turns waiting with it go, and the prompt in front of
+     * it is cancelled, as the reference stop aborts the agent's work in flight
+     * and drops the turns waiting behind it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
      */
     cancel: (turnId) => {
-      const turn = ctx.active;
-      if (turn === undefined || String(turn.id) !== turnId) return;
+      const shown = ctx.waiting.at(-1)?.said;
+      if (shown !== undefined && String(shown.id) === turnId) {
+        ctx.waiting.length = 0;
+        shown.state = 'cancelled';
+        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
+        turns.push(shown);
+        emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        touch();
+      }
+      else if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+      if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();
       ctx.settleElicitations();

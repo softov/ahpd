@@ -1,5 +1,5 @@
 import type { Store, RunHandle } from '@cofold/agents';
-import type { Activity, Bag, BoundTool, MessageAttachment, MessageFrom, Start } from '@ahpd/sdk';
+import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, RunCommand, Start } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
@@ -7,6 +7,20 @@ import type { TurnAgent } from './turnagent.js';
 import type { Runs } from './runs.js';
 import type { Pauses } from './pauses.js';
 import type { Turns } from './turns.js';
+
+/**
+ * A turn said while a run held another: what it runs, the queued message it
+ * came from if it did, and the turn as it was said. A command carries what
+ * runs it.
+ */
+export interface Waiting {
+  said: Bag;
+  model?: Chosen | undefined;
+  from?: MessageFrom | undefined;
+  queuedMessageId?: string | undefined;
+  attachments?: MessageAttachment[] | undefined;
+  command?: { text: string; run: RunCommand };
+}
 
 /**
  * Everything an area of a cofold session reaches for, in one object.
@@ -54,6 +68,16 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    * is.
    */
   untaken: { id: string; text: string; from?: MessageFrom; attachments?: MessageAttachment[] }[];
+  /**
+   * The steering messages a client took back while the run still held them.
+   *
+   * cofold's submit gives a steer back only by rejecting it, so one taken back
+   * is dropped when it comes back rather than run as a turn of its own, as the
+   * reference host has its provider withdraw a steering message a client
+   * removes after handing it over.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
+   */
+  withdrawn: Set<string>;
   settings: Record<string, unknown>;
   touch: () => void;
   /**
@@ -75,6 +99,19 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   offered: BoundTool[];
   active: Bag | undefined;
+  /**
+   * The turns said while a run held another, in the order they came, each run
+   * once the turn in front of it is over.
+   *
+   * Said at once, so each takes the place of the one before it in every
+   * client's state, as the protocol's reducer replaces the active turn; one
+   * run reads the session at a time, so each runs after.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   */
+  waiting: Waiting[];
+  /** The turns a later one took the place of, which run on and end in no history. */
+  replaced: Set<string>;
   /**
    * The run behind `active`, so a cancel, an answer and a steer have something
    * to reach.

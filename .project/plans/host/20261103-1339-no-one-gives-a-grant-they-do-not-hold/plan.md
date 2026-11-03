@@ -1,7 +1,7 @@
 ---
 title: No one gives a grant they do not hold
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -74,7 +74,7 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | todo | - |
+| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,17 +83,17 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-write-is-bounded-by-the-callers-grants.md](task-01-a-write-is-bounded-by-the-callers-grants.md).
+- **Done so far:** task 01 is done, and [implemented.md](implemented.md) records it.
+- **Next action:** none. The plan is built.
 - **Open questions:** none.
-- **Watch out for:** two doors reach the same records, the commands and the resource provider. Bound both, through `putRecord` and `removeRecord`, and test both.
+- **Watch out for:** a bound added anywhere other than `putRecord` and `removeRecord` covers only one of the two doors.
 
 ## Final verification checklist
 
-- [ ] `mo` with `role:put` cannot write a role with a grant he does not hold, through `x-ahpd/roles/put` or `role://`.
-- [ ] `mo` cannot write his own role as `*:*`.
-- [ ] `mo` with `user:put` cannot give a role whose grants he does not hold, through `x-ahpd/users/put` or `user://`.
-- [ ] `mo` cannot edit or remove a person or a role that holds more than he does.
-- [ ] `mo` can write a role, and give a role, made only of grants he holds.
-- [ ] An admin and the root connection write any role and any person.
-- [ ] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass.
+- [x] `mo` with `role:put` cannot write a role with a grant he does not hold, through `x-ahpd/roles/put` or `role://`.
+- [x] `mo` cannot write his own role as `*:*`.
+- [x] `mo` with `user:put` cannot give a role whose grants he does not hold, through `x-ahpd/users/put` or `user://`.
+- [x] `mo` cannot edit or remove a person or a role that holds more than he does.
+- [x] `mo` can write a role, and give a role, made only of grants he holds.
+- [x] An admin and the root connection write any role and any person.
+- [x] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass.

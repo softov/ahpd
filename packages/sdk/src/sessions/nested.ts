@@ -39,12 +39,15 @@ import { spawn as startProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { AhpClient, RpcError } from '@microsoft/agent-host-protocol/client';
 import type { AhpTransport, Subscription, TransportFrame } from '@microsoft/agent-host-protocol/client';
-import { chatReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import type { ChatAction, ChatState, RootAction, RootState, SessionAction, SessionState, StateAction, TerminalState } from '@microsoft/agent-host-protocol';
+import { canvasReducer, changesetReducer, chatReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import type {
+  CanvasAction, CanvasState, ChangesetAction, ChangesetState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionState, StateAction,
+  TerminalState,
+} from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from './catalog.js';
 import { posixUriOf, uriOf } from '../resources/fileuri.js';
 import { machinePathOf } from '../machines/machine.js';
-import { subagentChatUri } from '../host/channels.js';
+import { canvasResource, chatOfCanvas, subagentChatUri } from '../host/channels.js';
 import { STOP_FLAG } from '../host/background.js';
 import { ANSWER_TIMEOUT } from '../rpc.js';
 import { computerId } from '../machines/computers.js';
@@ -52,7 +55,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, Handed, MessageAttachment, MessageFrom, Session, SubagentChat, TurnOptions } from '../types/session.js';
+import type { Chosen, Handed, MessageAttachment, MessageFrom, Session, SessionChannel, SubagentChat, TurnOptions } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -101,8 +104,8 @@ const NO_AGENT = -32001;
 /** The session actions about one chat in the session's catalogue. */
 const CATALOGUE = new Set(['session/chatAdded', 'session/chatUpdated', 'session/chatRemoved', 'session/defaultChatChanged']);
 
-/** The lists the outer host says of a session itself, from the folder and the canvases it serves. */
-const OUTER_OWN = new Set(['session/changesetsChanged', 'chat/changesetsChanged', 'chat/canvasesChanged']);
+/** Where a changeset of a session hangs off the session's URI. */
+const CHANGESET = '/changeset/';
 
 /*
  * What a started inner host is is the port's, not this file's: `connect` answers
@@ -498,6 +501,20 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   const saidOutside = new Set<number>();
   /** The actions clients outside sent that wait, with `waiting`, for the host inside. */
   const unsent = new Set<Handed>();
+  /** A changeset or a canvas of the host inside that a client out here subscribed to. */
+  interface Relay {
+    /** Its name inside. */
+    inner: string;
+    kind: 'changeset' | 'canvas';
+    /** What the host inside last said of it, reduced as it moves. */
+    state: Bag;
+    /** Settled once the host inside has answered the subscribe. */
+    ready: Promise<void>;
+    /** Fails a subscribe that waits on the host inside to start, while it waits. */
+    refuse?: ((why: string) => void) | undefined;
+  }
+  /** Each relayed channel, by the name this session serves it by out here. */
+  const relays = new Map<string, Relay>();
   /** The inner host's own last lines, for a failure's sentence. */
   const tail: string[] = [];
   const lastWords = (): string => (tail.length === 0 ? '' : ` It said: ${tail.join(' | ')}`);
@@ -522,8 +539,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
    * out, when a client sent one: held until the host inside answers it, and
    * refused when nothing will. One the host outside says itself is marked so,
    * and its echo goes no further than the mirror.
+   *
+   * `channel` is the session's, the chat's, or the inner name of a changeset
+   * or a canvas this session relays.
    */
-  const deliver = (channel: 'session' | 'chat', action: Bag, handed?: Handed, said = false): void => {
+  const deliver = (channel: string, action: Bag, handed?: Handed, said = false): void => {
     if (closed || ended !== undefined) {
       handed?.refuse(ended ?? `${provider}'s session in computer://${id} has closed`);
       return;
@@ -533,7 +553,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       // Refused while it waited, and so let go of by the client that sent it.
       if (handed !== undefined && !unsent.delete(handed)) return;
       try {
-        const sent = client?.dispatch(channel === 'chat' ? innerChat : innerSession, action as unknown as StateAction);
+        const to = channel === 'chat' ? innerChat : channel === 'session' ? innerSession : channel;
+        const sent = client?.dispatch(to, action as unknown as StateAction);
         if (sent !== undefined && handed !== undefined) answering.set(sent.clientSeq, handed);
         if (sent !== undefined && said) saidOutside.add(sent.clientSeq);
       }
@@ -558,6 +579,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     for (const handed of [...answering.values(), ...unsent]) handed.refuse(sentence);
     answering.clear();
     unsent.clear();
+    for (const relay of relays.values()) relay.refuse?.(sentence);
   };
 
   /**
@@ -744,12 +766,33 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   };
 
   /**
+   * A changeset or a canvas of the host inside, under the name this session
+   * serves it by out here: a changeset hangs off the outer session's URI, and
+   * a canvas names the outer chat. Nothing for any other value.
+   */
+  const outerChannel = (uri: string): string | undefined => {
+    if (uri.startsWith(`${innerSession}${CHANGESET}`)) return `${start.uri}${uri.slice(innerSession.length)}`;
+    const chat = chatOfCanvas(uri);
+    const named = chat === undefined ? undefined : outerOf.get(chat);
+    return named === undefined ? undefined : canvasResource(named, uri.slice(uri.lastIndexOf('/') + 1));
+  };
+
+  /** The changeset or canvas of the host inside that an outer name stands for. */
+  const innerChannel = (uri: string): string | undefined => {
+    if (uri.startsWith(`${start.uri}${CHANGESET}`)) return `${innerSession}${uri.slice(start.uri.length)}`;
+    const chat = chatOfCanvas(uri);
+    const named = chat === undefined ? undefined : [...outerOf].find(([, outer]) => outer === chat)?.[0];
+    return named === undefined ? undefined : canvasResource(named, uri.slice(uri.lastIndexOf('/') + 1));
+  };
+
+  /**
    * A value with every inner chat URI it carries put under its outer name,
+   * every changeset and canvas under the name this session serves it by,
    * every file URI under the host's folder, and every terminal a call names
    * under the outer host's copy of it.
    */
   const outward = (value: unknown): unknown => {
-    if (typeof value === 'string') return outerOf.get(value) ?? outerDir(value);
+    if (typeof value === 'string') return outerOf.get(value) ?? outerChannel(value) ?? outerDir(value);
     if (Array.isArray(value)) return value.map(outward);
     if (typeof value === 'object' && value !== null) {
       const shown = Object.fromEntries(Object.entries(value).map(([key, held]) => [key, outward(held)])) as Bag;
@@ -970,11 +1013,12 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
    * the chats that are served. A `chat/inputCompleted` is kept back as well,
    * because the outer host says it once `answer` has taken it.
    *
-   * What the outer host says of this session itself is kept back too: the
-   * lead chat's row, which it says from the chat it holds, and the changesets
-   * and canvases, which name channels of the host inside and which it lists
-   * from the folder and the canvases it serves. One field has one producer.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
+   * The host inside runs this session, so what it says of the session is
+   * relayed as it said it: the lead chat's row, the session's and the chat's
+   * changesets, and the chat's canvases, each under the name this session
+   * serves it by out here. The reference host's designs across hosts leave the
+   * host running a session the one producer of its state.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
    */
   const served = (channel: 'session' | 'chat', action: Bag): Bag | undefined => {
     if (channel === 'session' && action.type === 'session/chatsReordered' && Array.isArray(action.chats)) {
@@ -982,12 +1026,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     }
     if (channel === 'session' && action.type === 'session/chatAdded' && opensWorker((action.summary ?? {}) as Bag)) return undefined;
     if (channel === 'chat' && action.type === 'chat/inputCompleted') return undefined;
-    if (OUTER_OWN.has(String(action.type))) return undefined;
     // A worker's row is the host's own, kept by the seam that opened it.
     if (channel === 'session' && CATALOGUE.has(String(action.type)) && workers.has(String(action.chat ?? ''))) return undefined;
-    // And so is the lead chat's, which the outer host says from the chat it holds.
-    if (channel === 'session' && CATALOGUE.has(String(action.type))
-      && [action.chat, (action.summary as Bag | undefined)?.resource, action.defaultChat].includes(innerChat)) return undefined;
     const stray = channel === 'session' && CATALOGUE.has(String(action.type)) ? strayIn(action) : undefined;
     if (stray !== undefined) {
       if (!unserved.has(stray)) log(`${provider} in computer://${id}: ${stray} is a chat of the host inside, which this host does not serve`);
@@ -1094,6 +1134,62 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       }
     }
     catch { /* the session's own subscriptions say why it ended */ }
+  };
+
+  /**
+   * One relayed channel's subscription, pumped as the session's own are: each
+   * action reduced into what the relay holds, with the protocol's own reducer,
+   * and said out here under the outer name, as the echo of the client action
+   * it answers or as that action's refusal.
+   */
+  const pumpRelay = async (outer: string, relay: Relay, subscription: Subscription): Promise<void> => {
+    try {
+      for await (const event of subscription) {
+        if (ended !== undefined || closed || relays.get(outer) !== relay) return;
+        if (event.type !== 'action') continue;
+        const { action, origin, rejectionReason } = event.params;
+        const sentAs = origin?.clientId === clientId ? origin.clientSeq : undefined;
+        const handed = sentAs === undefined ? undefined : answering.get(sentAs);
+        if (sentAs !== undefined) answering.delete(sentAs);
+        if (rejectionReason !== undefined) {
+          if (handed !== undefined) handed.refuse(rejectionReason);
+          else log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
+          continue;
+        }
+        try {
+          relay.state = (relay.kind === 'changeset'
+            ? changesetReducer(relay.state as unknown as ChangesetState, action as ChangesetAction)
+            : canvasReducer(relay.state as unknown as CanvasState, action as CanvasAction)) as unknown as Bag;
+        }
+        catch (error) {
+          log(`${provider}: kept the inner ${relay.kind} action ${action.type} out of the snapshot: ${reason(error)}`);
+        }
+        start.emitOn?.(outer, outward(action) as Bag, handed);
+      }
+    }
+    catch { /* the session's own subscriptions say why it ended */ }
+  };
+
+  /**
+   * Subscribe to a relayed channel inside and follow it. A relay followed
+   * again, once the host inside was opened again, has its new state said out
+   * here as the protocol's full replacement for its kind.
+   */
+  const follow = async (outer: string, relay: Relay, again = false): Promise<void> => {
+    const held = client;
+    if (held === undefined) throw new Error(`${provider}'s host inside computer://${id} is not running`);
+    const watched = await held.subscribe(relay.inner);
+    const now = (watched.result.snapshot?.state ?? {}) as Bag;
+    const told = relay.state;
+    relay.state = now;
+    void pumpRelay(outer, relay, watched.subscription);
+    if (!again || JSON.stringify(now) === JSON.stringify(told)) return;
+    if (relay.kind === 'canvas') {
+      start.emitOn?.(outer, { type: 'canvas/stateChanged', canvas: outward(now) });
+      return;
+    }
+    start.emitOn?.(outer, { type: 'changeset/contentChanged', files: outward(now.files ?? []), ...(now.operations === undefined ? {} : { operations: outward(now.operations) }) });
+    start.emitOn?.(outer, { type: 'changeset/statusChanged', status: now.status, ...(now.error === undefined ? {} : { error: now.error }) });
   };
 
   /**
@@ -1246,8 +1342,9 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       await make();
       return await held.subscribe(innerSession);
     });
-    // The title the clients out here were told, before the host inside answers.
+    // The title and the changesets the clients out here were told, before the host inside answers.
     const toldTitle = session?.title ?? chat?.title ?? 'Nested session';
+    const toldChangesets = session?.changesets ?? [];
     session = lead.result.snapshot?.state as SessionState | undefined;
     const named = (session as { defaultChat?: unknown } | undefined)?.defaultChat;
     if (typeof named === 'string' && named !== '') innerChat = named;
@@ -1257,14 +1354,23 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     chat = talk.result.snapshot?.state as ChatState | undefined;
     /*
      * What the host inside holds, said to the clients out here where it is not
-     * what they were told: the session's title, and the chat's conversation as
-     * `chat/truncated` then `chat/turnsLoaded`, the actions the reference host
-     * refreshes a chat's persisted history with. A session resumed inside is
-     * one the clients out here opened before its conversation was readable.
+     * what they were told: the session's title and changesets, the chat's
+     * canvases and changesets, and the chat's conversation as `chat/truncated`
+     * then `chat/turnsLoaded`, the actions the reference host refreshes a
+     * chat's persisted history with. A session resumed inside is one the
+     * clients out here opened before its conversation was readable.
      * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
      */
     if (session?.title !== undefined && session.title !== toldTitle) {
       start.emit('session', { type: 'session/titleChanged', title: session.title });
+    }
+    if (JSON.stringify(session?.changesets ?? []) !== JSON.stringify(toldChangesets)) {
+      start.emit('session', outward({ type: 'session/changesetsChanged', changesets: session?.changesets ?? [] }) as Bag);
+    }
+    for (const [key, type] of [['canvases', 'chat/canvasesChanged'], ['changesets', 'chat/changesetsChanged']] as const) {
+      const was = (wasChat as Bag | undefined)?.[key] ?? [];
+      const is = (chat as Bag | undefined)?.[key] ?? [];
+      if (JSON.stringify(is) !== JSON.stringify(was)) start.emit('chat', outward({ type, [key]: is }) as Bag);
     }
     const told = wasChat?.turns ?? [];
     const now = chat?.turns ?? [];
@@ -1276,6 +1382,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     }
     void pump(lead.subscription, 'session');
     void pump(talk.subscription, 'chat');
+    // And each changeset and canvas a client out here watches, from the host now running the session.
+    for (const [outer, relay] of relays) {
+      relay.ready = follow(outer, relay, true);
+      relay.ready.catch((error: unknown) => { log(`${provider} in computer://${id}: could not follow ${relay.inner} again: ${reason(error)}`); });
+    }
     ready = true;
     halted = undefined;
     log(`${provider} runs in computer://${id} as ${innerProvider} through ${plugins.join(', ')}`);
@@ -1353,21 +1464,20 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     workingDirectories: () => session?.workingDirectories?.map(outerDir) ?? (outside === undefined ? [] : [outside]),
     /*
      * The inner state, under the outer names. The host rewrites the fields it
-     * owns - the chat list, the status, the people in it, the changesets of
-     * the folder it serves - but a state whose own `resource` still named the
-     * inner channel would be a snapshot about a channel the client never asked
-     * for. Every inner chat URI is the outer one, a chat this session does not
-     * serve is left out of the list, a worker's row is the host's own from the
-     * seam that opened it, and the working directories are the folders this
-     * host named.
+     * owns - the chat list, the status, the people in it - but a state whose
+     * own `resource` still named the inner channel would be a snapshot about a
+     * channel the client never asked for. Every inner chat URI is the outer
+     * one, a chat this session does not serve is left out of the list, a
+     * worker's row is the host's own from the seam that opened it, the
+     * changesets are the ones this session serves, and the working
+     * directories are the folders this host named.
      */
     sessionState: (): Bag => {
       const held = (session ?? { provider, title: mine.title(), status: mine.status(), lifecycle: 'ready', chats: [] }) as unknown as Bag;
       const chats = Array.isArray(held.chats)
         ? (held.chats as Bag[]).filter((one) => outerOf.has(String(one.resource)) && !workers.has(String(one.resource)))
         : [];
-      const { changesets: _changesets, ...own } = held;
-      const shown = outward({ ...own, chats }) as Bag;
+      const shown = outward({ ...held, chats }) as Bag;
       return {
         ...shown,
         ...(typeof held.defaultChat === 'string' && !outerOf.has(held.defaultChat) ? { defaultChat: start.chatUri } : {}),
@@ -1379,13 +1489,62 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       };
     },
     /*
-     * The inner chat under the outer names, less the canvases and changesets
-     * its host lists: those are channels of the host inside, and the host
-     * outside lists its own.
+     * The inner chat under the outer names, its canvases and changesets the
+     * ones this session serves.
      */
     chatState: (): Bag => {
-      const { canvases: _canvases, changesets: _changesets, ...own } = (chat ?? { title: mine.title(), status: mine.status(), modifiedAt: mine.modifiedAt(), turns: [] }) as unknown as Bag;
+      const own = (chat ?? { title: mine.title(), status: mine.status(), modifiedAt: mine.modifiedAt(), turns: [] }) as unknown as Bag;
       return { ...(outward(own) as Bag), resource: start.chatUri };
+    },
+    /*
+     * A changeset or a canvas of the host inside, which this session serves
+     * out here under the outer name, as it serves the session and its chat:
+     * followed from the first subscribe until nobody here watches it, a
+     * client's action on it carried inside, and a command about it asked
+     * inside, each answered from there.
+     */
+    channel: (uri: string): SessionChannel | undefined => {
+      const inner = innerChannel(uri);
+      if (inner === undefined) return undefined;
+      return {
+        snapshot: async (): Promise<Bag> => {
+          let relay = relays.get(uri);
+          if (relay === undefined) {
+            const over = ended ?? halted ?? (closed ? `${provider}'s session in computer://${id} has closed` : undefined);
+            if (over !== undefined) throw new Error(over);
+            const made: Relay = { inner, kind: inner.startsWith(`${innerSession}${CHANGESET}`) ? 'changeset' : 'canvas', state: {}, ready: Promise.resolve() };
+            made.ready = new Promise<void>((resolve, reject) => {
+              made.refuse = (why) => { reject(new Error(why)); };
+              gate(() => {
+                made.refuse = undefined;
+                follow(uri, made).then(resolve, reject);
+              });
+            });
+            relays.set(uri, made);
+            relay = made;
+          }
+          try { await relay.ready; }
+          catch (error) {
+            if (relays.get(uri) === relay) relays.delete(uri);
+            throw error;
+          }
+          return outward(relay.state) as Bag;
+        },
+        dispatch: (action: Bag): void => { deliver(inner, action, start.handed?.(action, uri)); },
+        request: async (method: string, params: Bag): Promise<unknown> => {
+          const held = client;
+          if (held === undefined || ended !== undefined || closed) throw new Error(ended ?? `${provider}'s session in computer://${id} has closed`);
+          // Widened, as the background stop is: the client is typed over the protocol's own commands.
+          const ask = held.request.bind(held) as unknown as (name: string, sent: Record<string, unknown>) => Promise<unknown>;
+          return outward(await ask(method, { ...params, channel: inner }));
+        },
+        release: (): void => {
+          const relay = relays.get(uri);
+          if (relay === undefined) return;
+          relays.delete(uri);
+          void client?.unsubscribe(relay.inner).catch(() => { /* gone with the host inside */ });
+        },
+      };
     },
 
     begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom): void => {
