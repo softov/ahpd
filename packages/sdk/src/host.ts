@@ -1098,6 +1098,22 @@ export function createHost(options: HostOptions): Host {
       ctx.chatMoved(channel);
     }
     /*
+     * A stop takes the chat's steering with it, once the backend has had the
+     * stop: the backend lets go of the steering message it holds, and one it
+     * says nothing of is taken out here, so nothing sent to steer the stopped
+     * turn runs after it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+     */
+    if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
+      queueMicrotask(() => {
+        const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
+        if (typeof steering !== 'string') return;
+        byChat.get(channel)?.chat.unqueue(steering);
+        if ((states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id !== steering) return;
+        dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+      });
+    }
+    /*
      * A terminal's title and claim are on the root's list of terminals too,
      * so the list is said again when either moves it: the root's state holds
      * the list it was last told.

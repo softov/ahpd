@@ -118,6 +118,11 @@ export function fakePi() {
       if (steers !== undefined) throw steers;
       return 'queued';
     },
+    // pi says its queue emptied, as `clearQueue` does.
+    clearSteering: () => {
+      asked.push({ kind: 'clearSteering' });
+      listener?.({ type: 'queue_update', steering: [], followUp: [] } as unknown as AgentSessionEvent);
+    },
     abort: async () => {
       asked.push({ kind: 'abort' });
       if (stops) listener?.({ type: 'agent_settled', aborted: true });

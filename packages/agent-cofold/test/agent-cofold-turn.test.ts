@@ -657,7 +657,8 @@ const unsteer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri:
   });
 };
 
-it('takes back a steering message a stopped run handed back, and it never runs', async () => {
+it('takes the steering message a stopped run handed back out with the stop, and it never runs', async () => {
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
   const { model, release, asked } = gatedModel();
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'first');
@@ -670,14 +671,9 @@ it('takes back a steering message a stopped run handed back, and it never runs',
   });
   release();
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  // Handed back by the run, and waiting for the chat's next turn to end.
-  expect(fold(p, chatUri).steeringMessage).toMatchObject({ id: 's1' });
-
-  unsteer(client, chatUri, 5, 's1');
-  await until(() => answer(p, chatUri, 5) !== undefined);
-  expect(answer(p, chatUri, 5)?.action).toEqual({ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
-  expect(answer(p, chatUri, 5)?.rejectionReason).toBeUndefined();
-  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+  await until(() => fold(p, chatUri).steeringMessage === undefined);
+  const removed = actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved');
+  expect(removed.map((e) => [e.action.kind, e.action.id])).toEqual([['steering', 's1']]);
 
   begin(client, chatUri, 't2', 'second');
   await until(() => types(p, chatUri).includes('chat/turnComplete'));

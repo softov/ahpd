@@ -1615,6 +1615,12 @@ export function piSession(
       if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');
+      /*
+       * The steering pi was handed and has not read goes with the stop, so
+       * none of it reaches a later run; pi says each one let go.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
+       */
+      live?.clearSteering();
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
       calls.release('The turn was stopped');
