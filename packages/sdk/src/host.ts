@@ -261,15 +261,16 @@ export function createHost(options: HostOptions): Host {
    * The protocol calls these `activeClients` and makes membership the host's
    * to keep: a client announces itself with `session/activeClientSet` and the
    * host takes it out again when the client unsubscribes or goes. Keyed by
-   * `clientId` rather than by connection, because that is what the protocol
-   * keys it by - a client that reconnects is the same client.
-      *
+   * the `clientId` each entry carries rather than by connection, because that
+   * is what the protocol's reducer keys it by - a client that reconnects is
+   * the same client, and an entry carrying no `clientId` is one entry.
+   *
    * By the id inside a session's URI, as the session store is: a client
    * announces itself on the way in, which can be before this host has listed
    * anything and so before it knows the name it will publish that session
    * under.
    */
-  const presence = new Map<string, Map<string, Bag>>();
+  const presence = new Map<string, Map<unknown, Bag>>();
 
   const watches = new Claiming<{
     state: Bag;
@@ -1323,11 +1324,10 @@ export function createHost(options: HostOptions): Host {
     for (const connection of connections) {
       if (connection.clientId === clientId && connection.watching.has(uri)) return;
     }
-    // The entry under its own id, which is the client id that entry carries.
-    const named = held.get(clientId)?.clientId;
+    // The entry held under this client's id, which is the id the entry carries.
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
-    dispatch(uri, { type: 'session/activeClientRemoved', clientId: typeof named === 'string' ? named : clientId });
+    dispatch(uri, { type: 'session/activeClientRemoved', clientId });
     /*
      * And the tools it was providing, which leave with it.
      *

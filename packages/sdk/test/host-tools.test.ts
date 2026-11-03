@@ -996,7 +996,7 @@ describe('the MCP servers a session is offered', () => {
           channel: uri,
           action: {
             type: 'session/activeClientSet',
-            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...extra }], tools: [] },
+            activeClient: { clientId: 'holder', customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...extra }], tools: [] },
           },
         },
       }),
@@ -1231,7 +1231,7 @@ describe('tools a client contributes', () => {
       method: 'dispatchAction',
       params: {
         channel: held.uri,
-        action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools } },
+        action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe', name: 'VS Code', tools } },
       },
     });
     await settle();
@@ -2124,10 +2124,10 @@ describe('a client\'s call, held by the backend', () => {
       await client.handle({ method: 'subscribe', params: { channel: uri } });
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     }
-    for (const client of clients) {
+    for (const [at, client] of clients.entries()) {
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: 'Editor', tools: [OPEN_FILE] } } },
+        params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { clientId: ids[at], name: 'Editor', tools: [OPEN_FILE] } } },
       });
     }
     await settle();
@@ -2505,7 +2505,7 @@ describe('a customization switched for every session or a folder', () => {
           channel: uri,
           action: {
             type: 'session/activeClientSet',
-            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce }], tools: [] },
+            activeClient: { clientId, customizations: [{ type: 'plugin', uri: PLUGIN, nonce }], tools: [] },
           },
         } }),
         /** Whether the plugin has been reported on this session, and settled. */
