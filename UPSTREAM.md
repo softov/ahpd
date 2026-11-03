@@ -99,7 +99,7 @@ Not possible here, as Pass 4 found: discovery and adoption read the Copilot CLI 
 
 ### Other host changes
 
-- [ ] **Session config `sensitiveEditLocations`**: edits under the listed globs always ask, even with auto-approve on. Upstream `06687ce3dfd`, `fffc9bc6481` (`common/agentHostSchema.ts`, `node/shared/sessionPermissions.ts` `_matchesSensitiveEditLocations`). `packages/agent-claude/src/claude.ts` schema, approvals in `packages/sdk/src/host/trust.ts`.
+- [x] **Session config `sensitiveEditLocations`**: edits under the listed globs always ask, even with auto-approve on. Upstream `06687ce3dfd`, `fffc9bc6481` (`common/agentHostSchema.ts`, `node/shared/sessionPermissions.ts` `_matchesSensitiveEditLocations`). The host's own key on every session (`packages/sdk/src/host/common.ts` `HOSTS_TAKEN`), taken by `packages/sdk/src/host/chatactions.ts`, and read by the redirect check in `packages/sdk/src/access/commandautoapprover.ts` `writeAllowed`. Built in `host/20261102-1747` task 05.
 - [ ] **Root config keys `activeAgentTitleGeneration` and `deferredTitleGeneration`.** Undeclared today, so they are logged as refused. `packages/sdk/src/vscoderootconfig.ts`.
 - [ ] **`send_message` takes the mode and model controls of the target chat.** Upstream `d3ef8534b9a` (`node/shared/sessionServerTools.ts`). `packages/sdk/src/tools/session.ts`.
 - [ ] **A subagent's failed and cancelled outcomes are reported as such** rather than as a completed result. Upstream `3f4647a7f9c`. `packages/sdk/src/host/spawn.ts`.

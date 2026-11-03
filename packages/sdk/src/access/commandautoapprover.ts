@@ -672,21 +672,48 @@ const realPathOf = (path: string): string | undefined => {
 const isInside = (path: string, folder: string): boolean =>
   path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
 
+/** A workspace-relative path whose writes always ask, as `sensitiveEditLocations` lists them. */
+export interface SensitiveEditLocation {
+  path: string;
+  isDirectory: boolean;
+}
+
 /**
  * Whether a write destination is one the rules approve.
  *
  * The destination has to name a path, land in the folder the command runs in,
- * and match the edit patterns. A path that leaves the folder by `..`, or by a
- * link on the way, does not, and neither does a name the shell expands: what
- * such a write lands on is not what the line says.
+ * stay off every sensitive location, and match the edit patterns. A path that
+ * leaves the folder by `..`, or by a link on the way, does not, and neither
+ * does a name the shell expands: what such a write lands on is not what the
+ * line says.
+ *
+ * A sensitive location is read against the folder, with the links on its own
+ * path followed too, and a folder location holds everything under it. The two
+ * are compared blind to case except on Linux, as the reference host compares
+ * them.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
  */
-const writeAllowed = (dest: string, folder: string, patterns: TerminalAutoApprovePatterns | undefined): boolean => {
+const writeAllowed = (
+  dest: string,
+  folder: string,
+  patterns: TerminalAutoApprovePatterns | undefined,
+  sensitive: readonly SensitiveEditLocation[],
+): boolean => {
   const named = dest.trim();
   if (named === '' || SHELL_EXPANDS.test(named) || patterns === undefined) return false;
   const literal = isAbsolute(named) ? normalize(named) : resolve(folder, named);
   const real = realPathOf(literal);
   if (real === undefined) return false;
-  for (const candidate of real === literal ? [literal] : [literal, real]) {
+  const candidates = real === literal ? [literal] : [literal, real];
+  const spelled = (path: string): string => (process.platform === 'linux' ? path : path.toLowerCase());
+  for (const location of sensitive) {
+    const at = resolve(folder, location.path);
+    const resolved = realPathOf(at);
+    const places = (resolved === undefined || resolved === at ? [at] : [at, resolved]).map(spelled);
+    const hit = candidates.map(spelled).some((one) => places.some((place) => (location.isDirectory ? isInside(one, place) : one === place)));
+    if (hit) return false;
+  }
+  for (const candidate of candidates) {
     if (!isInside(candidate, folder)) return false;
     if (!patternsAllow(candidate, patterns)) return false;
   }
@@ -703,6 +730,8 @@ export interface CommandApprovalOptions {
   workingDirectory?: string;
   /** The patterns a write target must match. Omitted means no write is approved. */
   editPatterns?: TerminalAutoApprovePatterns;
+  /** The locations, relative to the folder, a write target must stay off. */
+  sensitive?: readonly SensitiveEditLocation[];
 }
 
 /**
@@ -740,7 +769,7 @@ export class CommandAutoApprover {
 
     const folder = options.workingDirectory;
     if (folder === undefined) return 'noMatch';
-    return read.writeDests.every((dest) => writeAllowed(dest, folder, options.editPatterns)) ? 'approved' : 'noMatch';
+    return read.writeDests.every((dest) => writeAllowed(dest, folder, options.editPatterns, options.sensitive ?? [])) ? 'approved' : 'noMatch';
   }
 }
 

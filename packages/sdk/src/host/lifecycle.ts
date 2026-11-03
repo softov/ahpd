@@ -11,7 +11,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { BANG, HOSTS_OWN } from './common.js';
+import { BANG, HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -1020,9 +1020,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     log(`restarted ${chatUri}`);
   };
 
-  /** What the backend is given: everything except what this host answered. */
+  /** What the backend is given: everything except what this host answered or takes. */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key) && !Object.hasOwn(HOSTS_TAKEN, key)));
 
   /**
    * The backend that serves one chat.

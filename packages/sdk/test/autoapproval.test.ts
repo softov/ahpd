@@ -255,3 +255,35 @@ it('asks for a shell the rule names, before a terminal rule answers', async () =
   expect(approval(start(), 'ls -la', 'pwsh')).toBeUndefined();
   expect(approval(start(), 'ls -la', 'Bash')).toBe('ask');
 });
+
+/*
+ * The sensitive edit locations are the host's: VS Code sends them before each
+ * turn whatever the backend declares, its host declares them on every session
+ * and takes them, and a write into one asks.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2273-L2286
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
+ */
+it('takes the sensitive edit locations, and asks for a write into one', async () => {
+  const { signedIn, pushing, opening, start } = serving();
+  const ana = await signedIn('admin', 'ana');
+  await pushing(ana, { editAutoApprovePatterns: { '**/*': true } });
+  await opening(ana, 'ana-sensitive');
+  const channel = 'ahp-session:/ana-sensitive';
+  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBe('not-needed');
+
+  const locations = [{ path: '.github/hooks', isDirectory: true }];
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel, action: { type: 'session/configChanged', config: { sensitiveEditLocations: locations } } },
+  });
+  await settle();
+
+  // Declared, taken and said back: the echo backend declares no such key.
+  const { snapshot } = await ana.handle({ method: 'subscribe', params: { channel } }) as {
+    snapshot: { state: { config: { schema: { properties: Record<string, { sessionMutable?: boolean }> }; values: Record<string, unknown> } } };
+  };
+  expect(snapshot.state.config.schema.properties['sensitiveEditLocations']?.sessionMutable).toBe(true);
+  expect(snapshot.state.config.values['sensitiveEditLocations']).toEqual(locations);
+  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBeUndefined();
+  expect(approval(start(), 'echo hi > out.txt')).toBe('not-needed');
+});
