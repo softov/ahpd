@@ -383,7 +383,7 @@ it('lets an archived session go once nobody watches it, whatever the count', asy
   const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+    params: { channel: one.channel, clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } },
   });
   await settle();
   // Watched, so held.
