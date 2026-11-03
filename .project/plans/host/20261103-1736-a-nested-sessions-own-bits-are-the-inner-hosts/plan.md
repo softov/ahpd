@@ -1,7 +1,7 @@
 ---
 title: A nested session's own bits are the inner host's
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -72,7 +72,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The session's bits go inside](task-01-the-sessions-bits-go-inside.md) | todo | - |
+| [01 - The session's bits go inside](task-01-the-sessions-bits-go-inside.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing yet.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the archive's housekeeping in `sessionFlag`, which a relayed archive goes through too.
 
 ## Final verification checklist
 
-- [ ] The new case fails on `3945964a`'s sources and passes after the change.
-- [ ] The nested proxy's test file passes.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new case fails on `3945964a`'s sources and passes after the change.
+- [x] The nested proxy's test file passes.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
