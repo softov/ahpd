@@ -9,7 +9,7 @@ plans:
 
 A message sent in a bot chat while the bot works is a steer. Since ca82b8af (host/20261102-1814 task 03), it goes into the running turn, as VS Code's host does, and that turn goes on. Before, the steer ended the turn and began a new one. Nobody has checked this on a real bot yet.
 
-With PR #200 merged, the main turn ends when the back session's turn ends. Run this check after that merge.
+With PR #200 merged, the main turn ends when the back session's turn ends. Run this check after the merge of plugin/20261103-1044, which keeps a steer from ending the main turn.
 
 ## Set up
 
