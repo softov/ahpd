@@ -185,6 +185,17 @@ export function piSession(
   let unsubscribe: (() => void) | undefined;
   let closed = false;
   let cancelled = false;
+  /**
+   * Whether a message was queued while a stop was in flight.
+   *
+   * A stopped turn starts nothing behind it, as the reference host leaves
+   * queued messages queued, and a message queued after the stop starts the
+   * head of the queue once pi lets the turn go, as the reference host takes the
+   * first queued message once one is set while idle.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+   */
+  let askedSinceStop = false;
   /** What it is doing, and the one handle that says it. */
   const activity = activityOf(emit);
   let title = UNTITLED;
@@ -723,7 +734,9 @@ export function piSession(
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
     touch();
-    startNext();
+    const asked = askedSinceStop;
+    askedSinceStop = false;
+    if (ending !== 'cancelled' || asked) startNext();
   };
 
   /**
@@ -1336,8 +1349,13 @@ export function piSession(
       ...(active !== undefined ? { activeTurn: active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      ...(steering !== undefined ? { steeringMessage: steering } : {}),
-      queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
+      // A steering message no turn was running to take waits at the head of
+      // the queue, and is still a steering message while it waits.
+      ...(steering !== undefined
+        ? { steeringMessage: steering }
+        : queued.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+      queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
     begin: (turnId, text, model, from, attachments) => {
@@ -1365,6 +1383,7 @@ export function piSession(
         emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         // At once when nothing runs, as a queued message is.
+        if (cancelled) askedSinceStop = true;
         startNext();
         return;
       }
@@ -1500,7 +1519,7 @@ export function piSession(
       void live?.abort().catch(() => { finish('cancelled'); });
     },
 
-    queue: (id, text, model, from, attachments) => {
+    queue: (id, text, model, from, attachments, _options, kind = 'queued') => {
       const message: Bag = {
         text,
         origin: from?.origin ?? { kind: 'user' },
@@ -1509,9 +1528,10 @@ export function piSession(
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
       const at = queued.findIndex((held) => String(held.id) === id);
-      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}) };
-      if (at >= 0) queued[at] = entry; else queued.push(entry);
-      emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}), ...(kind === 'steering' ? { steering: true } : {}) };
+      // A steering message no turn was running to take is the next turn.
+      if (at >= 0) queued[at] = entry; else if (kind === 'steering') queued.unshift(entry); else queued.push(entry);
+      emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
       touch();
       /*
        * At once when nothing runs: "the server SHOULD immediately consume it",
@@ -1519,14 +1539,15 @@ export function piSession(
        * is idle.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
        */
+      if (cancelled) askedSinceStop = true;
       startNext();
     },
 
     unqueue: (id) => {
       const at = queued.findIndex((held) => String(held.id) === id);
       if (at < 0) return;
-      queued.splice(at, 1);
-      emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      const [held] = queued.splice(at, 1);
+      emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
       touch();
     },
 

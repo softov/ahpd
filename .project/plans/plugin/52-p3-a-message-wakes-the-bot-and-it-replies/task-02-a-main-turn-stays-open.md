@@ -1,6 +1,6 @@
 ---
 title: A main turn stays open
-status: implemented
+status: done
 depends: []
 layer: "packages/bot"
 refs:

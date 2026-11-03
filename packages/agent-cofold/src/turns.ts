@@ -760,7 +760,13 @@ export const createTurns = (
     runCommand(turnId, command, run, queuedAs);
   };
 
-  const queue: Session['queue'] = (id, text, model, from, attachments) => {
+  /*
+   * A steering message no turn was running to take is the next turn, ahead of
+   * what a stopped turn left waiting, as the reference host runs steering that
+   * came too late to steer a turn.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+   */
+  const queue: Session['queue'] = (id, text, model, from, attachments, _options, kind = 'queued') => {
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : {}),
@@ -775,11 +781,13 @@ export const createTurns = (
       message,
       ...(model !== undefined ? { model } : {}),
       ...(from !== undefined ? { from } : {}),
+      ...(kind === 'steering' ? { steering: true } : {}),
     };
     const at = queued.findIndex((held) => held.id === id);
     if (at >= 0) queued[at] = entry;
+    else if (kind === 'steering') queued.unshift(entry);
     else queued.push(entry);
-    start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+    start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
     ctx.touch();
     startNext();
   };
@@ -802,8 +810,8 @@ export const createTurns = (
     }
     const at = queued.findIndex((held) => held.id === id);
     if (at < 0) return;
-    queued.splice(at, 1);
-    start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+    const [held] = queued.splice(at, 1);
+    start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
     ctx.touch();
   };
 

@@ -261,7 +261,11 @@ export function acpSession(
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
+      // A steering message no turn was running to take waits at the head of
+      // the queue, and is still a steering message while it waits.
+      ...(queued.filter((held) => held.steering === true).slice(0, 1)
+        .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+      queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
     // The host's five, and not its sixth: the queue's own sixth is the queued

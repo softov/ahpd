@@ -833,24 +833,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ? action.activeClient
         : {}) as Bag;
       /*
-       * A client announces itself, and no other client: an entry naming
-       * another `clientId` is refused, since its tools would be called on the
-       * client it names and its leaving would remove that client's entry.
-       */
-      if (typeof carried.clientId === 'string' && carried.clientId !== clientId) {
-        no(`${carried.clientId} is another client; this connection is ${clientId}`);
-        return;
-      }
-      /*
        * The entry as the client sent it, `tools` included or left out, under
-       * the sender's own `clientId`: the reference host reduces a set as sent,
-       * and its window reads `tools` of every client in the session. A client
-       * that names no tools provides none (`clientTools`). Held under the
-       * connection that announced it, which is what leaves.
-       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2750-L2752
+       * the `clientId` it carries, the sender's where it carries none: the
+       * reference host takes a set as sent, an entry naming another client
+       * among them, and its window reads `tools` of every client in the
+       * session. A client that names no tools provides none (`clientTools`).
+       * A client's leaving takes out the entry under its own id, as the
+       * reference host removes a leaving client's entry.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1659-L1677
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostCustomizationService.ts#L1083-L1101
        */
-      const activeClient: Bag = { ...carried, clientId };
+      const named = typeof carried.clientId === 'string' ? carried.clientId : clientId;
+      const activeClient: Bag = { ...carried, clientId: named };
       const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
       presence.set(idOf(channel), held);
       /*
@@ -865,14 +860,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * Code's session handler does, sends nothing more.
        * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253
        */
-      if (JSON.stringify(held.get(clientId)) === JSON.stringify(activeClient)) {
+      if (JSON.stringify(held.get(named)) === JSON.stringify(activeClient)) {
         dispatch(channel, { type, activeClient }, origin);
         return;
       }
       // Re-announcing is how a client refreshes what it contributes, so
       // this replaces rather than merges - a tool taken away has to be
       // able to go.
-      held.set(clientId, activeClient);
+      held.set(named, activeClient);
       dispatch(channel, { type, activeClient });
       // What it says it can run is a change to what the model is offered,
       // which is the whole point of the field: announced and never read,

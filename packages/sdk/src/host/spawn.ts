@@ -1,7 +1,7 @@
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, SessionInputRequestKind, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
-import type { CommandShell, CommandSplit, CommandSplitter, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
+import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
 import { reason } from '../utils/values.js';
 import { computerId, computersFor } from '../machines/computers.js';
@@ -961,11 +961,18 @@ export function createSpawn(ctx: HostContext): Spawn {
         ? pushed as TerminalAutoApproveRules
         : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
       const patterns = ctx.rootConfig['editAutoApprovePatterns'];
+      // The session's sensitive edit locations, each entry of the shape its
+      // property declares: a write into one asks.
+      const held: unknown = sessions.get(uri)?.config['sensitiveEditLocations'];
+      const sensitive = Array.isArray(held)
+        ? held.filter((one): one is SensitiveEditLocation => typeof one?.path === 'string' && typeof one?.isDirectory === 'boolean')
+        : [];
       const result = approver.evaluate(line, {
         rules,
         ...(patterns !== null && typeof patterns === 'object' ? { editPatterns: patterns as TerminalAutoApprovePatterns } : {}),
         shell,
         ...(workingDirectory === undefined ? {} : { workingDirectory }),
+        sensitive,
       });
       // The protocol's enum is ambient, so its one value is written out rather
       // than reached for: `verbatimModuleSyntax` will not let this file import

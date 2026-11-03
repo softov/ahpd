@@ -3,7 +3,7 @@ import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { HOSTS_OWN } from './common.js';
+import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
@@ -1047,7 +1047,8 @@ export function chatAction(
       }
       /*
        * The keys the session's backend is asked about: every key but this
-       * host's own and the ones the schema fixes, which a start takes.
+       * host's own, the ones it takes, and the ones the schema fixes, which a
+       * start takes.
        *
        * What the schema says about a key: `host.ts` imports no backend, and
        * the two things this layer needs to know are declared there - whether
@@ -1059,7 +1060,7 @@ export function chatAction(
        */
       const asked = Object.entries(config)
         .filter(([key]) => {
-          if (HOSTS_OWN.includes(key)) return false;
+          if (HOSTS_OWN.includes(key) || Object.hasOwn(HOSTS_TAKEN, key)) return false;
           const property = propertyOf(owning?.agent, key);
           return property === undefined || property.sessionMutable === true;
         });
@@ -1077,6 +1078,10 @@ export function chatAction(
        */
       const said = (taken: Record<string, unknown>): void => {
         for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
+        // A key this host took is one of its answers, which every snapshot of
+        // the session says back over the backend's config.
+        const answered = Object.entries(taken).filter(([key]) => Object.hasOwn(HOSTS_TAKEN, key));
+        if (answered.length > 0) decided.set(uri, { ...decided.get(uri), ...Object.fromEntries(answered) });
         // Said on the session's channel, and answered on the channel it came
         // on, a chat's for a key the schema scopes to one chat.
         if (channel === uri) dispatch(uri, { ...action, config: taken }, origin);
@@ -1444,7 +1449,9 @@ export function chatAction(
         no(`${kind} is neither a steering message nor a queued one`);
         break;
       }
-      if (kind === 'steering' && !session.steer) {
+      // A turn running in a backend that cannot steer one. With nothing
+      // running, the message is the next turn, whatever the backend.
+      if (kind === 'steering' && !session.steer && activeHeld !== undefined) {
         no('This backend cannot take a message mid-turn');
         break;
       }
@@ -1485,9 +1492,9 @@ export function chatAction(
       /*
        * A queued message, or a steering message with no turn running to steer.
        *
-       * The second runs as a turn of its own, under its id, as the reference
-       * host runs steering that came too late to steer a turn, and the turn
-       * naming it takes it out of every client's state.
+       * The second runs as a turn of its own, under its id and ahead of what
+       * waits, as the reference host runs steering that came too late to steer
+       * a turn, and the turn naming it takes it out of every client's state.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
        */
@@ -1508,6 +1515,7 @@ export function chatAction(
           connection,
           id,
           read.attachments,
+          kind,
         ),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );

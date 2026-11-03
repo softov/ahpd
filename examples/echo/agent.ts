@@ -270,7 +270,11 @@ export function echo(options: EchoOptions): Agent {
         ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
-        queuedMessages: [...queued],
+        // A steering message no turn was running to take waits at the head,
+        // and is still a steering message while it waits.
+        ...(queued.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+        queuedMessages: queued.filter((held) => held.steering !== true),
       }),
 
       /**
@@ -290,18 +294,20 @@ export function echo(options: EchoOptions): Agent {
        * started at once, which a client sees as an entry that appears and
        * leaves rather than one that was never there.
        */
-      queue: (id, text, _model, from, attachments) => {
+      queue: (id, text, _model, from, attachments, _options, kind = 'queued') => {
         const message: Bag = {
           text,
           ...(from?.origin !== undefined ? { origin: from.origin } : {}),
           ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
           ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
         };
-        const entry: Bag = { id, message, ...(from !== undefined ? { from } : {}) };
+        const entry: Bag = { id, message, ...(from !== undefined ? { from } : {}), ...(kind === 'steering' ? { steering: true } : {}) };
         const at = queued.findIndex((held) => held.id === id);
+        // A steering message no turn was running to take is the next turn.
         if (at >= 0) queued[at] = entry;
+        else if (kind === 'steering') queued.unshift(entry);
         else queued.push(entry);
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
         touch();
         startNext();
       },
@@ -318,8 +324,8 @@ export function echo(options: EchoOptions): Agent {
       unqueue: (id) => {
         const at = queued.findIndex((held) => held.id === id);
         if (at < 0) return;
-        queued.splice(at, 1);
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+        const [held] = queued.splice(at, 1);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
         touch();
       },
 

@@ -11,7 +11,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { BANG, HOSTS_OWN } from './common.js';
+import { BANG, HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -150,6 +150,7 @@ export interface Lifecycle {
     sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
+    kind?: 'queued' | 'steering',
   ): string | undefined | Promise<string | undefined>;
   /** A turn begun, or a turn refused, from what `beginOrRun` answered. */
   beginTurn(
@@ -1020,9 +1021,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     log(`restarted ${chatUri}`);
   };
 
-  /** What the backend is given: everything except what this host answered. */
+  /** What the backend is given: everything except what this host answered or takes. */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key) && !Object.hasOwn(HOSTS_TAKEN, key)));
 
   /**
    * The backend that serves one chat.
@@ -1292,7 +1293,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `queuedAs` is the queued message's id when the text came through
    * `chat/pendingMessageSet`: a question is queued under it, and a command
-   * is handed to `ran` under it, so it waits its turn as a command.
+   * is handed to `ran` under it, so it waits its turn as a command. `kind` is
+   * that message's, and a steering one is queued ahead of what waits.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -1314,6 +1316,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
+    kind?: 'queued' | 'steering',
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out.
@@ -1392,7 +1395,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          * session holds at the moment the turn starts.
          */
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments, ctx.turnInstructions(session.uri));
-        else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri));
+        else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
         return undefined;
       }
       if (!session.ran) {

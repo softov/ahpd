@@ -380,6 +380,28 @@ it('ends a turn as failed, in the words of what failed', async () => {
   expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: 't1', state: 'error' });
 });
 
+/*
+ * A stop is told to whoever holds the chat, so the work behind the turn stops
+ * too, as the reference host cancels a stopped chat's subagent sessions
+ * (agentSideEffects.ts L1942, L1470-L1483 at a4e689ae).
+ */
+it('tells the chat\'s holder which turn a client stopped', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+  const stops: [string, string][] = [];
+  chat.onStop = (session, turnId) => { stops.push([session, turnId]); };
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  expect(stops).toEqual([[HELD, 't1']]);
+});
+
 it('ends a turn with a notice, and with a cancellation', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
@@ -538,6 +560,36 @@ it('keeps a queued message behind the steered turn', async () => {
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
   expect(after['queuedMessages'] ?? []).toEqual([]);
+});
+
+/*
+ * A stopped turn starts nothing behind it: the reference host leaves queued
+ * messages queued, and a message set while idle starts the first of them.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+ */
+it('starts nothing behind a stopped turn, and its queue\'s head once a message is queued after it', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await queued(client, 'q1', 'and then this');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  const stopped = await stateOf(client);
+  expect(stopped['activeTurn']).toBeUndefined();
+  expect(stopped['queuedMessages']).toMatchObject([{ id: 'q1' }]);
+
+  await queued(client, 'q2', 'one more');
+  const after = await stateOf(client);
+  expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
+  expect(heard.map((one) => one.text)).toEqual(['hello', 'and then this']);
 });
 
 it('reads an old steering line as a turn of its own', async () => {

@@ -749,6 +749,35 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
   expect(said).not.toContain('chat/turnComplete');
 });
 
+/*
+ * Steering that came too late to steer a turn runs next, ahead of what the
+ * stopped turn left queued, though this backend cannot steer a running turn
+ * (queueDrainContribution.ts L260-L262 at a4e689ae).
+ */
+it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'please wait');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+  });
+  const before = types(p, chatUri).length;
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+  });
+  await until(() => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').length >= 2);
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'now' } });
+});
+
 it('ends the running turn on a cancel that names no turn, with the cancel reaching the server', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'please wait');

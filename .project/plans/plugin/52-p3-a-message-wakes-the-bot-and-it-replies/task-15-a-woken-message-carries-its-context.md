@@ -1,6 +1,6 @@
 ---
 title: A woken message carries its context
-status: implemented
+status: done
 depends: [task-03-a-message-wakes-a-back-session.md]
 layer: "packages/bot"
 refs:

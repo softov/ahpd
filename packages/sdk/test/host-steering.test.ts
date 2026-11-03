@@ -121,3 +121,33 @@ it('refuses an edit of the steering message the running turn holds', async () =>
   const edit = envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3);
   expect(edit?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
 });
+
+/*
+ * Steering that came too late to steer a turn runs next, ahead of queued
+ * messages, whatever the backend: the example here has no `steer` and keeps
+ * its queue when a turn is stopped (queueDrainContribution.ts L260-L262 at
+ * a4e689ae).
+ */
+it('runs an idle steering message ahead of what a stopped turn left queued, on a backend that cannot steer', async () => {
+  const p = peer();
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 10_000 })] });
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/plain';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
+  const chatUri = opened.snapshot.state.defaultChat;
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const dispatch = (clientSeq: number, action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq, action } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words here' } });
+  await settle();
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } });
+  await dispatch(3, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  await dispatch(4, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now', origin: { kind: 'user' } } });
+  await settle();
+
+  expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 4)?.rejectionReason).toBeUndefined();
+  const started = envelopes(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted');
+  expect(started.map((one) => one.action.queuedMessageId)).toEqual([undefined, 's1']);
+});

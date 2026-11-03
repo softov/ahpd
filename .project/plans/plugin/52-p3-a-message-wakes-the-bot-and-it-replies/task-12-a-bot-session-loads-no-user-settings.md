@@ -1,6 +1,6 @@
 ---
 title: A bot session loads no user settings
-status: implemented
+status: done
 depends: [task-10-a-bots-folder-has-its-agents-file.md]
 layer: "packages/sdk, packages/agent-claude, packages/bot"
 refs:

@@ -314,27 +314,34 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
 });
 
 /*
- * A client announces itself and no other: an entry naming another client would
- * have that client's tools called, and its leaving would remove that client.
+ * The entry as sent, under the `clientId` it names: the reference host takes a
+ * set as sent, and a client's leaving takes out its own entry, so the sender's
+ * leaving leaves this one.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1659-L1677
  */
-it('refuses an entry that names another client, and holds nothing of it', async () => {
+it('holds an entry that names another client as sent, and the sender\'s leaving leaves it', async () => {
   const held = host();
   const a = await joins(held, 'honest');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
   await a.client.handle({ method: 'subscribe', params: { channel: URI } });
-  a.client.handle({
+  await a.client.handle({
     method: 'dispatchAction',
     params: {
       channel: URI,
       action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [{ name: 'openFile' }] } },
     },
   });
-  expect(await clientsIn(a.client, URI)).toEqual([]);
-  const refused = a.peer.notes
+  expect(await clientsIn(a.client, URI)).toEqual(['somebody-else']);
+  const said = a.peer.notes
     .filter((n) => n.method === 'action')
     .map((n) => n.params as { action: { type: string }; rejectionReason?: string })
     .find((one) => one.action.type === 'session/activeClientSet');
-  expect(refused?.rejectionReason).toContain('somebody-else is another client');
+  expect(said?.rejectionReason).toBeUndefined();
+  const b = await joins(held, 'watcher');
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
+  expect(await clientsIn(b.client, URI)).toEqual(['somebody-else']);
 });
 
 it('replaces what a client contributes rather than merging it', async () => {
@@ -394,12 +401,27 @@ it('holds a creator\'s entry that names no tools as it was sent', async () => {
   const a = await joins(held, 'creator');
   await a.client.handle({
     method: 'createSession',
-    params: { channel: URI, provider: 'echo', activeClient: { displayName: 'cli' } },
+    params: { channel: URI, provider: 'echo', activeClient: { clientId: 'creator', displayName: 'cli' } },
   });
   const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
     snapshot: { state: { activeClients: Record<string, unknown>[] } };
   };
-  expect(opened.snapshot.state.activeClients).toEqual([{ displayName: 'cli', clientId: 'creator' }]);
+  expect(opened.snapshot.state.activeClients).toEqual([{ clientId: 'creator', displayName: 'cli' }]);
+});
+
+/*
+ * The creator's `clientId` MUST match the connection's, and VS Code's host
+ * refuses an entry that names none, as one naming another.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
+ */
+it('refuses a creator\'s entry that names no client, and makes nothing', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  await expect(a.client.handle({
+    method: 'createSession',
+    params: { channel: URI, provider: 'echo', activeClient: { displayName: 'cli', tools: [] } },
+  })).rejects.toMatchObject({ code: -32602, message: 'createSession.activeClient.clientId must match the connection\'s clientId' });
+  await expect(a.client.handle({ method: 'subscribe', params: { channel: URI } })).rejects.toThrow();
 });
 
 it('takes a client out on unsubscribe, on disconnect, and on a reconnect that drops it', async () => {
@@ -650,7 +672,7 @@ it('offers a tool the creator brought on the session\'s first turn', async () =>
   const a = await joins(held, 'creator');
   await a.client.handle({
     method: 'createSession',
-    params: { channel: URI, provider: 'echo', activeClient: { tools: [{ name: 'openFile' }] } },
+    params: { channel: URI, provider: 'echo', activeClient: { clientId: 'creator', tools: [{ name: 'openFile' }] } },
   });
   // Recorded before the backend is started, so the very first list it is
   // handed already holds the tool - not one a `retool` adds one turn later.
@@ -670,7 +692,7 @@ it('takes the creator back out when the session never opens', async () => {
   const { agent: watchedOne, born } = watched(0, agent);
   const held = createHost({ path: DIR, agents: [watchedOne] });
   const a = await joins(held, 'creator');
-  const activeClient = { tools: [{ name: 'openFile' }] };
+  const activeClient = { clientId: 'creator', tools: [{ name: 'openFile' }] };
 
   await expect(a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo', activeClient } }))
     .rejects.toThrow(/will not start/);

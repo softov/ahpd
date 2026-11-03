@@ -728,6 +728,30 @@ it('starts a message queued with nothing running at once, as a turn naming it', 
   expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('only');
 });
 
+/*
+ * A stopped turn starts nothing behind it: the reference host leaves queued
+ * messages queued, and a message set while idle starts the first of them
+ * (agentSideEffects.ts L1950-L1954, queueDrainContribution.ts L245-L286 at
+ * a4e689ae).
+ */
+it('starts nothing behind a stopped turn, and its queue\'s head once a message is queued after it', async () => {
+  const { session, sent, pi } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.queue('waiting', 'second');
+  await settled();
+  session.cancel('t1');
+  await settled();
+  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
+    .filter((one) => one.type === 'chat/turnStarted');
+  expect(session.chatState().activeTurn).toBeUndefined();
+  expect(started()).toHaveLength(1);
+  session.queue('later', 'third');
+  await settled();
+  expect(started().at(-1)?.queuedMessageId).toBe('waiting');
+});
+
 it('starts a queued !command as a turn naming it, with nothing said before it', async () => {
   const { session, pi, sent } = opened();
   pi.hold();

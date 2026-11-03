@@ -84,6 +84,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     peers: [...(options.additional ?? [])] as string[],
     steering: undefined as Bag | undefined,
     owed: new Map<string, Owed>(),
+    deferred: false,
     answering: undefined as string | undefined,
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
     running: undefined as string | undefined,
@@ -269,8 +270,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // when the field is absent, and assuming it is not the same as being
       // told. Every chat here is one somebody can type into.
       interactivity: 'full',
-      ...(ctx.steering !== undefined ? { steeringMessage: ctx.steering } : {}),
-      queuedMessages: ctx.queued.map((held) => ({ id: held.id, message: held.message })),
+      // A steering message no turn was running to take waits at the head of
+      // the queue, and is still a steering message while it waits.
+      ...(ctx.steering !== undefined
+        ? { steeringMessage: ctx.steering }
+        : ctx.queued.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+      queuedMessages: ctx.queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
     /**

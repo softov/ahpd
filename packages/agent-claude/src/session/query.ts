@@ -1033,13 +1033,16 @@ export function createQuery(ctx: SessionContext): Query {
            * A stopped turn's result comes after `cancel` ended the turn, and a
            * turn begun since, or opened for the steering messages the stopped
            * turn left, is running when it comes. It says the turn was stopped,
-           * which is not a failure.
+           * which is not a failure. The queue behind a stopped turn stays, as
+           * the reference host keeps it, so the start made here is only one a
+           * message queued since asked for.
+           * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
             ctx.interrupted = false;
             if (turn === undefined) {
               ctx.doing(undefined);
-              ctx.startNext();
+              if (ctx.deferred) ctx.startNext();
             }
             ctx.touch();
             continue;
@@ -1156,7 +1159,9 @@ export function createQuery(ctx: SessionContext): Query {
           ctx.touch();
           // A turn that failed or stopped leaves its steering messages with the CLI.
           if (turn) ctx.handOver(String(turn.id));
-          ctx.startNext();
+          // A stopped turn leaves the queue behind it waiting, and starts only
+          // what a message queued since asked for.
+          if (!stopped || ctx.deferred) ctx.startNext();
         }
       }
     } catch (error) {
