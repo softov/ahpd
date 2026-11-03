@@ -1,6 +1,6 @@
 ---
 title: cofold asks for a matched tool in every mode
-status: todo
+status: implemented
 depends: [task-05-cofold-asks-for-a-matched-tool.md]
 layer: agent-cofold
 refs:
@@ -43,3 +43,7 @@ A session-wide approval cofold remembered before the rule was set does not answe
 
 ## Resume
 
+- **Done so far:** 2026-11-03. `beforeTool` in `turnagent.ts` reads the rule with `ruleName` for every call, after the edit announcement. A matched call returns `approval` in every mode but `dontAsk`, which returns a `deny` naming the rule. Before an `approval`, it deletes cofold's remembered entry at `approvals/<session>/<tool>`, because cofold skips a hook's `approval` when one is held. `autoApprove` in `pauses.ts` asks the rule with `ruleName(ctx.offered, name)`. Tests: `packages/agent-cofold/test/agent-cofold-autoapproval.test.ts` (10). Three are new. A matched `read_file` asks in `auto`, `acceptEdits` and `bypassPermissions`, which the policy alone would allow. `dontAsk` refuses it without a question. A remembered `allow-session` answers a second call until the rule names the tool, which then asks again. The existing `asked` expectations gained the hook's read and the approval read. The whole agent-cofold suite passes (18 files, 277 tests).
+- **Next action:** build [task-08-the-mcp-door-refuses-a-matched-tool.md](task-08-the-mcp-door-refuses-a-matched-tool.md), which does not wait on this task.
+- **Open questions:** none.
+- **Watch out for:** every matched call now pays one kv read-and-delete per tool before it asks. The delete is idempotent on the file store, so it runs even when no approval was held. `plan` mode still refuses a matched write after the hook's `approval`, because the policy's own deny comes later and wins.

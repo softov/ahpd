@@ -109,7 +109,7 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 | [04 - pi asks for a matched tool](task-04-pi-asks-for-a-matched-tool.md) | implemented | 01 |
 | [05 - cofold asks for a matched tool](task-05-cofold-asks-for-a-matched-tool.md) | implemented | 01 |
 | [06 - The docs name the rule](task-06-the-docs-name-the-rule.md) | implemented | 02, 03, 04, 05 |
-| [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | todo | 05 |
+| [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | implemented | 05 |
 | [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | todo | 01 |
 | [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | todo | 02 |
 | [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | todo | 07, 08, 09 |
@@ -124,8 +124,8 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits.
-- **Next action:** build tasks 07 to 10, which fix what the review of 2026-11-02 found. Then run the by-hand checks in *Final verification checklist* on a test daemon.
+- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first.
+- **Next action:** build tasks 08 to 10, which fix what the review of 2026-11-02 found. Then run the by-hand checks in *Final verification checklist* on a test daemon.
 - **Open questions:** none.
 - **Watch out for:** in VS Code a terminal deny rule also means "ask". It is not this rule: it is a match on the command line and it still offers "always".
 
