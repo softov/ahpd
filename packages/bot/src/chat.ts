@@ -138,16 +138,12 @@ interface Waiting {
 export interface ChatMessage {
   /** The URI of the session the chat is in. */
   session: string;
+  /** The URI of the chat it was said in. */
+  chat: string;
   /** The turn that began, or the open turn the message was steered into. */
   turnId: string;
   /** What was said. */
   text: string;
-  /** The model the message named, where it named one. */
-  model?: Chosen;
-  /** The agent the message picked, where it picked one. */
-  agent?: { uri: string };
-  /** What the message carried beside its words: files, images, other chats. */
-  attachments?: MessageAttachment[];
 }
 
 /**
@@ -941,14 +937,7 @@ export function botChatAgent(
         finish(held, 'complete', []);
         return;
       }
-      handle.onMessage({
-        session: start.uri,
-        turnId,
-        text,
-        ...(model === undefined ? {} : { model }),
-        ...(from?.agent === undefined ? {} : { agent: from.agent }),
-        ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
-      });
+      handle.onMessage({ session: start.uri, chat: start.chatUri, turnId, text });
     };
 
     /**
@@ -1143,9 +1132,10 @@ export function botChatAgent(
        * A message into the turn that is running.
        *
        * The turn goes on: the message is handed to whoever answers the chat as
-       * a message into the open turn, and the wake steers the back session,
-       * whose answer lands in that turn. The reference host hands steering into
-       * a running turn through its provider, and the turn goes on.
+       * a message into the open turn, and the wake sends it to the back
+       * session, whose answer to it lands in that turn. The reference host
+       * hands steering into a running turn through its provider, and the turn
+       * goes on.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
        *
        * The id the host names is the client's steering message. It is said
@@ -1166,13 +1156,7 @@ export function botChatAgent(
         const message = messageOf(text, from, undefined, attachments);
         start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message });
         append(dir, id, { id: held.id, steering: true, message, _meta: mark });
-        handle.onMessage?.({
-          session: start.uri,
-          turnId: held.id,
-          text,
-          ...(from?.agent === undefined ? {} : { agent: from.agent }),
-          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
-        });
+        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text });
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
         touch();
         return true;

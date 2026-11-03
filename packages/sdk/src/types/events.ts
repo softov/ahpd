@@ -108,6 +108,8 @@ export interface TurnStartEvent {
    * host: no users directory to name, or a turn the backend began by itself.
    */
   sender?: Owner;
+  /** The queued message the turn took up, where it took one up. */
+  queuedMessageId?: string;
 }
 
 /** A turn that ended, and how. */

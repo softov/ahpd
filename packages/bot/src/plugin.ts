@@ -594,13 +594,12 @@ export const apply: Plugin['apply'] = (host, options) => {
         throw new Error(`${session} names no chat to say a message in`);
       }
       const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
-      const working = (status & Status.InProgress) !== 0;
-      if (!working) return { chat, working };
+      if ((status & Status.InProgress) === 0) return { chat };
       // And the turn running there, off the chat's own state, which a stop
       // of the main turn cancels by its id.
       const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: Bag } };
       const active = opened.snapshot?.state?.['activeTurn'] as Bag | undefined;
-      return { chat, working, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
+      return { chat, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
     },
     send,
     mayUse,
@@ -664,18 +663,27 @@ export const apply: Plugin['apply'] = (host, options) => {
    * turn of its own, so the person watching there sees the work and its answer;
    * the wake holds it from then on, as it holds a turn a message woke.
    *
-   * A turn this wake woke is left alone: `woken` holds the main turn it is
-   * answering already. The back session is found from its row, which names the
-   * bot and the person, and the main chat from that bot's row for the person -
-   * the one chat a person has with a bot. A chat this host is not running opens
-   * nothing, and so does one that has a turn open.
+   * A turn this wake woke opens nothing: `woken` holds the main turn it is
+   * answering already, and is told the turn began. The back session is found
+   * from its row, which names the bot and the person, and the main chat from
+   * that bot's row for the person - the one chat a person has with a bot. A
+   * chat this host is not running opens nothing, and so does one that has a
+   * turn open.
    *
    * The reads take time, and a back turn that fails or is stopped at once ends
    * before the main turn opens. Its `turn_end` is kept in `opening`, and the
    * main turn ends with it as soon as it opens.
    */
   host.on('turn_start', (event) => {
-    if (wake.main(event.session) !== undefined) return;
+    /*
+     * A turn of a back session a main turn waits on: the message it took up,
+     * where it was one the wake sent, waits no more, and the main turn is
+     * answered by the turn the last of them becomes.
+     */
+    if (wake.main(event.session) !== undefined) {
+      wake.taken(event.session, event.turn, event.queuedMessageId);
+      return;
+    }
     const key = openingKey(event.session, event.turn);
     const note: Opening = {};
     opening.set(key, note);

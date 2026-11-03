@@ -60,8 +60,11 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
   ...over,
 });
 
+/** The main chat's own chat, which a message names as the one it came from. */
+const MAIN = 'ahp-chat:/main';
+
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string, session = CHAT): ChatMessage => ({ session, turnId, text });
+const message = (turnId: string, text: string, session = CHAT): ChatMessage => ({ session, chat: MAIN, turnId, text });
 
 /**
  * The text a woken message carries: the context block, one blank line, then
@@ -144,9 +147,7 @@ async function sitting(
   const at = new Map<string, string>();
   /** Whose each session is: a URI absent here is one this host no longer has. */
   const owners = new Map<string, Owner>();
-  /** The back sessions a turn is running in, which is what a message steers. */
-  const working = new Set<string>();
-  /** The turn running in a working back session, where a case names one. */
+  /** The turn running in a back session, where a case names one. */
   const running = new Map<string, string>();
   const starts: SessionRequest[] = [];
   const sent: { channel: string; action: Bag }[] = [];
@@ -208,7 +209,7 @@ async function sitting(
       const chat = at.get(session);
       if (chat === undefined) throw new Error(`${session} names no chat to say a message in`);
       const turn = running.get(session);
-      return { chat, working: working.has(session), ...(turn === undefined ? {} : { turn }) };
+      return { chat, ...(turn === undefined ? {} : { turn }) };
     },
     send: async (channel, action) => {
       sent.push({ channel, action });
@@ -219,7 +220,7 @@ async function sitting(
   });
 
   return {
-    wake, backs, starts, sent, problems, working, running, store, during,
+    wake, backs, starts, sent, problems, running, store, during,
     refuseStart: (line: string) => { startRefusal = line; },
     refuseStartLate: (line: string) => { lateRefusal = line; },
     /** Hold every start from here, and answer with what lets them go. */
@@ -306,11 +307,11 @@ it('starts a back session on the first message, and says the second in it', asyn
   }]);
   expect(one.sent).toMatchObject([{
     channel: 'ahp-chat:/1',
-    action: { type: 'chat/turnStarted', message: { text: carrying('hello') } },
+    action: { type: 'chat/pendingMessageSet', kind: 'queued', message: { text: carrying('hello') } },
   }]);
-  // The turn in the back session is the back session's own, not the main chat's.
-  expect(typeof one.sent[0]?.action['turnId']).toBe('string');
-  expect(one.sent[0]?.action['turnId']).not.toBe('t1');
+  // The message in the back session is the wake's own entry, not the main chat's turn.
+  expect(typeof one.sent[0]?.action['id']).toBe('string');
+  expect(one.sent[0]?.action['id']).not.toBe('t1');
   // The row is written before the message is sent, so a second message finds
   // this session rather than starting another one.
   expect(await one.backs.get('backer', 'ana', 'work')).toBe('ahp-session:/1');
@@ -321,8 +322,8 @@ it('starts a back session on the first message, and says the second in it', asyn
   await one.wake.woken(message('t2', 'and again'), second.handle);
 
   expect(one.starts).toHaveLength(1);
-  expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/turnStarted', 'chat/turnStarted']);
-  expect(one.sent[1]).toMatchObject({ channel: 'ahp-chat:/1', action: { message: { text: carrying('and again') } } });
+  expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/pendingMessageSet', 'chat/pendingMessageSet']);
+  expect(one.sent[1]).toMatchObject({ channel: 'ahp-chat:/1', action: { kind: 'queued', message: { text: carrying('and again') } } });
   // What the second message waits on is the second turn.
   expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't2', handle: second.handle });
   // Nothing ended a turn of the main chat: the wake ends one only over a
@@ -332,42 +333,75 @@ it('starts a back session on the first message, and says the second in it', asyn
 });
 
 /*
- * The back session is handed the person's message whole: the model and agent
- * they named, and what they attached, beside their words.
- * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+ * The back session is handed the person's message as the reference Agents
+ * window sends a message from one session into another: queued, an agent's,
+ * naming the session and the chat it came from, and with no model, agent or
+ * attachments, so the back session's defaults apply.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L271-L282
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L810-L827
  */
-it('hands the back session the model, the agent and the attachments the message carried', async () => {
+it('hands the back session the words as an agent\'s queued message that names the main chat', async () => {
   const one = await sitting();
-  const attachments = [{ type: 'resource', uri: 'file:///tmp/notes.md', label: 'notes.md' }] as NonNullable<ChatMessage['attachments']>;
-  await one.wake.woken({ ...message('t1', 'read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments }, turn().handle);
-  expect(one.sent).toMatchObject([{
-    channel: 'ahp-chat:/1',
-    action: { type: 'chat/turnStarted', message: { text: carrying('read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments } },
-  }]);
+  await one.wake.woken(message('t1', 'read this'), turn().handle);
+  const action = one.sent[0]?.action ?? {};
+  expect(action).toMatchObject({
+    type: 'chat/pendingMessageSet',
+    kind: 'queued',
+    message: {
+      text: carrying('read this'),
+      origin: { kind: 'agent' },
+      _meta: { 'vscode.chat.delegation': { sourceSession: CHAT, sourceChat: MAIN } },
+    },
+  });
+  expect(Object.keys(action['message'] as Record<string, unknown>).sort()).toEqual(['_meta', 'origin', 'text']);
 });
 
-it('steers a message into the back session that is already working', async () => {
+/*
+ * A steer of the main turn is sent the same way, and waits in the back session
+ * behind its running turn: the main turn is answered by the turn the last
+ * message becomes, not by the one in front of it.
+ */
+it('answers the main turn with the turn its last message became', async () => {
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
-  one.working.add('ahp-session:/1');
+  const first = String(one.sent[0]?.action['id']);
+  one.wake.taken('ahp-session:/1', 'r1', first);
 
-  // The main chat's steer goes into its open turn, and the message wakes the
-  // working session again rather than starting it.
+  // The main chat's steer, into its open turn, while the back session works.
   await one.wake.woken(message('t1', 'stop that'), said.handle);
+  const second = one.sent[1]?.action ?? {};
+  expect(second).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued', message: { text: carrying('stop that') } });
+  expect(second['id']).not.toBe(first);
 
-  expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/turnStarted', 'chat/pendingMessageSet']);
-  expect(one.sent[1]).toMatchObject({
-    channel: 'ahp-chat:/1',
-    action: { type: 'chat/pendingMessageSet', kind: 'steering', message: { text: carrying('stop that') } },
-  });
-  // The entry is the sender's own, which is what the protocol asks of a steer.
-  expect(typeof one.sent[1]?.action['id']).toBe('string');
-  // The answer lands in the steered turn, which is the one the person waits in.
+  // The turn in front of it ends, and the main turn still waits.
+  one.wake.finished('ahp-session:/1', 'the first answer');
+  expect(said.replies).toEqual([]);
   expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
-  expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.posts).toEqual(['done']);
+
+  one.wake.taken('ahp-session:/1', 'r2', String(second['id']));
+  one.wake.finished('ahp-session:/1', 'the second answer');
+  expect(said.replies).toEqual(['the second answer']);
   expect(said.notices).toEqual([]);
+});
+
+/*
+ * A stop takes back the messages the stopped turn sent that still wait in the
+ * back session, as a client takes back one it queued, and keeps the link.
+ */
+it('takes back a message still waiting in the back session when its main turn is stopped', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  const first = String(one.sent[0]?.action['id']);
+
+  await one.wake.stopped(CHAT, 't1');
+
+  expect(one.sent.at(-1)).toMatchObject({
+    channel: 'ahp-chat:/1',
+    action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: first },
+  });
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ session: CHAT, turnId: 't1' });
 });
 
 /*
@@ -380,15 +414,15 @@ it('stops the back session\'s running turn when its main turn is stopped, and ke
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
-  const begun = one.sent.find((each) => each.action['type'] === 'chat/turnStarted');
-  one.working.add('ahp-session:/1');
-  one.running.set('ahp-session:/1', String(begun?.action['turnId']));
+  // The back session took the message up as its turn `r1`.
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+  one.running.set('ahp-session:/1', 'r1');
 
   await one.wake.stopped(CHAT, 't1');
 
   expect(one.sent.at(-1)).toMatchObject({
     channel: 'ahp-chat:/1',
-    action: { type: 'chat/turnCancelled', turnId: begun?.action['turnId'] },
+    action: { type: 'chat/turnCancelled', turnId: 'r1' },
   });
   expect(typeof one.sent.at(-1)?.action['duration']).toBe('number');
   // The back session stays linked to the main chat it was answering.
@@ -552,7 +586,7 @@ it('starts a name again whose session this host no longer has', async () => {
   expect(await one.backs.get('backer', 'ana', 'work')).toBe('ahp-session:/1');
   expect(one.sent).toMatchObject([{
     channel: 'ahp-chat:/1',
-    action: { type: 'chat/turnStarted', message: { text: carrying('hello') } },
+    action: { type: 'chat/pendingMessageSet', kind: 'queued', message: { text: carrying('hello') } },
   }]);
   // The person is not told a restart happened: the message reached a session
   // of the bot's, and the main turn waits on that one.
