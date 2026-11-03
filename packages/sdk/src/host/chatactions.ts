@@ -216,6 +216,19 @@ export function chatAction(
     statusOf, subagents, summaryMoved, value, waitingFor, wake, hold,
   } = ctx;
 
+  /*
+   * A turn's start time and a message's origin the client left out are this
+   * host's: every reducer reads them, the protocol requires both, and the
+   * server's echo is the one that wins where the two differ.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L71-L91
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+   */
+  if (type === 'chat/turnStarted' && typeof action.startedAt !== 'string') action.startedAt = new Date().toISOString();
+  if ((type === 'chat/turnStarted' || type === 'chat/pendingMessageSet') && typeof action.message === 'object' && action.message !== null
+    && (action.message as Record<string, unknown>).origin === undefined) {
+    action.message = { origin: { kind: 'user' }, ...(action.message as Record<string, unknown>) };
+  }
+
   /** The message an action carries, which its text and its attachments ride on. */
   const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
     (typeof one.message === 'object' && one.message !== null ? one.message : {}) as Record<string, unknown>;

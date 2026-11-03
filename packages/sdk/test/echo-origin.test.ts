@@ -128,6 +128,23 @@ it('gives the echo the origin of the dispatch, and the actions it causes none', 
   await host.close();
 });
 
+/*
+ * A turn's start time and a message's origin a client left out are this
+ * host's, filled in the echo: every reducer reads them, the protocol requires
+ * both, and the server's echo wins where the two differ.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+ */
+it('fills the start time and the origin a client\'s start left out, and the turn ends', async () => {
+  const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }));
+  p.heard.length = 0;
+  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
+  const echoed = p.heard.find((one) => one.origin?.clientSeq === 5)?.action;
+  expect(Number.isNaN(Date.parse(String(echoed?.startedAt)))).toBe(false);
+  expect((echoed?.message as Bag | undefined)?.origin).toEqual({ kind: 'user' });
+  await host.close();
+});
+
 it('gives a turn its origin when its backend begins it after an await', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 0 })));
   p.heard.length = 0;
