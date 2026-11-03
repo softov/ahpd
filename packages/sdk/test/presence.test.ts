@@ -314,27 +314,34 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
 });
 
 /*
- * A client announces itself and no other: an entry naming another client would
- * have that client's tools called, and its leaving would remove that client.
+ * The entry as sent, under the `clientId` it names: the reference host takes a
+ * set as sent, and a client's leaving takes out its own entry, so the sender's
+ * leaving leaves this one.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1659-L1677
  */
-it('refuses an entry that names another client, and holds nothing of it', async () => {
+it('holds an entry that names another client as sent, and the sender\'s leaving leaves it', async () => {
   const held = host();
   const a = await joins(held, 'honest');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
   await a.client.handle({ method: 'subscribe', params: { channel: URI } });
-  a.client.handle({
+  await a.client.handle({
     method: 'dispatchAction',
     params: {
       channel: URI,
       action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [{ name: 'openFile' }] } },
     },
   });
-  expect(await clientsIn(a.client, URI)).toEqual([]);
-  const refused = a.peer.notes
+  expect(await clientsIn(a.client, URI)).toEqual(['somebody-else']);
+  const said = a.peer.notes
     .filter((n) => n.method === 'action')
     .map((n) => n.params as { action: { type: string }; rejectionReason?: string })
     .find((one) => one.action.type === 'session/activeClientSet');
-  expect(refused?.rejectionReason).toContain('somebody-else is another client');
+  expect(said?.rejectionReason).toBeUndefined();
+  const b = await joins(held, 'watcher');
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
+  expect(await clientsIn(b.client, URI)).toEqual(['somebody-else']);
 });
 
 it('replaces what a client contributes rather than merging it', async () => {

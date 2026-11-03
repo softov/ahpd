@@ -1323,7 +1323,7 @@ export function createHost(options: HostOptions): Host {
     for (const connection of connections) {
       if (connection.clientId === clientId && connection.watching.has(uri)) return;
     }
-    // The entry it announced, under the client id that entry carries.
+    // The entry under its own id, which is the client id that entry carries.
     const named = held.get(clientId)?.clientId;
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
