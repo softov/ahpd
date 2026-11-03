@@ -2,6 +2,7 @@ import { rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { RpcError } from '@ahpd/sdk';
 import { covers, ownerFilter, ownerOfPrincipal } from '@ahpd/sdk';
+import { instructionsProblem } from './agents.js';
 import { CHAT_PROVIDER } from './chat.js';
 import { fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
 import { named, rowId, userOf, whose } from './names.js';
@@ -823,6 +824,13 @@ export function botProvider(options: BotOptions): BotProvider {
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
+      /*
+       * The section ends at the next `##` line, so instructions with one of
+       * their own would be cut at it: refused here, before anything is written,
+       * rather than written and read back short.
+       */
+      const wrong = instructionsProblem(record.instructions ?? '');
+      if (wrong !== undefined) throw new RpcError(-32602, wrong);
       /*
        * The file is written before the record, because the file is the one copy
        * of the persona: a record written over a file that never got the parts

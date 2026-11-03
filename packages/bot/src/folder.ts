@@ -171,8 +171,10 @@ const saidOf = (bot: KeptBot): Words => ({
 /** A line of a file or a record, where it says anything. */
 const nonEmpty = (said: string | undefined): string | undefined => {
   if (typeof said !== 'string') return undefined;
-  const held = said.trim();
-  return held === '' ? undefined : held;
+  // Only the blank lines at the end go: the indentation of the first line is
+  // the text's, and an Instructions section keeps it when it is read back.
+  const held = said.replace(/(?:\r?\n[ \t]*)+$/, '');
+  return held.trim() === '' ? undefined : held;
 };
 
 /**
@@ -201,13 +203,18 @@ const joined = (bot: KeptBot, first: Words, second: Words): BotRecord => {
  * says none of its own.
  *
  * The record's parts are the older copy - what a bot made before the file was
- * the one copy has - so they win where they are there: this is also the join a
- * load moves that copy with. A bot on a computer has no folder here, and its
- * record is all this host knows of it.
+ * the one copy has - so they win where they are there, except for the
+ * Instructions section: a file that has one is the bot's own writing, and the
+ * copy in the record is dropped rather than written over it. A bot on a
+ * computer has no folder here, and its record is all this host knows of it.
  */
 export function withAgents(yaml: Yaml | undefined, bot: KeptBot): BotRecord {
   if (yaml === undefined || bot.computer !== undefined) return joined(bot, saidOf(bot), {});
-  return joined(bot, saidOf(bot), partsIn(readAgentsFile(bot.workspace, yaml)) ?? {});
+  const file = partsIn(readAgentsFile(bot.workspace, yaml));
+  const record = file !== undefined && nonEmpty(file.instructions) !== undefined
+    ? { ...saidOf(bot), instructions: undefined }
+    : saidOf(bot);
+  return joined(bot, record, file ?? {});
 }
 
 /**

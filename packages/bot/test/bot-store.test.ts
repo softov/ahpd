@@ -208,6 +208,37 @@ it('keeps the persona when a folder stands where its AGENTS.md should be', async
   expect(problems.join('\n')).toMatch(/bots\/motion was left in its record: its AGENTS\.md cannot be read/);
 });
 
+it('keeps the indentation of an older record\'s instructions through the move', async () => {
+  const { bots, store, problems } = await made();
+  await bots.put(bot('motion', { instructions: '    Be brief.' }));
+
+  await store.ready();
+
+  // The four spaces are the bot's own first line, and the file it is moved into
+  // says them back the same.
+  expect(store.get('motion')).toMatchObject({ instructions: '    Be brief.' });
+  expect(readFileSync(join(root, 'bots', 'motion', 'AGENTS.md'), 'utf8')).toContain('    Be brief.');
+  expect(problems).toEqual([]);
+});
+
+it('keeps the file\'s Instructions section when a move finds one', async () => {
+  const { bots, store, problems } = await made();
+  const folder = join(root, 'bots', 'motion');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'AGENTS.md'), '---\nversion: 1\nname: Motion\n---\n\n## Instructions\n\nThe bot\'s own words.\n');
+  await bots.put(bot('motion', { instructions: 'The older copy.' }));
+
+  await store.ready();
+
+  // The file is the one copy: its section is the bot's writing, and the older
+  // record's copy is dropped rather than written over it.
+  expect(store.get('motion')).toMatchObject({ instructions: 'The bot\'s own words.' });
+  expect(readFileSync(join(folder, 'AGENTS.md'), 'utf8')).toContain('The bot\'s own words.');
+  expect(readFileSync(join(folder, 'AGENTS.md'), 'utf8')).not.toContain('The older copy.');
+  expect((await held(bots, 'motion'))['instructions']).toBeUndefined();
+  expect(problems).toEqual([]);
+});
+
 it('reports a record that is not a bot, and keeps every other one', async () => {
   const { bots, store, problems } = await made();
   await bots.put(bot('motion'));

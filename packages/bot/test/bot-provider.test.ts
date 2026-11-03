@@ -470,6 +470,17 @@ it('writes the UI\'s parts into an AGENTS.md a make finds, and keeps the bot\'s 
   });
 });
 
+it('refuses instructions with a line that starts with ## ', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'] });
+  const soft = await as(host, 'soft');
+
+  // The section ends at the next `##` line, so the write that took one would
+  // read back short: it is refused, and the line is named.
+  expect(await write(soft, 'bot://motion', {
+    name: 'Motion', instructions: 'Be calm.\n## Notes\nBe kind.',
+  }, { createOnly: true })).toMatchObject({ code: -32602, message: expect.stringContaining('## Notes') });
+});
+
 it('answers a read from the bot\'s own file, so its own edit shows on the next read', async () => {
   const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
   const soft = await as(host, 'soft');

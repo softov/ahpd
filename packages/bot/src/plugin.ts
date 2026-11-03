@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/sdk';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
@@ -85,6 +85,18 @@ const filesIn = (folder: string): string[] => {
   catch {
     return [];
   }
+};
+
+/**
+ * Whether one folder is the other or is under it.
+ *
+ * Both are resolved first, so `..` and a trailing slash mean what they say, and
+ * a path that only starts like the other - `/a/bx` under `/a/b` - is not one.
+ */
+const within = (path: string, folder: string): boolean => {
+  const one = resolve(path);
+  const other = resolve(folder);
+  return one === other || one.startsWith(`${other}${sep}`);
 };
 
 /** A file's frontmatter as a mapping, read with the host's YAML, or nothing. */
@@ -327,7 +339,18 @@ const textOf = (state: unknown, turn: string): string => {
 
 export const apply: Plugin['apply'] = (host, options) => {
   const asked = options.root as string | undefined;
-  const root = expandHome(asked === undefined || asked.trim() === '' ? defaults.root : asked);
+  const chosen = expandHome(asked === undefined || asked.trim() === '' ? defaults.root : asked);
+  /*
+   * A work folder under the configuration folder is refused: the records live
+   * there, and a delete of a bot removes the folder of its data, so anything a
+   * person keeps under the root would be one bad path from the same delete. The
+   * default root is used instead, and the operator is told.
+   */
+  const inside = within(chosen, host.configDir);
+  const root = inside ? expandHome(defaults.root) : chosen;
+  if (inside) {
+    host.problem(`${name}: root ${JSON.stringify(chosen)} is inside the configuration folder ${JSON.stringify(resolve(host.configDir))}; using ${JSON.stringify(root)}`);
+  }
   /*
    * The default `AGENTS.md` template, written once where there is none.
    *
