@@ -818,21 +818,48 @@ it("runs a !command in the host's shell rather than asking the server", async ()
 });
 
 /*
- * A command sent as a turn while a turn runs is refused, as a question is: a
- * chat holds one active turn. A command that waits its turn is queued, and
- * runs as the queued message's turn once the one in front of it ends.
+ * A command sent as a turn while a turn runs is taken, as a question is: said
+ * at once, it takes the running turn's place as the reducer replaces the active
+ * turn, and runs once the turn in front of it is over. A stop of it stops the
+ * turn in front of it too, and it never runs.
  */
-it('refuses a !command sent as a turn during a turn, and runs one queued behind it', async () => {
+it('takes a !command sent as a turn during a turn, said at once, and a stop of it stops both', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hold it');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-queued' } } },
+    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-took' } } },
   });
   await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 6));
-  expect(actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6).map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
-    .toEqual(['A turn is running in this chat']);
+  const took = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6);
+  expect(took.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason)).toEqual([undefined]);
+  expect(took[0]?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { activeTurn?: { id: string }; turns: { id: string }[] } };
+  }).snapshot.state;
+  expect(held.activeTurn?.id).toBe('t2');
+  expect(held.turns.map((turn) => turn.id)).not.toContain('t1');
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
+  });
+  await until(() => types(p, uri).includes('session/inputNeededRemoved'));
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't2'));
+  // The turn t2 took the place of ends in no client's state, and t2's command never runs.
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't1')).toBe(false);
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't2')).toBe(false);
+});
+
+/*
+ * A command that waits its turn is queued, and runs as the queued message's
+ * turn once the one in front of it ends.
+ */
+it('runs a !command queued behind a turn once that turn ends', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hold it');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo acp-queued' } } },

@@ -454,10 +454,12 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
 
 /*
  * A stop is said when it is taken, and the run lets its turn go after. What a
- * client sends between the two is sent to an idle chat, and is applied to one
- * once the run has let the stopped turn go.
+ * client sends between the two is applied at once to the idle chat every
+ * client holds, as the reference host hands a client's turn to its agent while
+ * an abort may still be under way, and runs once the run has let the stopped
+ * turn go.
  */
-it('begins a turn sent after a stop once the stopped run has let its turn go', async () => {
+it('says a turn sent after a stop at once, and runs it once the stopped run has let its turn go', async () => {
   const { model, release, asked } = gatedModel();
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'first');
@@ -468,11 +470,14 @@ it('begins a turn sent after a stop once the stopped run has let its turn go', a
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
 
-  // The run holds the stopped turn until its model is released.
+  // The run holds the stopped turn until its model is released, and the turn
+  // is said meanwhile.
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
   });
+  await until(() => answer(p, chatUri, 7) !== undefined);
+  expect(asked.some((prompt) => prompt.includes('second'))).toBe(false);
   release();
   await until(() => types(p, chatUri).includes('chat/turnComplete'));
   expect(answer(p, chatUri, 7)?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
@@ -482,7 +487,7 @@ it('begins a turn sent after a stop once the stopped run has let its turn go', a
   expect(asked.at(-1)).toContain('second');
 });
 
-it('runs a message queued after a stop once the stopped run has let its turn go', async () => {
+it('takes up a message queued after a stop at once, and runs it once the stopped run has let its turn go', async () => {
   const { model, release, asked } = gatedModel();
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'first');
@@ -497,6 +502,9 @@ it('runs a message queued after a stop once the stopped run has let its turn go'
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
   });
+  // Taken up as the chat's turn before the stopped run lets go.
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q1'));
+  expect(asked.some((prompt) => prompt.includes('later'))).toBe(false);
   release();
   await until(() => types(p, chatUri).includes('chat/turnComplete'));
   expect(answer(p, chatUri, 8)?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1' });
@@ -653,7 +661,8 @@ const unsteer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri:
   });
 };
 
-it('takes back a steering message a stopped run handed back, and it never runs', async () => {
+it('takes the steering message a stopped run handed back out with the stop, and it never runs', async () => {
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
   const { model, release, asked } = gatedModel();
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'first');
@@ -666,14 +675,9 @@ it('takes back a steering message a stopped run handed back, and it never runs',
   });
   release();
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  // Handed back by the run, and waiting for the chat's next turn to end.
-  expect(fold(p, chatUri).steeringMessage).toMatchObject({ id: 's1' });
-
-  unsteer(client, chatUri, 5, 's1');
-  await until(() => answer(p, chatUri, 5) !== undefined);
-  expect(answer(p, chatUri, 5)?.action).toEqual({ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
-  expect(answer(p, chatUri, 5)?.rejectionReason).toBeUndefined();
-  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+  await until(() => fold(p, chatUri).steeringMessage === undefined);
+  const removed = actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved');
+  expect(removed.map((e) => [e.action.kind, e.action.id])).toEqual([['steering', 's1']]);
 
   begin(client, chatUri, 't2', 'second');
   await until(() => types(p, chatUri).includes('chat/turnComplete'));

@@ -40,6 +40,26 @@ export interface Handed {
 }
 
 /**
+ * A channel of a session that its backend serves under this host's name for
+ * it, as `Session.channel` answers it: a changeset or a canvas of the host a
+ * nested session runs in.
+ *
+ * The host answers a subscribe with `snapshot`, and its backend says what
+ * moves after that through `Start.emitOn`, under the same name, until
+ * `release`.
+ */
+export interface SessionChannel {
+  /** The channel's state now. */
+  snapshot(): Promise<Bag>;
+  /** A client's action on the channel, answered through `Start.handed` as any action a backend holds. */
+  dispatch(action: Bag): void;
+  /** A command a client sent about the channel, with its params as sent, answered by the backend. */
+  request(method: string, params: Bag): Promise<unknown>;
+  /** No client of this host watches the channel any more. */
+  release(): void;
+}
+
+/**
  * What a backend knows about the worker chat it wants for one of its calls.
  *
  * A subagent runs inside a single tool call of a turn, and the protocol has a
@@ -548,6 +568,21 @@ export interface Session {
   sessionState(): Bag;
   /** The chat channel's state, for a subscription snapshot. */
   chatState(): Bag;
+  /**
+   * A changeset or canvas channel this session's backend serves, by this
+   * host's name for it, or nothing for one it does not.
+   *
+   * A backend that answers it is the one producer of the session's changeset
+   * lists, its chat's canvas list and its chat's row, all but the read and
+   * archived bits, which are this host's: the proxy of a session in a
+   * machine, whose host there runs the session. The reference host's designs
+   * across hosts leave the host running a session the one producer of its
+   * state: a relay forwards that host's messages, and a mirror enqueues that
+   * host's own envelopes for the session's chat and changeset channels.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
+   */
+  channel?(uri: string): SessionChannel | undefined;
 
   /**
    * Run one command as a turn of this chat's, without asking the agent.
@@ -623,6 +658,17 @@ export interface Session {
    *
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
+   *
+   * A turn handed while another runs takes that one's place: its start is said
+   * at once, so every client holds it as the chat's turn, as the protocol's
+   * reducer replaces the active turn, and it runs once the work in front of it
+   * is done. The turn it replaced runs on, its actions name it, and it is in no
+   * history; a stop of the turn that took its place stops that work and drops
+   * the turns waiting behind it. The reference host hands a client's start to
+   * its agent at once, and its agents run each in turn.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8720-L8750
    */
   begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
   /**

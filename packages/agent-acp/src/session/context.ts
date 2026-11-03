@@ -1,5 +1,5 @@
 import type { CreateElicitationResponse, PromptCapabilities, SessionModeState, SessionUpdate } from '@agentclientprotocol/sdk';
-import type { Bag, BoundTool, Emit, OpenedTerminal, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, OpenedTerminal, RunCommand, Start } from '@ahpd/sdk';
 import type { TypedAnswer } from '../mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
 import type { ClientCalls } from './clientcalls.js';
@@ -8,6 +8,20 @@ import type { Handlers } from './handlers.js';
 import type { Opening } from './opening.js';
 import type { Queue } from './queue.js';
 import type { Turn } from './turn.js';
+
+/**
+ * A turn said while the server ran another: what it runs, the queued message
+ * it came from if it did, and the turn as it was said. A command carries what
+ * runs it.
+ */
+export interface Waiting {
+  said: Bag;
+  model?: Chosen | undefined;
+  from?: MessageFrom | undefined;
+  queuedMessageId?: string | undefined;
+  attachments?: MessageAttachment[] | undefined;
+  command?: { text: string; run: RunCommand };
+}
 
 /**
  * One terminal this session opened for the server.
@@ -98,6 +112,19 @@ export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, 
    */
   heardModes?: (modes: { id: string; name: string }[]) => void;
   active: Bag | undefined;
+  /**
+   * The turns said while the server ran another, in the order they came, each
+   * prompted once the turn in front of it is over.
+   *
+   * Said at once, so each takes the place of the one before it in every
+   * client's state, as the protocol's reducer replaces the active turn; a
+   * session runs one prompt at a time, so each runs after.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   */
+  waiting: Waiting[];
+  /** The turns a later one took the place of, which run on and end in no history. */
+  replaced: Set<string>;
   /** The running turn's mapping, so an update knows what it belongs to. */
   mapping: AcpTurn | undefined;
   /**

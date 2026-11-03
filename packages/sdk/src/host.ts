@@ -859,26 +859,20 @@ export function createHost(options: HostOptions): Host {
    */
   const said = new WeakSet<Origin>();
   /**
-   * The connections waiting on a dispatch's answer before they apply their
-   * next, by the dispatch's origin: what `applyNow` returns for a dispatch a
-   * backend answers later.
+   * What waits on a dispatch's answer, by the dispatch's origin: the
+   * connection that sent it, before it applies its next, which is what
+   * `applyNow` returns for a dispatch a backend answers later, and a stop of
+   * the turn a start names.
    */
-  const awaited = new Map<Origin, () => void>();
-  /** A dispatch answered: held in `said`, and the connection waiting on it let go. */
+  const awaited = new Map<Origin, Set<() => void>>();
+  /** A dispatch answered: held in `said`, and everything waiting on it let go. */
   const told = (origin: Origin): void => {
     said.add(origin);
-    const next = awaited.get(origin);
-    if (next === undefined) return;
+    const waiting = awaited.get(origin);
+    if (waiting === undefined) return;
     awaited.delete(origin);
-    next();
+    for (const go of waiting) go();
   };
-  /**
-   * The dispatches waiting on a chat whose backend still runs a turn the chat
-   * has ended, by the chat's channel: a client's stop is said when it is
-   * taken, and the backend lets the turn go when it can. Each is let go by
-   * the backend's end of that turn.
-   */
-  const stopping = new Map<string, (() => void)[]>();
   /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
@@ -1033,22 +1027,18 @@ export function createHost(options: HostOptions): Host {
       owed.delete(key);
       if (started !== undefined) dispatch(started.channel, started.action, started.origin);
       /*
-       * A backend's end of a turn the chat has ended is not said: the turn
-       * ended when a client's stop was taken, and a turn ends once. The
-       * reference host ends the turn on the client's cancel and then aborts
-       * the agent. The end is what the dispatches sent since wait on: a
-       * backend leaves a turn before it says its end, so each is applied to a
-       * backend that runs nothing.
+       * A backend's end of a turn the chat does not hold as its turn is not
+       * said: a turn ended when a client's stop was taken, and a turn ends
+       * once; a turn another took the place of was never ended in any
+       * client's state, and the protocol's reducer ends only the active turn.
+       * The reference host ends the turn on the client's cancel and then
+       * aborts the agent.
        * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L186-L188
        */
       const held = states.get(channel);
       if (origin === undefined && held?.kind === 'chat'
-        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) {
-        const waiting = stopping.get(channel) ?? [];
-        stopping.delete(channel);
-        for (const go of waiting) go();
-        return;
-      }
+        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1108,6 +1098,22 @@ export function createHost(options: HostOptions): Host {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
       ctx.askedLeft(channel);
       ctx.chatMoved(channel);
+    }
+    /*
+     * A stop takes the chat's steering with it, once the backend has had the
+     * stop: the backend lets go of the steering message it holds, and one it
+     * says nothing of is taken out here, so nothing sent to steer the stopped
+     * turn runs after it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+     */
+    if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
+      queueMicrotask(() => {
+        const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
+        if (typeof steering !== 'string') return;
+        byChat.get(channel)?.chat.unqueue(steering);
+        if ((states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id !== steering) return;
+        dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+      });
     }
     /*
      * A terminal's title and claim are on the root's list of terminals too,
@@ -1277,34 +1283,30 @@ export function createHost(options: HostOptions): Host {
     watches.delete(channel);
     log(`released ${channel}`);
   };
+  /**
+   * Let a channel a session's backend serves go once no connection here
+   * watches it, so the host it lives on stops saying what moves on it here.
+   * Checked against every connection, as a watch is.
+   */
+  const releaseRelayed = (channel: string): void => {
+    const handle = ctx.relayedChannel(channel);
+    if (handle === undefined) return;
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) return;
+    }
+    handle.release();
+  };
 
   /**
-   * Let the state of a session this host is not running go, with its chats',
-   * once no connection watches any of them.
-   *
-   * A running session holds its state for as long as it runs. One asleep, or
-   * read from its record, holds it while somebody watches it, and opens again
-   * from the record at the next subscribe: what was held belonged to nobody
-   * still looking at it. The reference host lets a session's state go on the
-   * same terms, never while a client is subscribed to it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   * Let the state this host holds of a session go, its own and its chats'.
    *
    * Each client that was served a state let go is owed the state its channel
    * opens with next, since what it holds is the state let go.
    */
-  const statesUnwatched = (channel: string): void => {
-    const open = states.get(channel);
-    if (open === undefined || open.kind === 'root') return;
-    const session = open.kind === 'session' ? channel : sessionFor(channel);
-    if (sessions.has(session)) return;
-    const its = [...states]
-      .filter(([one, held]) => one === session || (held.kind === 'chat' && sessionFor(one) === session))
-      .map(([one]) => one);
-    for (const connection of connections) {
-      if (its.some((one) => connection.watching.has(one))) return;
-    }
-    for (const one of its) {
-      for (const client of states.get(one)?.baselines ?? []) {
+  const letStateGo = (session: string): void => {
+    for (const [one, open] of [...states]) {
+      if (one !== session && (open.kind !== 'chat' || sessionFor(one) !== session)) continue;
+      for (const client of open.baselines) {
         const channels = lapsed.get(client) ?? new Set<string>();
         lapsed.set(client, channels.add(one));
       }
@@ -1455,11 +1457,15 @@ export function createHost(options: HostOptions): Host {
       applying.owed = true;
       owed.set(owedKey(applying.channel, type, name), applying);
     },
+    startOwed: (channel: string, turnId: string) => {
+      const start = owed.get(owedKey(channel, 'chat/turnStarted', turnId));
+      if (start === undefined) return undefined;
+      return new Promise<void>((resolve) => {
+        awaited.set(start.origin, (awaited.get(start.origin) ?? new Set()).add(resolve));
+      });
+    },
     answering,
     unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
-    letGo: (chat: string) => new Promise<void>((resolve) => {
-      stopping.set(chat, [...(stopping.get(chat) ?? []), resolve]);
-    }),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
@@ -1471,7 +1477,7 @@ export function createHost(options: HostOptions): Host {
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,
-    statesUnwatched,
+    letStateGo,
     lapsed,
     asleep: new Set<string>(),
   } as HostContext;
@@ -1484,6 +1490,7 @@ export function createHost(options: HostOptions): Host {
   ctx.canvases = createCanvases({
     dispatch: (channel, action) => dispatch(channel, action),
     holds: (chat) => byChat.has(chat),
+    relays: (chat) => byChat.get(chat)?.chat.channel !== undefined,
     // Read at each call, because a window may push the key while the daemon
     // runs, and a canvas that is already open stays open when it turns off.
     enabled: () => ctx.rootConfig.canvasesEnabled === true,
@@ -2170,15 +2177,18 @@ export function createHost(options: HostOptions): Host {
         finally { applying = undefined; }
         if (said.has(origin) || (held.owed !== true && held.taken !== true)) return later;
         const answered = new Promise<void>((resolve) => {
+          const go = (): void => {
+            clearTimeout(timer);
+            resolve();
+          };
           const timer = setTimeout(() => {
-            awaited.delete(origin);
+            const waiting = awaited.get(origin);
+            waiting?.delete(go);
+            if (waiting?.size === 0) awaited.delete(origin);
             resolve();
           }, WAIT_LIMIT);
           timer.unref?.();
-          awaited.set(origin, () => {
-            clearTimeout(timer);
-            resolve();
-          });
+          awaited.set(origin, (awaited.get(origin) ?? new Set()).add(go));
         });
         return later === undefined ? answered : later.then(() => answered);
       };
@@ -2233,11 +2243,14 @@ export function createHost(options: HostOptions): Host {
           // in as many words: it has no dispose command, so the last
           // unsubscribe is what releases the watcher.
           releaseWatch(channel);
+          releaseRelayed(channel);
           // And unsubscribing from a session is one of the three ways the
           // protocol says a client stops being active in it.
           leaves(channel, connection.clientId || 'anonymous');
           leftChannel(connection.clientId, channel);
-          statesUnwatched(meantBy(channel));
+          // A session nobody watches is one the residency may let go.
+          // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11752
+          ctx.reconcile();
         },
         /**
          * What the client says happened.
@@ -2414,6 +2427,7 @@ export function createHost(options: HostOptions): Host {
           // Before anything else looks: a watch this client owned and never
           // subscribed to has nobody left to subscribe to it.
           for (const channel of [...watches.keys()]) releaseWatch(channel);
+          for (const channel of was) releaseRelayed(channel);
           /*
            * Gone without reconnecting, which is the second of the three ways -
            * and the one that waits rather than leaving at once. The connection
@@ -2426,7 +2440,7 @@ export function createHost(options: HostOptions): Host {
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);
-          for (const channel of was) statesUnwatched(meantBy(channel));
+          ctx.reconcile();
           log(`${connection.clientId || 'a client'} went away`);
         },
       };

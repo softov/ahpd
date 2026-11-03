@@ -793,10 +793,13 @@ export interface HostOptions {
    */
   sleepAfterMinutes?: number;
   /**
-   * How many sessions are loaded at most.
+   * How many sessions are resident at most: running, or with their state
+   * held.
    *
-   * Over this, the least recently used quiet session sleeps first, checked on
-   * each turn start. Unset is 10; zero is no limit.
+   * Over this, the least recently used one that nothing holds is let go
+   * first, its agent and its state, checked as sessions start, as clients
+   * subscribe and leave, as turns start and end, and each minute. Unset is
+   * 10; zero is no limit.
    */
   sessionResidencyLimit?: number;
   /** The clock sleep and wakes read. A test supplies its own so a timeout can be reached without waiting for it. */

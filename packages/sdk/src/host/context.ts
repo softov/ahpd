@@ -358,6 +358,11 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   owe: (type: 'chat/turnStarted' | 'chat/pendingMessageSet', name: string) => void;
   /**
+   * Settled once the start of `turnId` that a backend owes on `channel` is
+   * said or refused, or nothing when no backend owes one.
+   */
+  startOwed: (channel: string, turnId: string) => Promise<void> | undefined;
+  /**
    * The client's dispatch `action`, said on `channel`, says back: the one
    * being applied, when `action` is on its channel, of its kind and names
    * what it names, or one owed on `channel` under the turn or the queued
@@ -375,12 +380,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * said back by the host, and every client reduces it.
    */
   unanswered: () => boolean;
-  /**
-   * Settled once the backend of `chat` says its end of a turn the chat has
-   * ended. A client's stop is said when it is taken and the backend lets the
-   * turn go after it, and a dispatch sent between the two waits on this.
-   */
-  letGo: (chat: string) => Promise<void>;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *
@@ -413,10 +412,10 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** Every state held, by channel. */
   heldStates: ReadonlyMap<string, HeldState>;
   /**
-   * Let the state of a session this host is not running go, with its chats',
-   * once no connection watches any of them.
+   * Let the state this host holds of a session go, its own and its chats',
+   * for a session the residency lets go.
    */
-  statesUnwatched: (channel: string) => void;
+  letStateGo: (session: string) => void;
   /**
    * The channels each client holds a state of that this host let go of since
    * it served it, by client id. Such a client is owed the state the channel

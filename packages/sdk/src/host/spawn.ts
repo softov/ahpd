@@ -15,7 +15,7 @@ import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
-import { CLOSING } from './common.js';
+import { CLOSING, ENDINGS } from './common.js';
 import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
@@ -121,9 +121,6 @@ const clearsRead = (type: unknown): boolean =>
  * rather than the client never hearing the turn is over.
  */
 const PLAN_HOLD_MS = 2000;
-
-/** The actions that end a turn, which hold a plan update in flight behind them. */
-const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);
 
 /**
  * Whether the operator's rule makes a tool ask every time.
@@ -1184,8 +1181,8 @@ export function createSpawn(ctx: HostContext): Spawn {
        * and the refusal goes to the client that sent it. The dispatch is marked
        * taken, so the host leaves its answer to the backend.
        */
-      handed: (action) => {
-        const at = ctx.answering(String(action.type ?? '').startsWith('session/') ? uri : chatUri, action);
+      handed: (action, channel) => {
+        const at = ctx.answering(channel ?? (String(action.type ?? '').startsWith('session/') ? uri : chatUri), action);
         if (at === undefined) return undefined;
         at.taken = true;
         const handed: Handed = {
@@ -1204,6 +1201,13 @@ export function createSpawn(ctx: HostContext): Spawn {
         };
         handedFrom.set(handed, at);
         return handed;
+      },
+      /*
+       * An action on a channel this session's backend serves, said under this
+       * host's name for it, and the client's echo where it answers one.
+       */
+      emitOn: (channel, action, handed) => {
+        dispatch(channel, action, handed === undefined ? undefined : handedFrom.get(handed)?.origin);
       },
       emit: (channel, action, handed) => {
         /*
@@ -1229,6 +1233,20 @@ export function createSpawn(ctx: HostContext): Spawn {
          * chat's, which the chat's `chat/activityChanged` already carries.
          */
         if (action.type === 'session/activityChanged') return;
+        /*
+         * A chat's read and archived bits are this host's, laid over the status
+         * a backend says on the chat's row, as they are on the chat's state.
+         */
+        if (channel === 'session' && (action.type === 'session/chatUpdated' || action.type === 'session/chatAdded')) {
+          const row = (action.type === 'session/chatAdded' ? action.summary : action.changes) as Bag | undefined;
+          const named = String((action.type === 'session/chatAdded' ? row?.resource : action.chat) ?? '');
+          if (row !== undefined && typeof row.status === 'number') {
+            const status = (row.status & (Status.IsRead - 1)) | kept.chatFlags(idOf(uri), named);
+            action = action.type === 'session/chatAdded'
+              ? { ...action, summary: { ...row, status } }
+              : { ...action, changes: { ...row, status } };
+          }
+        }
         const where = channel === 'chat' ? chatUri : uri;
         /*
          * Who sent this turn, and a queued one finding out which turn it became.
@@ -1740,19 +1758,25 @@ export function createSpawn(ctx: HostContext): Spawn {
       // session's own, because `sessions.get` answered above.
       createdAt: births.get(uri) ?? new Date().toISOString(),
       quietSince: 0,
-      turnedAt: 0,
     };
     // Loaded now, which is activity: a session resumed a moment ago is not one
     // that has been quiet since before it slept.
-    const loadedAt = (options.now?.() ?? new Date()).getTime();
-    held.quietSince = loadedAt;
-    if (held.turnedAt === 0) held.turnedAt = loadedAt;
+    held.quietSince = (options.now?.() ?? new Date()).getTime();
     // Said back to the catalogue, so a row listed after this agrees with the
     // session channel about when it began.
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
     ctx.asleep.delete(uri);
+    /*
+     * Started, or brought back, which is recent in the residency; one more
+     * resident may put another past the limit, which is read once the start is
+     * done.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L6489-L6490
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13950-L13951
+     */
+    ctx.touch(uri);
+    queueMicrotask(() => { ctx.reconcile(); });
     /*
      * A chat on a backend of its own, which the session's own agent does not
      * serve.
@@ -1906,6 +1930,24 @@ export function createSpawn(ctx: HostContext): Spawn {
       if (Array.isArray(turns) && turns.length > 0) dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
     }
     ctx.chatMoved(chatUri);
+    /*
+     * A session whose state this host holds already - read from its record, or
+     * kept across a sleep - is told the customizations of the backend that now
+     * leads it, where they are not what the state says. The reference host
+     * says an agent's list on a held state whenever it differs from the one
+     * the state holds, and says a new session's first list to the clients that
+     * subscribed while it was read.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L6419-L6422
+     */
+    const state = ctx.stateOf(uri);
+    if (state !== undefined && held.defaultChat === chatUri) {
+      const reported = session.customizations();
+      const laid = ctx.laidCustomizations(uri, reported) ?? [];
+      if (JSON.stringify(laid) !== JSON.stringify(state.customizations ?? [])) {
+        dispatch(uri, { type: 'session/customizationsChanged', customizations: reported });
+      }
+    }
     return session;
   };
 

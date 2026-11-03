@@ -20,6 +20,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, BoundTool, Start } from '../src/types/agent.js';
 import type { AutomationStore } from '../src/types/automations.js';
 import type { Bag } from '../src/types/common.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -79,6 +80,8 @@ interface Counts {
   made?: Start[];
   /** The chats running now, by the session each is a chat of. */
   running?: Map<string, number>;
+  /** What the backend's probe waits on before it answers what it offers. */
+  probing?: Promise<void>;
 }
 
 /** The echo backend, counting the sessions it starts and resumes. */
@@ -87,6 +90,12 @@ const counted = (dir: string, counts: Counts): Agent => {
   return {
     ...base,
     ...(counts.forks === true ? { chats: { ...base.chats, fork: true } } : {}),
+    ...(counts.probing === undefined || base.probe === undefined ? {} : {
+      probe: async () => {
+        await counts.probing;
+        return await (base.probe as NonNullable<Agent['probe']>)();
+      },
+    }),
     transcript: async (id: string) => {
       if (counts.slowTranscript !== undefined && counts.starts.length > counts.slowTranscript.after) await counts.slowTranscript.until;
       return await base.transcript?.(id);
@@ -130,7 +139,7 @@ const clock = () => {
   };
 };
 
-async function serving(counts: Counts, automations?: AutomationStore) {
+async function serving(counts: Counts, automations?: AutomationStore, more: Partial<HostOptions> = {}) {
   const dir = temp();
   const time = clock();
   const kept = memorySessions();
@@ -142,6 +151,7 @@ async function serving(counts: Counts, automations?: AutomationStore) {
     now: time.now,
     timer: time.timer,
     ...(automations === undefined ? {} : { automations }),
+    ...more,
   });
   const p = peer();
   const client = host.accept(p);
@@ -495,4 +505,53 @@ it('wakes a sleeping session for a new chat in it', async () => {
   expect(counts.starts).toEqual([undefined, 'one', undefined]);
   const chats = ((await read(one.channel)).chats as Bag[]).map((chat) => chat.resource);
   expect(chats).toContain('ahp-chat:/second');
+});
+
+/*
+ * A session's state read from its record holds the config its backend runs
+ * with, and a wake keeps that state: no action carries a schema, and the
+ * reference host lays a restored session's config into its state, resolved as
+ * its created one was, before a client reads it.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14864-L14898
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L614-L620
+ */
+it('holds, once a turn wakes a session read from its record, the config it held while it ran', async () => {
+  const counts: Counts = { starts: [], closes: 0 };
+  const { open, sleep, prompt, read, turnsOf } = await serving(counts, undefined, {
+    sessionConfig: { computer: { type: 'string', title: 'Computer', enum: ['here', 'box'], default: 'here' } },
+  });
+  const one = await open('one');
+  const ran = (await read(one.channel)).config as Bag;
+  await sleep(one);
+  await read(one.channel);
+
+  await prompt(one.chat, 'again');
+  await until(async () => (await turnsOf(one.chat)).length === 2, 'the woken turn');
+  const woken = (await read(one.channel)).config as Bag;
+  expect(woken).toEqual(ran);
+  // In the order a client draws the controls in.
+  expect(Object.keys((woken.schema as Bag).properties as Bag)).toEqual(Object.keys((ran.schema as Bag).properties as Bag));
+});
+
+/*
+ * And the customizations of the backend a wake starts, where they moved since
+ * the state was read: the reference host says an agent's list on a held state
+ * whenever it differs from the one the state holds.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+ */
+it('says the customizations of the backend a turn wakes a session on, where they moved since its record was read', async () => {
+  let answer = (): void => {};
+  const counts: Counts = { starts: [], closes: 0, probing: new Promise<void>((resolve) => { answer = resolve; }) };
+  const { open, sleep, prompt, read, turnsOf, dir } = await serving(counts);
+  const one = await open('one');
+  await sleep(one);
+  // Read before the backend has said what it offers, so the state holds none.
+  expect((await read(one.channel)).customizations).toBeUndefined();
+  answer();
+  await settle();
+
+  await prompt(one.chat, 'again');
+  await until(async () => (await turnsOf(one.chat)).length === 2, 'the woken turn');
+  const offered = (await echo({ path: dir, pace: 0 }).probe?.())?.customizations ?? [];
+  expect((await read(one.channel)).customizations).toEqual(offered);
 });
