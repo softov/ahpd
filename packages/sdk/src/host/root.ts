@@ -645,7 +645,7 @@ export function createRoot(ctx: HostContext): Root {
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(daemon)]) daemonSeen.add(key);
     return {
       agents: descriptors(),
-      // What this host is running, not what is on disk beside it.
+      // Every session this host has and has not disposed, as its catalogue lists them.
       activeSessions: ctx.activeCount(),
       ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
       /*

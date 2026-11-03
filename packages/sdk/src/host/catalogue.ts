@@ -77,7 +77,7 @@ export interface Catalogue {
    */
   summaryKept(uri: string, running?: boolean): Promise<void>;
   forgetSent(uri: string): void;
-  /** How many sessions this host holds open: running, or asleep and not disposed. */
+  /** How many sessions this host has and has not disposed: every row of its catalogue. */
   activeCount(): number;
   activeSessionsMoved(): void;
   learnModels(uri: string): void;
@@ -491,21 +491,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
 
   /**
-   * How many sessions are running a turn, as the reference host counts its
-   * active sessions: a session counts while any of its chats, a worker's
-   * included, has an active turn in the state the chat's reducer made. A
-   * session asleep, or awake with nothing running, counts nothing.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3262
+   * How many sessions this host has: the protocol's "Number of active
+   * (non-disposed) sessions on the server", the sessions a client's list
+   * holds from their `root/sessionAdded` to their `root/sessionRemoved`. Every
+   * row of the catalogue, by id: a session running, one asleep and a row a
+   * listing found alike. A session still being made is not one yet.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/root-channel.md#L29
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/commands.ts#L20-L33
    */
-  const activeCount = (): number => [...sessions.values()].filter((held) => [
-    ...held.chats.keys(),
-    ...[...subagents].filter(([, one]) => sessions.get(one.session) === held).map(([one]) => one),
-  ].some((chat) => typeof ctx.stateOf(chat)?.activeTurn === 'object' && ctx.stateOf(chat)?.activeTurn !== null)).length;
+  const activeCount = (): number => new Set([
+    ...[...sessions].filter(([uri, held]) => leadOf(held) !== undefined && !coming.has(uri)).map(([uri]) => idFor(uri)),
+    ...[...ctx.asleep].map((uri) => idFor(uri)),
+    ...ctx.listed().map((row) => idFor(row.resource)),
+  ]).size;
   /**
-   * Say how many sessions are running a turn, when the root's clients hold
-   * another number: the one the root's state holds, or the last said while no
-   * client has the root's state.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
+   * Say how many sessions there are, when the root's clients hold another
+   * number: the one the root's state holds, or the last said while no client
+   * has the root's state.
    */
   let announced = -1;
   const activeSessionsMoved = (): void => {
@@ -1462,9 +1465,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `resource`. The session's `activity` takes the activity of the chat that
    * now decides it, as `session/activityChanged`. And the catalogue row moves
    * with both. Each is said only when the session's state is held: a session
-   * nothing holds opens with what its chats say then. The root's count of
-   * sessions running a turn is read again too, since a turn's start and end
-   * are chat actions.
+   * nothing holds opens with what its chats say then.
    *
    * A row's `activity` the chat cleared stays as it was: the action merges what
    * it carries, and the protocol's summary has no value that clears it. The
@@ -1496,7 +1497,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       }
     }
     summaryMoved(session);
-    activeSessionsMoved();
   };
 
   /**

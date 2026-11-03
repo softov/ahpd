@@ -589,11 +589,11 @@ it('leaves no wait running when the host closes', async () => {
 });
 
 /*
- * The sessions running a turn, said as a turn starts and ends: a session
- * created with nothing running, and its disposal after its turn, move nothing.
- * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
+ * The sessions not disposed, said as a session is made and disposed: a turn
+ * starting and ending moves nothing.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
  */
-it('says how many sessions are running a turn when that changes', async () => {
+it('says how many sessions there are when that changes', async () => {
   const held = host();
   const a = await joins(held, 'one');
   await a.client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
@@ -607,8 +607,8 @@ it('says how many sessions are running a turn when that changes', async () => {
   const said = (): unknown[] => actions(a.peer, 'ahp-root://')
     .filter((one) => one.type === 'root/activeSessionsChanged')
     .map((one) => one.activeSessions);
-  // The turn's start and its end.
-  expect(said()).toEqual([1, 0]);
+  // The session made, and its turn's start and end moving nothing.
+  expect(said()).toEqual([1]);
   await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
   expect(said()).toEqual([1, 0]);
 });
