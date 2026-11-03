@@ -39,14 +39,15 @@ import type { BotStore } from './store.js';
  * is where the connection that carries it lives, the way the webhook package
  * keeps its own seams beside its route.
  *
- * A message that reached a back session leaves its main turn open until one of
- * two things happens: the session posts an answer with `post_message`, which is
- * `post.ts`, or its turn ends without one and the option
- * `mainTurnPostMessageAbsent` decides what the main turn gets - the session's
- * last words, a notice that none came, or nothing. Both are said through
- * `answering` - the map from a back session to the turn that woke it - which is
- * also what lets the turn go. A message that never reached a session is the one
- * ending this file makes itself, with a notice naming the cause.
+ * A message that reached a back session leaves its main turn open until the
+ * session's turn ends, as a turn waits on a subagent. Each `post_message` call
+ * in that time adds an answer to the main turn, which is `post.ts`. A turn that
+ * ends with no post leaves it to the option `mainTurnPostMessageAbsent` what the
+ * main turn gets - the session's last words, a notice that none came, or
+ * nothing. Both are said through `answering` - the map from a back session to
+ * the turn that woke it - which is also what lets the turn go. A message that
+ * never reached a session is the one ending this file makes itself, with a
+ * notice naming the cause.
  */
 
 /** One back session's chat, as the host answers it. */
@@ -118,6 +119,8 @@ export interface Answering {
   handle: TurnHandle;
   /** The bot's name, which the notice is said in, where the option asks for one. */
   bot: string;
+  /** True once the back session has posted into this turn. */
+  posted?: boolean;
 }
 
 /**
@@ -187,23 +190,28 @@ export interface Wake {
    */
   stopped(session: string, turnId: string): Promise<void>;
   /**
-   * Answer the main turn one back session is answering, and let it go.
+   * Add an answer to the main turn one back session is answering, and keep
+   * the turn open.
+   *
+   * The main turn waits on the back session's turn as on a subagent, so a
+   * session may post more than once, and `finished` ends the main turn when
+   * the back turn ends.
    *
    * False where no main turn is waiting on this session - it is not a back
-   * session this wake started, or the turn it woke has already ended - so a
-   * caller that posted into nothing says so rather than answering a turn twice.
+   * session this wake started, or the turn it answered has already ended - so
+   * a caller that posted into nothing says so.
    */
   posted(backSession: string, text: string): boolean;
   /**
    * End the main turn one back session was answering, because the session's
-   * turn is over and nothing was posted.
+   * turn is over.
    *
-   * `text` is what the session said in that turn, and what the main turn gets
-   * is the option `mainTurnPostMessageAbsent`: the last words, the notice, or
-   * nothing.
+   * A turn the session posted into ends with what it posted. Otherwise `text`
+   * is what the session said in that turn, and what the main turn gets is the
+   * option `mainTurnPostMessageAbsent`: the last words, the notice, or nothing.
    *
-   * Nothing where no main turn is waiting on this session, which is a session
-   * that posted already and one this wake never woke.
+   * Nothing where no main turn is waiting on this session, which is one whose
+   * main turn already ended and one this wake never woke.
    *
    * `failed` is the sentence a turn that failed ended with, and the main turn
    * fails with it.
@@ -539,25 +547,31 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
     posted: (backSession, text) => {
       const held = answering.get(backSession);
       if (held === undefined) return false;
-      /*
-       * Let go before the answer is said: ending the turn starts whatever was
-       * queued behind it in the main chat, and that message wakes a session
-       * which may be this one - a turn left in the map here would be answered
-       * by the next message's turn as well.
-       */
-      answering.delete(backSession);
-      held.handle.reply(text);
+      // The turn stays held: the back turn is still running, and its end is
+      // what ends the main turn.
+      held.posted = true;
+      held.handle.say(text);
       return true;
     },
 
     finished: (backSession, text, failed) => {
       const held = answering.get(backSession);
       if (held === undefined) return;
-      // Let go first, for the reason `posted` says.
+      /*
+       * Let go before the turn ends: ending it starts whatever was queued
+       * behind it in the main chat, and that message wakes a session which may
+       * be this one - a turn left in the map here would be answered by the
+       * next message's turn as well.
+       */
       answering.delete(backSession);
       // A turn that failed fails the main turn, as the reference host ends a failed send.
       if (failed !== undefined && held.handle.fail !== undefined) {
         held.handle.fail(failed);
+        return;
+      }
+      // What the session posted is the answer, and its last words are not added to it.
+      if (held.posted === true) {
+        held.handle.end();
         return;
       }
       /*
@@ -625,9 +639,14 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * Held before the message is sent, so a back session that answers and
        * ends inside the send still finds the turn that is waiting on it. A steer
        * into a session already working names the open turn it went into, which
-       * is the turn the answer after it belongs to.
+       * is the turn the answer after it belongs to, and keeps what was posted
+       * into that turn before the steer.
        */
-      answering.set(session, { session: message.session, turnId: message.turnId, handle, bot: bot.name });
+      const before = answering.get(session);
+      const posted = before !== undefined && before.handle === handle && before.turnId === message.turnId && before.posted === true;
+      answering.set(session, {
+        session: message.session, turnId: message.turnId, handle, bot: bot.name, ...(posted ? { posted } : {}),
+      });
       /*
        * The open turn shows what it is waiting on: the back session's chat, as
        * a subagent call a client opens. The title is the bot's, which is who

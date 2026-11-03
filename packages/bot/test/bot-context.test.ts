@@ -77,6 +77,7 @@ const turn = (): Recorded => {
     // The turn this handle is over is the open one: nothing begins a second.
     begin: () => undefined,
     reply: (text) => { replies.push(text); },
+    say: () => {},
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },
   };

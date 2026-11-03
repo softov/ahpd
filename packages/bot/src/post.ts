@@ -6,18 +6,19 @@ import type { Wake } from './wake.js';
  *
  * A person says something to a bot in its main chat, and that message wakes a
  * back session as a turn (see `wake.ts`). The main turn stays open while the
- * work is done, and this is how it ends: the back session calls `post_message`
- * with what the person should be told, and the text becomes the response of the
- * turn they are waiting on.
+ * work is done, and this is how the person is answered: the back session calls
+ * `post_message` with what the person should be told, and the text is added to
+ * the turn they are waiting on. A session may call it more than once, and the
+ * main turn ends when the session's own turn ends.
  *
  * The main chat is found from the session the call was made in, which is the
  * one thing about a call a caller cannot choose - `at.session` - and never from
  * an input. So a back session posts into the chat that woke it and nowhere
  * else, and a session this wake never woke has nothing to post to.
  *
- * A session that ends its turn without posting is ended with a notice instead,
- * which `plugin.ts` hears on `turn_end`; both roads go through the wake, so the
- * two can never end one main turn twice.
+ * The end of the session's turn is what `plugin.ts` hears on `turn_end`, and a
+ * turn with no post is answered as `mainTurnPostMessageAbsent` says; both roads
+ * go through the wake, so one main turn is never ended twice.
  */
 /**
  * What a back session is told about the person waiting on it.
@@ -38,14 +39,14 @@ import type { Wake } from './wake.js';
  * is that a question is asked with the harness's tool, which is what task 06
  * shows in the main chat, and a harness with none asks in the text it posts.
  */
-export const POST_INSTRUCTION = 'A person is waiting in the main chat for your reply to the message that woke this session. Only post_message answers them: call it once, when the answer is ready, and the text you give it becomes their reply. When you need an answer from them before you can reply, ask with your question tool: it puts the question in the main chat and brings their answer back here. A harness with no question tool asks in the text it posts. send_message starts a turn in another session and does not reply to the person waiting, so do not use it to answer.';
+export const POST_INSTRUCTION = 'A person is waiting in the main chat for your reply to the message that woke this session. Only post_message answers them: each call adds its text to their reply, and the reply ends when your turn ends. When you need an answer from them before you can reply, ask with your question tool: it puts the question in the main chat and brings their answer back here. A harness with no question tool asks in the text it posts. send_message starts a turn in another session and does not reply to the person waiting, so do not use it to answer.';
 
 export function postMessage(wake: Wake): HostTool {
   return {
     definition: {
       name: 'post_message',
       title: 'Post Message',
-      description: 'Post the reply to the main chat that woke this session. The turn the person is waiting on ends with this text. Post once, when the answer is ready.',
+      description: 'Post to the main chat that woke this session. The text is added to the turn the person is waiting on, which ends when this session\'s turn ends.',
       inputSchema: {
         type: 'object',
         properties: {

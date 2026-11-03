@@ -177,7 +177,7 @@ The block says what changes from message to message; the system prompt does not.
 
 ### What the back session answers with
 
-The main turn stays open while the back session works, and it shows the back session as a `subagent` tool call whose content opens the back session's chat. It ends when the back session calls `post_message` with the reply: that text becomes the response of the turn the person is waiting on. The tool is offered only to a back session, and it posts only to the main chat that woke the calling session, so a back session cannot post into another chat. It is marked as running without a confirmation, and a deny list a session carries still refuses it.
+The main turn stays open while the back session works, and it shows the back session as a `subagent` tool call whose content opens the back session's chat. Each time the back session calls `post_message`, the text is added to the turn the person is waiting on. A back session may post more than once, and the main turn ends when the back session's turn ends. The tool is offered only to a back session, and it posts only to the main chat that woke the calling session, so a back session cannot post into another chat. It is marked as running without a confirmation, and a deny list a session carries still refuses it.
 
 A back session asks a question with its harness's question tool, and the question is shown in the main chat; the answer given there goes back to the back session. An approval is shown as a tool call waiting for a confirmation, and a request the back session withdraws leaves the main chat. A harness with no question tool asks in the text it posts.
 
