@@ -1,7 +1,7 @@
 ---
 title: A nested session's lists are the inner host's
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -93,7 +93,7 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The proxy relays the inner lists](task-01-the-proxy-relays-the-inner-lists.md) | todo | - |
+| [01 - The proxy relays the inner lists](task-01-the-proxy-relays-the-inner-lists.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -103,13 +103,13 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a relayed channel a client still watches when the host inside opens again.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `c97d8459`'s sources and passes after the change.
-- [ ] The touched files' test files pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] The touched files' test files pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
