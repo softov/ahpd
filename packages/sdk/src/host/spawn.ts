@@ -16,7 +16,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING } from './common.js';
-import { chatFlag, commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -1203,22 +1203,28 @@ export function createSpawn(ctx: HostContext): Spawn {
           completePlan(chatUri, turn);
         }
         /*
-         * The bits of a chat whose backend runs it on another host, as that
-         * host says them: kept here, where every row and state of the chat
-         * reads them, and the session's read bit follows a read, as it follows
-         * any chat's.
+         * The bits of a session and a chat whose backend runs them on another
+         * host, as that host says them: kept here, where every row and state
+         * of the session and the chat reads them. The session's read bit
+         * follows a chat's there, and comes out as the session's action, which
+         * is said here only where it moves the bit: a client's own was said
+         * when this host took it.
          */
-        const bit = channel === 'chat' && sessions.get(uri)?.chats.get(chatUri)?.flag !== undefined
+        const relays = sessions.get(uri)?.chats.get(chatUri)?.flag !== undefined;
+        const bit = relays && channel === 'chat'
           ? (action.type === 'chat/isReadChanged' ? Status.IsRead : action.type === 'chat/isArchivedChanged' ? Status.IsArchived : undefined)
           : undefined;
-        const readBefore = (kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0;
         if (bit !== undefined) {
           const flags = kept.chatFlags(idOf(uri), chatUri);
           const on = bit === Status.IsRead ? action.isRead === true : action.isArchived === true;
           kept.setChatFlags(idOf(uri), chatUri, on ? flags | bit : flags & ~bit);
         }
+        if (relays && channel === 'session' && (action.type === 'session/isReadChanged' || action.type === 'session/isArchivedChanged')) {
+          const read = action.type === 'session/isReadChanged';
+          sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, read ? action.isRead === true : action.isArchived === true, asSent(action));
+          return;
+        }
         dispatch(where, asSent(action), answering);
-        if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.
         // The row's counts move with it: the turn has no checkpoint yet, so
@@ -1409,8 +1415,9 @@ export function createSpawn(ctx: HostContext): Spawn {
          * and leaves the session's as it is. The bits move while the session
          * holds the chat, whose row they mark.
          *
-         * A chat whose backend runs it on another host has its read bit moved
-         * there, and said as the chat's action.
+         * A chat whose backend runs it on another host has its read bit, and
+         * its session's, moved there, and said as the chat's and the session's
+         * actions.
          */
         const commandKey = commandTurnKey(chatUri, turn);
         const ownBit = moved !== undefined && moved.flag === undefined;
@@ -1434,8 +1441,8 @@ export function createSpawn(ctx: HostContext): Spawn {
             ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
           }
           ctx.commandTurns.delete(commandKey);
-          if (moved !== undefined) {
-            if (ownBit) chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
+          if (moved !== undefined && ownBit) {
+            chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
             const row = chatSummary(uri, chatUri, moved);
             if (!command && (row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
               sessionFlag(ctx, uri, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });

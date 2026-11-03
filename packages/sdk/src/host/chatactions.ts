@@ -14,10 +14,12 @@ import type { ConnectionContext, HostContext } from './context.js';
 /**
  * Set or clear one of a session's own two bits, and say so.
  *
- * A session's `IsRead` and `IsArchived` are this host's rather than a
- * backend's: a harness asked would have no idea whether a person had read a
- * transcript. `session/isReadChanged` and `session/isArchivedChanged` reach
- * this, a client's on a session channel and this host's own.
+ * A session's `IsRead` and `IsArchived` are the host's that runs it rather
+ * than a harness's: a harness asked would have no idea whether a person had
+ * read a transcript. `session/isReadChanged` and `session/isArchivedChanged`
+ * reach this, a client's on a session channel, this host's own, and those of
+ * the host inside that runs a session in a machine, said under `origin` where
+ * they answer a client.
  *
  * A read bit moved here is the session's. The chats it moves with, and when,
  * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
@@ -302,10 +304,15 @@ export function chatAction(
     const wasRead = (kept.chatFlags(idOf(flagSession), channel) & Status.IsRead) !== 0;
     const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action, origin);
     if (!moved) dispatch(channel, action, origin);
-    // A chat whose backend runs it on another host has its bits there too.
-    byChat.get(channel)?.chat.flag?.(bitOf === Status.IsRead ? 'read' : 'archived', on);
+    /*
+     * A chat whose backend runs it on another host has its bits there too, and
+     * its session's read bit follows it there: that host runs the session, and
+     * says the session's bit as it moves.
+     */
+    const relayed = byChat.get(channel)?.chat.flag;
+    relayed?.(bitOf === Status.IsRead ? 'read' : 'archived', on, 'chat');
     if (bitOf === Status.IsRead) {
-      sessionFollows(ctx, flagSession, channel, wasRead);
+      if (relayed === undefined) sessionFollows(ctx, flagSession, channel, wasRead);
       return;
     }
     /*
@@ -315,7 +322,7 @@ export function chatAction(
      * as it is.
      * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
      */
-    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
+    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true) && relayed === undefined) sessionFollows(ctx, flagSession, channel, false);
     return;
   }
   /**
