@@ -8,7 +8,7 @@ revalidated: 2026-11-03
 changes:
   - specs/sessions-and-chats.md
 refs:
-  - git://a8eff676 - the commit of ahpd this plan was checked at
+  - git://cde4dd6c - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/actions.ts#L458-L461 - `ChatTurnCancelledAction.turnId` is a required field, \"Turn identifier\""
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188 - the chat reducer ends a turn only when the id the action names is the active turn's"
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283 - the chat reducer completes a call only in the turn the action names"
@@ -138,6 +138,6 @@ client chat/toolCallComplete -> the backend takes it -> said as sent
 
 ## Final verification checklist
 
-- [x] Each new or changed case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] Each new or changed case fails on `cde4dd6c` for the reason it names, and passes after the change.
 - [x] The touched test files pass.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

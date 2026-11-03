@@ -41,7 +41,7 @@ A stop naming no turn, and a client's tool result, go to every client of the cha
 
 ## Validation
 
-- The changed and new cases fail on `a8eff676` and pass after.
+- The changed and new cases fail on `cde4dd6c` and pass after.
 - The touched test files pass.
 - `pnpm run typecheck` is clean.
 
@@ -49,6 +49,6 @@ A stop naming no turn, and a client's tool result, go to every client of the cha
 
 Built 2026-11-03 in `0b7e8ff0`.
 
-- On `a8eff676`'s sources the empty and missing stops stop the turn, and the result is said under `t1`.
+- On `cde4dd6c`'s sources the empty and missing stops stop the turn, and the result is said under `t1`.
 - `notes.test.ts` and a worker case of `subagent-chat.test.ts` stopped a running turn with `turnId: ''`.
 - They name the running turn, read from the chat, as a client's stop does.

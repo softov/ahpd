@@ -24,7 +24,7 @@ A client's tool result goes to every client as the client sent it.
 
 ## Verified
 
-- On `a8eff676`'s `chatactions.ts` five cases fail: two stops in `echo-origin`, the result in `host-tools`, and the ACP and cofold stops.
+- On `cde4dd6c`'s `chatactions.ts` five cases fail: two stops in `echo-origin`, the result in `host-tools`, and the ACP and cofold stops.
 - Each fails for the stop carried out or the turn filled in, and each passes with `0b7e8ff0`.
 - With the change, each touched file passes alone at one worker, as do `ahp-test-cases`, `host-catalogue` and `session-wake`.
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
