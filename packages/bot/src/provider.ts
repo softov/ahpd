@@ -4,7 +4,7 @@ import { RpcError } from '@ahpd/sdk';
 import { covers, ownerFilter, ownerOfPrincipal } from '@ahpd/sdk';
 import { instructionsProblem } from './agents.js';
 import { CHAT_PROVIDER } from './chat.js';
-import { fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
+import { AGENTS_FILE, fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
 import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
@@ -847,7 +847,13 @@ export function botProvider(options: BotOptions): BotProvider {
        * not reach.
        */
       if (record.computer === undefined) {
-        if (existing === undefined && readAgentsFile(record.workspace, options.yaml).kind === 'missing') {
+        // A file this host cannot read would be written over as if it were
+        // empty, and its text is the bot's: the write is refused instead.
+        const file = readAgentsFile(record.workspace, options.yaml);
+        if (file.kind === 'unreadable') {
+          throw new RpcError(-32603, `${join(record.workspace, AGENTS_FILE)} cannot be read, so it was not written: ${String(file.error)}`);
+        }
+        if (existing === undefined && file.kind === 'missing') {
           makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
         }
         else {

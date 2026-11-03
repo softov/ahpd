@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -479,6 +479,28 @@ it('refuses instructions with a line that starts with ## ', async () => {
   expect(await write(soft, 'bot://motion', {
     name: 'Motion', instructions: 'Be calm.\n## Notes\nBe kind.',
   }, { createOnly: true })).toMatchObject({ code: -32602, message: expect.stringContaining('## Notes') });
+});
+
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('refuses a write over an AGENTS.md it cannot read, and leaves the file', async () => {
+  const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
+  const folder = join(bots, 'motion');
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, 'AGENTS.md');
+  writeFileSync(path, '# Our rules\n');
+  // Write-only: a read fails and a write would not, so only the check keeps
+  // the file's text.
+  chmodSync(path, 0o200);
+  const soft = await as(host, 'soft');
+
+  try {
+    expect(await write(soft, 'bot://motion', {
+      name: 'Motion', instructions: 'Be calm',
+    }, { createOnly: true })).toMatchObject({ code: -32603, message: expect.stringContaining('cannot be read') });
+  }
+  finally {
+    chmodSync(path, 0o600);
+  }
+  expect(readFileSync(path, 'utf8')).toBe('# Our rules\n');
 });
 
 it('answers a read from the bot\'s own file, so its own edit shows on the next read', async () => {
