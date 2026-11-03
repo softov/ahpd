@@ -573,7 +573,7 @@ describe('a message typed while a turn is running', () => {
    *
    * The reference host runs steering that arrived too late to steer a turn
    * next, ahead of queued messages, under its id, so the turn naming it takes
-   * it out of every client's state (queueDrainContribution.ts L260-L262,
+   * it out of every client's state (queueDrainContribution.ts L266-L267,
    * L283-L292 at a4e689ae).
    */
   it('runs one sent at a chat with nothing running as a turn of its own, under its id', async () => {

@@ -503,7 +503,7 @@ it('runs a message queued after a stop once the stopped run has let its turn go'
 
 /*
  * Steering that came too late to steer a turn runs next, ahead of what the
- * stopped turn left queued (queueDrainContribution.ts L260-L262 at a4e689ae).
+ * stopped turn left queued (queueDrainContribution.ts L266-L267 at a4e689ae).
  */
 it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
   const { model, release } = gatedModel();

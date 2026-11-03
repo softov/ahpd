@@ -1449,9 +1449,12 @@ export function chatAction(
         no(`${kind} is neither a steering message nor a queued one`);
         break;
       }
-      // A turn running in a backend that cannot steer one. With nothing
-      // running, the message is the next turn, whatever the backend.
-      if (kind === 'steering' && !session.steer && activeHeld !== undefined) {
+      /*
+       * A backend that takes no steering refuses it, a turn running or not, as
+       * the reference host refuses steering to a provider that cannot take it.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13513-L13516
+       */
+      if (kind === 'steering' && !session.steer) {
         no('This backend cannot take a message mid-turn');
         break;
       }
@@ -1495,7 +1498,7 @@ export function chatAction(
        * The second runs as a turn of its own, under its id and ahead of what
        * waits, as the reference host runs steering that came too late to steer
        * a turn, and the turn naming it takes it out of every client's state.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
        */
       const model = (typeof message.model === 'object' && message.model !== null

@@ -670,10 +670,10 @@ export interface Session {
    * are the ones true then rather than the ones true now.
    *
    * `kind` is the pending message's, `queued` when absent. A `steering` one is
-   * a steering message no turn was running to take: it is the next turn, ahead
-   * of everything waiting, as the reference host runs steering that came too
-   * late to steer a turn.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+   * a steering message no turn was running to take, handed only to a backend
+   * with `steer`: it is the next turn, ahead of everything waiting, as the
+   * reference host runs steering that came too late to steer a turn.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
    */
   queue(
     id: string,

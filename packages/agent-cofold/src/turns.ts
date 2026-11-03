@@ -764,7 +764,7 @@ export const createTurns = (
    * A steering message no turn was running to take is the next turn, ahead of
    * what a stopped turn left waiting, as the reference host runs steering that
    * came too late to steer a turn.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
    */
   const queue: Session['queue'] = (id, text, model, from, attachments, _options, kind = 'queued') => {
     const message: Bag = {
