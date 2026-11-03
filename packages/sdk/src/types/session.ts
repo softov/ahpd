@@ -578,8 +578,13 @@ export interface Session {
    * running turn and anything already queued, the same id twice edits what
    * is waiting, and the turn that runs it names it as `queuedMessageId` so a
    * client takes it out of its queue - whether that turn starts now or later.
+   *
+   * `kind` is that message's, as `queue` takes it: a `steering` command waits
+   * as a steering message does, ahead of everything queued, and runs as a
+   * command, as the reference host runs a `!` command its drain admits.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L30-L44
    */
-  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string): void;
+  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering'): void;
 
   /**
    * Put a message into the turn that is already running.
@@ -671,9 +676,13 @@ export interface Session {
    *
    * `kind` is the pending message's, `queued` when absent. A `steering` one is
    * a steering message no turn was running to take, handed only to a backend
-   * with `steer`: it is the next turn, ahead of everything waiting, as the
-   * reference host runs steering that came too late to steer a turn.
+   * with `steer`: it runs ahead of every queued message, behind the steering
+   * messages already waiting, as the reference host runs steering that came
+   * too late to steer a turn, in the order its queue holds them. The chat
+   * shows the steering message set last, as the protocol's reducer holds one.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L899-L903
    */
   queue(
     id: string,

@@ -29,7 +29,7 @@ export interface Turns {
   methods: {
     begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
     setTitle: (title: string) => void;
-    ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string) => void;
+    ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering') => void;
     steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
     queue: (
       id: string,
@@ -390,7 +390,13 @@ export function createTurns(ctx: SessionContext): Turns {
       return;
     }
     ctx.deferred = false;
-    const next = ctx.queued.shift();
+    /*
+     * The first steering message waiting, in the order they came, and then the
+     * head: the reference host's drain runs steering that came too late to
+     * steer a turn ahead of queued messages.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+     */
+    const [next] = ctx.queued.splice(Math.max(0, ctx.queued.findIndex((held) => held.steering === true)), 1);
     if (!next)
       return;
     /*
@@ -644,23 +650,25 @@ export function createTurns(ctx: SessionContext): Turns {
      * they interrupted, rather than in a panel that closed. Nothing is pushed
      * to the CLI, which is the whole difference from `begin`.
      */
-    ran: (turnId, command, run, queuedAs) => {
+    ran: (turnId, command, run, queuedAs, kind = 'queued') => {
       /*
        * A turn is already running, so the command waits its turn.
        *
        * A shell command that jumped the queue would run against a tree the
        * turn in front of it is still editing - and what waits is the command
        * itself, not the text of it: when its turn comes `startNext` runs it
-       * rather than handing `!ping` to the CLI.
+       * rather than handing `!ping` to the CLI. A steering one waits as
+       * steering, as a steering message does, and runs as a command.
        */
       if (busy() || (queuedAs !== undefined && ctx.queued.length > 0)) {
         const id = queuedAs ?? turnId;
         const message = { text: `!${command}`, origin: { kind: 'user' } };
-        const entry = { id, command: { text: command, run }, message };
+        const entry = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
         const at = ctx.queued.findIndex((held) => String(held.id) === id);
+        if (kind === 'steering') for (const held of ctx.queued) delete held.shown;
         if (at >= 0) ctx.queued[at] = entry;
         else ctx.queued.push(entry);
-        ctx.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+        ctx.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
         ctx.touch();
         return;
       }
@@ -715,7 +723,7 @@ export function createTurns(ctx: SessionContext): Turns {
         // Held with the message and read when its turn comes, which is what
         // makes a turn's instruction follow the turn rather than the arrival.
         ...(options !== undefined ? { options } : {}),
-        ...(kind === 'steering' ? { steering: true } : {}),
+        ...(kind === 'steering' ? { steering: true, shown: true } : {}),
         message: {
           text,
           origin: from?.origin ?? { kind: 'user' },
@@ -731,11 +739,13 @@ export function createTurns(ctx: SessionContext): Turns {
         },
       };
       const at = ctx.queued.findIndex((held) => str(held.id) === id);
-      // The same id again edits what is waiting; a fresh one appends. That is
-      // the client's spelling for "change my mind" and it costs nothing here.
-      // A steering message no turn was running to take is the next turn.
+      // The steering message set last is the one the chat shows, as the
+      // protocol's reducer holds the latest.
+      if (kind === 'steering') for (const held of ctx.queued) delete held.shown;
+      // The same id again edits what is waiting; a fresh one appends, in the
+      // order things came. That is the client's spelling for "change my mind"
+      // and it costs nothing here.
       if (at >= 0) ctx.queued[at] = entry;
-      else if (kind === 'steering') ctx.queued.unshift(entry);
       else ctx.queued.push(entry);
       ctx.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message: entry.message });
       ctx.touch();

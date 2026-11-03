@@ -711,6 +711,30 @@ it('sends no usage for a !command turn, which is not pi running', async () => {
 });
 
 /*
+ * Steering that came too late to steer a turn runs next, ahead of queued
+ * messages, in the order it came, and the chat shows the steering message set
+ * last, as the protocol's reducer holds one (queueDrainContribution.ts
+ * L266-L267, agentSessionMessage.ts L17-L22 at a4e689ae).
+ */
+it('runs two waiting steering messages in the order they were sent, ahead of what is queued', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.queue('waiting', 'second');
+  session.queue('s1', 'first steer', undefined, undefined, undefined, undefined, 'steering');
+  session.queue('s2', 'second steer', undefined, undefined, undefined, undefined, 'steering');
+  await settled();
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+
+  const started = sent.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);
+  expect(started).toEqual([undefined, 's1']);
+  expect((session.chatState().steeringMessage as Bag | undefined)?.id).toBe('s2');
+  expect((session.chatState().queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
+});
+
+/*
  * A queued message with nothing running starts at once, as a turn naming it:
  * "the server SHOULD immediately consume it", and the reference host starts
  * an accepted queued message while its chat is idle, as `chat/turnStarted`

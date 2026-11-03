@@ -1294,7 +1294,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * `queuedAs` is the queued message's id when the text came through
    * `chat/pendingMessageSet`: a question is queued under it, and a command
    * is handed to `ran` under it, so it waits its turn as a command. `kind` is
-   * that message's, and a steering one is queued ahead of what waits.
+   * that message's, handed to both, and a steering one waits ahead of what is
+   * queued.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -1413,7 +1414,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         chat: session.chatUri,
         turnId,
         toolCallId,
-      }, opened), queuedAs);
+      }, opened), queuedAs, kind);
       return undefined;
     };
     /*

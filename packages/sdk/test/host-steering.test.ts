@@ -84,7 +84,12 @@ async function running() {
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text, origin: { kind: 'user' } } } },
   });
-  return { p, chatUri, steers, steer };
+  // A queued message under the same id as `steer`'s.
+  const queue = (clientSeq: number, text: string) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 's1', message: { text, origin: { kind: 'user' } } } },
+  });
+  return { p, chatUri, steers, steer, queue };
 }
 
 /*
@@ -120,6 +125,25 @@ it('refuses an edit of the steering message the running turn holds', async () =>
   expect(steers).toEqual([{ id: 's1', text: 'not that one' }]);
   const edit = envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3);
   expect(edit?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+});
+
+/*
+ * A queued message under the held steering message's id changes its kind, which
+ * the reference host refuses while a turn runs (agentService.ts L13517-L13524 at
+ * a4e689ae): `existing` is found by id whatever the action's kind.
+ */
+it('refuses a queued message under the id of the steering message the running turn holds', async () => {
+  const { p, chatUri, steers, steer, queue } = await running();
+  void steer(2, 'not that one');
+  await settle();
+  void queue(3, 'not that one');
+  await settle();
+
+  expect(steers).toEqual([{ id: 's1', text: 'not that one' }]);
+  const queued = envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3);
+  expect(queued?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(envelopes(p, chatUri).some((one) => one.rejectionReason === undefined
+    && one.action.type === 'chat/pendingMessageSet' && one.action.kind === 'queued')).toBe(false);
 });
 
 /*

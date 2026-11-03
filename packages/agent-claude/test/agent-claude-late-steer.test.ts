@@ -528,6 +528,65 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   expect(started.at(-1)?.queuedMessageId).toBe('waiting');
 });
 
+/*
+ * Steering that came too late to steer a turn runs next, ahead of queued
+ * messages, in the order it came, and the chat shows the steering message set
+ * last, as the protocol's reducer holds one.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22
+ */
+it('runs two idle steering messages in the order they were sent, ahead of what is queued', async () => {
+  const { session, chat } = await opened();
+  const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
+  const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
+  session.begin(HALTED, COUNT_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  session.cancel(HALTED);
+  await settle();
+  // The CLI still owes the stopped turn's result, so these wait for it.
+  session.queue('waiting', BETA_TEXT);
+  session.queue('s1', ALPHA_TEXT, undefined, undefined, undefined, undefined, 'steering');
+  session.queue('s2', GAMMA_TEXT, undefined, undefined, undefined, undefined, 'steering');
+  await settle();
+  sdk.push(...stopped);
+  await settle();
+
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').at(-1)?.queuedMessageId).toBe('s1');
+  const state = session.chatState() as Bag;
+  expect((state.steeringMessage as Bag | undefined)?.id).toBe('s2');
+  expect((state.queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
+});
+
+/*
+ * A steering `!command` waits as steering and runs as a command, as the
+ * reference host's drain admits a `!` command from its queue.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L30-L44
+ */
+it('runs an idle steering !command ahead of what is queued, as a command', async () => {
+  const { session, chat } = await opened();
+  const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
+  const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
+  session.begin(HALTED, COUNT_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  session.cancel(HALTED);
+  await settle();
+  session.queue('waiting', BETA_TEXT);
+  session.ran?.('t-cmd', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }), 'c1', 'steering');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/pendingMessageSet' && one.id === 'c1').map((one) => one.kind)).toEqual(['steering']);
+
+  sdk.push(...stopped);
+  await settle();
+  // The command runs first, and the queued message after it.
+  const started = chat.filter((one) => one.type === 'chat/turnStarted');
+  expect(started.map((one) => one.queuedMessageId)).toEqual([undefined, 'c1', 'waiting']);
+  expect(started[1]).toMatchObject({ message: { text: '!echo hi' } });
+});
+
 it('opens no turn for a steering message the CLI took in before the stop', async () => {
   const { session, chat, before } = await opened();
   const [first, rest] = splitAfter(fixture('claude-folded-stop.jsonl'), isToolCall);

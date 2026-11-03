@@ -1459,20 +1459,22 @@ export function chatAction(
         break;
       }
       /*
-       * The steering message the running turn was handed, sent again.
+       * A pending message under the id of the steering message the running
+       * turn was handed.
        *
-       * The backend holds it already, so the same message is answered and not
-       * handed over a second time, and a different one is refused, in the
-       * reference host's words: "Repeated identical upserts MUST NOT cause
-       * duplicate provider delivery", and "Hosts MUST reject edits ... that
-       * they can no longer honor after handoff".
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13516-L13523
+       * The backend holds it already, so the same steering message is answered
+       * and not handed over a second time, and a different one, or a queued
+       * message under its id, is refused, in the reference host's words:
+       * "Repeated identical upserts MUST NOT cause duplicate provider
+       * delivery", and "Hosts MUST reject edits ... that they can no longer
+       * honor after handoff".
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L190-L196
        */
       const holding = chatHeld.steeringMessage as Bag | undefined;
-      if (kind === 'steering' && activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
+      if (activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
         // By value: the held copy went through a reducer, which writes its keys in its own order.
-        if (isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
+        if (kind === 'steering' && isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
         else no('Cannot change a steering message while it is being processed.');
         break;
       }

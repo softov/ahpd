@@ -325,11 +325,12 @@ export function cofoldSession(
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
       ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      // A steering message no turn was running to take waits at the head of
-      // the queue, and is still a steering message while it waits.
+      // A steering message no turn was running to take waits ahead of the
+      // queue, and is still a steering message while it waits: the one set
+      // last, as the protocol's reducer holds the latest.
       ...(ctx.steering !== undefined
         ? { steeringMessage: ctx.steering }
-        : queued.filter((held) => held.steering === true).slice(0, 1)
+        : queued.filter((held) => held.shown === true)
           .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
       // The protocol's `PendingMessage` is `{ id, message }` and nothing else,
       // so the model a queued turn will run on stays in this session.

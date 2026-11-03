@@ -590,7 +590,13 @@ export const createTurns = (
       beginTurn(crypto.randomUUID(), left.text, undefined, left.from, left.id, left.attachments);
       return;
     }
-    const next = queued.shift();
+    /*
+     * Then the first steering message waiting, in the order they came, and then
+     * the head: the reference host's drain runs steering that came too late to
+     * steer a turn ahead of queued messages.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+     */
+    const [next] = queued.splice(Math.max(0, queued.findIndex((held) => held.steering === true)), 1);
     if (next === undefined) return;
     /*
      * A command somebody typed is run, not asked.
@@ -743,17 +749,19 @@ export const createTurns = (
    * back is the same shape as any other turn: it opens, carries one tool
    * call, and completes. What waits on a busy session is the command itself
    * and not the text of it, so when its turn comes `startNext` runs it
-   * rather than handing `!ping` to a model.
+   * rather than handing `!ping` to a model. A steering one waits as steering,
+   * as a steering message does, and runs as a command.
    */
-  const ran: Session['ran'] = (turnId, command, run, queuedAs) => {
+  const ran: Session['ran'] = (turnId, command, run, queuedAs, kind = 'queued') => {
     if (ctx.active !== undefined || ctx.opening !== undefined || (queuedAs !== undefined && queued.length > 0)) {
       const id = queuedAs ?? turnId;
       const message = { text: `!${command}`, origin: { kind: 'user' } };
-      const entry = { id, command: { text: command, run }, message };
+      const entry = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
       const at = queued.findIndex((held) => String(held.id) === id);
+      if (kind === 'steering') for (const held of queued) delete held.shown;
       if (at >= 0) queued[at] = entry;
       else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+      start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
       ctx.touch();
       return;
     }
@@ -761,9 +769,11 @@ export const createTurns = (
   };
 
   /*
-   * A steering message no turn was running to take is the next turn, ahead of
-   * what a stopped turn left waiting, as the reference host runs steering that
-   * came too late to steer a turn.
+   * A steering message no turn was running to take runs ahead of what is
+   * queued, after the steering already waiting, as the reference host runs
+   * steering that came too late to steer a turn in the order its queue holds
+   * it. The one set last is what the chat shows, as the protocol's reducer
+   * holds the latest.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
    */
   const queue: Session['queue'] = (id, text, model, from, attachments, _options, kind = 'queued') => {
@@ -781,11 +791,11 @@ export const createTurns = (
       message,
       ...(model !== undefined ? { model } : {}),
       ...(from !== undefined ? { from } : {}),
-      ...(kind === 'steering' ? { steering: true } : {}),
+      ...(kind === 'steering' ? { steering: true, shown: true } : {}),
     };
     const at = queued.findIndex((held) => held.id === id);
+    if (kind === 'steering') for (const held of queued) delete held.shown;
     if (at >= 0) queued[at] = entry;
-    else if (kind === 'steering') queued.unshift(entry);
     else queued.push(entry);
     start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
     ctx.touch();
