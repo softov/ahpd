@@ -37,14 +37,14 @@ describe('the injection a shell is given', () => {
   it('starts bash, fish, pwsh and zsh with the script VS Code ships for each', () => {
     expect(injectionOf('/bin/bash')).toMatchObject({
       type: 'injection',
-      newArgs: ['--init-file', join(scripts, 'shellIntegration-bash.sh')],
+      newArgs: ['--init-file', `${scripts}/shellIntegration-bash.sh`],
       envMixin: { VSCODE_INJECTION: '1', VSCODE_NONCE: nonce },
     });
     expect(injectionOf('/usr/bin/fish')).toMatchObject({
-      newArgs: ['--init-command', `source "${join(scripts, 'shellIntegration.fish')}"`],
+      newArgs: ['--init-command', `source "${scripts}/shellIntegration.fish"`],
     });
     expect(injectionOf('/usr/bin/pwsh')).toMatchObject({
-      newArgs: ['-noexit', '-command', `. "${join(scripts, 'shellIntegration.ps1')}"`],
+      newArgs: ['-noexit', '-command', `. "${scripts}/shellIntegration.ps1"`],
     });
     expect(injectionOf('/bin/zsh')).toMatchObject({ newArgs: ['-i'] });
   });
@@ -56,8 +56,8 @@ describe('the injection a shell is given', () => {
     // the person's own in a folder of their own, which the script sources them
     // from. They are copied by the port, before the shell starts.
     expect(asked.envMixin?.ZDOTDIR).toBeTypeOf('string');
-    expect(asked.filesToCopy?.map((file) => file.dest.replace(asked.envMixin?.ZDOTDIR ?? '', ''))).toEqual([
-      '/.zshrc', '/.zprofile', '/.zshenv', '/.zlogin',
+    expect(asked.filesToCopy?.map((file) => file.dest.replace(asked.envMixin?.ZDOTDIR ?? '', '').replace(/^[\\/]/u, ''))).toEqual([
+      '.zshrc', '.zprofile', '.zshenv', '.zlogin',
     ]);
     expect(asked.filesToCopy?.every((file) => file.source.startsWith(scripts))).toBe(true);
   });
