@@ -1,7 +1,7 @@
 ---
 title: A stop takes every steer and starts nothing
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -76,7 +76,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The backend lets go of every steer at a stop](task-01-the-backend-lets-go-of-every-steer-at-a-stop.md) | todo | - |
+| [01 - The backend lets go of every steer at a stop](task-01-the-backend-lets-go-of-every-steer-at-a-stop.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -85,13 +85,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing yet.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** cofold's submits, which settle after the stop and must stay silent.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `3945964a`'s sources and passes after the change.
-- [ ] The test files that hold the cases pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `3945964a`'s sources and passes after the change.
+- [x] The test files that hold the cases pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
