@@ -287,6 +287,6 @@ function runHelp(run: Command): string {
   return `\n${style.heading('ahpd [options]:')}\n${renderDefinitions(optionsOf(run).map(optionLine))}`
     + '\nEvery option above can be a key in the configuration file instead, spelled the way it is here without the dashes: port, host, paths, connectionToken, connectionTokenFile, withoutConnectionToken, automations, sessions, wire, updateCheck, plugins, users, resource, origins, issuer, issuerVerify, requireIssuer, tokensPerPerson, advancedTools, sessionTools, sessionToolsProviders, archiveDirtyWorktree, pullRequestLookup.\n'
     + 'A flag beats the file, because a flag is this run and a file is every run until somebody edits it.\n'
-    + '"plugins" is a list of the same specs --plugin takes, and --plugin-option sets an entry\'s "options" for one run; --no-plugins has no key, because leaving plugins out is already the off.\n'
+    + '"plugins" is a list of the same specs --plugin takes, and --plugin-option sets an entry\'s "options" for one run; each --plugin is added to that list, and --no-plugins leaves the list out so only the --plugin ones load.\n'
     + '\nClients present the token as ?tkn=<secret> on the URL, or as an Authorization: Bearer <secret> header.\n';
 }

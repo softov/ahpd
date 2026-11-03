@@ -100,7 +100,6 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       const options = served === undefined
         ? await namedOptionsFrom(context.input as Readonly<Record<string, unknown>>)
         : served.options;
-      if (options.noPlugins) return output([], 'plugins: --no-plugins, so nothing is listed\n');
       if (options.plugins.length === 0) return output([], 'plugins: none named\n');
       // Served, a row is read by anyone holding `config:read`, so every option
       // the plugin's schema marks `writeOnly` or `secret` is answered as `<set>`

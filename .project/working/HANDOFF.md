@@ -33,7 +33,7 @@ Current progress and pending items only, as of 2026-11-02.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) and the vitest worker RPC (`Timeout calling "onTaskUpdate"`) fail at times. Rerun the failed jobs once; a second failure needs a look.
 - On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
 - Worktrees in `/github/ahpd.worktrees/`: `briefs-commit` and `plan-mcp` (detached, for plan-only commits), `release-prerelease`, `canvas-example`, `build-agents-b6d26e50` (plan 1054, merged in #187), `maycxc-union` and `union-ad15488a` (merged unions). Remove one only on Softov's word. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
-- `plugin/canvas-example` holds `0100edc0`, "--plugin adds to the configured list, and examples/canvas is a canvas plugin". It is not on main and has no PR. Ask Softov before you act on it.
+- `plugin/canvas-example` holds `0100edc0`, "--plugin adds to the configured list, and examples/canvas is a canvas plugin". Softov asked for a PR of the whole branch on 2026-11-02. It merges only on his word.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union` and `host/20261101-0331-maycxc-cancel-4e6d5cb8`. Delete them only on his word.
 - Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list`, 8 on his box. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
 

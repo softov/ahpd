@@ -224,11 +224,11 @@ describe('the flags of a run', () => {
     expect(said.stderr).toContain(`token: read from ${at}`);
   }, 20000);
 
-  it('refuses --no-plugins beside a --plugin', async () => {
-    const said = await cli(['--stdio', '--no-plugins', '--plugin', BACKEND, '--config-file', config]);
-    expect(said.code).toBe(2);
-    expect(said.stderr).toContain('--no-plugins contradicts');
-  });
+  it('takes --no-plugins beside a --plugin, and loads that one', async () => {
+    const said = await cli(['--stdio', '--no-plugins', '--plugin', BACKEND, '--config-file', config, '--no-update-check']);
+    expect(said.code).toBe(0);
+    expect(said.stderr).toContain('plugin-echo');
+  }, 20000);
 
   it('refuses --plugins, which is not another spelling of --no-plugins', async () => {
     const said = await cli(['--plugins', '--stdio', '--config-file', config]);

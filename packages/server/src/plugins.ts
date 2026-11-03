@@ -78,6 +78,27 @@ export interface Resolved {
 export const sourceOf = (spec: PluginSpec): string => typeof spec === 'string' ? spec : spec.source ?? spec.name;
 
 /**
+ * The plugins one run loads: the file's list, with each `--plugin` added.
+ *
+ * `--no-plugins` leaves the file's list out, so only the `--plugin` ones load.
+ * A `--plugin` naming a module the file lists takes that entry's options and
+ * grants, in the entry's place, but not its `enabled`: the person named it for
+ * this run. A nested host is started as `ahpd --stdio --no-plugins --plugin
+ * <each>`, and the box's own file still says how each backend is set up.
+ */
+export const runPlugins = (file: readonly PluginSpec[], typed: readonly PluginSpec[], noPlugins: boolean): PluginSpec[] => {
+  const list = noPlugins ? [] : [...file];
+  for (const spec of typed) {
+    const entry = typeof spec === 'string' ? file.find((one) => sourceOf(one) === spec) : undefined;
+    const named = typeof entry === 'object' ? (({ enabled: _enabled, ...rest }) => rest)(entry) : spec;
+    const at = list.findIndex((one) => sourceOf(one) === sourceOf(spec));
+    if (at === -1) list.push(named);
+    else list[at] = named;
+  }
+  return list;
+};
+
+/**
  * Each plugin's id, by its spec as written: the name its module exports, then
  * its manifest's, then its file's, then the spec. Filled by `loadPlugins` and
  * `pluginIdsOf`, which import a module to read it.

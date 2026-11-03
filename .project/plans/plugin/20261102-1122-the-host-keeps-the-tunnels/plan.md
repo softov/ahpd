@@ -9,7 +9,7 @@ requires:
   - plans/plugin/20261102-1054-a-connector-signs-in-with-a-device-code/plan.md
 refs:
   - git://6213729e - the commit of ahpd this plan was checked at
-  - git://plugin/canvas-example - holds `.project/briefs/the-host-keeps-the-tunnels.md`, the brief this plan covers in part; the view's data, the ahpw forms and the canvas URL are later plans
+  - briefs/the-host-keeps-the-tunnels.md - the brief this plan covers in part; the view's data, the ahpw forms and the canvas URL are later plans
   - "[code://packages/sdk/src/types/plugin.ts#L1444-L1454](../../../../packages/sdk/src/types/plugin.ts#L1444-L1454) - `registerAdapter` and `registerEngine`, which `registerTunnelKind` sits beside"
   - "[code://packages/sdk/src/plugins/plugins.ts#L1777-L1786](../../../../packages/sdk/src/plugins/plugins.ts#L1777-L1786) - `registerAdapter` checks the name against `contracts` and keeps the adapter"
   - "[code://packages/sdk/src/plugins/plugins.ts#L479-L487](../../../../packages/sdk/src/plugins/plugins.ts#L479-L487) - the fold refuses an adapter name another plugin took, the rule a kind copies"

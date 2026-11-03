@@ -103,8 +103,8 @@ ahpd plugin config orders apiKey '{"$secret":"host:stripe"}'
 
 | Flag | Does |
 | --- | --- |
-| `--plugin <spec>` | Load this plugin. Replaces the file's `plugins` list. Repeatable |
-| `--no-plugins` | Load none |
+| `--plugin <spec>` | Load this plugin too. Adds to the file's `plugins` list. Repeatable |
+| `--no-plugins` | Leave the file's `plugins` list out. With `--plugin`, only those load |
 | `--plugin-option <id>.<key>=<value>` | Set one option for this run. Repeatable |
 
 ```bash

@@ -22,7 +22,7 @@ import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
 import { apiHandler } from '../src/http.js';
 import type { Runner } from '../src/install.js';
 import { registry, type Fetch } from '../src/update.js';
-import { loadPlugins, pluginSet, type PluginSet } from '../src/plugins.js';
+import { loadPlugins, pluginSet, runPlugins, type PluginSet } from '../src/plugins.js';
 import { pluginsChannel } from '../src/pluginschannel.js';
 import { daemonRootConfig } from '../src/rootconfig.js';
 
@@ -179,12 +179,12 @@ const writing = (word: string, marker: string): string => [
   '',
 ].join('\n');
 
-/** A host serving the plugins channel, over plugins loaded from the file. */
-const served = async ({ load = true, run }: { load?: boolean; run?: Runner } = {}) => {
+/** A host serving the plugins channel, over plugins loaded from the file and the `--plugin` ones. */
+const served = async ({ load = true, run, typed, noPlugins }: { load?: boolean; run?: Runner; typed?: PluginSpec[]; noPlugins?: boolean } = {}) => {
   let loaded: Awaited<ReturnType<typeof loadPlugins>>['loaded'] = [];
   let alerts: Awaited<ReturnType<typeof loadPlugins>>['alerts'] = {};
   if (load) {
-    const specs = held().plugins as Parameters<typeof loadPlugins>[0];
+    const specs = runPlugins(held().plugins as PluginSpec[], typed ?? [], noPlugins === true);
     ({ loaded, alerts } = await loadPlugins(specs, {
       base: { path: home, agents: [echo({ path: home })] },
       configDir: fixtures,
@@ -202,6 +202,8 @@ const served = async ({ load = true, run }: { load?: boolean; run?: Runner } = {
     views: () => ({}),
     restartNeeded: () => markRestart(),
     ...(run === undefined ? {} : { run }),
+    ...(typed === undefined ? {} : { typed }),
+    ...(noPlugins === undefined ? {} : { noPlugins }),
   });
   const wire = servedRecords('ahpd', [lists.channel], lists.methods);
   const users = fileUsers({ path: usersFile });
@@ -395,6 +397,25 @@ it('lists two configured plugins, one with the manifest its package.json declare
   expect(secret['manifest']).toEqual({ optionsSchema: secret['optionsSchema'] });
   expect(secret['undeclared']).toBe(true);
   await close();
+});
+
+it('lists what the run loads: the file\'s plugins and the --plugin ones', async () => {
+  const beside = await served({ load: false, typed: [MARKER_OFF] });
+  const ana = await as(beside.host, beside.users, 'ana');
+  expect(Object.keys(await ana.rows())).toEqual(['declared', 'secret', 'marker-off']);
+  // A write edits the file, which does not list a plugin only --plugin named.
+  const cy = await as(beside.host, beside.users, 'cy');
+  expect(await cy.call('x-ahpd/plugins/options', { id: 'marker-off', key: 'level', value: 'high' }))
+    .toMatchObject({ code: -32602, message: `marker-off is not in plugins in ${config}.` });
+  await beside.close();
+
+  // Under --no-plugins only the --plugin ones are listed, set up as the file says.
+  const only = await served({ load: false, typed: [SECRET], noPlugins: true });
+  const ana2 = await as(only.host, only.users, 'ana');
+  const rows = await ana2.rows();
+  expect(Object.keys(rows)).toEqual(['secret']);
+  expect((rows['secret'] as Bag)['spec']).toEqual({ source: SECRET, options: { apiKey: SET, region: 'eu' } });
+  await only.close();
 });
 
 it('turns a plugin off in the configuration file, and the row says so', async () => {

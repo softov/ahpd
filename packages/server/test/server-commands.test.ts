@@ -357,7 +357,7 @@ describe('--plugin-option', () => {
 
   it('sets an option on a plugin named by a typed --plugin', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
-    expect(plugins({ plugins: ['b'], pluginOptions: ['b.k=true'] })).toEqual([{ source: 'b', options: { k: true } }]);
+    expect(plugins({ plugins: ['b'], pluginOptions: ['b.k=true'] })).toEqual(['a', { source: 'b', options: { k: true } }]);
   });
 
   it('names a plugin by the id its module exports, once it is imported to read it', async () => {
@@ -372,7 +372,7 @@ describe('--plugin-option', () => {
   it('refuses a plugin this run does not load, naming it', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
     expect(() => plugins({ pluginOptions: ['c.k=1'] })).toThrow('--plugin-option names c, which is not a plugin this run loads.');
-    expect(() => plugins({ plugins: ['b'], pluginOptions: ['a.k=1'] })).toThrow('--plugin-option names a');
+    expect(() => plugins({ noPlugins: true, plugins: ['b'], pluginOptions: ['a.k=1'] })).toThrow('--plugin-option names a');
     expect(() => plugins({ plugins: ['b'], pluginOptions: ['@ahpd/agent-claude.presets.x.model=1'] }))
       .toThrow('--plugin-option names @ahpd/agent-claude, which is not a plugin this run loads.');
   });

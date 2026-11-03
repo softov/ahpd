@@ -144,7 +144,7 @@ Such a backend declares `runsNested: true`, and a session of it whose `computer`
 The proxy starts a whole `ahpd` **inside the machine**, in stdio mode, with that backend loaded, and presents the inner session to the client exactly as a local one:
 
 ```
-<host> --stdio --plugin <each>
+<host> --stdio --no-plugins --plugin <each>
 ```
 
 The inner host creates the session with the same config minus `computer`, and the outer session forwards turns, tool confirmations, input answers, config changes, cancel and dispose to it and emits its chat and session actions as its own.
@@ -214,7 +214,7 @@ A folder no mount covers is the machine's own working directory.
 The machine remembers the profile that made it, so a daemon that restarts - or one that did not make it - still starts the host the profile named.
 The profile's `agents` is what shares cofold's configuration and provider key into the machine, the same mechanism [Claude Code](#claude-code-in-a-machine) uses, and a profile without them is a cofold session that cannot sign in.
 
-`--stdio` and one `--plugin` per spec are appended to `host`, so `host` names only the program: `ahpd`, a pinned `node /work/ahpd/main.js`, or whatever an image actually has.
+`--stdio`, `--no-plugins` and one `--plugin` per spec are appended to `host`, so `host` names only the program: `ahpd`, a pinned `node /work/ahpd/main.js`, or whatever an image actually has.
 
 ### Claude Code in a machine
 
@@ -393,7 +393,7 @@ A policy names every ssh machine with `computer: ["ssh.*"]`.
 
 ### What runs there
 
-Every session on an ssh machine runs nested, whatever its backend: `<host> --stdio --plugin <the agent's plugin>` on the box, over one `ssh -T`.
+Every session on an ssh machine runs nested, whatever its backend: `<host> --stdio --no-plugins --plugin <the agent's plugin>` on the box, over one `ssh -T`.
 The session's folder there is the machine's `workdir`, written as the box's own path.
 An ACP agent runs only in a folder the person trusts: the folder inside is trusted when their client trusts the session's folder on this host.
 A restart of this host leaves the session on the box, and the next turn resumes it there.
@@ -438,7 +438,7 @@ A host with no users file has nowhere to keep a node.
 
 Every session on a node runs nested, as on an ssh machine.
 The hub asks for one with `node/open`, and the node dials one more socket back for it.
-The node starts `ahpd --stdio --plugin <the agent's plugin>` in its own working directory.
+The node starts `ahpd --stdio --no-plugins --plugin <the agent's plugin>` in its own working directory.
 The hub reads that socket as a `NestedHost`, so a turn, a tool call and a stop are the proxy's own frames.
 The folder a session starts in is the one the node said in its `node/hello`, written as that box's own path.
 What serves the session is the node's ahpd, with the harness and the configuration installed on that box.

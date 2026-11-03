@@ -9,7 +9,7 @@ requires:
   - plans/plugin/71-a-connector-signs-in-with-its-provider/plan.md
 refs:
   - git://6e6d1ca8 - the commit of ahpd this plan was checked at
-  - git://plugin/canvas-example - holds `.project/briefs/a-connector-signs-in-with-a-device-code.md`, the brief this plan covers, and `the-host-keeps-the-tunnels.md`, the next plan's brief
+  - git://f963ae8e - the last commit that holds `.project/briefs/a-connector-signs-in-with-a-device-code.md`, the brief this plan covers
   - "[code://packages/sdk/src/types/connectors.ts#L272-L288](../../../../packages/sdk/src/types/connectors.ts#L272-L288) - `SignIn`, the pasted-code flow that gets a device-code sibling"
   - "[code://packages/sdk/src/types/connectors.ts#L299-L360](../../../../packages/sdk/src/types/connectors.ts#L299-L360) - `Adapter`, with `signIn?`, `open` and `check`"
   - "[code://packages/sdk/src/connectors/channel.ts#L623-L695](../../../../packages/sdk/src/connectors/channel.ts#L623-L695) - `ownerChecks` and `prepare`, which every sign-in runs, and which replace a record on an existing id"

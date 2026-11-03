@@ -746,7 +746,7 @@ it('starts a host in the box with the plugins it was asked for, and nothing of t
   expect(problems).toEqual([]);
 
   const spawn = await options.computers?.nested?.('ssh.dev02', { plugins: ['@ahpd/agent-cofold'] });
-  expect(spawn?.args.at(-1)).toBe(`'ahpd' '--stdio' '--plugin' '@ahpd/agent-cofold'`);
+  expect(spawn?.args.at(-1)).toBe(`'ahpd' '--stdio' '--no-plugins' '--plugin' '@ahpd/agent-cofold'`);
   // No environment at all: the ahpd on the box holds what it was given by hand
   // there, and a value from the vault would be written into this very command.
   expect(spawn?.env).toBeUndefined();
