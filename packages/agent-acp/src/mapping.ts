@@ -207,16 +207,17 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
 };
 
 /**
- * The ready that says a call is running, and the ask that goes with it.
+ * The ready that says a call is running, and the ask that follows it.
  *
- * A call a client owns is that client's to run, so the entry asking it is
- * raised here, at the one ready that says the agent has started the call -
+ * A call a client owns is that client's to run, so the call is held for the
+ * entry asking it at the one ready that says the agent has started the call -
  * never at `pending`, which is the agent saying it has not. A call that arrives
- * already finished is nobody's to run and asks nobody.
+ * already finished is nobody's to run and asks nobody. The entry goes up once
+ * the ready has, so it names a call the chat holds running.
  */
 const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[] => {
   const finished = call.status === 'completed' || call.status === 'failed';
-  if (call.owner !== undefined && !finished) turn.onRunning?.(call);
+  if (call.owner !== undefined && !finished) turn.opening.push(call);
   return [ready(turn, call, input)];
 };
 

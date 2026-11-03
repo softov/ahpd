@@ -304,6 +304,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
       noteCall(bag(action));
       emit('chat', action);
     }
+    // The clients' calls this update started, asked for once the chat holds
+    // each one running: an entry names a call in that state.
+    for (const call of current.opening.splice(0)) ctx.openCall(call, current.turnId);
   };
 
   /**

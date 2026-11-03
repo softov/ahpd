@@ -466,6 +466,18 @@ it("answers the agent's request with what the owning client said", async () => {
   ]);
   expect(types(p, chatUri).filter((type) => type.startsWith('chat/toolCall')))
     .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+  /*
+   * The entry asking the client went up once the chat held the call running,
+   * which is the ready: an entry names a call in the state its kind is raised
+   * for, as the reference host raises a client execution while the call runs.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L132-L144
+   */
+  const ready = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === chatUri && (n.params as Note).action.type === 'chat/toolCallReady');
+  const raised = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === uri && (n.params as Note).action.type === 'session/inputNeededSet');
+  expect(ready).toBeGreaterThan(-1);
+  expect(raised).toBeGreaterThan(ready);
   // And the entry the client was asked through is gone, not left open.
   expect(asked(p, uri)).toEqual([]);
 });

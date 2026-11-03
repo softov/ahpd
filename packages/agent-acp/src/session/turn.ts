@@ -343,6 +343,7 @@ export function createTurn(ctx: SessionContext): Turn {
         turnId,
         parts: turn.responseParts as Bag[],
         calls: new Map(),
+        opening: [],
         ...(start.plan === true ? { hostPlan: true } : {}),
         reach: {
           within: inside,
@@ -358,7 +359,6 @@ export function createTurn(ctx: SessionContext): Turn {
         // offer: a call the agent reports for one is held for the client that
         // owns it, and asks that client to run it.
         ownerOf: ctx.ownerOf,
-        onRunning: (call) => ctx.openCall(call, turnId),
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
       await ctx.chooseModel(held, chosen);
