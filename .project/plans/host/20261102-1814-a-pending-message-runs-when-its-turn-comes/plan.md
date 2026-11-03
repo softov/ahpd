@@ -1,7 +1,7 @@
 ---
 title: A pending message runs when its turn comes
 domain: host
-status: built
+status: active
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -22,6 +22,14 @@ refs:
   - "[code://packages/agent-pi/src/session.ts#L1500-L1512](../../../../packages/agent-pi/src/session.ts#L1500-L1512) - a message queued with nothing running waits"
   - "[code://packages/bot/src/chat.ts#L1007-L1042](../../../../packages/bot/src/chat.ts#L1007-L1042) - a bot's steer ends the open turn and starts another"
   - "[code://packages/agent-claude/src/session/turns.ts#L367-L372](../../../../packages/agent-claude/src/session/turns.ts#L367-L372) - Claude starts a queued message in one step"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69 - a stopped turn's end starts nothing, and only a turn that succeeded or ran a local command starts the queue"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286 - what starts is the steering message first, then the first queued message"
+  - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L366-L372 - the specification's text: the queue is consumed when a turn completes, which says nothing of a stop"
+  - "[code://packages/agent-claude/src/session/query.ts#L1031-L1046](../../../../packages/agent-claude/src/session/query.ts#L1031-L1046) - a stopped turn's result starts the queue"
+  - "[code://packages/agent-claude/src/session/query.ts#L1149-L1159](../../../../packages/agent-claude/src/session/query.ts#L1149-L1159) - every result starts the queue"
+  - "[code://packages/agent-pi/src/session.ts#L685-L731](../../../../packages/agent-pi/src/session.ts#L685-L731) - pi's `finish` starts the queue whatever ended the turn"
+  - "[code://packages/bot/src/chat.ts#L1053-L1057](../../../../packages/bot/src/chat.ts#L1053-L1057) - a bot's stop ends its turn and starts the queue"
+  - "[code://packages/sdk/src/types/session.ts#L657-L672](../../../../packages/sdk/src/types/session.ts#L657-L672) - `Session.queue`, which appends"
 ---
 
 ## Goal
@@ -78,6 +86,12 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 | B4: the bot keeps the steer on a log line against that turn, so a chat read back still shows it, as plan 56 requires | [plugin/56](../../plugin/56-a-steered-bot-message-is-its-own-turn/plan.md) | 03 |
 | E28: no change; a Claude turn opened for steering a stopped turn left names it, which VS Code's host does too | [agentSideEffects.ts#L908-L913](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L908-L913) | - |
 | Q4, F3: no change; ACP and cofold keep queued messages after a stop, as VS Code's host does | [agentSideEffects.ts#L1950-L1954](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954) | - |
+| Q4's other backends: Claude, pi and the bot start nothing when a turn is stopped, and the queue stays for a later message to start | [agentSideEffects.ts#L1950-L1954](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954); [queueDrainContribution.ts#L55-L69](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69) | 04 |
+| Q4: the specification's "when a turn completes" leaves a stop open, and a VS Code client sees the queued turn start or stay, so VS Code's host decides | [chat-channel.md#L366-L372](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L366-L372) | 04 |
+| Q4: a message queued after the stop starts the head of the queue once the stopped turn has let go, as the reference host takes the first queued message whenever one is set while idle | [queueDrainContribution.ts#L245-L286](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286) | 04 |
+| A10's rest: a steering message with nothing running goes into the backend's queue ahead of what waits there, so it is the next turn | [queueDrainContribution.ts#L260-L262](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262) | 05 |
+| `Session.queue` takes the pending message's `kind`, and a backend holding a list puts a steering one at its head | `(defaulted: the protocol's word for the two kinds, carried to the backend that orders them)` | 05 |
+| Found, not built: Claude, pi, ACP and cofold start the queue after a failed turn, where the reference host starts it only after a turn that succeeded or ran a local command, and holds a new message behind a resumable failure | [queueDrainContribution.ts#L66-L68](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68); [queueDrainContribution.ts#L256-L259](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L256-L259) | - |
 
 ## Proposed architecture
 
@@ -93,6 +107,8 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 | [01 - A steering message runs as VS Code runs it](task-01-a-steering-message-runs-as-vs-code-runs.md) | done | - |
 | [02 - pi starts a queued message as a turn naming it](task-02-pi-starts-a-queued-message.md) | done | - |
 | [03 - A bot's steer goes into the open turn](task-03-a-bots-steer-goes-into-the-turn.md) | done | - |
+| [04 - A stop holds the queue](task-04-a-stop-holds-the-queue.md) | todo | - |
+| [05 - Idle steering runs ahead of the queue](task-05-idle-steering-runs-ahead.md) | todo | 04 |
 
 ## Risks and tradeoffs
 
@@ -103,7 +119,7 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 ## Resume state
 
 - **Done so far:** tasks 01 to 03, 2026-11-02.
-- **Next action:** none; see [implemented.md](implemented.md).
+- **Next action:** task 04.
 - **Open questions:** none.
 - **Watch out for:** the owed answer to a steering message is the backend's queued `chat/pendingMessageSet`, said as the client's own action.
 
