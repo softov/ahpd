@@ -1,6 +1,6 @@
 ---
 title: Each echo is the client's action
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -49,4 +49,6 @@ A running session's schema is the declared schema.
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources each of the five changed cases fails for the rewrite it names.

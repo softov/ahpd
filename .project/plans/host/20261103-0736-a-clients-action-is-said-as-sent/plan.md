@@ -1,7 +1,7 @@
 ---
 title: A client's action is said as sent
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -75,7 +75,7 @@ a running session's start -> spawn.ts -> runningSchema, the declared schema froz
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Each echo is the client's action](task-01-each-echo-is-the-clients-action.md) | todo | - |
+| [01 - Each echo is the client's action](task-01-each-echo-is-the-clients-action.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -84,13 +84,13 @@ a running session's start -> spawn.ts -> runningSchema, the declared schema froz
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the restart mark itself stays the daemon's answer, kept by `markRestart`.
 
 ## Final verification checklist
 
-- [ ] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The tools, root config, session config and fixed key test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The tools, root config, session config and fixed key test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
