@@ -149,17 +149,31 @@ export interface ConnectedClient {
   connectedAt: number;
 }
 
+/** A connection that opened, or one that closed. */
+export type ClientChange =
+  | { socket: number; joined: true }
+  | { socket: number; joined: false };
+
 /**
  * The clients this host serves, as a live list.
  *
- * Read-only for a plugin: what a reader may do with a connection is the
- * host's, since a socket is the door's to admit and the host's to end. The
- * rows exist while their sockets do, so a reader is sent an arrival and a
- * departure rather than a stored list that could fall behind.
+ * The rows exist while their sockets do, so a reader is sent an arrival and a
+ * departure rather than a stored list that could fall behind. Reading is one
+ * grant and dropping is another: a socket is the door's to admit and the
+ * host's to end, and nothing else about a connection is a caller's to change.
  */
 export interface ClientRegistry {
   /** One entry for each open connection, in the order they were accepted. */
   connected(): ConnectedClient[];
+  /** Called on each arrival and each departure, until the handle is closed. */
+  watch(onChange: (change: ClientChange) => void): { close(): void };
+  /**
+   * Close the connection on this socket, and answer whether the registry held one.
+   *
+   * A drop is not a ban: the client may connect again at once, and is a new
+   * row, because a row's id is the socket's number and not its client id.
+   */
+  drop(socket: number): boolean;
 }
 
 /** How to construct a host. */

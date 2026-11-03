@@ -18,11 +18,12 @@
  * Where an operation may be invoked.
  *
  * `list` is the channel as a whole, such as making a new record. `tunnel` is
- * one record of it, such as starting or removing that record. A kind declares
- * the scopes an operation accepts, and the host refuses an invocation whose
- * target is not one of them.
+ * one record of it, such as starting or removing that record. `client` is one
+ * client the host serves, such as dropping its connection. A kind declares the
+ * scopes an operation accepts, and the host refuses an invocation whose target
+ * is not one of them.
  */
-export type OperationScope = 'list' | 'tunnel';
+export type OperationScope = 'list' | 'tunnel' | 'client';
 
 /**
  * How an invocation of an operation is going.

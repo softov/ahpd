@@ -117,6 +117,8 @@ export { connectorsChannel } from './connectors/channel.js';
 export type { ConnectorsChannel, ConnectorsChannelOptions, ConnectorState } from './connectors/channel.js';
 export { tunnelsChannel } from './tunnels/channel.js';
 export type { TunnelsChannel, TunnelsChannelOptions } from './tunnels/channel.js';
+export { clientsChannel } from './clients/channel.js';
+export type { ClientCounts, ClientsChannel, ClientsChannelOptions } from './clients/channel.js';
 export { invokeOperation, OPERATION_COMMAND, OPERATION_GRANT } from './kinds/operations.js';
 export type { InvokeOperationOptions, OperationChannel } from './kinds/operations.js';
 export { BINDINGS_KEY, BINDINGS_SCHEME, bindingTarget, bindingsOf, checkBindings } from './connectors/bindings.js';

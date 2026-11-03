@@ -1,6 +1,6 @@
 import type { Agent } from '../types/agent.js';
 import type { Catalogs } from '../i18n.js';
-import type { Connection, HostOptions, HostTool, ResourceProvider } from '../types/host.js';
+import type { ClientChange, Connection, HostOptions, HostTool, ResourceProvider } from '../types/host.js';
 import type { PublishOptions } from '../types/plugin.js';
 import type { Peer } from '../types/rpc.js';
 import type { Session } from '../types/session.js';
@@ -66,6 +66,14 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   first: Agent | undefined;
   /** Every connection the host is serving right now. */
   connections: Set<Connection>;
+  /**
+   * Tell the client registry's watchers that a connection joined or left.
+   *
+   * An arrival is known where the handshake finishes, which is in
+   * `handshake.ts`, and the registry is held here; a departure is the
+   * connection's own close. Both go through this one call.
+   */
+  clientsChanged(change: ClientChange): void;
   /**
    * The dev container relays each live connection holds, by the connection.
    *

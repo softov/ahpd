@@ -13,11 +13,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
 import {
   adaptersChannel,
   enginesChannel,
   agentsChannel,
+  clientsChannel,
   clientPluginsIn,
   connectorsChannel,
   invokeOperation,
@@ -738,7 +739,27 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   openWire(options.wire);
   /** The MCP servers the next session is offered, replaced by a root config write. */
   let mcpServers = options.mcpServers;
-  const tap: Tap = (from, text, peer) => { capture.write?.(lineFor(from, text, peer, transport)); };
+  /*
+   * The frames and bytes each socket has carried, by direction.
+   *
+   * Counted where the tap already sees every frame, and dropped by the client
+   * list's watch when that socket leaves, so a row counts one connection.
+   */
+  const traffic = new Map<number, ClientCounts>();
+  const tap: Tap = (from, text, peer) => {
+    capture.write?.(lineFor(from, text, peer, transport));
+    const counts = traffic.get(peer) ?? { framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0 };
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (from === 'client') {
+      counts.framesIn += 1;
+      counts.bytesIn += bytes;
+    }
+    else {
+      counts.framesOut += 1;
+      counts.bytesOut += bytes;
+    }
+    traffic.set(peer, counts);
+  };
 
   /*
    * The host the plugins are folded into.
@@ -936,12 +957,25 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   });
   tunnelLists = tunnels;
   /*
-   * The one command over every channel that offers operations. The tunnels
-   * channel is its only one now; a computers channel joins it later without
-   * another command being served.
+   * The clients this daemon serves, as a list an operator reads.
+   *
+   * Built before the host exists, as the tunnels list is, and handed the
+   * registry through a closure: the registry is the host's own, and it is
+   * bound below once `createHost` returns.
    */
-  const tunnelOperations = invokeOperation({
-    channels: () => ({ [tunnels.operations.uri]: tunnels.operations }),
+  let clientRegistry: ClientRegistry | undefined;
+  const clients = clientsChannel({
+    registry: () => clientRegistry,
+    counters: (socket) => traffic.get(socket),
+    onProblem: listProblem,
+  });
+  /*
+   * The one command over every channel that offers operations. The tunnels and
+   * clients channels are its two now; a computers channel joins them later
+   * without another command being served.
+   */
+  const channelOperations = invokeOperation({
+    channels: () => ({ [tunnels.operations.uri]: tunnels.operations, [clients.operations.uri]: clients.operations }),
     check: (value, schema, label) => { check(value, schema as JsonSchema, label); },
     onProblem: listProblem,
   });
@@ -1044,8 +1078,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   };
   const lists = servedRecords(
     'ahpd',
-    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel],
-    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: tunnelOperations },
+    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel, clients.channel],
+    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: channelOperations },
   );
 
   /*
@@ -1813,6 +1847,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * in the channel.
    */
   const host = createHost({ ...started, connectors: { refs: () => connectorLists.refs(), run: connectorLists.run } });
+  /*
+   * The client list's source, now that the host holding the connections exists,
+   * and a refresh on each arrival and the departure that follows it. A socket's
+   * counts go with it, so a reconnect starts from zero.
+   */
+  clientRegistry = host.clientRegistry;
+  const clientWatch = host.clientRegistry.watch((change) => {
+    if (!change.joined) traffic.delete(change.socket);
+    void clients.refresh();
+  });
   // The plugin channel's marks reach the host that now serves it.
   markRestart = () => { host.markRestartNeeded(); };
   valuesMoved = () => host.daemonValuesMoved();
@@ -2097,6 +2141,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
        * stop is the host's, whatever the kind's plugin does in its handler.
        */
       await tunnels.stopAll();
+      // The client list is refreshed by the host, which is going with it.
+      clientWatch.close();
+      clients.stop();
       await raise(liveEvents, { type: 'stopping' }, failed('stopping'));
       peopleLists?.close();
       // The hourly fetch of the provider lists stops with the daemon that reads them.

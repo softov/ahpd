@@ -36,7 +36,7 @@ import { debugLogs } from './sessions/debuglogs.js';
 import type { Terminal } from './types/terminals.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
 import type { MessageAttachment, MessageFrom } from './types/session.js';
-import type { Connection, ConnectedClient, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
+import type { ClientChange, Connection, ConnectedClient, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
 import type { Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool, Listed, McpServer } from './types/agent.js';
@@ -242,6 +242,12 @@ export function createHost(options: HostOptions): Host {
     return [...found];
   };
   const connections = new Set<Connection>();
+  /** The calls the client registry makes on each arrival and departure. */
+  const clientWatchers = new Set<(change: ClientChange) => void>();
+  /** Tell each watcher of the client registry what moved. */
+  const clientsChanged = (change: ClientChange): void => {
+    for (const watcher of clientWatchers) watcher(change);
+  };
   /**
    * The ten `resource*` methods, which run in both directions.
    *
@@ -1429,7 +1435,7 @@ export function createHost(options: HostOptions): Host {
         : options.catalogs?.agents?.[provider],
       HOST_CATALOGS,
     ],
-    replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
+    replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
     logs, detached, refuse,
@@ -1810,8 +1816,26 @@ export function createHost(options: HostOptions): Host {
 
   return {
     clients,
-    // In arrival order, which is the order the set iterates in.
-    clientRegistry: { connected: () => [...connections].map(clientRow) },
+    /*
+     * In arrival order, which is the order the set iterates in.
+     *
+     * A drop closes the peer and returns at once; the connection leaves the
+     * set when the listener reports the socket it closed, which is where the
+     * departure is said.
+     */
+    clientRegistry: {
+      connected: () => [...connections].map(clientRow),
+      watch: (onChange) => {
+        clientWatchers.add(onChange);
+        return { close: () => { clientWatchers.delete(onChange); } };
+      },
+      drop: (socket) => {
+        const connection = [...connections].find((one) => one.socket === socket);
+        if (connection === undefined) return false;
+        connection.peer.close();
+        return true;
+      },
+    },
     /*
      * Replaced whole, and every running session told.
      *
@@ -2364,7 +2388,9 @@ export function createHost(options: HostOptions): Host {
               void Promise.resolve(options.containers.disconnect(id)).catch(() => { /* already gone */ });
             }
           }
-          connections.delete(connection);
+          const departed = connections.delete(connection);
+          // Said once, however often the close is asked for.
+          if (departed && connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: false });
           // The relays above were ended one by one; the view across
           // connections drops this one with the connection itself.
           ctx.relays.delete(connection);
