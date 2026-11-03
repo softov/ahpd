@@ -1,7 +1,7 @@
 ---
 title: An active client entry is taken as sent
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -62,7 +62,7 @@ a client unsubscribes or goes -> host.ts leaves -> the entry under its own id ->
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An entry naming no client is held as sent](task-01-an-entry-naming-no-client-is-held.md) | todo | - |
+| [01 - An entry naming no client is held as sent](task-01-an-entry-naming-no-client-is-held.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -70,13 +70,13 @@ a client unsubscribes or goes -> host.ts leaves -> the entry under its own id ->
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a creator's entry is refused unless it names the connection, so `createSession` holds none without an id.
 
 ## Final verification checklist
 
-- [ ] The new case fails on `cde4dd6c` for the reason it names, and passes after the change.
-- [ ] The presence test file passes.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new case fails on `cde4dd6c` for the reason it names, and passes after the change.
+- [x] The presence test file passes.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

@@ -1,6 +1,6 @@
 ---
 title: An entry naming no client is held as sent
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -22,6 +22,13 @@ A client's leaving takes out the entry under its own id, and leaves an entry nam
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts:1069-1074` - a creator's entry under the presence map's type.
 - `UPDATE: packages/sdk/test/presence.test.ts:316-345` - an entry naming no client, held as sent and left by the sender's leaving.
 - `UPDATE: docs/sdk/AHP.md` - the `session/activeClientSet` row.
+- `UPDATE: packages/sdk/test/client-plugins-session.test.ts` - the plugin client announces under its own id.
+- `UPDATE: packages/sdk/test/host-catalogue.test.ts` - the two announcements name the sender.
+- `UPDATE: packages/sdk/test/host-remote-session.test.ts` - the announcement names the sender.
+- `UPDATE: packages/sdk/test/host-tools.test.ts` - each announcement names its sender.
+- `UPDATE: packages/agent-acp/test/agent-acp-client-tool.test.ts` - the joining client announces under its own id.
+- `UPDATE: packages/agent-acp/test/agent-acp-turn.test.ts` - the joining client announces under its own id.
+- `UPDATE: packages/agent-cofold/test/agent-cofold-client-tool.test.ts` - both clients announce under their own ids.
 
 ## Steps
 
@@ -30,6 +37,7 @@ A client's leaving takes out the entry under its own id, and leaves an entry nam
 3. Name a leaving client's removal by its own id.
 4. Add the case of an entry naming no client.
 5. Describe the entry in the `session/activeClientSet` row.
+6. Name the sender in every case that announces a client's own entry.
 
 ## Validation
 
@@ -39,4 +47,7 @@ A client's leaving takes out the entry under its own id, and leaves an entry nam
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the new case fails: the entry is said with the sender's id.
+- The cases that announced a client's own entry with no `clientId` name the sender now, in eight test files.
