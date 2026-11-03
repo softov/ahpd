@@ -146,6 +146,28 @@ it('holds the set without ahp when the declaration that adds it back is refused'
   expect(held.state().offering).toEqual(first);
 });
 
+/*
+ * The one host tool this backend does not take.
+ *
+ * Claude has its own question tool, and the plan
+ * `host/20261103-1620-an-agent-asks-the-person` leaves it on that for now. The
+ * host's `ask_user` is therefore never declared, so the model is never offered
+ * `mcp__ahp__ask_user` beside the question tool it already has.
+ */
+it('does not take the host\'s ask_user, because it asks with its own tool', async () => {
+  const held = session();
+  expect(await held.setTools([offeredTool('ask_user'), offeredTool('openFile')])).toBe(true);
+  // The server the CLI was given, which is what it registers as `mcp__ahp__*`.
+  const tools = seen.given?.tools as { name: string }[];
+  expect(tools.map((one) => one.name)).toEqual(['openFile']);
+  expect(held.state().offering.map((one) => one.definition.name)).toEqual(['openFile']);
+
+  // A list of nothing but ask_user leaves the session with no `ahp` at all.
+  expect(await held.setTools([offeredTool('ask_user')])).toBe(true);
+  expect(held.state().offering).toEqual([]);
+  expect(Object.keys(held.state().declared)).toEqual(['host']);
+});
+
 it('declares the set whole, so a re-declare cannot take the host server away', async () => {
   const held = session();
   await held.setTools([offeredTool('openFile')]);

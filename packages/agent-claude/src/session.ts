@@ -5,7 +5,7 @@ import { activityOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
-import { contributed, createClientTools } from './session/clienttools.js';
+import { contributed, createClientTools, takes } from './session/clienttools.js';
 import { createConfig, listsOf } from './session/config.js';
 import type { ClaudeSessionOptions, Owed, SessionContext } from './session/context.js';
 import { createLogins } from './session/logins.js';
@@ -67,7 +67,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
     turnEffort: undefined as string | undefined,
-    offering: [...(options.tools ?? [])] as BoundTool[],
+    offering: takes((options.tools ?? []) as BoundTool[]),
     handle: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
