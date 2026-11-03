@@ -431,6 +431,38 @@ describe('a command typed into the conversation', () => {
     expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
   });
 
+  /*
+   * A turn sent while a command runs as the chat's turn takes its place, as
+   * the reducer replaces the active turn, and the command's turn is then in
+   * no history: the reducer keeps none of the turn it replaces.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   */
+  it('keeps no history of a command a turn sent after it took the place of, and runs that turn', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!sleep 1' } } },
+    });
+    for (const until = Date.now() + WAIT_MS; Date.now() < until && !actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't1');) {
+      await new Promise((r) => { setTimeout(r, 25); });
+    }
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'after it' } } },
+    });
+    for (const until = Date.now() + WAIT_MS; Date.now() < until && !sdk.said.includes('after it');) {
+      await new Promise((r) => { setTimeout(r, 25); });
+    }
+    expect(sdk.said).toEqual(['after it']);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    await ended(p, chatUri, 't2');
+    await new Promise((r) => { setTimeout(r, 1200); });
+    const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
+  });
+
   it('says a command on pipes runs in no pseudoterminal', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
