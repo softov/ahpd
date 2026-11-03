@@ -204,7 +204,7 @@ async function providing(
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
+    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { clientId: id, name: id, tools } } },
   });
 }
 

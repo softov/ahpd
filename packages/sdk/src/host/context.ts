@@ -279,8 +279,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   actionTools: HostTool[];
   /** The tools this host contributes, with the permission applied. */
   contributing: HostTool[];
-  /** Who is in a session right now, by the id inside the session's uri. */
-  presence: Map<string, Map<string, Bag>>;
+  /** Who is in a session right now, by the id inside the session's uri and then by the `clientId` each entry carries. */
+  presence: Map<string, Map<unknown, Bag>>;
   /** The directories a chat was handed on top of its session's own, by chat URI. */
   beside: Map<string, string[]>;
   /** The marks a session carries, kept so they outlive the annotations channel. */

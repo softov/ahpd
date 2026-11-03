@@ -175,13 +175,14 @@ async function session(held: ReturnType<typeof serving>['served'], id = 'watcher
   return a;
 }
 
+/** The client called `plugin` announcing its own entry, under its own id. */
 const announce = (
   client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
   customizations: unknown[],
   tools: { name: string }[] = [],
 ) => client.handle({
   method: 'dispatchAction',
-  params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { customizations, tools } } },
+  params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { clientId: 'plugin', customizations, tools } } },
 });
 
 const names = (one: Record<string, unknown>) => one.type;

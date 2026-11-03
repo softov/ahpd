@@ -1168,7 +1168,7 @@ it('takes a client into a session it is serving from a transcript', async () => 
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, clientSeq: 3, action: { type: 'session/activeClientSet', activeClient: {} } },
+    params: { channel: uri, clientSeq: 3, action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe' } } },
   });
   await settle();
 
@@ -1193,7 +1193,7 @@ it('takes a client into a session the catalogue has listed, before anybody reads
   const uri = 'ahp-session:/listed';
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, clientSeq: 5, action: { type: 'session/activeClientSet', activeClient: {} } },
+    params: { channel: uri, clientSeq: 5, action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe' } } },
   });
   await settle();
 

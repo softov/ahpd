@@ -139,7 +139,7 @@ it('says an unchanged announcement to every client, each time at the next sequen
 
   const announce = (clientSeq: number) => client.handle({
     method: 'dispatchAction',
-    params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } },
+    params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', tools: [] } } },
   });
   await announce(1);
   await settle();
@@ -241,7 +241,7 @@ it('leaves a client that reconciles on every move, as VS Code does, sending its 
 
   // The other client says its set, then says it again unchanged.
   for (const clientSeq of [1, 2, 3]) {
-    await second.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } } });
+    await second.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { clientId: 'two', tools: [] } } } });
     await settle();
   }
 
@@ -259,7 +259,7 @@ it('says so again when what a client contributes has changed', async () => {
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } },
+    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', tools: [] } } },
   });
   await settle();
   // A tool arriving is a change, and has to go out.
@@ -267,7 +267,7 @@ it('says so again when what a client contributes has changed', async () => {
     method: 'dispatchAction',
     params: {
       channel: URI,
-      action: { type: 'session/activeClientSet', activeClient: { tools: [{ name: 'openBrowserPage' }] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', tools: [{ name: 'openBrowserPage' }] } },
     },
   });
   await settle();
@@ -342,6 +342,40 @@ it('holds an entry that names another client as sent, and the sender\'s leaving 
   await b.client.handle({ method: 'subscribe', params: { channel: URI } });
   await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
   expect(await clientsIn(b.client, URI)).toEqual(['somebody-else']);
+});
+
+/*
+ * An entry that names no client is held as sent: the reference host takes a
+ * set as sent, and the protocol's reducer keys the entry by the `clientId` it
+ * carries. A client's leaving takes out its own entry, which this is not.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts#L264-L273
+ */
+it('holds an entry that names no client as sent, and the sender\'s leaving leaves it', async () => {
+  const held = host();
+  const a = await joins(held, 'honest');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+  const entry = { displayName: 'Nobody', tools: [] };
+  await a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq: 1, action: { type: 'session/activeClientSet', activeClient: entry } },
+  });
+  const said = a.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: { type: string; activeClient?: unknown }; rejectionReason?: string })
+    .find((one) => one.action.type === 'session/activeClientSet');
+  expect(said?.rejectionReason).toBeUndefined();
+  expect(said?.action.activeClient).toEqual(entry);
+  /** The session's entries as a client subscribing now is handed them. */
+  const entries = async (client: Client) => ((await client.handle({ method: 'subscribe', params: { channel: URI } })) as {
+    snapshot: { state: { activeClients: unknown[] } };
+  }).snapshot.state.activeClients;
+  expect(await entries(a.client)).toEqual([entry]);
+  const b = await joins(held, 'watcher');
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
+  expect(await entries(b.client)).toEqual([entry]);
 });
 
 it('replaces what a client contributes rather than merging it', async () => {

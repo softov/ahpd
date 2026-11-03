@@ -106,9 +106,9 @@ const OPENED = {
  * A running cofold session with one client that says it can run `openFile`.
  *
  * Announced the way the protocol says a client does: dispatching a
- * `session/activeClientSet` whose `tools` are the definitions it provides.
- * The host forces the `clientId` to this connection's, which is what makes
- * the tool `probe__openFile` on the model's list.
+ * `session/activeClientSet` whose `tools` are the definitions it provides,
+ * under its own `clientId`, which is what makes the tool `probe__openFile`
+ * on the model's list.
  */
 async function offering(
   model: ModelAdapter,
@@ -141,7 +141,7 @@ async function offering(
     method: 'dispatchAction',
     params: {
       channel: uri,
-      action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools: [OPEN_FILE] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: given.clientId ?? 'probe', name: 'VS Code', tools: [OPEN_FILE] } },
     },
   });
   await settle();
@@ -422,7 +422,7 @@ it('asks a call of the one client whose tool it is, and refuses the other', asyn
     method: 'dispatchAction',
     params: {
       channel: uri,
-      action: { type: 'session/activeClientSet', activeClient: { name: 'Other editor', tools: [OPEN_FILE] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'b', name: 'Other editor', tools: [OPEN_FILE] } },
     },
   });
   await settle();

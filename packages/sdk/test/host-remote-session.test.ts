@@ -304,7 +304,7 @@ const announces = (client: Client) => client.handle({
   method: 'dispatchAction',
   params: {
     channel: SESSION,
-    action: { type: 'session/activeClientSet', activeClient: { tools: [REPORTS_BACK] } },
+    action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe', tools: [REPORTS_BACK] } },
   },
 });
 

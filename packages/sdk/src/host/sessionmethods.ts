@@ -1067,9 +1067,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
         const activeClient: Bag | undefined = claimed;
-        let here: Map<string, Bag> | undefined;
+        let here: Map<unknown, Bag> | undefined;
         if (activeClient !== undefined) {
-          here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
+          here = presence.get(idOf(uri)) ?? new Map<unknown, Bag>();
           presence.set(idOf(uri), here);
           here.set(clientId, activeClient);
         }
