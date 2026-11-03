@@ -623,6 +623,17 @@ export interface Session {
    *
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
+   *
+   * A turn handed while another runs takes that one's place: its start is said
+   * at once, so every client holds it as the chat's turn, as the protocol's
+   * reducer replaces the active turn, and it runs once the work in front of it
+   * is done. The turn it replaced runs on, its actions name it, and it is in no
+   * history; a stop of the turn that took its place stops that work and drops
+   * the turns waiting behind it. The reference host hands a client's start to
+   * its agent at once, and its agents run each in turn.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8720-L8750
    */
   begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
   /**

@@ -376,12 +376,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   unanswered: () => boolean;
   /**
-   * Settled once the backend of `chat` says its end of a turn the chat has
-   * ended. A client's stop is said when it is taken and the backend lets the
-   * turn go after it, and a dispatch sent between the two waits on this.
-   */
-  letGo: (chat: string) => Promise<void>;
-  /**
    * Send every streamed delta still held in the window, oldest first.
    *
    * A held delta has no sequence number yet, so anything answering a client

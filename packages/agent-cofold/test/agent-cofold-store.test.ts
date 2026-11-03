@@ -821,7 +821,13 @@ const refusals = (): { refused: { action: Bag; reason: string }[]; handed: NonNu
   return { refused, handed: (action) => ({ refuse: (reason) => { refused.push({ action, reason }); } }) };
 };
 
-it('refuses a second turn handed while a resumed session opens, to the client that sent it', async () => {
+/*
+ * A turn handed while another runs takes its place, said at once as the
+ * reducer replaces the active turn, and runs once the run in front of it is
+ * over: the reference host hands a client's start to its agent at once, and
+ * its agents run each in turn.
+ */
+it('takes a second turn handed while a resumed session opens, said at once and run after the first', async () => {
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'first' }], stream: true }), allowAll());
   const before = open(first, 'one', sweep);
@@ -831,22 +837,33 @@ it('refuses a second turn handed while a resumed session opens, to the client th
 
   /*
    * Both turns arrive while the resume still reads the store, which is before
-   * either has started, so the host's own guard lets both through. Both wait
-   * for the read, and the first to open is the turn the second one finds.
+   * either has started. Both wait for the read, and the second finds the
+   * first running.
    */
   const { refused, handed } = refusals();
-  const second = backend(root, createFakeModel({ script: [{ text: 'second' }], stream: true }), allowAll());
+  const second = backend(root, createFakeModel({ script: [{ text: 'second' }, { text: 'third' }], stream: true }), allowAll());
   const after = open(second, 'one', sweep, { resume: 'one', seed: [], handed });
   after.session.begin('t2', 'say second');
   after.session.begin('t3', 'say third');
-  await until(() => ended(after.view));
+  const done = (turnId: string): boolean => after.view.notes.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === turnId);
+  await until(() => done('t3'));
 
-  expect(refused).toEqual([{ action: { type: 'chat/turnStarted', turnId: 't3' }, reason: 'A turn is running in this chat' }]);
+  expect(refused).toEqual([]);
   const started = after.view.notes.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.turnId);
-  expect(started).toEqual(['t2']);
+  expect(started).toEqual(['t2', 't3']);
+  // t3 is said before t2's run is over, and runs after it.
+  const at = (type: string, turnId: string): number =>
+    after.view.notes.findIndex((one) => one.action.type === type && one.action.turnId === turnId);
+  expect(at('chat/turnStarted', 't3')).toBeLessThan(at('chat/turnComplete', 't2'));
+  // The turn t3 took the place of is in no history.
+  const kept = (after.session.chatState().turns as Bag[]).map((turn) => turn.id);
+  expect(kept).toContain('t3');
+  expect(kept).not.toContain('t2');
+  const reader = createFileStore({ root });
+  expect((await reader.runs.list({ sessionId: 'one' })).length).toBe(3);
 });
 
-it('refuses a turn handed while a paused run reopens, to the client that sent it', async () => {
+it('takes a turn handed while a paused run reopens, said at once in its place', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
@@ -863,17 +880,21 @@ it('refuses a turn handed while a paused run reopens, to the client that sent it
 
   /*
    * Somebody writes before the resume has found the run waiting on them. Once
-   * it has, that run is the chat's turn again, and the new one finds it
-   * running.
+   * it has, that run is the chat's turn again, and the new one takes its place
+   * and waits for it.
    */
   const { refused, handed } = refusals();
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool], handed });
   after.session.begin('t2', 'something else');
-  await until(() => refused.length > 0, 4000, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
+  await until(
+    () => after.view.notes.some((one) => one.action.type === 'chat/turnStarted' && one.action.turnId === 't2'),
+    4000,
+    () => JSON.stringify(after.view.notes.map((one) => one.action.type)),
+  );
 
-  expect(refused).toEqual([{ action: { type: 'chat/turnStarted', turnId: 't2' }, reason: 'A turn is running in this chat' }]);
-  expect(after.view.notes.some((one) => one.action.type === 'chat/turnStarted' && one.action.turnId === 't2')).toBe(false);
+  expect(refused).toEqual([]);
+  expect((after.session.chatState().activeTurn as Bag | undefined)?.id).toBe('t2');
 });
 
 it('keeps two chats of one session in two conversations, each with its own turn', async () => {

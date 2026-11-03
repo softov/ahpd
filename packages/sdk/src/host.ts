@@ -873,13 +873,6 @@ export function createHost(options: HostOptions): Host {
     next();
   };
   /**
-   * The dispatches waiting on a chat whose backend still runs a turn the chat
-   * has ended, by the chat's channel: a client's stop is said when it is
-   * taken, and the backend lets the turn go when it can. Each is let go by
-   * the backend's end of that turn.
-   */
-  const stopping = new Map<string, (() => void)[]>();
-  /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
    */
@@ -1033,22 +1026,18 @@ export function createHost(options: HostOptions): Host {
       owed.delete(key);
       if (started !== undefined) dispatch(started.channel, started.action, started.origin);
       /*
-       * A backend's end of a turn the chat has ended is not said: the turn
-       * ended when a client's stop was taken, and a turn ends once. The
-       * reference host ends the turn on the client's cancel and then aborts
-       * the agent. The end is what the dispatches sent since wait on: a
-       * backend leaves a turn before it says its end, so each is applied to a
-       * backend that runs nothing.
+       * A backend's end of a turn the chat does not hold as its turn is not
+       * said: a turn ended when a client's stop was taken, and a turn ends
+       * once; a turn another took the place of was never ended in any
+       * client's state, and the protocol's reducer ends only the active turn.
+       * The reference host ends the turn on the client's cancel and then
+       * aborts the agent.
        * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L186-L188
        */
       const held = states.get(channel);
       if (origin === undefined && held?.kind === 'chat'
-        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) {
-        const waiting = stopping.get(channel) ?? [];
-        stopping.delete(channel);
-        for (const go of waiting) go();
-        return;
-      }
+        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1108,6 +1097,22 @@ export function createHost(options: HostOptions): Host {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
       ctx.askedLeft(channel);
       ctx.chatMoved(channel);
+    }
+    /*
+     * A stop takes the chat's steering with it, once the backend has had the
+     * stop: the backend lets go of the steering message it holds, and one it
+     * says nothing of is taken out here, so nothing sent to steer the stopped
+     * turn runs after it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+     */
+    if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
+      queueMicrotask(() => {
+        const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
+        if (typeof steering !== 'string') return;
+        byChat.get(channel)?.chat.unqueue(steering);
+        if ((states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id !== steering) return;
+        dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+      });
     }
     /*
      * A terminal's title and claim are on the root's list of terminals too,
@@ -1440,9 +1445,6 @@ export function createHost(options: HostOptions): Host {
     },
     answering,
     unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
-    letGo: (chat: string) => new Promise<void>((resolve) => {
-      stopping.set(chat, [...(stopping.get(chat) ?? []), resolve]);
-    }),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {

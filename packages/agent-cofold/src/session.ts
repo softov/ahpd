@@ -207,6 +207,9 @@ export function cofoldSession(
     refreshOptions,
     offered: start.tools ?? [],
     active: undefined,
+    waiting: [] as SessionContext['waiting'],
+    replaced: new Set<string>(),
+    withdrawn: new Set<string>(),
     handle: undefined,
     activeMapping: undefined,
     cancelRequested: false,
@@ -322,7 +325,8 @@ export function cofoldSession(
       status: ctx.status(),
       modifiedAt: ctx.modified,
       turns,
-      ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
+      // The last turn said, which may be one still waiting for a run.
+      ...((ctx.waiting.at(-1)?.said ?? ctx.active) !== undefined ? { activeTurn: ctx.waiting.at(-1)?.said ?? ctx.active } : {}),
       ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       // A steering message no turn was running to take waits ahead of the
@@ -357,11 +361,25 @@ export function cofoldSession(
      * The cancel reaches cofold's `RunHandle.cancel`, and the run's own
      * `run.finished` (a cancelled outcome) is what emits `chat/turnCancelled`
      * exactly once. This must not send one of its own, or a client sees two.
+     *
+     * A turn said while a run held another ends here, as it has no run of its
+     * own yet: the turns waiting with it go, and the run in front of it is
+     * stopped, as the reference stop aborts the agent's work in flight and
+     * drops the turns waiting behind it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
      */
     cancel: (turnId) => {
-      const turn = ctx.active;
-      if (turn === undefined) return;
-      if (turnId !== String(turn.id)) return;
+      const shown = ctx.waiting.at(-1)?.said;
+      if (shown !== undefined && String(shown.id) === turnId) {
+        ctx.waiting.length = 0;
+        shown.state = 'cancelled';
+        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
+        turns.push(shown);
+        start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        ctx.touch();
+      }
+      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) return;
+      if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.stop('the client stopped the turn');
     },
@@ -405,11 +423,16 @@ export function cofoldSession(
           .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
       void submitted.then(
         () => {
+          // Read by the model, so it stays the run's whatever a client asked;
+          // one a client took back is gone from every client already.
+          if (ctx.withdrawn.delete(id)) return;
           if (ctx.steering?.id === id) ctx.steering = undefined;
           start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
           ctx.touch();
         },
         () => {
+          // Taken back by a client while the run held it, so it never runs.
+          if (ctx.withdrawn.delete(id)) return;
           ctx.untaken.push({
             id,
             text,

@@ -6,7 +6,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.
 import { piAgent } from '../src/agent.js';
 import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';
-import { promptOf, resumeOrCreate } from '../src/backend.js';
+import { failedReply, promptOf, resumeOrCreate } from '../src/backend.js';
 import { answer, driveCall, fakePi, opened, root, sessionOnDisk, settled, streamed } from './fake-pi.js';
 
 // A session from disk -------------------------------------------------------
@@ -124,6 +124,25 @@ it('finds the prompt pi wrote after an entry, which is the id a turn from pi fil
   expect(promptOf(branch, 'not-on-the-branch')).toBeUndefined();
   const turns = await piAgent({ sessionDir }, [root]).transcript?.(disk.id);
   expect(turns?.map((turn) => turn.id)).toEqual([disk.first, disk.second]);
+});
+
+it('resumes again from a failed reply whose earlier resume threw before pi wrote anything', async () => {
+  /*
+   * The reference host marks a resume that failed resumable, so a client may
+   * ask again; the second resume continues from the same reply.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873
+   */
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const { SessionManager } = await loadPi();
+  const store = SessionManager.open(disk.file, sessionDir, root);
+  expect(failedReply(store)).toEqual({ id: disk.secondEnd, edited: false });
+  // The first resume took the reply out of the model's context, then threw.
+  store.appendContextEdit(disk.secondEnd, null);
+  expect(failedReply(store)).toEqual({ id: disk.secondEnd, edited: true });
+  // A reply after it is a conversation that moved on.
+  store.appendMessage(answer([{ type: 'text', text: 'done' }], 'stop'));
+  expect(failedReply(store)).toBeUndefined();
 });
 
 it('keeps the turns from pi file in the record of a session resumed and run again', async () => {

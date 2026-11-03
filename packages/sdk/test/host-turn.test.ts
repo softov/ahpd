@@ -617,9 +617,22 @@ describe('a turn asked for while one is running', () => {
     });
   };
 
-  it('is refused, and the running turn keeps its id and its parts', async () => {
+  /** Everything the chat holds as finished, as a client reading a snapshot sees it. */
+  const finished = async (client: Awaited<ReturnType<typeof busy>>['client'], chatUri: string) =>
+    (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string; state?: string }[] } };
+    }).snapshot.state.turns;
+
+  /*
+   * Taken, and said at once: the reference host applies a client's start and
+   * hands it to its agent, the protocol's reducer replaces the active turn, and
+   * the reference Claude agent sends a prompt once the one in flight is answered.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+   */
+  it('takes the running turn\'s place at once, and reaches the CLI once the turn before it is answered', async () => {
     const { host, client, peer: p, chatUri } = await busy();
-    // A second window on the same chat, to tell a refusal from a turn.
+    // A second window on the same chat, which is told of the new turn too.
     const other = peer();
     const b = host.accept(other);
     await b.handle(hello(['0.9.0']));
@@ -628,33 +641,31 @@ describe('a turn asked for while one is running', () => {
     say(client, chatUri, 't2', 'second');
     await settle();
 
-    // Refused rather than accepted: a client applies its own dispatch before it
-    // sends it, so a host that dropped this leaves it holding a turn that will
-    // never be answered and a conversation with one turn missing from it.
-    const rejected = p.notes
-      .map((n) => n.params as { action?: { turnId?: string }; rejectionReason?: string })
-      .find((one) => one.rejectionReason !== undefined);
-    expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
-    expect(rejected?.action?.turnId).toBe('t2');
-    // The refusal carries the action back and applies nothing, so what is
-    // counted here is everything else: nothing of `t2` reaches the chat, and
-    // the window that did not ask hears only the same refusal.
-    const applied = actions(p, chatUri).filter((e) => e.rejectionReason === undefined);
-    expect(applied.some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2')).toBe(false);
-    expect(actions(other, chatUri).filter((e) => e.action.turnId === 't2').map((e) => e.rejectionReason))
-      .toEqual(['A turn is running in this chat']);
+    expect(p.notes.some((n) => (n.params as { rejectionReason?: string }).rejectionReason !== undefined)).toBe(false);
+    expect(actions(other, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2')).toBe(true);
+    const shown = await activeTurn(client, chatUri);
+    expect(shown?.id).toBe('t2');
+    expect(shown?.message.text).toBe('second');
+    expect(shown?.responseParts).toHaveLength(0);
+    // The CLI is still answering the first prompt, and that answer goes nowhere.
     expect(sdk.said).toEqual(['first']);
+    const first = sdk.uuids[0];
+    await emit({ type: 'assistant', user_message_uuid: first, message: { id: 'm2', content: [{ type: 'text', text: 'More of the first' }] } });
+    await settle();
+    expect((await activeTurn(client, chatUri))?.responseParts).toHaveLength(0);
 
-    const still = await activeTurn(client, chatUri);
-    expect(still?.id).toBe('t1');
-    expect(still?.message.text).toBe('first');
-    expect(still?.responseParts).toHaveLength(1);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5, user_message_uuids: [first] });
+    await settle();
+    expect(sdk.said).toEqual(['first', 'second']);
+    expect((await activeTurn(client, chatUri))?.id).toBe('t2');
+    // The turn it took the place of is in no history, and its end was said to no client.
+    expect((await finished(client, chatUri)).map((turn) => turn.id)).not.toContain('t1');
+    expect(actions(other, chatUri).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't1')).toBe(false);
   });
 
-  it('is refused while the turn before it is still switching its model', async () => {
+  it('is said after the turn before it, which is still switching its model, and replaces it', async () => {
     const { client, peer: p, chatUri } = await running();
-    // A turn naming another model waits for the switch before it says it
-    // started, so the chat's state shows it only once the switch answers.
+    // A turn naming another model says its start once the switch answers.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first', model: { id: 'claude-other' } } } },
@@ -662,13 +673,37 @@ describe('a turn asked for while one is running', () => {
     say(client, chatUri, 't2', 'second');
     await settle();
 
-    const rejected = p.notes
-      .map((n) => n.params as { action?: { turnId?: string }; rejectionReason?: string })
-      .find((one) => one.rejectionReason !== undefined);
-    expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
-    expect(rejected?.action?.turnId).toBe('t2');
+    expect(p.notes.some((n) => (n.params as { rejectionReason?: string }).rejectionReason !== undefined)).toBe(false);
+    const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+    expect(started).toEqual(['t1', 't2']);
+    expect((await activeTurn(client, chatUri))?.id).toBe('t2');
     expect(sdk.said).toEqual(['first']);
-    expect((await activeTurn(client, chatUri))?.id).toBe('t1');
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5, user_message_uuids: [sdk.uuids[0]] });
+    await settle();
+    expect(sdk.said).toEqual(['first', 'second']);
+  });
+
+  /*
+   * A stop of the turn that took the place stops the work in flight and drops
+   * what waits behind it, as the reference stop aborts the agent's work and
+   * cancels the turns queued before it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
+   */
+  it('stops the work in flight when the turn that took its place is stopped, and never sends it', async () => {
+    const { client, chatUri } = await busy();
+    say(client, chatUri, 't2', 'second');
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
+    });
+    await settle();
+    expect(sdk.interrupted).toBe(1);
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, user_message_uuids: [sdk.uuids[0]] });
+    await settle();
+    expect(sdk.said).toEqual(['first']);
+    expect(await activeTurn(client, chatUri)).toBeUndefined();
+    expect((await finished(client, chatUri)).map((turn) => [turn.id, turn.state])).toEqual([['t2', 'cancelled']]);
   });
 
   it('lets the next one start once the running turn has ended', async () => {

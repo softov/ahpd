@@ -93,6 +93,8 @@ export function fakePi() {
     { provider: 'openai', id: 'gpt-5', name: 'GPT-5' },
   ];
   let settle = true;
+  /** Whether a stop settles the run at once, or leaves it for a case to settle. */
+  let stops = true;
   let leaf = 'entry-1';
   /** The entry the fake says a turn's prompt went under, or nothing. */
   let prompted: string | undefined;
@@ -116,7 +118,15 @@ export function fakePi() {
       if (steers !== undefined) throw steers;
       return 'queued';
     },
-    abort: async () => { asked.push({ kind: 'abort' }); listener?.({ type: 'agent_settled', aborted: true }); },
+    // pi says its queue emptied, as `clearQueue` does.
+    clearSteering: () => {
+      asked.push({ kind: 'clearSteering' });
+      listener?.({ type: 'queue_update', steering: [], followUp: [] } as unknown as AgentSessionEvent);
+    },
+    abort: async () => {
+      asked.push({ kind: 'abort' });
+      if (stops) listener?.({ type: 'agent_settled', aborted: true });
+    },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
     chosen: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
@@ -152,6 +162,8 @@ export function fakePi() {
     opens,
     raise: (event: AgentSessionEvent) => { listener?.(event); },
     hold: () => { settle = false; },
+    /** A stop that settles only when the case raises `agent_settled`. */
+    holdStops: () => { stops = false; },
     setLeaf: (next: string) => { leaf = next; },
     setPrompted: (next: string | undefined) => { prompted = next; },
     refuseRewind: () => { moves = false; },

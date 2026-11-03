@@ -71,3 +71,38 @@ it('refuses to take back a steering message pi holds, and keeps it in the chat',
   expect(opened.snapshot.state.steeringMessage).toMatchObject({ id: 's1', message: { text: 'actually, stop' } });
   client.close();
 });
+
+it('lets go of the steering pi holds when the turn it was sent into is stopped', async () => {
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
+  const pi = fakePi();
+  pi.hold();
+  const base = piAgent({ sessionDir: join(root, 'pi') }, [root], async () => []);
+  const agent: Agent = { ...base, create: (start) => piSession({ sessionDir: join(root, 'pi') }, start, pi.open) };
+  const host = createHost({ path: join(root, 'host'), agents: [agent] });
+  const peer: Peer = { send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} };
+  const client = host.accept(peer);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'ahp-session:/stopped-steering';
+  const chatUri = chatUriFor(uri);
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const dispatch = (clientSeq: number, action: Bag): void => {
+    void client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq, action } });
+  };
+  const state = async (): Promise<Bag> =>
+    ((await client.handle({ method: 'subscribe', params: { channel: chatUri } })) as { snapshot: { state: Bag } }).snapshot.state;
+
+  dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'list it', origin: { kind: 'user' } } });
+  await until(() => pi.asked.some((one) => one.kind === 'prompt'));
+  dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and the tests' } });
+  await until(() => pi.asked.some((one) => one.kind === 'steer'));
+  dispatch(3, { type: 'chat/turnCancelled', turnId: 't1' });
+  await until(() => pi.asked.some((one) => one.kind === 'abort'));
+  expect(pi.asked.some((one) => one.kind === 'clearSteering')).toBe(true);
+  for (let i = 0; i < 50 && (await state()).steeringMessage !== undefined; i++) await new Promise((done) => { setTimeout(done, 0); });
+  expect((await state()).steeringMessage).toBeUndefined();
+  client.close();
+});

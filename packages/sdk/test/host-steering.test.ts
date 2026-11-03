@@ -170,3 +170,35 @@ it('refuses a steering message to a backend that takes none, with nothing runnin
   expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 1)?.rejectionReason).toBe('This backend cannot take a message mid-turn');
   expect(envelopes(p, chatUri).some((one) => one.action.type === 'chat/turnStarted')).toBe(false);
 });
+
+/*
+ * "Cancellation clears every pending steering entry, including prompts handed
+ * off but not yet consumed": the steering message sent into the stopped turn
+ * goes with it, and the queued message stays (AGENTS.md L617,
+ * queueDrainContribution.ts L55-L65 at a4e689ae).
+ */
+it('takes the steering message out of the chat when the turn it was sent into is stopped', async () => {
+  const { agent } = backend();
+  const p = peer();
+  const host = createHost({ path: DIR, agents: [agent] });
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/stopped';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'steady' } });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
+  const chatUri = opened.snapshot.state.defaultChat;
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const dispatch = (clientSeq: number, action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq, action } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words here' } });
+  await settle();
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and the tests', origin: { kind: 'user' } } });
+  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } });
+  await dispatch(4, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+
+  const removed = envelopes(p, chatUri).filter((one) => one.action.type === 'chat/pendingMessageRemoved');
+  expect(removed.map((one) => [one.action.kind, one.action.id])).toEqual([['steering', 's1']]);
+  const state = ((await client.handle({ method: 'subscribe', params: { channel: chatUri } })) as { snapshot: { state: Bag } }).snapshot.state;
+  expect(state.steeringMessage).toBeUndefined();
+  expect((state.queuedMessages as Bag[]).map((one) => one.id)).toEqual(['q1']);
+});

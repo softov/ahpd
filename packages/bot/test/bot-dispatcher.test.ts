@@ -38,9 +38,9 @@ it('waits for the host to answer a dispatch, however long it takes, and takes a 
   await vi.advanceTimersByTimeAsync(30_000);
   expect(settled).toBeUndefined();
 
-  answer({ channel: 'ahp-chat:/1', origin: { clientId: 'ahpd-bot', clientSeq: sent[0]?.clientSeq }, rejectionReason: 'A turn is running in this chat' });
+  answer({ channel: 'ahp-chat:/1', origin: { clientId: 'ahpd-bot', clientSeq: sent[0]?.clientSeq }, rejectionReason: 'host is stopping' });
   await vi.advanceTimersByTimeAsync(0);
-  expect(settled).toEqual({ refused: 'A turn is running in this chat' });
+  expect(settled).toEqual({ refused: 'host is stopping' });
 });
 
 it('settles a dispatch the host took when its echo arrives, and not on another client\'s answer', async () => {

@@ -821,7 +821,8 @@ export function createQuery(ctx: SessionContext): Query {
           const owed = ctx.answering === undefined ? undefined : ctx.owed.get(ctx.answering);
           const running = ctx.active === undefined ? undefined : String(ctx.active.id);
           if (owed !== undefined && owed.turn !== running) {
-            if (owed.steering && running === undefined) ctx.present(String(ctx.answering));
+            // A steering message a client took back is answered nowhere.
+            if (owed.steering && owed.withdrawn !== true && running === undefined) ctx.present(String(ctx.answering));
             else continue;
           }
         }
@@ -1033,7 +1034,8 @@ export function createQuery(ctx: SessionContext): Query {
            * A stopped turn's result comes after `cancel` ended the turn, and a
            * turn begun since, or opened for the steering messages the stopped
            * turn left, is running when it comes. It says the turn was stopped,
-           * which is not a failure. The queue behind a stopped turn stays, as
+           * which is not a failure. A turn a later one took the place of while
+           * it ran ends the same way, in no history. The queue behind a stopped turn stays, as
            * the reference host keeps it, so the start made here is only one a
            * client's change to the queue asked for since.
            * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
@@ -1044,6 +1046,9 @@ export function createQuery(ctx: SessionContext): Query {
               ctx.doing(undefined);
               if (ctx.deferred) ctx.startNext();
             }
+            // A turn handed while the one answered here ran is begun once the
+            // CLI owes nothing in front of it.
+            else ctx.startNext();
             ctx.touch();
             continue;
           }

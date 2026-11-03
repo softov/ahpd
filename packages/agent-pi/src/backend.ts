@@ -45,6 +45,11 @@ export interface PiBackend {
    * pi did with it: queued for the turn, or handled by an extension.
    */
   steer(text: string, images?: ImageContent[]): ReturnType<AgentSession['steer']>;
+  /**
+   * Let go of every steering message pi holds and has not read, which pi
+   * says as its queue emptied.
+   */
+  clearSteering(): void;
   /** Stop the running turn. */
   abort(): Promise<void>;
   /** The models this session could run on. */
@@ -109,6 +114,13 @@ export interface PiBackend {
    * then continues from the message before it, so the calls the turn already
    * ran are not run again. Answers `false`, and runs nothing, when the
    * conversation does not end at a failed reply.
+   *
+   * A conversation that ends at that edit, over the failed reply, is one an
+   * earlier resume left when its continue threw before pi wrote anything. It
+   * still ends at the failed reply, and is continued again without a second
+   * edit: the reference host marks a resume that failed resumable, so a
+   * client may ask again.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873
    *
    * The run is outside pi's own loop, so pi raises no `agent_settled` for it
    * and retries nothing itself: what ends the turn is this promise settling.
@@ -229,6 +241,23 @@ export function promptOf(branch: readonly SessionEntry[], after: string | undefi
   const at = after === undefined ? -1 : branch.findIndex((entry) => entry.id === after);
   if (after !== undefined && at < 0) return undefined;
   return branch.slice(at + 1).find((entry) => entry.type === 'message' && entry.message.role === 'user')?.id;
+}
+
+/**
+ * The failed reply a resume continues from, and whether its context edit is
+ * written already, or nothing when the conversation does not end at one.
+ *
+ * It ends at one when its last entry is the reply, or is the context edit an
+ * earlier resume wrote over it, with nothing after: that resume's continue
+ * threw before pi wrote anything.
+ */
+export function failedReply(manager: Pick<SessionManager, 'getLeafEntry' | 'getEntry'>): { id: string; edited: boolean } | undefined {
+  const leaf = manager.getLeafEntry();
+  const edited = leaf?.type === 'context_edit' && leaf.replacement === null && leaf.parentId === leaf.targetId;
+  const entry = edited ? manager.getEntry(leaf.targetId) : leaf;
+  const message = entry?.type === 'message' ? entry.message as { role?: string; stopReason?: string } : undefined;
+  if (entry === undefined || message?.role !== 'assistant' || message.stopReason !== 'error') return undefined;
+  return { id: entry.id, edited };
 }
 
 /**
@@ -370,6 +399,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
     }),
     steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }),
+    clearSteering: () => { session.clearQueue(); },
     abort: () => session.abort(),
     models,
     leaf: () => session.sessionManager.getLeafId() ?? undefined,
@@ -452,11 +482,12 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       return !moved.cancelled;
     },
     resume: async () => {
-      const entry = session.sessionManager.getLeafEntry();
-      const message = entry?.type === 'message' ? entry.message as { role?: string; stopReason?: string } : undefined;
-      if (entry === undefined || message?.role !== 'assistant' || message.stopReason !== 'error') return false;
-      session.sessionManager.appendContextEdit(entry.id, null);
-      session.refreshContext();
+      const failed = failedReply(session.sessionManager);
+      if (failed === undefined) return false;
+      if (!failed.edited) {
+        session.sessionManager.appendContextEdit(failed.id, null);
+        session.refreshContext();
+      }
       await session.agent.continue();
       return true;
     },
