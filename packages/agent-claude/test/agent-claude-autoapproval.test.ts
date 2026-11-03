@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -61,14 +61,20 @@ const settle = async (times = 30): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
+/** The frames a session reads, and how it reaches a subagent's chat. */
+interface Replay {
+  frames?: Record<string, unknown>[];
+  subagent?: NonNullable<Parameters<typeof createSession>[0]['subagent']>;
+}
+
 /** A session with the owner's check, and what it said on the wire. */
-async function sessionWith(check?: Check, settings: Bag = {}, shellEnv?: Record<string, string>): Promise<{
+async function sessionWith(check?: Check, settings: Bag = {}, shellEnv?: Record<string, string>, replay: Replay = {}): Promise<{
   session: ReturnType<typeof createSession>;
   canUseTool: NonNullable<typeof sdk.canUseTool>;
   options: Bag;
   sent: Bag[];
 }> {
-  sdk.frames = [];
+  sdk.frames = replay.frames ?? [];
   const sent: Bag[] = [];
   const session = createSession({
     uri: 'ahp-session:/autoapprove',
@@ -78,6 +84,7 @@ async function sessionWith(check?: Check, settings: Bag = {}, shellEnv?: Record<
     settings,
     ...(check === undefined ? {} : { getAutoApproval: check }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
+    ...(replay.subagent === undefined ? {} : { subagent: replay.subagent }),
   });
   await settle();
   return { session, canUseTool: sdk.canUseTool!, options: sdk.options!, sent };
@@ -348,6 +355,109 @@ it('names an MCP tool as <server>/<tool>, the name the rule matches', async () =
   expect(asked).toEqual([{ kind: 'tool', line: 'tracker/move', shell: undefined, tool: undefined }]);
   session.confirm('toolu_mcp', false);
   expect(decisionOf(await waiting)).toBe('deny');
+});
+
+it('names a renamed MCP server as its config key, which the tool prefix does not spell', async () => {
+  // A server's key and the prefix the CLI builds from it need not be the same
+  // text, and the rule names the server by its key, which is what the hook is
+  // told. The tool is what follows the prefix the CLI did build.
+  const { asked, check } = naming(['my server/move']);
+  const { session, options } = await sessionWith(check);
+
+  const waiting = ruleHook(options)({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'mcp__my_server__move',
+    tool_input: { id: 1 },
+    tool_use_id: 'toolu_renamed',
+    mcp_server: { name: 'my server', source: 'user' },
+  });
+  await settle();
+  expect(asked).toEqual([{ kind: 'tool', line: 'my server/move', shell: undefined, tool: undefined }]);
+  session.confirm('toolu_renamed', false);
+  expect(decisionOf(await waiting)).toBe('deny');
+});
+
+it('splits a server name with __ at the prefix, not at the first __', async () => {
+  // Read by the split alone, this call is server `my`, tool `server__move`; the
+  // hook says the server is `my__server`, and the tool is what follows it.
+  const { asked, check } = naming(['my__server/move']);
+  const { session, options } = await sessionWith(check);
+
+  const waiting = ruleHook(options)({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'mcp__my__server__move',
+    tool_input: { id: 1 },
+    tool_use_id: 'toolu_double',
+    mcp_server: { name: 'my__server', source: 'sdk' },
+  });
+  await settle();
+  expect(asked).toEqual([{ kind: 'tool', line: 'my__server/move', shell: undefined, tool: undefined }]);
+  session.confirm('toolu_double', false);
+  expect(decisionOf(await waiting)).toBe('deny');
+});
+
+/** The captured subagent turn, cut where its permission ask was recorded. */
+const subagentCall = (): { frames: Record<string, unknown>[]; agentId: string; write: string } => {
+  const lines = readFileSync(new URL('./fixtures/claude-subagent-ask.jsonl', import.meta.url), 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const at = lines.findIndex((one) => one.type === 'canUseTool');
+  const about = bag(bag(lines[at]).options);
+  return { frames: lines.slice(0, at), agentId: str(about.agentID) as string, write: str(about.toolUseID) as string };
+};
+
+/** The chats the session says a question is waiting on. */
+const neededChats = (session: ReturnType<typeof createSession>): string[] =>
+  ((session.sessionState().inputNeeded as Bag[]) ?? []).map((one) => str(one.chat) ?? '');
+
+it('asks a subagent\'s matched call on its own chat, by the agent id the hook is given', async () => {
+  const { frames, agentId, write } = subagentCall();
+  const { check } = naming(['Write']);
+  const workers: { uri: string; actions: Bag[] }[] = [];
+  const { session, options } = await sessionWith(check, {}, undefined, {
+    frames,
+    subagent: (id) => {
+      const held = { uri: `ahp-chat://subagent/${id}`, actions: [] as Bag[] };
+      workers.push(held);
+      return {
+        uri: held.uri,
+        turnId: `wturn-${id}`,
+        emit: (action: Bag) => { held.actions.push(action); },
+        end: () => {},
+      };
+    },
+  });
+  const worker = workers[0];
+  expect(worker).toBeDefined();
+  const chat = (worker as { uri: string }).uri;
+
+  // The call whose frame already arrived is joined by its own id.
+  const first = ruleHook(options)({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: '/tmp/one', content: 'one' },
+    tool_use_id: write,
+    agent_id: agentId,
+  });
+  await settle();
+  expect(neededChats(session)).toContain(chat);
+  session.confirm(write, false);
+  expect(decisionOf(await first)).toBe('deny');
+
+  // A call whose frame has not arrived is put on that same chat, because the
+  // hook said which subagent it belongs to.
+  const later = ruleHook(options)({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: '/tmp/two', content: 'two' },
+    tool_use_id: 'toolu_later',
+    agent_id: agentId,
+  });
+  await settle();
+  expect(neededChats(session)).toContain(chat);
+  session.confirm('toolu_later', false);
+  expect(decisionOf(await later)).toBe('deny');
 });
 
 it('returns at once for a tool the rule does not name', async () => {

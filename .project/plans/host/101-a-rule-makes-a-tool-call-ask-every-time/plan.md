@@ -111,7 +111,7 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 | [06 - The docs name the rule](task-06-the-docs-name-the-rule.md) | implemented | 02, 03, 04, 05 |
 | [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | implemented | 05 |
 | [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | todo | 01 |
-| [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | todo | 02 |
+| [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | implemented | 02 |
 | [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | todo | 07, 08, 09 |
 
 ## Risks and tradeoffs
@@ -124,9 +124,9 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first.
-- **Next action:** build tasks 08 to 10, which fix what the review of 2026-11-02 found. Then run the by-hand checks in *Final verification checklist* on a test daemon.
-- **Open questions:** none.
+- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first. Task 09 implemented 2026-11-03: the Claude hook names a server by `mcp_server.name` and asks a subagent's call on its chat by `agent_id`.
+- **Next action:** task 10 waits on task 08's open question. Answer it, build 08, then build 10. Then run the by-hand checks in *Final verification checklist* on a test daemon.
+- **Open questions:** Task 08 stopped on 2026-11-03. The rule lives in `ctx.rootConfig` inside `createHost`, and nothing on the `Host` interface reads it. `HostOptions.rootConfig` is a port to the daemon's `config.json`, whose keys are `DAEMON_KEYS` and do not include `eligibleForAutoApproval`. How should `/mcp` read the host's pushed root config? Options: a `Host.asksForTool(tool)` method, the live root config exposed read-only, or the check applied inside `sessionlessTools`. Task 08's Files name no sdk change.
 - **Watch out for:** in VS Code a terminal deny rule also means "ask". It is not this rule: it is a match on the command line and it still offers "always".
 
 ## Final verification checklist

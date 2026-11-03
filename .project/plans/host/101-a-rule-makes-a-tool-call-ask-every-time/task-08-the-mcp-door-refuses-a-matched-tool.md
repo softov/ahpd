@@ -36,3 +36,4 @@ A call through `/mcp` to a host tool the rule names is refused, because the door
 
 ## Resume
 
+- **Done so far:** nothing. Stopped on 2026-11-03 before the first edit: the server has no way to read the host's pushed root config, and this task's Files name no sdk change that would add one. The question is in the plan's Resume state.
