@@ -1354,8 +1354,13 @@ export function piSession(
       ...(active !== undefined ? { activeTurn: active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      ...(steering !== undefined ? { steeringMessage: steering } : {}),
-      queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
+      // A steering message no turn was running to take waits at the head of
+      // the queue, and is still a steering message while it waits.
+      ...(steering !== undefined
+        ? { steeringMessage: steering }
+        : queued.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+      queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
     begin: (turnId, text, model, from, attachments) => {
@@ -1519,7 +1524,7 @@ export function piSession(
       void live?.abort().catch(() => { finish('cancelled'); });
     },
 
-    queue: (id, text, model, from, attachments) => {
+    queue: (id, text, model, from, attachments, _options, kind = 'queued') => {
       const message: Bag = {
         text,
         origin: from?.origin ?? { kind: 'user' },
@@ -1528,9 +1533,10 @@ export function piSession(
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
       const at = queued.findIndex((held) => String(held.id) === id);
-      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}) };
-      if (at >= 0) queued[at] = entry; else queued.push(entry);
-      emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}), ...(kind === 'steering' ? { steering: true } : {}) };
+      // A steering message no turn was running to take is the next turn.
+      if (at >= 0) queued[at] = entry; else if (kind === 'steering') queued.unshift(entry); else queued.push(entry);
+      emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
       touch();
       /*
        * At once when nothing runs: "the server SHOULD immediately consume it",
@@ -1545,8 +1551,8 @@ export function piSession(
     unqueue: (id) => {
       const at = queued.findIndex((held) => String(held.id) === id);
       if (at < 0) return;
-      queued.splice(at, 1);
-      emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      const [held] = queued.splice(at, 1);
+      emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
       touch();
     },
 

@@ -500,6 +500,33 @@ it('runs a message queued after a stop once the stopped run has let its turn go'
   expect(asked.at(-1)).toContain('later');
 });
 
+/*
+ * Steering that came too late to steer a turn runs next, ahead of what the
+ * stopped turn left queued (queueDrainContribution.ts L260-L262 at a4e689ae).
+ */
+it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
+  const { model, release } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+  });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  steer(client, chatUri, 9, 's1', 'now');
+  release();
+  await until(() => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').length >= 2);
+  expect(answer(p, chatUri, 9)?.rejectionReason).toBeUndefined();
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'now' } });
+});
+
 /** The envelope that answers the dispatch this client numbered `clientSeq`. */
 const answer = (p: ReturnType<typeof peer>, chatUri: string, clientSeq: number) => p.notes
   .filter((n) => n.method === 'action')

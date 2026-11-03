@@ -587,17 +587,23 @@ export function notes(options: NotesOptions): Agent {
         ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
-        queuedMessages: [...queued],
+        // A steering message no turn was running to take waits at the head,
+        // and is still a steering message while it waits.
+        ...(queued.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
+        queuedMessages: queued.filter((held) => held.steering !== true),
       }),
 
       begin: (turnId, text) => { beginTurn(turnId, text); },
 
-      queue: (id, text) => {
-        const entry: Bag = { id, message: { text } };
+      queue: (id, text, _model, _from, _attachments, _options, kind = 'queued') => {
+        const entry: Bag = { id, message: { text }, ...(kind === 'steering' ? { steering: true } : {}) };
         const at = queued.findIndex((held) => held.id === id);
+        // A steering message no turn was running to take is the next turn.
         if (at >= 0) queued[at] = entry;
+        else if (kind === 'steering') queued.unshift(entry);
         else queued.push(entry);
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message: entry.message });
         touch();
         startNext();
       },
@@ -605,8 +611,8 @@ export function notes(options: NotesOptions): Agent {
       unqueue: (id) => {
         const at = queued.findIndex((held) => held.id === id);
         if (at < 0) return;
-        queued.splice(at, 1);
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+        const [held] = queued.splice(at, 1);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
         touch();
       },
 

@@ -150,6 +150,7 @@ export interface Lifecycle {
     sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
+    kind?: 'queued' | 'steering',
   ): string | undefined | Promise<string | undefined>;
   /** A turn begun, or a turn refused, from what `beginOrRun` answered. */
   beginTurn(
@@ -1292,7 +1293,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `queuedAs` is the queued message's id when the text came through
    * `chat/pendingMessageSet`: a question is queued under it, and a command
-   * is handed to `ran` under it, so it waits its turn as a command.
+   * is handed to `ran` under it, so it waits its turn as a command. `kind` is
+   * that message's, and a steering one is queued ahead of what waits.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -1314,6 +1316,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
+    kind?: 'queued' | 'steering',
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out.
@@ -1392,7 +1395,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          * session holds at the moment the turn starts.
          */
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments, ctx.turnInstructions(session.uri));
-        else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri));
+        else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
         return undefined;
       }
       if (!session.ran) {

@@ -119,6 +119,8 @@ interface Waiting {
   model: Chosen | undefined;
   /** What it carried beside its words. */
   attachments: MessageAttachment[] | undefined;
+  /** A steering message no turn was running to take, which goes first. */
+  steering?: boolean;
 }
 
 /**
@@ -847,11 +849,12 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
      */
     const enqueue = (entry: Waiting): void => {
       const at = waiting.findIndex((held) => held.id === entry.id);
-      if (at < 0) waiting.push(entry);
-      else waiting[at] = entry;
+      if (at >= 0) waiting[at] = entry;
+      else if (entry.steering === true) waiting.unshift(entry);
+      else waiting.push(entry);
       start.emit('chat', {
         type: 'chat/pendingMessageSet',
-        kind: 'queued',
+        kind: entry.steering === true ? 'steering' : 'queued',
         id: entry.id,
         message: messageOf(entry.text, entry.from, entry.model, entry.attachments),
       });
@@ -870,7 +873,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       if (open !== undefined) return;
       const next = waiting.shift();
       if (next === undefined) return;
-      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: next.id });
+      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: next.steering === true ? 'steering' : 'queued', id: next.id });
       beginTurn(next.turnId, next.text, next.from, next.id, next.model, next.attachments);
     };
 
@@ -926,7 +929,12 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         // What is waiting for the open turn to end, in the order it will start.
         // Read here rather than left to the client's own queue, so a client
         // that opens this chat while a message waits is told about it.
-        queuedMessages: waiting.map((held) => ({ id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) })),
+        // A steering message no turn was running to take waits at the head,
+        // and is still a steering message while it waits.
+        ...(waiting.filter((held) => held.steering === true).slice(0, 1)
+          .map((held) => ({ steeringMessage: { id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) } }))[0] ?? {}),
+        queuedMessages: waiting.filter((held) => held.steering !== true)
+          .map((held) => ({ id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) })),
         // The turn that is running, in the protocol's own spelling for one:
         // no state and no duration, because it has neither until it ends. The
         // parts array is the live one, so a client that reads the state while
@@ -970,8 +978,8 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * in front of it ends. Its turn id is chosen here rather than when it
        * starts, so that the turn it becomes is the same one either way.
        */
-      queue: (id, text, model, from, attachments) => {
-        enqueue({ turnId: crypto.randomUUID(), id, text, from, model, attachments });
+      queue: (id, text, model, from, attachments, _options, kind) => {
+        enqueue({ turnId: crypto.randomUUID(), id, text, from, model, attachments, ...(kind === 'steering' ? { steering: true } : {}) });
         startNext();
       },
 
@@ -979,8 +987,8 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       unqueue: (id) => {
         const at = waiting.findIndex((held) => held.id === id);
         if (at < 0) return;
-        waiting.splice(at, 1);
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+        const [held] = waiting.splice(at, 1);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
         touch();
       },
 

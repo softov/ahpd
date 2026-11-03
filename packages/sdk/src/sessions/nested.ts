@@ -52,7 +52,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, Handed, MessageFrom, Session, SubagentChat } from '../types/session.js';
+import type { Chosen, Handed, MessageAttachment, MessageFrom, Session, SubagentChat, TurnOptions } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -1408,16 +1408,26 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         },
       });
     },
-    queue: (queueId: string, text: string, model?: Chosen, from?: MessageFrom): void => {
+    queue: (
+      queueId: string,
+      text: string,
+      model?: Chosen,
+      from?: MessageFrom,
+      _attachments?: MessageAttachment[],
+      _options?: TurnOptions,
+      kind: 'queued' | 'steering' = 'queued',
+    ): void => {
       // A message queued on a session that stopped resumes it the way a turn
       // does: it is a turn waiting, and the host inside is where it waits.
       if (halted !== undefined && !closed) {
         halted = undefined;
         void reopen('');
       }
+      // Under its own kind: a steering message with nothing running is the
+      // next turn of the host inside too.
       carry('chat', {
         type: 'chat/pendingMessageSet',
-        kind: 'queued',
+        kind,
         id: queueId,
         message: {
           text,
