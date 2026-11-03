@@ -841,6 +841,62 @@ it('leaves the back session\'s call unfinished when its turn ends with a notice'
 });
 
 /*
+ * A back session may post more than once while its own turn runs.
+ *
+ * Each answer `say` gives is a part of the open turn, which stays open, and
+ * `end` after them completes the turn as answered: the call that shows the
+ * back session completes, as a subagent call does when its turn ends.
+ */
+it('adds each answer to the open turn, and completes the call when the turn ends', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
+  const chat = turns(HELD);
+  const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
+  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+
+  await said(client, 't1', 'hello');
+  chat.say('working on it');
+  chat.say('the answer');
+
+  expect((await stateOf(client))['activeTurn']).toMatchObject({
+    id: 't1',
+    responseParts: [
+      { kind: 'toolCall' },
+      { id: 't1:reply', kind: 'markdown', content: 'working on it' },
+      { id: 't1:reply2', kind: 'markdown', content: 'the answer' },
+    ],
+  });
+
+  chat.end();
+
+  const state = await stateOf(client);
+  expect(state['activeTurn']).toBeUndefined();
+  expect(state['turns']).toMatchObject([{
+    id: 't1',
+    state: 'complete',
+    responseParts: [
+      { kind: 'toolCall', toolCall: { status: 'completed' } },
+      { id: 't1:reply', kind: 'markdown', content: 'working on it' },
+      { id: 't1:reply2', kind: 'markdown', content: 'the answer' },
+    ],
+  }]);
+  // A client that watched it live reads the same turn.
+  const watched = (replayed(opened, notes, CHAT)['turns'] as Bag[])[0];
+  expect(watched).toMatchObject({
+    id: 't1',
+    state: 'complete',
+    responseParts: [
+      { kind: 'toolCall', toolCall: { status: 'completed' } },
+      { kind: 'markdown', content: 'working on it' },
+      { kind: 'markdown', content: 'the answer' },
+    ],
+  });
+});
+
+/*
  * A call the back session stopped waiting on leaves the open turn at once.
  *
  * The back session raised the confirmation and took it back, and the copy here

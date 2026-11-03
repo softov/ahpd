@@ -24,10 +24,11 @@ import type { Owner } from '../../sdk/src/types/usage.js';
  * The tool a back session answers its main chat with.
  *
  * A message said to a bot leaves a main turn open while a back session works,
- * and something has to end it. This is the two ways: `post_message`, which ends
- * it with the text the session posts, and the end of the session's own turn,
- * which ends it as `mainTurnPostMessageAbsent` says - the session's last words
- * by default, or the notice, or nothing. What is checked is that the chat
+ * and something has to answer and end it. `post_message` adds the text the
+ * session posts to it, as often as the session posts, and the end of the
+ * session's own turn ends it: with no more text after a post, and otherwise as
+ * `mainTurnPostMessageAbsent` says - the session's last words by default, or
+ * the notice, or nothing. What is checked is that the chat
  * answered is the session's own - the tool reads `at.session` and no input -
  * and that a turn ends once, whichever road gets there first.
  *
@@ -72,6 +73,8 @@ interface Recorded {
   handle: TurnHandle;
   /** What the turn was answered with. */
   replies: string[];
+  /** What a post added to the turn, which leaves it open. */
+  posts: string[];
   /** What the turn was ended with instead of an answer. */
   notices: string[];
   /** One entry per ending, which is the only way a handle says it was used. */
@@ -82,6 +85,7 @@ interface Recorded {
 
 const turn = (): Recorded => {
   const replies: string[] = [];
+  const posts: string[] = [];
   const notices: string[] = [];
   const endings: string[] = [];
   const failures: string[] = [];
@@ -89,11 +93,12 @@ const turn = (): Recorded => {
     // The turn this handle is over is the open one: nothing begins a second.
     begin: () => undefined,
     reply: (text) => { replies.push(text); },
+    say: (text) => { posts.push(text); },
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },
     fail: (message) => { failures.push(message); },
   };
-  return { handle, replies, notices, endings, failures };
+  return { handle, replies, posts, notices, endings, failures };
 };
 
 /**
@@ -171,24 +176,55 @@ async function woken(one: Awaited<ReturnType<typeof sitting>>): Promise<Recorded
   return said;
 }
 
-it('ends the main turn with the text the back session posts', async () => {
+it('adds the text the back session posts to the main turn, and keeps it open', async () => {
   const one = await sitting();
   const said = await woken(one);
 
   expect(await one.post.run({ text: 'the answer' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
 
-  // The text is the response of the turn the person is waiting on, and the
-  // wake holds no turn for that session any more.
-  expect(said.replies).toEqual(['the answer']);
-  expect(said.notices).toEqual([]);
+  // The text goes into the turn the person is waiting on, and the turn stays
+  // open while the back session's turn runs.
+  expect(said.posts).toEqual(['the answer']);
+  expect(said.replies).toEqual([]);
   expect(said.endings).toEqual([]);
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1' });
+});
+
+it('posts every call of one back turn, and ends the main turn once with that turn', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+
+  expect(await one.post.run({ text: 'working on it' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
+  expect(await one.post.run({ text: 'the answer' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
+  expect(said.posts).toEqual(['working on it', 'the answer']);
+
+  one.wake.finished('ahp-session:/1', 'the answer');
+
+  // The posts are the answer: the end adds no last words and no notice.
+  expect(said.endings).toEqual(['ended']);
+  expect(said.replies).toEqual([]);
+  expect(said.notices).toEqual([]);
   expect(one.wake.main('ahp-session:/1')).toBeUndefined();
 
-  // A second post is a call into a turn that is over, and it answers nothing:
-  // one ending is one turn, and a second would be a turn of its own.
+  // A post after the turn ended has nothing to post to.
   expect(await one.post.run({ text: 'and again' }, called('ahp-session:/1')))
     .toBe('There is no main chat waiting on this session, so there is nothing to post to.');
-  expect(said.replies).toEqual(['the answer']);
+  expect(said.posts).toEqual(['working on it', 'the answer']);
+});
+
+it('keeps a post through a steer into the same main turn', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+
+  await one.post.run({ text: 'the answer' }, called('ahp-session:/1'));
+  // The person says more while the back turn runs, and it goes into the same
+  // main turn.
+  await one.wake.woken(message('t1', 'and one more thing'), said.handle);
+  one.wake.finished('ahp-session:/1', 'the last words');
+
+  expect(said.posts).toEqual(['the answer']);
+  expect(said.replies).toEqual([]);
+  expect(said.endings).toEqual(['ended']);
 });
 
 it('refuses a session that is not a back session', async () => {
@@ -211,7 +247,7 @@ it('posts into the chat that woke the session, never one an input names', async 
   // the chat answered is the one the calling session was woken by.
   await one.post.run({ text: 'the answer', session: 'bot-chat:/another' }, called('ahp-session:/1'));
 
-  expect(said.replies).toEqual(['the answer']);
+  expect(said.posts).toEqual(['the answer']);
 });
 
 /**
@@ -316,18 +352,33 @@ it('ends the main turn once, whichever road got there first', async () => {
   expect(one.wake.main('ahp-session:/1')).toBeUndefined();
 });
 
-it('ends nothing when the session\'s own turn ends after a post', async () => {
+it('ends the main turn with no more text when the session\'s own turn ends after a post', async () => {
+  for (const absent of ['post', 'notice', 'silence', 'postNotice'] as const) {
+    const one = await sitting(bot(), absent);
+    const said = await woken(one);
+
+    await one.post.run({ text: 'the answer' }, called('ahp-session:/1'));
+    // The answer is not followed by the last words as well, and neither is it
+    // followed by a notice saying it was not given, whatever the option says.
+    one.wake.finished('ahp-session:/1', 'the last words');
+
+    expect(said.posts).toEqual(['the answer']);
+    expect(said.replies).toEqual([]);
+    expect(said.notices).toEqual([]);
+    expect(said.endings).toEqual(['ended']);
+  }
+});
+
+it('fails the main turn when the back turn fails after a post', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  await one.post.run({ text: 'the answer' }, called('ahp-session:/1'));
-  // The turn a post ended is over, so the session's own turn ending after it
-  // is nothing: the answer is not followed by the last words as well, and
-  // neither is it followed by a notice saying it was not given.
-  one.wake.finished('ahp-session:/1', 'the last words');
+  await one.post.run({ text: 'half an answer' }, called('ahp-session:/1'));
+  one.wake.finished('ahp-session:/1', 'half an answer', 'the model call failed');
 
-  expect(said.replies).toEqual(['the answer']);
-  expect(said.notices).toEqual([]);
+  expect(said.posts).toEqual(['half an answer']);
+  expect(said.failures).toEqual(['the model call failed']);
+  expect(said.endings).toEqual([]);
 });
 
 it('is offered only to a session that names it, with the rule that it is the reply', () => {

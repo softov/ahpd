@@ -643,9 +643,9 @@ export const apply: Plugin['apply'] = (host, options) => {
   });
   host.on('input_needed_removed', (event) => { ask.withdrawn(event.session, event.id); });
   /*
-   * How a main turn ends, the two ways a back session has of ending it: the
-   * `post_message` tool, which answers it with what the session says, and the
-   * end of the session's own turn, which answers it as the option
+   * How a back session answers a main turn: the `post_message` tool, which
+   * adds what the session says to it, and the end of the session's own turn,
+   * which ends it - with no more text after a post, and otherwise as the option
    * `mainTurnPostMessageAbsent` says. The tool finds the chat from the calling
    * session, and the event names the session that ended a turn - neither can
    * name somebody else's.

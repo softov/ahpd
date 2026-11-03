@@ -76,6 +76,8 @@ interface Recorded {
   handle: TurnHandle;
   /** What the turn was answered with. */
   replies: string[];
+  /** What a post added to the turn, which leaves it open. */
+  posts: string[];
   /** What the turn was ended with instead of an answer. */
   notices: string[];
   /** One entry per ending, which is the only way a handle says it was used. */
@@ -88,6 +90,7 @@ interface Recorded {
 
 const turn = (): Recorded => {
   const replies: string[] = [];
+  const posts: string[] = [];
   const notices: string[] = [];
   const endings: string[] = [];
   const failures: string[] = [];
@@ -101,11 +104,12 @@ const turn = (): Recorded => {
       return `t${begun.length}`;
     },
     reply: (text) => { open = false; replies.push(text); },
+    say: (text) => { posts.push(text); },
     notice: (text) => { open = false; notices.push(text); },
     end: () => { open = false; endings.push('ended'); },
     fail: (message) => { open = false; failures.push(message); },
   };
-  return { handle, replies, notices, endings, failures, begun };
+  return { handle, replies, posts, notices, endings, failures, begun };
 };
 
 /**
@@ -353,7 +357,7 @@ it('steers a message into the back session that is already working', async () =>
   // The answer lands in the steered turn, which is the one the person waits in.
   expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
   expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.replies).toEqual(['done']);
+  expect(said.posts).toEqual(['done']);
   expect(said.notices).toEqual([]);
 });
 
@@ -380,6 +384,7 @@ it('stops the back session\'s running turn when its main turn is stopped, and an
   // What the back session says after the stop answers nothing.
   expect(one.wake.main('ahp-session:/1')).toBeUndefined();
   expect(one.wake.posted('ahp-session:/1', 'late')).toBe(false);
+  expect(said.posts).toEqual([]);
   expect(said.replies).toEqual([]);
 });
 
@@ -389,7 +394,7 @@ it('stops the back session\'s running turn when its main turn is stopped, and an
  * Nothing woke this one - the person typed in the back session, or whatever
  * else drives that chat began it - so the main turn was opened by the handle
  * before the wake was told, and what the wake adds is the wait: the session's
- * `post_message` replies into it, and its turn's end ends it.
+ * `post_message` posts into it, and its turn's end ends it.
  */
 it('holds a main turn open on a turn somebody began in a back session', async () => {
   const one = await sitting(bot(), [{ name: 'work', session: 'ahp-session:/1', chat: 'ahp-chat:/1' }]);
@@ -403,7 +408,11 @@ it('holds a main turn open on a turn somebody began in a back session', async ()
     session: CHAT, turnId: 't1', handle: said.handle, bot: 'Backer',
   });
   expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.replies).toEqual(['done']);
+  expect(said.posts).toEqual(['done']);
+  // The back turn's end ends the main turn it posted into.
+  one.wake.finished('ahp-session:/1', 'done');
+  expect(said.endings).toEqual(['ended']);
+  expect(said.replies).toEqual([]);
 
   // The next back turn opens a main turn of its own, and the end of it is what
   // answers that one.
@@ -427,8 +436,8 @@ it('leaves the main turn a message woke alone when a back turn begins', async ()
   // waiting for.
   expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
   expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.replies).toEqual(['done']);
-  expect(other.replies).toEqual([]);
+  expect(said.posts).toEqual(['done']);
+  expect(other.posts).toEqual([]);
 });
 
 it('stops a back turn the main chat shows, with the time it ran', async () => {

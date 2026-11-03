@@ -67,6 +67,8 @@ interface OpenTurn {
   calls: WorkingCall[];
   /** The questions and approvals it shows while another session waits on a person. */
   asked: AskedCopy[];
+  /** How many answers `say` and `reply` have given it, which numbers the next one's id. */
+  answers: number;
 }
 
 /**
@@ -153,7 +155,8 @@ export interface ChatMessage {
  * package knows what a bot's answer is, and nothing here would ever end a turn
  * by itself. `reply` is that answer, `notice` is something that happened
  * instead of one, and `end` is a turn that gets neither - each ends the turn it
- * finds open, and does nothing at all when there is none.
+ * finds open, and does nothing at all when there is none. `say` adds an answer
+ * and leaves the turn open.
  *
  * `onMessage` is the other direction: each turn this chat begins, and each
  * message steered into the open one, is handed to it. That is how what a person
@@ -174,6 +177,14 @@ export interface TurnHandle {
   begin(text: string, from?: MessageFrom): string | undefined;
   /** End the open turn with this as its answer. */
   reply(text: string): void;
+  /**
+   * Add this answer to the open turn, and keep the turn open.
+   *
+   * What a back session posts while its own turn runs: the main turn waits on
+   * that turn as on a subagent, and ends when it ends. `end` after it completes
+   * the turn as answered.
+   */
+  say(text: string): void;
   /** End the open turn with a notice rather than an answer. */
   notice(text: string): void;
   /** End the open turn with no response at all. */
@@ -700,6 +711,19 @@ export function botChatAgent(
     };
 
     /**
+     * One answer of the open turn, as a markdown part.
+     *
+     * The first is `<turn>:reply` and each after it `<turn>:reply2` and on, as
+     * a second steer is `:steer2`: one turn may hold several answers, and a
+     * part's id names one.
+     */
+    const answerPart = (held: OpenTurn, text: string): Bag => {
+      held.answers += 1;
+      const id = held.answers === 1 ? `${held.id}:reply` : `${held.id}:reply${held.answers}`;
+      return { id, kind: 'markdown', content: text };
+    };
+
+    /**
      * End the open turn, and keep the turn it was.
      *
      * The calls the turn showed end with it, and each ending updates the part
@@ -804,7 +828,14 @@ export function botChatAgent(
          * there are no `chat/delta`s after it - and the id is the turn's, which
          * is what a delta would have appended to.
          */
-        finish(held, 'complete', [{ id: `${held.id}:reply`, kind: 'markdown', content: text }], true, true);
+        finish(held, 'complete', [answerPart(held, text)], true, true);
+      },
+      say: (text) => {
+        const held = open;
+        if (held === undefined) return;
+        const part = answerPart(held, text);
+        held.responseParts.push(part);
+        start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
       },
       notice: (text) => {
         const held = open;
@@ -816,7 +847,8 @@ export function botChatAgent(
       end: () => {
         const held = open;
         if (held === undefined) return;
-        finish(held, 'complete', []);
+        // A turn with an answer `say` gave it was answered, and its calls complete.
+        finish(held, 'complete', [], true, held.answers > 0);
       },
       /*
        * A turn whose work failed ends as failed, with an error part, as the
@@ -873,7 +905,7 @@ export function botChatAgent(
     ): OpenTurn => {
       const startedAt = new Date().toISOString();
       const message = messageOf(text, from, model, attachments);
-      const held: OpenTurn = { id: turnId, startedAt, message, responseParts: [], calls: [], asked: [] };
+      const held: OpenTurn = { id: turnId, startedAt, message, responseParts: [], calls: [], asked: [], answers: 0 };
       open = held;
       // No state and no duration: this is the turn as it began, and the line
       // that ends it is the one that says how it went.
