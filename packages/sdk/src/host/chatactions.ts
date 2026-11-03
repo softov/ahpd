@@ -259,6 +259,19 @@ export function chatAction(
     : undefined;
   const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
   /*
+   * A chat whose backend runs it on another host has its bits there.
+   *
+   * The read or the archive goes to that host, which answers the client and
+   * says the bit as the chat's action, which is kept here as it is said: the
+   * host running a session is the one producer of its state, and a relay
+   * forwards a client's messages to it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+   */
+  if (bitOf !== undefined && byChat.get(channel)?.chat.flag?.(
+    bitOf === Status.IsRead ? 'read' : 'archived',
+    bitOf === Status.IsRead ? action.isRead === true : action.isArchived === true,
+  ) === true) return;
+  /*
    * A session's default chat is not archived on its own.
    *
    * The reference host refuses an archive of a default chat, in a session it
