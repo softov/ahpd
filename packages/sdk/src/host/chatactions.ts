@@ -15,20 +15,16 @@ import type { ConnectionContext, HostContext } from './context.js';
  *
  * A session's `IsRead` and `IsArchived` are this host's rather than a
  * backend's: a harness asked would have no idea whether a person had read a
- * transcript. Three actions reach this - `session/isReadChanged` and
- * `session/isArchivedChanged` on a session channel, and `chat/isArchivedChanged`
- * on the session's default chat, which archives the session because that chat
- * is what the session's row is.
+ * transcript. `session/isReadChanged` and `session/isArchivedChanged` reach
+ * this, a client's on a session channel and this host's own.
  *
  * A read bit moved here is the session's. The chats it moves with, and when,
  * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
  * moves a sole chat where `session/isReadChanged` is applied.
  *
- * An archived bit that moved moves the default chat's with it. The protocol
- * makes archiving the default chat the same act as archiving the session, and
- * the chat and the session each carry the bit, so a client of either channel
- * holds it as the other does. A session that is not running names its default
- * chat as its catalogue row does.
+ * An archived bit is the session's alone, and each chat keeps its own, as the
+ * reference host keeps a session's flags apart from its chats'.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3369-L3374
  *
  * Answers whether anything moved. A bit handed the value it already had is not
  * a change, and a client told about one is a client woken for a message that
@@ -51,14 +47,6 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
-  if (bit === Status.IsArchived) {
-    const id = idOf(uri);
-    const recorded = ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
-    const lead = ctx.sessions.get(uri)?.defaultChat
-      ?? recorded.find((one) => one.default === true)?.uri
-      ?? chatUriFor(ctx.nameOf(id));
-    chatFlag(ctx, uri, lead, Status.IsArchived, on);
-  }
   if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
   // Unarchived: the tree back before anything wakes the session into it, and
   // the session is no longer one the host archived.
@@ -262,29 +250,33 @@ export function chatAction(
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
     : undefined;
   const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
-  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
-    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
-    /*
-     * Archiving the chat that is the session's row archives the session.
-     *
-     * A session is a row in a list and its first chat is what that row is, so
-     * the protocol makes the two the same act: "Archiving the session's default
-     * chat is equivalent to archiving the session"
-     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts).
-     * The chat's archived bit is kept
-     * and said as any chat's is, the client's own action going out to every
-     * client of the chat, and the session's follows on the session channel as
-     * this host's action; a session archived by its own action moves the two
-     * bits alike, in `sessionFlag`.
-     */
-    if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
-      const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
-      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
-      // A chat already archived or not as asked is the client's action all
-      // the same, said to every client of the chat as any accepted action is.
-      if (!moved) dispatch(channel, action, origin);
+  /*
+   * A session's default chat is not archived on its own.
+   *
+   * The reference host refuses an archive of a default chat, in a session it
+   * runs and in one it has not loaded, and its window sends one on the chat's
+   * channel. A session is archived by its own `session/isArchivedChanged`.
+   * The default chat is the running session's, or the one a session not
+   * running records, or the one its catalogue row names. Refused before
+   * anything wakes the session, as the reference host refuses one without
+   * restoring it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13453-L13464
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12120-L12122
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L7838-L7856
+   */
+  if (bitOf === Status.IsArchived && flagSession !== undefined) {
+    const id = idOf(flagSession);
+    const recorded = sessions.has(flagSession) || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = sessions.get(flagSession)?.defaultChat
+      ?? recorded.find((one) => one.default === true)?.uri
+      ?? chatUriFor(ctx.nameOf(id));
+    if (lead === channel) {
+      refuse(connection.peer, channel, action, origin, 'Only a known independently manageable non-default chat can be archived.');
       return;
     }
+  }
+  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
+    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
     /*
      * Said again, a bit that did not move keeps the catalogue as it is. The
      * action is still accepted, and goes to every client of the chat. A read
