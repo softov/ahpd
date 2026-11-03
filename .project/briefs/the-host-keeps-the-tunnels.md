@@ -467,7 +467,7 @@ host.showView({
 How the data reaches a client:
 
 - The data rides the plugin's row on the plugins channel. No new channel is made for a plugin's data.
-- A plugin's page subscribes to that plugin's row alone: `x-ahpd-plugins://?id=devtunnel`. The records channel takes `id` as a second query, beside `owner`.
+- A plugin's page subscribes to that plugin's row alone, at the row's own URI: `x-ahpd-plugins://devtunnel`.
 - The snapshot holds the row with its views and its data.
 - `updateViewData` sends a new action, `x-ahpd-plugins/viewData` `{ id, surface, path, value }`. It goes only to the clients subscribed to that plugin's row, not the whole row to every client of the list.
 - ahpw follows the row while the page shows it, writes the data to the plugin's namespace, and gives the view its data context.
@@ -489,7 +489,8 @@ The data and the store are two registrations in two places:
 | Where | What is registered | Who registers it |
 | --- | --- | --- |
 | The host | The data, as a channel such as `x-crm://clients`, with a grant for each reader | The `crm` plugin, with `registerChannel` |
-| The client | A namespace in scena's store, such as `crm`, read as `$/crm/...` | The client, with `registerDataProvider` or its own `follow` |
+| The view | The short name and its channel, as `sources: { crm: 'x-crm://clients' }` | The plugin that draws the view, in `showView` |
+| The client | A namespace in scena's store, such as `crm`, read as `$/crm/...` | The client, from the view's `sources`, with `registerDataProvider` or its own `follow` |
 
 - The client subscribes to the channel as the person, so the person sees only the records the channel lets them read.
 - The plugin that draws the view never reads the other plugin's data. A copy in its own data would reach every reader of its row with its own grants.
@@ -522,19 +523,17 @@ The data and the store are two registrations in two places:
 | Each tunnel records the plugin that opened it and why it was opened, such as system access or a canvas | Softov, 2026-11-02: "I was referring from why the tunnels was openned... like was a tunnel for the system access. a tunnels for the canvas.. that thing." |
 | A kind's plugin config limits its tunnels by purpose: the most tunnels, whether it opens tunnels for that purpose, and whether a tunnel closes when its last use ends | Softov, 2026-11-02: "so we can enforce like in plugin config limit qtd tunnel by purpose.. like system tunnel only one... and if it can open tunnel for canvas, etc.. also if close the tunnel if last user." |
 | The devtunnel kind hosts in-process with `@microsoft/dev-tunnels-connections` and calls `refreshPorts` for a new port, so the daemon's clients stay connected. The SDK's host serves a port added after it started ([tunnelRelayTunnelHost.ts](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/connections/tunnelRelayTunnelHost.ts#L693-L737)) | Softov, 2026-11-02: "Use the SDK in-process" |
-| The devtunnel plugin signs in itself, with a GitHub or Microsoft device code. It no longer needs the `devtunnel` CLI. Each signed-in account is a `devtunnel` connector, and a tunnel names the one it uses, as [a-connector-signs-in-with-a-device-code.md](a-connector-signs-in-with-a-device-code.md) says. A GitHub sign-in uses the service's own GitHub app, `Iv1.e7b89e013f801f03`, as the SDK tells a client app to do ([tunnelServiceProperties.ts](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/contracts/tunnelServiceProperties.ts#L32-L38)). On 2026-11-02 a device code sign-in with that app gave a token, and the service listed the tunnels with it under the `github` scheme | Softov, 2026-11-02: "The plugin logs in itself"; the sign-in is "A devtunnel connector" |
+| The devtunnel plugin signs in itself, with a GitHub or Microsoft device code. It no longer needs the `devtunnel` CLI. Each signed-in account is a `devtunnel` connector, and a tunnel names the one it uses, as plan `20261102-1054-a-connector-signs-in-with-a-device-code` says. A GitHub sign-in uses the service's own GitHub app, `Iv1.e7b89e013f801f03`, as the SDK tells a client app to do ([tunnelServiceProperties.ts](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/contracts/tunnelServiceProperties.ts#L32-L38)). On 2026-11-02 a device code sign-in with that app gave a token, and the service listed the tunnels with it under the `github` scheme | Softov, 2026-11-02: "The plugin logs in itself"; the sign-in is "A devtunnel connector" |
 | A record of the shared core has an optional `owner`, with the `?owner=me` filter. Computers fill it with the person who made the machine. Tunnels leave it empty, so a tunnel belongs to the host | Softov, 2026-11-02: "Optional owner" |
 | `remove` needs `<thing>:delete` and every other operation `<thing>:put`. A kind can name another grant for an operation, such as `<thing>:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
+| A view names its sources: `showView` takes `sources`, a map from each short name to its channel, such as `crm` to `x-crm://clients` | Softov, 2026-11-02, chose "The view names them" |
+| Each plugin's row has its own URI, such as `x-ahpd-plugins://devtunnel`, and a plugin's page subscribes to it | Softov, 2026-11-02, chose "A URI for each row" |
+| A plugin's own method keeps its title, icon and input in the manifest. A method such as `x-example-canvas/open` is on no channel, so no operation describes it | (defaulted: the 2026-11-02 answer "In the manifest" still holds for a method that is not an operation) |
+| A canvas and a person who forward the same port get two tunnels. Each has its own URL and anonymous switch, and each record keeps one `purpose` | Softov, 2026-11-02, chose "Two tunnels" |
+| The canvas example has a setting that names the kind it asks for. The default is the kind of the daemon's system tunnel | Softov, 2026-11-02, chose "A setting, system kind" |
+| The list holds tunnels only. A proxy's address stays in the daemon's `resource` and the canvas `origin` option | Softov, 2026-11-02, chose "Tunnels only" |
 
 ## Open points
 
-1. Who maps a namespace to its channel, such as `crm` to `x-crm://clients`? The view could name its sources, the manifest could, or the client could hold a fixed list.
-2. ahpw keeps a followed channel at `$/ahp/hosts/<host>/channels/<uri>`. Does a source get its own namespace, such as `$/crm`, or a short name under that path? Not checked: whether scena lets a page register a namespace while it shows, and unregister it after.
-3. Is `?id=<plugin>` a query of the plugins channel, or does each plugin's row get its own URI?
-4. Does devtunnel's view list its tunnels from its own data, or read `x-ahpd-tunnels://` filtered by its kind? The second keeps one copy of each tunnel.
-5. Does a plugin's own method still get its title, icon and input in the manifest, now that the tunnel operations are the host's?
-6. When two kinds can forward a port, which kind does the canvas example ask for?
-7. When a canvas and a person ask for the same port, is it one tunnel or two?
-8. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
-9. Does `say` stay for `ahpd status`, beside the list?
-10. The sign-in points are open in [a-connector-signs-in-with-a-device-code.md](a-connector-signs-in-with-a-device-code.md#open-points).
+1. ahpw keeps a followed channel at `$/ahp/hosts/<host>/channels/<uri>`, and a view reads a source as `$/<name>/...`. Not checked: whether scena lets a page register a namespace while it shows, and unregister it after.
+2. Does devtunnel's view list its tunnels from its own data, or read `x-ahpd-tunnels://` filtered by its kind? The second keeps one copy of each tunnel. Softov, 2026-11-02: "skip that for now".
