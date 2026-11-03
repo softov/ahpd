@@ -1,6 +1,6 @@
 ---
 title: A creator naming no client is refused
-status: todo
+status: done
 depends: [task-01-a-creator-naming-another-client-is-refused.md]
 layer: host
 refs:
@@ -35,3 +35,10 @@ Nothing is claimed or made for it.
 - `packages/sdk/test/presence.test.ts`: the new case fails on `7e87e7da` and passes after.
 - The presence and remote session test files pass.
 - `pnpm run typecheck` is clean.
+
+## Resume
+
+Built 2026-11-02.
+
+- On `7e87e7da`'s sources the new case fails: the session is made with the connection's id filled in.
+- Presence's held-as-sent case, its two other creators and the remote session helper name the connection's id.

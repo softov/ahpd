@@ -1,7 +1,7 @@
 ---
 title: A session for another client is refused
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -66,7 +66,7 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A creator naming another client is refused](task-01-a-creator-naming-another-client-is-refused.md) | done | - |
-| [02 - A creator naming no client is refused](task-02-a-creator-naming-no-client-is-refused.md) | todo | 01 |
+| [02 - A creator naming no client is refused](task-02-a-creator-naming-no-client-is-refused.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -74,8 +74,8 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
-- **Next action:** task 02.
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a creator's entry with no `clientId`, which the cases send and which takes the connection's.
 
