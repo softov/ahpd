@@ -158,7 +158,7 @@ member of. Every other pool is refused until a role names the grant.
 | --- | --- |
 | `admin` | `*:*` |
 | `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `mcp:call`, `trust:write` |
-| `guest` | `session:read`, `automation:read`, `mcp:call` |
+| `guest` | `session:read`, `automation:read` |
 
 `guest` is the default for `ahpd user add` with no `--role`, and it is the one
 worth looking at twice: it lists the sessions and the automations and can do

@@ -250,7 +250,7 @@ it('answers the grants a role resolves to, without repeating the resolution', as
   const users = open();
   await users.add('g', ['guest']);
   const rows = await users.list();
-  expect(rows).toEqual([{ id: 'g', roles: ['guest'], grants: ['session:read', 'automation:read', 'mcp:call'], trusted: true }]);
+  expect(rows).toEqual([{ id: 'g', roles: ['guest'], grants: ['session:read', 'automation:read'], trusted: true }]);
 });
 
 it('trusts a local token unless the issuer is required', async () => {

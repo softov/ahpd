@@ -17,13 +17,15 @@
  *
  * The command's own grant is `operation:invoke`, and a caller who holds the
  * operation's grant is let in without it: a person who may change the tunnels
- * may run a change to one, and needs no second grant to do it.
+ * may run a change to one, and needs no second grant to do it. Each operation
+ * still needs its own grant, so `operation:invoke` alone runs none of them.
  *
  * The command never runs an operation itself. It finds the channel, checks what
  * the call says, and hands the operation to the channel, which answers with the
  * record, or `{}` for an operation that removed it.
  */
 
+import { refusalReason } from '../host/gate.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import type { Operation } from '../types/kinds.js';
 import type { PluginMethod } from '../types/plugin.js';
@@ -141,6 +143,10 @@ export const invokeOperation = (options: InvokeOperationOptions): PluginMethod =
     if (operation === undefined) {
       throw new RpcError(INVALID_PARAMS, `No operation called ${operationId} on ${uri}; one the list offers now can be run`);
     }
+    // The gate admitted the command; the operation is checked here. No reader
+    // is the root connection, or a host with no users directory.
+    const grant = operation.grant as Grant;
+    if (reader !== undefined && !reader.can(grant)) throw new RpcError(-32009, refusalReason(reader.id, grant), {});
     const target = targetOf(operation, params.target);
     const input = inputOf(operation, params.input, options.check);
     channel.begin(operationId, target);

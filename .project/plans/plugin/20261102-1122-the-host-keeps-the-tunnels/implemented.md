@@ -27,6 +27,7 @@ No `devtunnel` process runs.
 - [`code://packages/tunnel-devtunnel/src/service.ts`](../../../../packages/tunnel-devtunnel/src/service.ts) - one management client and one relay host for each connector, with the Dev Tunnel found by its `_ahpd` label.
 - [`code://packages/tunnel-devtunnel/src/kind.ts`](../../../../packages/tunnel-devtunnel/src/kind.ts) - the `devtunnel` kind, its operations, its system tunnel and the hop from `31546`.
 - [`code://docs/plugins/PLUGINS.md`](../../../../docs/plugins/PLUGINS.md) - "A tunnel kind of your own" and the `tunnelKinds` contract.
+- The branch `host/20261102-1347-grants-follow-the-answers`, from Softov's answer on 2026-11-02: `handle` checks `operation.grant`, so `operation:invoke` alone runs no operation.
 
 ## Verified
 
@@ -48,7 +49,6 @@ No `devtunnel` process runs.
 
 ## Left for later
 
-- `x-ahpd/invokeOperation` admits a caller who holds `operation:invoke` OR the operation's grant, and `handle` does not check the operation's grant again. So a holder of `operation:invoke` runs every operation, `remove` included. Only `admin` holds it today. The fix to decide is a check of `operation.grant` in `handle`.
-- Whether a `devtunnel` connector can take its token from `fromEnv`, and which long-lived token the Dev Tunnels service accepts.
+- Whether a `devtunnel` connector can take its token from `fromEnv`, and which long-lived token the Dev Tunnels service accepts. Softov, 2026-11-02: find the token first, in a brief; decide `fromEnv` after it. Until then the device sign-in is the only way.
 - The view's data, the ahpw forms, the canvas URL and the limits by purpose, as *Goal* says.
 - The first commit on the branch, `e4c9c5ef`, does not typecheck alone. The branch builds from `694687f7`.

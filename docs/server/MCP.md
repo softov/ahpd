@@ -54,7 +54,7 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 `get_current_session`, `set_workspace` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
 
-Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all seven. A `guest` holds `session:read` and sees `list_sessions` and `get_session_context`; a call to `create_session` is refused in the tool's result, which is where the model reads it.
+Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all seven. A role with `mcp:call` and `session:read` only sees `list_sessions` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
 
 `create_session` takes an `agent`, a provider id such as `claude-deepseek-build`, and a `config`, the new session's settings checked against that agent's schema. Both are optional. See [Tools](../sdk/TOOLS.md#tools-that-need-no-session).
 
@@ -62,7 +62,7 @@ A session made here belongs to the caller and has no parent. Its turns are the c
 
 ## Who may call
 
-The door asks for `mcp:call`. It is in `member` and `guest`, and `admin` holds it through everything. A guest's token reaches the door and then sees only the tools its other grants allow, because the door and each tool are two checks.
+The door asks for `mcp:call`. It is in `member`, and `admin` holds it through everything. `guest` does not hold it. A token that reaches the door sees only the tools its other grants allow, because the door and each tool are two checks. The door charges nothing, so a person in no team is not refused.
 
 | Token | Answer |
 | --- | --- |

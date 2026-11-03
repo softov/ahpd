@@ -83,6 +83,16 @@ const credentialOf = (headers: Headers): string | undefined | false => {
 export const callerName = (caller: ProxyCaller): string =>
   caller.kind === 'root' ? 'root' : caller.kind === 'person' ? caller.principal.id : `session ${caller.session}`;
 
+/** What one door asks of a caller beside its grant. */
+export interface CallerAsk {
+  /**
+   * Whether the caller needs a scope to charge the work to. True by default.
+   * A door that charges nothing, such as `/mcp`, passes false, so a person in
+   * no team is not refused there.
+   */
+  scoped?: boolean;
+}
+
 /**
  * Who sent `request`, holding `grant`, or the refusal.
  *
@@ -91,7 +101,7 @@ export const callerName = (caller: ProxyCaller): string =>
  * `grant` or naming a scope they are not in. Root and a session are not asked
  * for a grant or a scope: a session's scope is the one `whose` answered.
  */
-export async function callerOf(request: Request, options: CallerOptions, grant: Grant): Promise<Called> {
+export async function callerOf(request: Request, options: CallerOptions, grant: Grant, ask: CallerAsk = {}): Promise<Called> {
   const presented = credentialOf(request.headers);
   if (presented === false) {
     return { refusal: { status: 400, message: 'Authorization and x-api-key name different credentials; send one' } };
@@ -120,7 +130,7 @@ export async function callerOf(request: Request, options: CallerOptions, grant: 
   if (!who.can(grant)) return { refusal: { status: 403, message: refusalReason(who.id, grant) } };
 
   const named = request.headers.get(SCOPE_HEADER) ?? new URL(request.url).searchParams.get('scope') ?? undefined;
-  const answer = scopeFor(who, named);
+  const answer = ask.scoped === false ? undefined : scopeFor(who, named);
   if (answer?.refusal !== undefined) return { refusal: { status: 403, message: answer.refusal } };
   /*
    * What the call says about itself, under what its key says.
