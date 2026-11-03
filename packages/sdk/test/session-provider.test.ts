@@ -445,7 +445,11 @@ describe('a row two harnesses both list', () => {
     const one: string[] = [];
     const { client } = serving(store, [harness('one', ['shared'], one)], {
       ...peer(),
-      notify: (_method, params) => { refusals.push((params as Record<string, unknown>)['rejectionReason']); },
+      // Only refusals: a listing also says the root's count of sessions.
+      notify: (_method, params) => {
+        const refused = (params as Record<string, unknown>)['rejectionReason'];
+        if (refused !== undefined) refusals.push(refused);
+      },
     });
     await settle();
     await catalogue(client);
@@ -523,7 +527,11 @@ describe('a row two harnesses both list', () => {
     const one: string[] = [];
     const { client } = serving(store, [harness('one', ['shared'], one)], {
       ...peer(),
-      notify: (_method, params) => { refusals.push((params as Record<string, unknown>)['rejectionReason'] as string); },
+      // Only refusals: a listing also says the root's count of sessions.
+      notify: (_method, params) => {
+        const refused = (params as Record<string, unknown>)['rejectionReason'];
+        if (refused !== undefined) refusals.push(refused as string);
+      },
     });
     await settle();
     await catalogue(client);
