@@ -1,6 +1,6 @@
 ---
 title: A shell to sit in runs the integration
-status: todo
+status: implemented
 depends:
   - task-01-the-store-reads-vscodes-marks.md
 layer: "@ahpd/sdk machines, @ahpd/server"
@@ -62,3 +62,13 @@ A shell given a command, a shell on pipes, a shell in a machine, and a shell the
 - `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass, one at a time.
 
 ## Resume
+
+Implemented 2026-11-03.
+`packages/server/shellintegration/` holds the seven scripts from `e7ada61c`, byte for byte, and `packages/server/package.json` ships the folder in `files`.
+`packages/server/src/shellintegration.ts` is the fork's `getShellIntegrationInjection` with the scripts resolved beside the source, plus the `shellIntegration` port that answers `newArgs` and `envMixin` and copies zsh's four startup files itself, then `run.ts` hands it to `shellTerminals`.
+The port answers no `filesToCopy`: the store has no filesystem, so the on-disk half of the injection stayed in the server and only the two values a caller applies cross the seam.
+`packages/sdk/src/types/terminals.ts` declares `ShellIntegration` and `ShellIntegrationAnswer`, `TerminalOptions` gains `nonInteractive`, `preventShellHistory` and `machine`, and `machines/terminals.ts` gives `kindOf` the shell's name, generates the nonce before the port is asked, sets the two options' variables, and asks the port only for a command-less shell under a pseudoterminal with no `machine`.
+`docs/sdk/TERMINALS.md` describes the port, when it is asked and the variables.
+`packages/server/test/shellintegration.test.ts` exercises the injection for each shell and a real bash under node-pty.
+One finding the plan did not have: the script writes an exit code only for a command it can name, so a bare `(exit 3)` gets `633;D` with no code and the test runs `bash -c "exit 3"` instead.
+Gates: `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary`, the sdk suite and the server suite all pass.

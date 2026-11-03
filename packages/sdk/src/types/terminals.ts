@@ -33,6 +33,15 @@ export interface TerminalOptions {
    */
   shell?: string;
   /**
+   * The nonce the shell integration is given, which a command line it reports
+   * has to carry to be read as the shell's.
+   *
+   * A line is only trusted with it, so a line some program printed - one that
+   * happens to look like an OSC 633 `E` - cannot pass for what the shell ran.
+   * Generated for each terminal when nobody names one.
+   */
+  nonce?: string;
+  /**
    * One command to run instead of a shell to sit in.
    *
    * The terminal runs it and exits, so `terminal/exited` is what says the
@@ -59,6 +68,30 @@ export interface TerminalOptions {
    * caller cannot leave a terminal disagreeing with the size it reports.
    */
   env?: Record<string, string | undefined>;
+  /**
+   * Say the shell is one a person is not watching, so a program in it must not
+   * wait for an answer nobody will give.
+   *
+   * It sets what VS Code's agent host sets for the same flag - no pager, no
+   * interactive prompt - as variables in the shell's environment.
+   */
+  nonInteractive?: boolean;
+  /**
+   * Keep what the shell runs out of the person's history.
+   *
+   * The integration script reads it and stops the shell from recording the
+   * lines it is given, which is what an agent's commands are.
+   */
+  preventShellHistory?: boolean;
+  /**
+   * The machine the shell's process runs in, by the id a computer URI names.
+   *
+   * A shell in a machine gets no shell integration: the scripts would have to
+   * be copied or mounted there first, which this host cannot do. The value is
+   * handed to the `ShellIntegration` port all the same, so a runtime that can
+   * answers for one later.
+   */
+  machine?: string;
   /** Width in columns, as the client draws it. */
   cols?: number;
   /** Height in rows. */
@@ -136,6 +169,25 @@ export interface Terminal {
    * the runtime said the process was signalled rather than exiting by itself.
    */
   waitForExit(): Promise<{ exitCode?: number; signal?: string }>;
+
+  /**
+   * Whether the program is on the alternate screen.
+   *
+   * Read from the emulated screen the store feeds, so a full-screen program -
+   * `vim`, `less`, anything that switches buffers - is a fact rather than a
+   * guess from its output. `false` when no screen was handed in.
+   */
+  isInAltBuffer(): boolean;
+  /** Whether the program turned on bracketed paste. `false` with no screen. */
+  isBracketedPasteMode(): boolean;
+  /**
+   * Resolves when the alternate screen shows, or at once when it already does.
+   *
+   * What a caller waits on after starting a full-screen program, rather than
+   * polling `isInAltBuffer`. Without a screen there is nothing to watch, so it
+   * resolves at once.
+   */
+  whenAltBuffer(): Promise<void>;
 }
 
 /**
@@ -170,6 +222,90 @@ export type SpawnPty = (
   args: string[] | string,
   options: { cwd?: string; cols: number; rows: number; env: Record<string, string | undefined> },
 ) => Pty;
+
+/** What a screen is made from: the size it starts at, and where its answers go. */
+export interface ScreenOptions {
+  /** Width in columns, as the terminal was opened. */
+  readonly cols: number;
+  /** Height in rows. */
+  readonly rows: number;
+  /**
+   * Write to the program what the screen answers.
+   *
+   * A screen answers the queries it was told to - the cursor position, which a
+   * program asks for with `ESC[6n` - and the answer belongs on the program's
+   * input, not in the output a client reads.
+   */
+  readonly write: (data: string) => void;
+}
+
+/**
+ * One terminal's emulated screen.
+ *
+ * Fed every chunk the program writes, it keeps the screen a terminal driver
+ * would show: the alternate buffer, the modes a program turned on, the cursor
+ * the program asks about. It is a port, as `pty` is, because a terminal
+ * emulator is a dependency a store of shells may not want to carry.
+ */
+export interface Screen {
+  /** Feed it what the program said, in order. Resolves once it is parsed. */
+  write(data: string): Promise<void>;
+  /** Record a new size, as the terminal's is recorded. */
+  resize(cols: number, rows: number): void;
+  /** Whether the alternate screen is the one showing. */
+  isInAltBuffer(): boolean;
+  /** Whether the program turned on bracketed paste. */
+  isBracketedPasteMode(): boolean;
+  /** Resolves when the alternate screen shows, or at once when it already is. */
+  whenAltBuffer(): Promise<void>;
+  /** Let it go, once the program has gone. */
+  dispose(): void;
+}
+
+/**
+ * Make one. The port the store calls for each terminal under a pseudoterminal.
+ *
+ * The store hands it the size the terminal was opened with and a function that
+ * writes to the program, and feeds it every chunk before reading the marks in
+ * it. A terminal on pipes has no screen, and a store given no port answers
+ * `false` to both reads and resolves `whenAltBuffer` at once.
+ */
+export type SpawnScreen = (options: ScreenOptions) => Screen;
+
+/** What a shell is started with instead, to read VS Code's integration script. */
+export interface ShellIntegrationAnswer {
+  /** The arguments to start the shell with, when they are not the ones asked about. */
+  readonly newArgs?: string[];
+  /** Variables to mix into the environment the shell is given. */
+  readonly envMixin?: Record<string, string>;
+}
+
+/**
+ * VS Code's shell integration, for a shell opened to sit in.
+ *
+ * A port, as `pty` is, and for the same kind of reason: it needs the scripts on
+ * disk and the shell's name, and both are the runtime's business rather than
+ * the protocol's. Asked for a shell's path, the arguments it would start with,
+ * the environment it would be given and the terminal's nonce, it answers what
+ * to start it with instead - or nothing, when it does not know the shell.
+ *
+ * It is asked only for a shell with no command, under a pseudoterminal, whose
+ * `machine` is absent: a shell given a command runs it and exits, a terminal on
+ * pipes has no prompt to mark, and a shell in a machine has no scripts there.
+ * `machine` is handed over all the same, so a runtime that copies or mounts
+ * the scripts in one can answer for it.
+ *
+ * Anything the answer needs on disk - zsh's startup files stand in for the
+ * person's own - the port does itself before answering, because the store has
+ * no filesystem.
+ */
+export type ShellIntegration = (
+  shell: string,
+  args: readonly string[],
+  env: Record<string, string | undefined>,
+  nonce: string,
+  machine?: string,
+) => ShellIntegrationAnswer | undefined;
 
 /**
  * The shells this host can open.

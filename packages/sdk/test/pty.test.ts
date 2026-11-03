@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { uriOf } from '../src/resources/fileuri.js';
 import { shellOf, shellTerminals } from '../src/machines/terminals.js';
 import type { SpawnShell } from '../src/machines/terminals.js';
-import type { Pty, SpawnPty, Terminal } from '../src/types/terminals.js';
+import type { Pty, ScreenOptions, ShellIntegration, SpawnPty, SpawnScreen, Terminal } from '../src/types/terminals.js';
 import { fakePty } from './support/pty.js';
 
 /*
@@ -19,13 +19,14 @@ import { fakePty } from './support/pty.js';
  * than needing native code to have been built.
  */
 
-const opened = (pty?: SpawnPty) => {
+const opened = (pty?: SpawnPty, asked: { nonce?: string } = {}) => {
   const seen: Record<string, unknown>[] = [];
   const store = shellTerminals(pty === undefined ? {} : { pty });
   const terminal = store.create({
     uri: 'ahp-terminal:/one',
     cwd: '/tmp',
     claim: { kind: 'user' },
+    ...asked,
     emit: (_channel: string, action: Record<string, unknown>) => { seen.push(action); },
   } as never);
   return { terminal, seen };
@@ -401,6 +402,343 @@ describe('a shell under a pseudoterminal', () => {
     expect(state.supportsCommandDetection).toBe(false);
     expect(seen.some((one) => one.type === 'terminal/commandDetectionAvailable')).toBe(false);
     terminal.close();
+  });
+});
+
+/*
+ * The marks VS Code's shell integration scripts write.
+ *
+ * They are OSC 633 rather than OSC 133, and the same events: `A` before the
+ * prompt, `C` where the output starts, `D;<code>` when the command finished,
+ * and `E;<line>;<nonce>` naming the command the shell actually ran. The line
+ * counts only with the terminal's own nonce, so a program that prints one
+ * cannot pass for the shell. Everything here arrives the way a script writes
+ * it: mixed into the output, and sometimes split across two reads.
+ */
+describe('a shell that writes VS Code\'s marks', () => {
+  const nonce = 'the-terminal-nonce';
+
+  /** One terminal that knows its nonce, and the fake pty behind it. */
+  const integrated = () => {
+    const { spawn, say, exit } = fakePty();
+    const { terminal, seen } = opened(spawn, { nonce });
+    return { terminal, seen, say, exit };
+  };
+
+  it('reads a command from them as one command part, with its output and code', () => {
+    const { terminal, seen, say } = integrated();
+    const start = terminal.state();
+    say(`${osc('633;A')}$ `);
+    terminal.write('echo a; echo b');
+    // The script writes the line it ran, escaped: a `;` in the line is
+    // `\x3b`, so the first bare `;` is the one before the nonce.
+    say(osc(`633;E;echo a\\x3b echo b;${nonce}`));
+    say(`${osc('633;C')}a\r\nb\r\n`);
+    say(osc('633;D;2'));
+    const state = seen.reduce<unknown>((now, action) => terminalReducer(now as never, action as never), start) as
+      { content: { type: string; commandLine?: string; output?: string; exitCode?: number; isComplete?: boolean }[] };
+    const ran = state.content.find((part) => part.type === 'command');
+    // The line is the one the script reported, not the one that was typed.
+    expect(ran).toMatchObject({ commandLine: 'echo a; echo b', output: 'a\r\nb\r\n', exitCode: 2, isComplete: true });
+  });
+
+  it('keeps them out of the output, a mark that two chunks split included', () => {
+    const { seen, say } = integrated();
+    say('out\u001b]63');
+    say(`3;E;ls;${nonce}\u0007\u001b]633`);
+    say(';C\u0007more\u001b]633');
+    say(';D;0\u001b\\');
+    // Nothing of a 633 sequence reaches the client, which would count it as
+    // output - and both terminators end one.
+    expect(dataOf(seen)).toBe('outmore');
+    expect(seen.some((one) => one.type === 'terminal/commandExecuted')).toBe(true);
+    expect(seen.some((one) => one.type === 'terminal/commandFinished')).toBe(true);
+  });
+
+  it('does not take a command line that carries another nonce', () => {
+    const { terminal, seen, say } = integrated();
+    say(osc('633;A'));
+    terminal.write('ls -la');
+    // A program that printed a line, or a script given another terminal's
+    // nonce. The typed line is what was run, so that is what is reported.
+    say(osc('633;E;rm -rf /;someone-elses-nonce'));
+    say(`${osc('633;C')}out`);
+    const ran = seen.find((one) => one.type === 'terminal/commandExecuted') as { commandLine?: string } | undefined;
+    expect(ran?.commandLine).toBe('ls -la');
+  });
+
+  it('follows the directory a property names, which is a path and not a URI', () => {
+    const { seen, say } = integrated();
+    const elsewhere = join(tmp, 'elsewhere');
+    say(osc(`633;P;Cwd=${elsewhere}`));
+    const moved = seen.find((one) => one.type === 'terminal/cwdChanged') as { cwd?: string } | undefined;
+    expect(moved?.cwd).toBe(uriOf(elsewhere));
+  });
+
+  it('reads only these once they arrive, so a command is not counted twice', () => {
+    const { seen, say } = integrated();
+    // A prompt set up for another terminal writes OSC 133 beside the script's
+    // OSC 633 - fish does from 4.0 - and both describe the same command.
+    say(osc('133;A'));
+    say(osc('633;A'));
+    say(osc(`633;E;ls;${nonce}`));
+    say(`${osc('633;C')}out${osc('633;D;0')}`);
+    say(osc('133;C'));
+    expect(seen.filter((one) => one.type === 'terminal/commandExecuted')).toHaveLength(1);
+    expect(seen.filter((one) => one.type === 'terminal/commandFinished')).toHaveLength(1);
+    // Both kinds are still taken out of the output.
+    expect(dataOf(seen)).toBe('out');
+  });
+});
+
+/*
+ * VS Code's shell integration, as the store asks for it.
+ *
+ * The store never reaches for the scripts: it asks a port, which is what the
+ * daemon hands it, and starts the shell with what comes back. A shell given a
+ * command, one on pipes and one in a machine are left as they were, because
+ * none of them has a prompt the scripts could mark.
+ */
+describe('the shell integration a terminal asks for', () => {
+  type Ask = {
+    shell: string;
+    args: readonly string[];
+    env: Record<string, string | undefined>;
+    nonce: string;
+    machine: string | undefined;
+  };
+
+  /** One terminal under a fake pty, with a port recording every ask it is made. */
+  const began = (
+    answers?: ShellIntegration,
+    asked: {
+      shell?: string;
+      command?: string;
+      machine?: string;
+      nonce?: string;
+      preventShellHistory?: boolean;
+      nonInteractive?: boolean;
+      pty?: boolean;
+    } = {},
+  ) => {
+    const calls: Ask[] = [];
+    const port: ShellIntegration = (shell, args, env, nonce, machine) => {
+      calls.push({ shell, args, env, nonce, machine });
+      return answers?.(shell, args, env, nonce, machine);
+    };
+    const fake = fakePty();
+    const terminal = shellTerminals({
+      ...(asked.pty === false ? {} : { pty: fake.spawn }),
+      shellIntegration: port,
+    }).create({
+      uri: 'ahp-terminal:/integration',
+      cwd: '/tmp',
+      shell: asked.shell ?? '/bin/bash',
+      claim: { kind: 'user' },
+      ...(asked.command === undefined ? {} : { command: asked.command }),
+      ...(asked.machine === undefined ? {} : { machine: asked.machine }),
+      ...(asked.nonce === undefined ? {} : { nonce: asked.nonce }),
+      ...(asked.preventShellHistory === undefined ? {} : { preventShellHistory: asked.preventShellHistory }),
+      ...(asked.nonInteractive === undefined ? {} : { nonInteractive: asked.nonInteractive }),
+      emit: () => {},
+    } as never);
+    return { terminal, calls, fake };
+  };
+
+  it('starts a shell with no command with what the port answers', () => {
+    const { fake, calls } = began((shell, args, env, nonce) => {
+      expect(shell).toBe('/bin/bash');
+      // The arguments the shell would start with, which for one opened to sit
+      // in are none.
+      expect(args).toEqual([]);
+      // The environment it would be given, over the host's own.
+      expect(env.COLUMNS).toBe('80');
+      return {
+        newArgs: ['-i', '--init-file', '/opt/ahpd/shellIntegration-bash.sh'],
+        envMixin: { VSCODE_INJECTION: '1', VSCODE_NONCE: nonce },
+      };
+    }, { nonce: 'the-terminal-nonce' });
+    // Asked once, with the terminal's own nonce - the one an `E` mark needs.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.nonce).toBe('the-terminal-nonce');
+    // Started with the answer, not with what it would have had.
+    expect(fake.started.at(-1)?.args).toEqual(['-i', '--init-file', '/opt/ahpd/shellIntegration-bash.sh']);
+    expect(fake.started.at(-1)?.env).toMatchObject({ VSCODE_INJECTION: '1', VSCODE_NONCE: 'the-terminal-nonce' });
+  });
+
+  it('asks no port for a shell given a command, on pipes, or in a machine', () => {
+    // A command runs and the shell exits: there is no prompt to mark.
+    expect(began(undefined, { command: 'echo hi' }).calls).toHaveLength(0);
+    // Pipes: there is no prompt a client reads marks out of either.
+    expect(began(undefined, { pty: false }).calls).toHaveLength(0);
+    // A machine has no scripts, and copying them there is a runtime's job.
+    expect(began(undefined, { machine: 'box' }).calls).toHaveLength(0);
+  });
+
+  it('starts the shell as it would have when the port throws or answers nothing', () => {
+    const threw = began(() => { throw new Error('no scripts here'); });
+    expect(threw.calls).toHaveLength(1);
+    expect(threw.fake.started.at(-1)?.args).toEqual([]);
+    expect(threw.fake.started.at(-1)?.env.VSCODE_INJECTION).toBeUndefined();
+    const nothing = began(() => undefined);
+    expect(nothing.fake.started.at(-1)?.args).toEqual([]);
+    expect(nothing.fake.started.at(-1)?.env.VSCODE_NONCE).toBeUndefined();
+  });
+
+  it('sets the history and non-interactive variables a caller asks for', () => {
+    const bash = began(undefined, { preventShellHistory: true, nonInteractive: true });
+    expect(bash.fake.started.at(-1)?.env).toMatchObject({
+      VSCODE_PREVENT_SHELL_HISTORY: '1',
+      LC_ALL: 'C.UTF-8',
+      PAGER: '',
+      GIT_PAGER: '',
+      GH_PAGER: '',
+      GIT_TERMINAL_PROMPT: '0',
+      DEBIAN_FRONTEND: 'noninteractive',
+    });
+    // zsh's partial-line marker is the one that belongs to a shell rather than
+    // a pager, and only zsh prints one.
+    expect(bash.fake.started.at(-1)?.env.PROMPT_EOL_MARK).toBeUndefined();
+    const zsh = began(undefined, { shell: '/bin/zsh', nonInteractive: true });
+    expect(zsh.fake.started.at(-1)?.env.PROMPT_EOL_MARK).toBe('');
+  });
+});
+
+/*
+ * The screen a terminal under a pseudoterminal is fed with.
+ *
+ * The store never emulates a terminal: it hands a port every chunk and reads
+ * two facts off it, and writes back what the port answers. The port here is a
+ * few lines that read the same sequences a real emulator would, which is what
+ * lets a case ask what the store does with it without a terminal library.
+ */
+describe('the screen a terminal is fed with', () => {
+  /** A screen that reads the switches a case writes, and keeps what it is told. */
+  const fakeScreen = () => {
+    const fed: string[] = [];
+    const sizes: { cols: number; rows: number }[] = [];
+    let alt = false;
+    let paste = false;
+    let disposed = false;
+    const waiting: (() => void)[] = [];
+    const port: SpawnScreen = (options: ScreenOptions) => {
+      expect(options.cols).toBe(80);
+      expect(options.rows).toBe(24);
+      return {
+        write: (data: string) => {
+          fed.push(data);
+          if (data.includes('\u001b[?1049h')) alt = true;
+          if (data.includes('\u001b[?1049l')) alt = false;
+          if (data.includes('\u001b[?2004h')) paste = true;
+          if (data.includes('\u001b[?2004l')) paste = false;
+          // A real emulator answers the query on its data channel, and the
+          // store wrote the answer back to the program.
+          if (data.includes('\u001b[6n')) options.write('\u001b[2;3R');
+          for (const done of alt ? waiting.splice(0) : []) done();
+          return Promise.resolve();
+        },
+        resize: (cols: number, rows: number) => { sizes.push({ cols, rows }); },
+        isInAltBuffer: () => alt,
+        isBracketedPasteMode: () => paste,
+        whenAltBuffer: () => (alt ? Promise.resolve() : new Promise<void>((resolve) => { waiting.push(resolve); })),
+        dispose: () => { disposed = true; },
+      };
+    };
+    return {
+      port,
+      fed,
+      sizes,
+      isDisposed: () => disposed,
+    };
+  };
+
+  /** One terminal under a fake pty and a fake screen. */
+  const openedWith = (asked: { pty?: boolean } = {}) => {
+    const fake = fakePty();
+    const made = fakeScreen();
+    const terminal = shellTerminals({
+      ...(asked.pty === false ? {} : { pty: fake.spawn }),
+      screen: made.port,
+    }).create({
+      uri: 'ahp-terminal:/screen',
+      cwd: '/tmp',
+      shell: '/bin/bash',
+      claim: { kind: 'user' },
+      emit: () => {},
+    } as never);
+    return { terminal, made, fake };
+  };
+
+  it('is fed each chunk as it came, before the marks are taken out of it', () => {
+    const { made, fake } = openedWith();
+    // A chunk holding both output and a mark: the emulator draws it as the
+    // terminal did, so it sees the sequence a client never receives.
+    const chunk = `out${osc('133;A')}more`;
+    fake.say(chunk);
+    expect(made.fed).toEqual([chunk]);
+  });
+
+  it('answers the alternate buffer and bracketed paste from it', () => {
+    const { terminal, fake } = openedWith();
+    expect(terminal.isInAltBuffer()).toBe(false);
+    expect(terminal.isBracketedPasteMode()).toBe(false);
+    fake.say('\u001b[?1049h\u001b[?2004h');
+    expect(terminal.isInAltBuffer()).toBe(true);
+    expect(terminal.isBracketedPasteMode()).toBe(true);
+    fake.say('\u001b[?1049l\u001b[?2004l');
+    expect(terminal.isInAltBuffer()).toBe(false);
+    expect(terminal.isBracketedPasteMode()).toBe(false);
+  });
+
+  it('writes the answer a program asked for back to it', () => {
+    const { fake } = openedWith();
+    fake.say('\u001b[6n');
+    // The program's input, not its output: a client drawing the terminal must
+    // not see the answer as something the program printed.
+    expect(fake.typed).toEqual(['\u001b[2;3R']);
+  });
+
+  it('settles when the alternate screen shows', async () => {
+    const { terminal, fake } = openedWith();
+    let settled = false;
+    const waited = terminal.whenAltBuffer().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    fake.say('\u001b[?1049h');
+    await waited;
+    // Already there, so the next wait is over at once.
+    await expect(terminal.whenAltBuffer()).resolves.toBeUndefined();
+  });
+
+  it('moves with the terminal, and goes when it does', () => {
+    const { terminal, made, fake } = openedWith();
+    terminal.resize(100, 40);
+    expect(made.sizes).toEqual([{ cols: 100, rows: 40 }]);
+    expect(made.isDisposed()).toBe(false);
+    fake.exit(0);
+    expect(made.isDisposed()).toBe(true);
+  });
+
+  it('is never made for a terminal on pipes, and answers false without one', async () => {
+    // A shell on pipes writes plain text: there is no screen to keep and the
+    // port is not called at all.
+    const pipes = openedWith({ pty: false });
+    expect(pipes.made.fed).toEqual([]);
+    expect(pipes.terminal.isInAltBuffer()).toBe(false);
+    pipes.terminal.close();
+
+    // A store given no port answers the same, and does not make a caller
+    // waiting on the alternate buffer wait for one that never comes.
+    const { spawn } = fakePty();
+    const terminal = shellTerminals({ pty: spawn }).create({
+      uri: 'ahp-terminal:/no-screen',
+      cwd: '/tmp',
+      claim: { kind: 'user' },
+      emit: () => {},
+    } as never);
+    expect(terminal.isInAltBuffer()).toBe(false);
+    expect(terminal.isBracketedPasteMode()).toBe(false);
+    await expect(terminal.whenAltBuffer()).resolves.toBeUndefined();
   });
 });
 

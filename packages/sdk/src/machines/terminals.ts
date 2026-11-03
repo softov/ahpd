@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, win32 } from 'node:path';
 import { terminalReducer, type TerminalContentPart } from '@microsoft/agent-host-protocol';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { shellEnvOf, type ShellEnv } from './shellenv.js';
-import type { Pty, SpawnPty, Terminal, TerminalOptions, TerminalStore } from '../types/terminals.js';
+import { osc633Of } from './osc633.js';
+import type { Pty, Screen, ShellIntegration, SpawnPty, SpawnScreen, Terminal, TerminalOptions, TerminalStore } from '../types/terminals.js';
 
 /**
  * A shell on the host machine, as a terminal channel.
@@ -165,19 +167,23 @@ const cmdQuoted = (word: string): string => `"${word}"`;
 type ShellKind = 'powershell' | 'cmd' | 'posix';
 
 /**
- * The kind of shell a path names.
+ * What a shell's path says about it: its kind, and its file's own name.
  *
- * Read from the file's own name, because that is the one part of a shell that
- * says what it is: `pwsh.exe` and `powershell.exe` both take PowerShell's
- * arguments, `cmd.exe` takes `cmd.exe`'s, and everything else - `sh`, `bash`,
- * `zsh`, `fish` - reads a command line the POSIX way. Anything unrecognised is
- * POSIX, which is what every shell but these two is.
+ * The kind is read from the file's name, because that is the one part of a
+ * shell that says what it is: `pwsh.exe` and `powershell.exe` both take
+ * PowerShell's arguments, `cmd.exe` takes `cmd.exe`'s, and everything else -
+ * `sh`, `bash`, `zsh`, `fish` - reads a command line the POSIX way. Anything
+ * unrecognised is POSIX, which is what every shell but these two is.
+ *
+ * `file` is the name it was read from, lowercased, for the parts that are
+ * about one shell rather than one kind: zsh prints a partial-line marker
+ * unless it is told not to.
  */
-const kindOf = (shell: string): ShellKind => {
+const kindOf = (shell: string): { kind: ShellKind; file: string } => {
   const file = basename(shell).toLowerCase();
   if (file === 'pwsh' || file === 'pwsh.exe' || file === 'powershell' || file === 'powershell.exe')
-    return 'powershell';
-  return file === 'cmd' || file === 'cmd.exe' ? 'cmd' : 'posix';
+    return { kind: 'powershell', file };
+  return { kind: file === 'cmd' || file === 'cmd.exe' ? 'cmd' : 'posix', file };
 };
 
 /**
@@ -226,19 +232,22 @@ const argvLine = (kind: ShellKind, argv: string[], windowsPowerShell = false): s
 /**
  * What a shell says about itself, in the escape sequences it says it with.
  *
- * OSC 133 is the command-boundary convention every shell integration script
- * writes - `A` before the prompt, `B` where the command starts, `C` where its
- * output does, `D;<code>` when it finished - and OSC 7 is the directory. They
- * arrive mixed into the output, and this takes them out of it: a server MUST
- * NOT include shell integration escape sequences in `terminal/data`, which a
- * client would otherwise count as output
+ * OSC 133 is the command-boundary convention a shell's own prompt writes -
+ * `A` before the prompt, `B` where the command starts, `C` where its output
+ * does, `D;<code>` when it finished - and OSC 7 is the directory. OSC 633 is
+ * the same thing as VS Code's shell integration scripts write it: `A`, `B`,
+ * `C` and `D` mean what their OSC 133 twins mean, `E;<line>;<nonce>` is the
+ * command line itself, and `P;Cwd=<path>` is the directory. They arrive mixed
+ * into the output, and this takes them out of it: a server MUST NOT include
+ * shell integration escape sequences in `terminal/data`, which a client would
+ * otherwise count as output
  * (https://microsoft.github.io/agent-host-protocol/specification/terminal-channel).
  * The rest of the bytes go to the client, which is drawing a terminal.
  *
  * Only under a pseudoterminal, because only then is there a shell running its
  * own prompt to emit them.
  */
-const MARKS = /\u001b\](133|7);([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
+const MARKS = /\u001b\](133|633|7);([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
 
 /**
  * The most of a chunk's end held back as the start of a mark.
@@ -250,7 +259,7 @@ const MARKS = /\u001b\](133|7);([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
 const HELD = 1024;
 
 /** How each mark the store reads begins. */
-const OPENERS = ['\u001b]133;', '\u001b]7;'];
+const OPENERS = ['\u001b]133;', '\u001b]633;', '\u001b]7;'];
 
 /**
  * Where a mark that the next chunk may finish starts, at the end of `data`.
@@ -274,12 +283,13 @@ const unfinished = (data: string): number => {
 /**
  * Open one.
  *
- * `pty`, `shellEnv`, `platform`, `run` and `start` are the machine's own: a
- * pseudoterminal to run under, the environment an operator gives every shell,
- * which system this is, how a program is started to end a tree, and how the
- * shell itself is started. All five are handed in rather than reached for,
- * which is the only way a case on Linux can ask what a Windows machine would
- * do.
+ * `pty`, `shellEnv`, `platform`, `run`, `start`, `shellIntegration` and
+ * `spawnScreen` are the machine's own: a pseudoterminal to run under, the
+ * environment an operator gives every shell, which system this is, how a
+ * program is started to end a tree, how the shell itself is started, VS Code's
+ * shell integration to put into it, and the screen that keeps what a terminal
+ * emulator would show. All seven are handed in rather than reached for, which
+ * is the only way a case on Linux can ask what a Windows machine would do.
  */
 export function createTerminal(
   options: TerminalOptions,
@@ -288,6 +298,8 @@ export function createTerminal(
   platform: string = process.platform,
   run: RunQuietly = quietly,
   start: SpawnShell = shells,
+  shellIntegration?: ShellIntegration,
+  spawnScreen?: SpawnScreen,
 ): Terminal {
   const { uri, cwd, emit } = options;
   /** Windows, where a shell is started without `detached` and ended by pid. */
@@ -377,7 +389,12 @@ export function createTerminal(
    * written for one shell is not a line the others read, and the composer's
    * `!echo hi` reaches PowerShell as `echo hi` and `cmd.exe` as the same.
    */
-  const kind = kindOf(shell);
+  const { kind, file } = kindOf(shell);
+  /**
+   * The value the integration script is given, and the one an `E` mark has to
+   * carry for its line to be read as the shell's.
+   */
+  const nonce = options.nonce ?? randomUUID();
   /** The line the shell is asked to run, once there is one. */
   const line = options.command === undefined
     ? undefined
@@ -392,7 +409,7 @@ export function createTerminal(
    * both arrive broken without this. The spawn is told the argv is verbatim
    * for the same reason, and both are what Node's own `shell: true` does.
    */
-  const args = line === undefined ? [] : [...flagOf(kind), shellLine(kind, line)];
+  let args = line === undefined ? [] : [...flagOf(kind), shellLine(kind, line)];
   const environment: Record<string, string | undefined> = {
     // The operator's map over the daemon's own environment, which is what
     // makes a service unit with a private `XDG_CONFIG_HOME` reach its shells.
@@ -415,6 +432,51 @@ export function createTerminal(
   for (const [name, value] of Object.entries(environment)) {
     if (value === undefined) delete environment[name];
   }
+  /*
+   * The two flags a caller opens a shell with, set the way VS Code's agent
+   * host sets them
+   * (https://github.com/microsoft/vscode/blob/122ec4fe4431e8435c42e9b609e3a43a60877383/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L332-L355).
+   *
+   * Asked last, over the caller's own variables: a shell nobody is watching is
+   * a fact about the terminal, and a command that paginates or asks a question
+   * would wait for an answer that never comes. `PROMPT_EOL_MARK` is zsh's
+   * partial-line marker - a `%` after output with no newline - and an empty
+   * one is what keeps a `%` out of what an agent reads back.
+   */
+  if (options.preventShellHistory === true) environment.VSCODE_PREVENT_SHELL_HISTORY = '1';
+  if (options.nonInteractive === true) {
+    environment.LC_ALL = 'C.UTF-8';
+    environment.PAGER = '';
+    environment.GIT_PAGER = '';
+    environment.GH_PAGER = '';
+    environment.GIT_TERMINAL_PROMPT = '0';
+    environment.DEBIAN_FRONTEND = 'noninteractive';
+    if (file === 'zsh' || file === 'zsh.exe') environment.PROMPT_EOL_MARK = '';
+  }
+  /*
+   * VS Code's shell integration, for a shell opened to sit in.
+   *
+   * A shell given a command runs it and exits, a terminal on pipes has no
+   * prompt to mark, and a shell in a machine has no scripts there to read, so
+   * none of the three is asked. What the port answers replaces the arguments
+   * the shell would start with and mixes its variables over the environment it
+   * would be given; a port that answers nothing, or throws, leaves the shell
+   * starting exactly as it would have.
+   *
+   * `machine` is passed though it is always absent here: the day a runtime can
+   * copy or mount the scripts in one, the port already knows which terminal
+   * asked for it.
+   */
+  if (options.command === undefined && pty !== undefined && options.machine === undefined && shellIntegration !== undefined) {
+    try {
+      const asked = shellIntegration(shell, args, environment, nonce, options.machine);
+      if (asked !== undefined) {
+        if (asked.newArgs !== undefined) args = asked.newArgs;
+        Object.assign(environment, asked.envMixin);
+      }
+    }
+    catch { /* a port that cannot answer leaves the shell as it was */ }
+  }
 
   /** Where the shell says it is, once it has said. */
   let where = cwd;
@@ -422,6 +484,17 @@ export function createTerminal(
   let command: { id: string; line: string; at: number } | undefined;
   /** What has been typed since the prompt, so the command line can be read back. */
   let typed = '';
+  /** The command line the integration reported, carrying this terminal's nonce. */
+  let reported: string | undefined;
+  /**
+   * Whether the shell writes OSC 633.
+   *
+   * From the first of those marks its commands are read from them alone: its
+   * prompt may also write OSC 133 - fish does from 4.0, and so does a prompt
+   * set up for another terminal - and reading both would report one command
+   * twice. Both kinds are still stripped from the output.
+   */
+  let integrated = false;
   /**
    * Whether the shell has marked a command boundary.
    *
@@ -436,43 +509,94 @@ export function createTerminal(
   /** The end of the last chunk, while it may be the start of a mark. */
   let held = '';
 
+  /** Say the shell has marked a command boundary, once. */
+  const detect = (): void => {
+    if (detected) return;
+    detected = true;
+    tell({ type: 'terminal/commandDetectionAvailable' });
+  };
+
+  /** A command's output begins, as a `C` says, with the line it ran. */
+  const executed = (line: string): void => {
+    command = { id: `c${String(Date.now())}`, line, at: Date.now() };
+    tell({
+      type: 'terminal/commandExecuted',
+      commandId: command.id,
+      commandLine: command.line,
+      timestamp: command.at,
+    });
+  };
+
+  /** The command ended, as a `D` says, with the code the mark carries. */
+  const finished = (code: number | undefined): void => {
+    if (command === undefined) return;
+    tell({
+      type: 'terminal/commandFinished',
+      commandId: command.id,
+      ...(code !== undefined && Number.isFinite(code) ? { exitCode: code } : {}),
+      durationMs: Date.now() - command.at,
+    });
+    command = undefined;
+  };
+
+  /** The shell's directory, as a path on this machine. */
+  const moved = (path: string): void => {
+    if (path === '' || path === where) return;
+    where = path;
+    tell({ type: 'terminal/cwdChanged', cwd: uriOf(path) });
+  };
+
   /** Say what one mark meant. */
   const meant = (kind: string | undefined, body: string): void => {
     if (kind === '7') {
       // `file://host/path`, per the convention. The host part is dropped:
       // the path is on this machine, and that is what a client opens.
-      const path = localPath(body);
-      if (path !== '' && path !== where) {
-        where = path;
-        tell({ type: 'terminal/cwdChanged', cwd: uriOf(path) });
-      }
+      moved(localPath(body));
       return;
     }
-    if (!detected) {
-      detected = true;
-      tell({ type: 'terminal/commandDetectionAvailable' });
+    if (kind === '633') {
+      /*
+       * The shell writes VS Code's marks. Any of them means the integration
+       * loaded, including the ones this reads nothing from, so OSC 133 is
+       * left alone from here on - see `integrated`.
+       */
+      integrated = true;
+      const event = osc633Of(body);
+      if (event === undefined) return;
+      detect();
+      switch (event.type) {
+        case 'PromptStart':
+          typed = '';
+          return;
+        case 'CommandLine':
+          // Only a line the script wrote, carrying this terminal's nonce.
+          if (event.nonce === nonce) reported = event.commandLine;
+          return;
+        case 'CommandExecuted':
+          executed(reported ?? typed.trim());
+          reported = undefined;
+          return;
+        case 'CommandFinished':
+          finished(event.exitCode);
+          return;
+        case 'Property':
+          // The script writes the directory as a plain path, where OSC 7
+          // writes a URI: `P;Cwd=/tmp`, not `P;Cwd=file://host/tmp`.
+          if (event.key === 'Cwd') moved(event.value);
+          return;
+        default:
+          // `B`, and any event this reads nothing from.
+          return;
+      }
     }
+    // A prompt's own marks, while the integration's are not the ones read.
+    if (integrated) return;
+    detect();
     const mark = body.split(';')[0];
     if (mark === 'A') { typed = ''; return; }
-    if (mark === 'C') {
-      command = { id: `c${String(Date.now())}`, line: typed.trim(), at: Date.now() };
-      tell({
-        type: 'terminal/commandExecuted',
-        commandId: command.id,
-        commandLine: command.line,
-        timestamp: command.at,
-      });
-      return;
-    }
-    if (mark !== 'D' || command === undefined) return;
-    const code = Number(body.split(';')[1]);
-    tell({
-      type: 'terminal/commandFinished',
-      commandId: command.id,
-      ...(Number.isFinite(code) ? { exitCode: code } : {}),
-      durationMs: Date.now() - command.at,
-    });
-    command = undefined;
+    if (mark === 'C') { executed(typed.trim()); return; }
+    if (mark !== 'D') return;
+    finished(Number(body.split(';')[1]));
   };
 
   /**
@@ -487,6 +611,16 @@ export function createTerminal(
    * (https://github.com/microsoft/vscode/blob/122ec4fe4431e8435c42e9b609e3a43a60877383/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L654-L705).
    */
   const read = (chunk: string): void => {
+    /*
+     * The screen sees the chunk first, marks and all.
+     *
+     * A terminal emulator draws what the program wrote, so it is fed the bytes
+     * as they came rather than the output left after the marks were taken out:
+     * a program's own cursor movement and modes live in the same stream. The
+     * port answers a query by writing back to the program, and the write is
+     * what settles it, so nothing here waits on it.
+     */
+    void screen?.write(chunk);
     const data = held + chunk;
     const end = unfinished(data);
     held = data.slice(end);
@@ -515,6 +649,27 @@ export function createTerminal(
     rows,
     env: environment,
   });
+  /*
+   * The screen, for a terminal a program draws on.
+   *
+   * Only under a pseudoterminal: a shell on pipes is fed plain text, and there
+   * is no cursor or mode for an emulator to keep. A port that throws leaves
+   * the terminal without one rather than failing to start, since a screen is
+   * something a caller reads and never something a shell needs.
+   */
+  let screen: Screen | undefined;
+  if (terminal !== undefined && spawnScreen !== undefined) {
+    try {
+      screen = spawnScreen({
+        cols,
+        rows,
+        // The answer to a program's query, which belongs on its input.
+        write: (data) => { terminal.write(data); },
+      });
+    }
+    catch { /* a port that cannot make one leaves the terminal as it was */ }
+  }
+
   if (terminal !== undefined) {
     terminal.onData(read);
     terminal.onExit(({ exitCode: code }) => {
@@ -586,6 +741,9 @@ export function createTerminal(
   const ended = (): void => {
     if (announced) return;
     announced = true;
+    // The program has gone, so nothing is left to draw. Let the screen go with
+    // it rather than once the terminal is dropped, which may be much later.
+    screen?.dispose();
     tell({ type: 'terminal/exited', exitCode });
     // The same moment, for a caller waiting rather than watching: the code is
     // set before this runs, so what resolves here is what the event carried.
@@ -628,6 +786,17 @@ export function createTerminal(
     claim: () => claim,
     exitCode: () => exitCode,
     waitForExit: () => gone,
+    /*
+     * What the program drew, from the screen when there is one.
+     *
+     * A terminal on pipes has no screen, and one whose store kept none has
+     * nothing to ask: none of those is on another buffer, and none has a paste
+     * mode. `whenAltBuffer` answers at once for them rather than leaving a
+     * caller waiting for a change nothing will report.
+     */
+    isInAltBuffer: () => screen?.isInAltBuffer() ?? false,
+    isBracketedPasteMode: () => screen?.isBracketedPasteMode() ?? false,
+    whenAltBuffer: () => screen?.whenAltBuffer() ?? Promise.resolve(),
     lifecycle: () => (exitCode === undefined
       ? { status: 'running' }
       : { status: 'exited', exitCode }),
@@ -732,6 +901,9 @@ export function createTerminal(
     // state reports them and a client draws to them.
     resize: (nextCols, nextRows) => {
       terminal?.resize(nextCols, nextRows);
+      // The screen keeps the same geometry, or a program's cursor sits where
+      // the client no longer draws.
+      screen?.resize(nextCols, nextRows);
       cols = nextCols;
       rows = nextRows;
       tell({ type: 'terminal/resized', cols, rows });
@@ -805,12 +977,41 @@ export function createTerminal(
  * the daemon itself runs with. A caller asking for one terminal still wins
  * over it, because a terminal somebody opened is theirs.
  *
+ * `shellIntegration` is VS Code's shell integration, put into a shell opened
+ * to sit in: with it, a shell that has a script for its kind marks each prompt,
+ * command, exit code and directory, and the store reads those marks as command
+ * boundaries. It is a port because the scripts are files, which this library
+ * does not carry - `@ahpd/server` has them and hands its own.
+ *
+ * `screen` is the emulated screen each terminal under a pseudoterminal is fed
+ * with: a caller reads the alternate buffer and bracketed paste from it, and
+ * a program that asks for the cursor gets its answer. The emulator is the
+ * daemon's dependency rather than this library's, so it is a port too - a
+ * store given none answers `false` and never waits.
+ *
  * `platform`, `run` and `spawn` are the machine's own as well, and are for a
  * case that has to ask what another system would do - or, for `spawn`, read
  * what the pipe path asks of the runtime. An ordinary caller names none.
  */
 export const shellTerminals = (
-  options: { pty?: SpawnPty; shellEnv?: ShellEnv; platform?: string; run?: RunQuietly; spawn?: SpawnShell } = {},
+  options: {
+    pty?: SpawnPty;
+    shellEnv?: ShellEnv;
+    platform?: string;
+    run?: RunQuietly;
+    spawn?: SpawnShell;
+    shellIntegration?: ShellIntegration;
+    screen?: SpawnScreen;
+  } = {},
 ): TerminalStore => ({
-  create: (asked) => createTerminal(asked, options.pty, options.shellEnv, options.platform, options.run, options.spawn),
+  create: (asked) => createTerminal(
+    asked,
+    options.pty,
+    options.shellEnv,
+    options.platform,
+    options.run,
+    options.spawn,
+    options.shellIntegration,
+    options.screen,
+  ),
 });

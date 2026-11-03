@@ -1,6 +1,6 @@
 ---
 title: Each terminal has a screen
-status: todo
+status: implemented
 depends:
   - task-01-the-store-reads-vscodes-marks.md
 layer: "@ahpd/sdk machines, @ahpd/server"
@@ -52,3 +52,12 @@ A program that asks for the cursor position gets the screen's answer.
 - `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass, one at a time.
 
 ## Resume
+
+Implemented 2026-11-03.
+`packages/server/src/screen.ts` is the fork's `headlessterminal.ts` as a `SpawnScreen` port over `@xterm/headless`, with VS Code's cursor-answer filter on the emulator's data channel so only a cursor position report reaches the program, and `whenAltBuffer` flushing what was fed before it listens.
+`packages/server/package.json` declares `@xterm/headless` `^6.0.0`, and `run.ts` hands the port to the store.
+`packages/sdk/src/types/terminals.ts` declares `Screen`, `ScreenOptions` and `SpawnScreen`, and `Terminal` gains `isInAltBuffer`, `isBracketedPasteMode` and `whenAltBuffer`; the host's own output terminal in `host/terminals.ts` answers `false` and resolves, since no process wrote it.
+`machines/terminals.ts` makes one screen per pseudoterminal, feeds it each chunk before `read`, writes its answers to the pty, resizes and disposes it with the terminal, and answers `false` without one.
+`packages/server/test/screen.test.ts` covers the alternate buffer, bracketed paste, the cursor answer and the alt-buffer wait; `pty.test.ts` covers the store's side with a fake screen, including pipes and a store with no port.
+`docs/sdk/TERMINALS.md` describes the screen and what a caller reads from it.
+Gates: `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary`, the sdk suite and the server suite all pass.
