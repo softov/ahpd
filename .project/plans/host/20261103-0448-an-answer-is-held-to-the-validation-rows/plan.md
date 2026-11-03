@@ -1,7 +1,7 @@
 ---
 title: An answer is held to the validation rows
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -64,7 +64,7 @@ chat/inputAnswerChanged -> chatactions.ts -> the value, held to its kind's paylo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The answers are held to the rows](task-01-the-answers-are-held-to-the-rows.md) | todo | - |
+| [01 - The answers are held to the rows](task-01-the-answers-are-held-to-the-rows.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,13 +72,13 @@ chat/inputAnswerChanged -> chatactions.ts -> the value, held to its kind's paylo
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a value naming no kind names no payload either, and is taken.
 
 ## Final verification checklist
 
-- [ ] The new cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The input-needed test file passes.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The input-needed test file passes.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
