@@ -6,7 +6,7 @@ priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
-  - git://a8eff676 - the commit of ahpd this plan was checked at
+  - git://cde4dd6c - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208 - each pending steering message is handed into the running turn once, and the turn goes on"
   - "[code://packages/bot/src/chat.ts#L1036-L1051](../../../../packages/bot/src/chat.ts#L1036-L1051) - `steer`, which hands the message into the open turn and logs it against that turn"
   - "[code://packages/bot/src/chat.ts#L339-L375](../../../../packages/bot/src/chat.ts#L339-L375) - `logAt`, which reads a `steering` line back as a turn of its own"
@@ -106,6 +106,6 @@ client chat/pendingMessageSet steering -> the bot's steer -> the open turn, whic
 
 ## Final verification checklist
 
-- [x] Each changed case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] Each changed case fails on `cde4dd6c` for the reason it names, and passes after the change.
 - [x] The touched test files pass.
 - [x] `pnpm run typecheck` reports no errors, and the prose lint is clean.

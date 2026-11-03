@@ -26,7 +26,7 @@ A `steering` line is the record that a message was said in the turn it names, an
 
 ## Validation
 
-- The two changed cases fail on `a8eff676` and pass after.
+- The two changed cases fail on `cde4dd6c` and pass after.
 - The bot's test files pass, one at a time.
 - `pnpm run typecheck` is clean.
 
@@ -35,4 +35,4 @@ A `steering` line is the record that a message was said in the turn it names, an
 Built 2026-11-03 in `b553da30`.
 
 - The line is still read for its mark, which is what names a chat's bot where the first line is unreadable.
-- On `a8eff676`'s sources both cases fail: the chat read back holds a second turn.
+- On `cde4dd6c`'s sources both cases fail: the chat read back holds a second turn.

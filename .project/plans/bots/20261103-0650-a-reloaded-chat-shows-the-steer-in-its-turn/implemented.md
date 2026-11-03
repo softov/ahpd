@@ -16,7 +16,7 @@ A bot chat read back after a restart shows the turn a steer went into, as the li
 
 ## Verified
 
-- On `a8eff676`'s sources both cases fail: the chat read back holds a second turn with the steered message.
+- On `cde4dd6c`'s sources both cases fail: the chat read back holds a second turn with the steered message.
 - Every bot test file passes alone at one worker.
 - `pnpm run typecheck` reports no errors.
 
