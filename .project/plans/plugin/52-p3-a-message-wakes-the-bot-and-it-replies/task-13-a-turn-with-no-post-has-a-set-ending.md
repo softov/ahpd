@@ -1,6 +1,6 @@
 ---
 title: A turn with no post has a set ending
-status: implemented
+status: done
 depends: [task-04-post-message-ends-the-main-turn.md]
 layer: "packages/bot"
 refs:

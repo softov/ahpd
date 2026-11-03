@@ -1,6 +1,6 @@
 ---
 title: The AGENTS.md template makes the bot
-status: implemented
+status: done
 depends: [task-10-a-bots-folder-has-its-agents-file.md]
 layer: "packages/bot"
 refs:

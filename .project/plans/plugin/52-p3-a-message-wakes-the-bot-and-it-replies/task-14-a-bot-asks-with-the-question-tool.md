@@ -1,6 +1,6 @@
 ---
 title: A bot asks with the question tool
-status: implemented
+status: done
 depends: [task-06-a-back-sessions-question-is-asked-in-the-main-chat.md]
 layer: "packages/bot"
 refs:
