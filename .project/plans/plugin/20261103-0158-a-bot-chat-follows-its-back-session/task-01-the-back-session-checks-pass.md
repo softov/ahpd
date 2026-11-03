@@ -4,9 +4,9 @@ status: todo
 depends: []
 layer: bot, sdk
 refs:
-  - "[code://packages/sdk/src/host/chatactions.ts#L1484-L1499](../../../../packages/sdk/src/host/chatactions.ts#L1484-L1499) - a steer with no turn running runs as a turn, since git://a3662128"
-  - "[code://packages/bot/src/plugin.ts#L512-L522](../../../../packages/bot/src/plugin.ts#L512-L522) - `look`, which reads `working` from the session's `status`"
-  - "[code://packages/bot/src/wake.ts#L557-L590](../../../../packages/bot/src/wake.ts#L557-L590) - the wake's turn or steer, and its notice on a refusal"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1491-L1506](../../../../packages/sdk/src/host/chatactions.ts#L1491-L1506) - a steer with no turn running runs as a turn, since git://a3662128"
+  - "[code://packages/bot/src/plugin.ts#L512-L528](../../../../packages/bot/src/plugin.ts#L512-L528) - `look`, which reads `working` from the session's `status`"
+  - "[code://packages/bot/src/wake.ts#L605-L639](../../../../packages/bot/src/wake.ts#L605-L639) - the wake's turn or steer, and its notice on a refusal"
   - "[code://packages/sdk/src/host/catalogue.ts](../../../../packages/sdk/src/host/catalogue.ts) - `drivingOf`, the session status made from its chats"
 ---
 

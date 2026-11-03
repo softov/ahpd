@@ -30,15 +30,21 @@ Softov ran the checks with a Claude session from VS Code on 2026-10-20.
 
 My first steps named `ls`. Claude Code approves `ls` and other read-only commands itself, before ahpd is asked, so `ls` cannot show the check. Auto mode also skips ahpd. The steps below use a command that only the defaults approve.
 
+## Results on a test daemon
+
+I ran the four checks on 2026-11-02 at `893051dc`, on a test daemon with its own XDG folders and port 47100. The session was Claude with `haiku`, started over ahpc by alice, an admin.
+
+1. **Pass.** `pnpm ls --depth 0` ran with no question under the `vscode` defaults.
+2. **Pass.** `rm scratch.txt` asked. I denied it, and the file stayed.
+3. **Pass.** With `--terminal-auto-approve-defaults none`, `pnpm ls --depth 0` asked. This also shows that ahpd, not Claude Code, approved it in check 1.
+4. **Changed.** Fork commit `8e6cbbc5` made the terminal keys one value for the whole host, as VS Code has them, and a push needs `config:change`. Result 4 in *Results* no longer holds.
+   - bob as a member pushed `{"rm": true}`. The push did not apply, and `rm` asked.
+   - bob as an admin pushed `{"rm": true}`. `rm` ran with no question, in alice's session.
+
 ## Check by hand
 
-PR #41 fixes the owner problem, and it is on main at `43cb5c40`. Do these after you restart the daemon on that commit or later. Use a new Claude session in Ask Before Edits mode.
-
-1. Connect VS Code to the daemon with no terminal rules pushed. Ask the agent to run `pnpm ls --depth 0`. It runs with no question.
-2. Ask the agent to run `rm` on a scratch file. It asks.
-3. Set `terminalAutoApproveDefaults` to `none` and restart the daemon. Ask for `pnpm ls --depth 0` again. It asks.
-4. Open a second window as another person on the same session, and push `{"rm": true}` there. Ask for `rm` from that window. It still asks.
+Restart your daemon on `893051dc` or later. Use a new Claude session from VS Code in Ask Before Edits mode, with no terminal rules pushed. Ask the agent to run `pnpm ls --depth 0`. It runs with no question.
 
 ## Reply
 
-- Write "pass" or what you saw for each check by hand.
+- Write "pass" or what you saw for the check by hand.

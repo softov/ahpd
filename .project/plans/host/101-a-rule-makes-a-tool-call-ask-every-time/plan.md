@@ -22,7 +22,7 @@ refs:
   - "[code://packages/agent-claude/src/session/query.ts#L377-L379](../../../../packages/agent-claude/src/session/query.ts#L377-L379) - the `PreToolUse` hooks"
   - "[code://packages/agent-claude/src/session/config.ts#L95-L122](../../../../packages/agent-claude/src/session/config.ts#L95-L122) - `autoApprove` maps to `bypassPermissions`"
   - "[code://packages/agent-acp/src/session/handlers.ts#L285-L340](../../../../packages/agent-acp/src/session/handlers.ts#L285-L340) - `askPermission` offers the agent's options"
-  - "[code://packages/agent-pi/src/session.ts#L385-L438](../../../../packages/agent-pi/src/session.ts#L385-L438) - `decide` by permission mode"
+  - "[code://packages/agent-pi/src/session.ts#L396-L449](../../../../packages/agent-pi/src/session.ts#L396-L449) - `decide` by permission mode"
   - "[code://packages/agent-cofold/src/pauses.ts#L139-L180](../../../../packages/agent-cofold/src/pauses.ts#L139-L180) - `confirm` sends `alwaysApprove` for `allow-session`"
   - "[code://.project/decisions/each-backend-offers-its-options-unless-a-rule-asks.md](../../../../.project/decisions/each-backend-offers-its-options-unless-a-rule-asks.md) - each backend offers its own options; the host remembers no approval"
   - "[code://.project/decisions/claude-approvals-keeps-dont-ask.md](../../../../.project/decisions/claude-approvals-keeps-dont-ask.md) - the six Claude modes, `dontAsk` included"
@@ -85,6 +85,11 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 | A new decision supersedes "each backend offers its own approval options" and holds the exception | Softov, 2026-10-16, chose "a decision that amends it" for "Whether a decision is needed"; [decision](../../../decisions/each-backend-offers-its-options-unless-a-rule-asks.md) | 01 |
 | One check on `Start`, shared with host/100, with this rule first | Softov, 2026-10-16, chose "one check on `Start`" for "How this plan relates to host/100" | 01 |
 | Claude's hook awaits the confirmation `canUseTool` uses and answers `allow` or `deny`, never `ask`; it offers no `allow-always` and drops `updatedPermissions` | Softov, 2026-10-16, chose "Fold into plans" | 02 |
+| A session inside a machine waits for the computer work | Softov, 2026-11-03, chose "Defer to computer work"; [deferred.md](deferred.md) | - |
+| The rule is held in memory only, as VS Code holds it, and the docs say it ends when the daemon stops | Softov, 2026-11-03, chose "Memory only, as VS Code" | 10 |
+| cofold answers `approval` for a matched call, `deny` in `dontAsk`, and removes a remembered approval for that tool | (defaulted: cofold's own hook decision, the one way a matched call asks in every mode) | 07 |
+| `/mcp` refuses a matched host tool | (defaulted: the door has no session to ask in, so a refusal is the safe answer) | 08 |
+| The Claude hook names an MCP server by `mcp_server.name`, and asks a subagent's call on its chat | (defaulted: the SDK gives both fields, and the name split guesses wrong for some servers) | 09 |
 
 ## Proposed architecture
 
@@ -104,6 +109,10 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 | [04 - pi asks for a matched tool](task-04-pi-asks-for-a-matched-tool.md) | implemented | 01 |
 | [05 - cofold asks for a matched tool](task-05-cofold-asks-for-a-matched-tool.md) | implemented | 01 |
 | [06 - The docs name the rule](task-06-the-docs-name-the-rule.md) | implemented | 02, 03, 04, 05 |
+| [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | todo | 05 |
+| [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | todo | 01 |
+| [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | todo | 02 |
+| [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | todo | 07, 08, 09 |
 
 ## Risks and tradeoffs
 
@@ -116,14 +125,16 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 ## Resume state
 
 - **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits.
-- **Next action:** the final verification checklist, then a review.
+- **Next action:** build tasks 07 to 10, which fix what the review of 2026-11-02 found. Then run the by-hand checks in *Final verification checklist* on a test daemon.
 - **Open questions:** none.
 - **Watch out for:** in VS Code a terminal deny rule also means "ask". It is not this rule: it is a match on the command line and it still offers "always".
 
 ## Final verification checklist
 
-- [x] A matched call asks in each backend, in every permission mode, and `dontAsk` refuses it.
+- [ ] A matched call asks in each backend, in every permission mode, and `dontAsk` refuses it. The review of 2026-11-02 found that cofold does not; task 07 fixes it.
 - [x] No backend offers or remembers an "always" answer for a matched call.
 - [x] An unmatched call behaves as before host/101.
 - [x] `pnpm -s build`, `pnpm -s typecheck`, `pnpm boundary` and the vitest gate pass.
-- [x] `plans/index.md` updated.
+- [ ] By hand, on a test daemon: run steps 2 to 5 of task 02 against the Claude SDK.
+  These cover `bypassPermissions`, `auto`, `allowedTools`, a Bash rewrite from `sourceFirst`, and a wait past one minute.
+- [ ] By hand, on a test daemon: an ACP agent asks once, not twice, for a matched host tool.

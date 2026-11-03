@@ -4,8 +4,8 @@ status: implemented
 depends: [task-01-the-rule-is-read-in-the-approval-check.md]
 layer: agent-pi
 refs:
-  - "[code://packages/agent-pi/src/session.ts#L385-L438](../../../../packages/agent-pi/src/session.ts#L385-L438) - `decide`"
-  - "[code://packages/agent-pi/src/session.ts#L445](../../../../packages/agent-pi/src/session.ts#L445) - `askBefore`"
+  - "[code://packages/agent-pi/src/session.ts#L396-L449](../../../../packages/agent-pi/src/session.ts#L396-L449) - `decide`"
+  - "[code://packages/agent-pi/src/session.ts#L456](../../../../packages/agent-pi/src/session.ts#L456) - `askBefore`"
 ---
 
 ## Objective
@@ -14,7 +14,7 @@ pi's `decide` returns an ask for a matched tool before it reads the permission m
 
 ## Files
 
-- `UPDATE: packages/agent-pi/src/session.ts:385-438` - check the rule first in `decide`.
+- `UPDATE: packages/agent-pi/src/session.ts:396-449` - check the rule first in `decide`.
 - `UPDATE: packages/agent-pi/test` - a matched tool in each mode.
 
 ## Steps

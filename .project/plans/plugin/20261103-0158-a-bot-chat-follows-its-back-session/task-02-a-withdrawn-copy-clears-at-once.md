@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: bot
 refs:
-  - "[code://packages/bot/src/chat.ts#L650-L653](../../../../packages/bot/src/chat.ts#L650-L653) - `withdrawAsked`, which now only removes the request from the list"
-  - "[code://packages/bot/src/chat.ts#L1092-L1116](../../../../packages/bot/src/chat.ts#L1092-L1116) - the bot chat's own answers, which carry `turnId: held.id`"
+  - "[code://packages/bot/src/chat.ts#L659-L662](../../../../packages/bot/src/chat.ts#L659-L662) - `withdrawAsked`, which now only removes the request from the list"
+  - "[code://packages/bot/src/chat.ts#L1117-L1141](../../../../packages/bot/src/chat.ts#L1117-L1141) - the bot chat's own answers, which carry `turnId: held.id`"
   - "[code://packages/bot/test/bot-chat.test.ts](../../../../packages/bot/test/bot-chat.test.ts) - the chat tests, which hold the reducer"
   - npm://@microsoft/agent-host-protocol@1.0.0 - the reducer ignores a tool call action whose `turnId` is not the active turn
 ---
@@ -16,7 +16,7 @@ When the back session stops asking, the copy in the main chat leaves the open tu
 
 ## Files
 
-- `UPDATE: packages/bot/src/chat.ts:639-653` - `withdrawAsked` removes the part and says the end, with the open turn's `turnId`; its comment says why.
+- `UPDATE: packages/bot/src/chat.ts:648-662` - `withdrawAsked` removes the part and says the end, with the open turn's `turnId`; its comment says why.
 - `UPDATE: packages/bot/test/bot-chat.test.ts` - the cases for a withdrawn call and a withdrawn question.
 
 ## Steps

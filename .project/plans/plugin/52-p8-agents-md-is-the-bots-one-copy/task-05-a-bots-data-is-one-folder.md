@@ -7,7 +7,7 @@ refs:
   - "[code://packages/sdk/src/plugins/plugins.ts#L987-L1002](../../../../packages/sdk/src/plugins/plugins.ts#L987-L1002) - `records` takes only a slug, so a collection cannot be in a subfolder"
   - "[code://packages/bot/src/provider.ts#L77](../../../../packages/bot/src/provider.ts#L77) - the `bot-chats` collection"
   - "[code://packages/bot/src/names.ts#L24](../../../../packages/bot/src/names.ts#L24) - the `bot-sessions` collection"
-  - "[code://packages/bot/src/chat.ts#L129](../../../../packages/bot/src/chat.ts#L129) - the chat logs in `bot-chats/`"
+  - "[code://packages/bot/src/chat.ts#L131](../../../../packages/bot/src/chat.ts#L131) - the chat logs in `bot-chats/`"
   - "[code://packages/server/src/records.ts#L115-L125](../../../../packages/server/src/records.ts#L115-L125) - `fileRecords`, which keeps record `<id>` at `<name>/<id>.md`"
   - "[code://packages/server/src/records.ts#L30](../../../../packages/server/src/records.ts#L30) - the reserved collection names"
   - "[code://packages/sdk/src/types/records.ts#L31-L40](../../../../packages/sdk/src/types/records.ts#L31-L40) - `CollectionOptions`, which has only `body`"

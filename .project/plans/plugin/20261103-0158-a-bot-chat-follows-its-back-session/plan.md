@@ -7,23 +7,24 @@ created: 2026-11-03
 revalidated: 2026-11-03
 refs:
   - git://a8eff676 - the commit of ahpd this plan was checked at, and the last commit that holds briefs/a-bot-chat-follows-its-back-session.md, which this plan covers
-  - "[code://packages/bot/src/chat.ts#L650-L653](../../../../packages/bot/src/chat.ts#L650-L653) - `withdrawAsked`, which since git://90efda43 only removes the request from the open turn's list"
-  - "[code://packages/bot/src/chat.ts#L746-L796](../../../../packages/bot/src/chat.ts#L746-L796) - `TurnHandle` of one chat, which acts only on the open turn"
-  - "[code://packages/bot/src/chat.ts#L809-L850](../../../../packages/bot/src/chat.ts#L809-L850) - `beginTurn`, which writes the line, says `chat/turnStarted` and calls `onMessage`"
-  - "[code://packages/bot/src/chat.ts#L438-L458](../../../../packages/bot/src/chat.ts#L438-L458) - `handles` and `turns`, the handle of a chat this host is running, by its URI"
-  - "[code://packages/bot/src/chat.ts#L1092-L1116](../../../../packages/bot/src/chat.ts#L1092-L1116) - the bot chat's own answers, which carry `turnId: held.id`"
+  - "[code://packages/bot/src/chat.ts#L659-L662](../../../../packages/bot/src/chat.ts#L659-L662) - `withdrawAsked`, which since git://90efda43 only removes the request from the open turn's list"
+  - "[code://packages/bot/src/chat.ts#L754-L805](../../../../packages/bot/src/chat.ts#L754-L805) - `TurnHandle` of one chat, which acts only on the open turn"
+  - "[code://packages/bot/src/chat.ts#L818-L859](../../../../packages/bot/src/chat.ts#L818-L859) - `beginTurn`, which writes the line, says `chat/turnStarted` and calls `onMessage`"
+  - "[code://packages/bot/src/chat.ts#L442-L462](../../../../packages/bot/src/chat.ts#L442-L462) - `handles` and `turns`, the handle of a chat this host is running, by its URI"
+  - "[code://packages/bot/src/chat.ts#L1117-L1141](../../../../packages/bot/src/chat.ts#L1117-L1141) - the bot chat's own answers, which carry `turnId: held.id`"
   - "[code://packages/bot/src/ask.ts#L199-L206](../../../../packages/bot/src/ask.ts#L199-L206) - `withdrawn`, called on `input_needed_removed` of a back session"
-  - "[code://packages/bot/src/wake.ts#L557-L570](../../../../packages/bot/src/wake.ts#L557-L570) - the wake holds the waiting turn in `answering` and shows `working`; the shape a back turn copies"
-  - "[code://packages/bot/src/wake.ts#L442-L500](../../../../packages/bot/src/wake.ts#L442-L500) - `main`, `posted` and `finished`, which read `answering`"
-  - "[code://packages/bot/src/wake.ts#L272-L287](../../../../packages/bot/src/wake.ts#L272-L287) - `started`, the bot of each back session, filled from the rows at load"
+  - "[code://packages/bot/src/wake.ts#L605-L618](../../../../packages/bot/src/wake.ts#L605-L618) - the wake holds the waiting turn in `answering` and shows `working`; the shape a back turn copies"
+  - git://020669b1 - the fork commit where a stop of a main turn stops its back session's turn, through `wake.stopped` and `begun`
+- "[code://packages/bot/src/wake.ts#L462-L548](../../../../packages/bot/src/wake.ts#L462-L548) - `main`, `posted` and `finished`, which read `answering`"
+  - "[code://packages/bot/src/wake.ts#L292-L307](../../../../packages/bot/src/wake.ts#L292-L307) - `started`, the bot of each back session, filled from the rows at load"
   - "[code://packages/bot/src/names.ts#L146-L198](../../../../packages/bot/src/names.ts#L146-L198) - `BackSessions`, the rows of bot, user, name and session"
   - "[code://packages/bot/src/names.ts#L99](../../../../packages/bot/src/names.ts#L99) - `whose`, the owner of a row's `user`"
   - "[code://packages/bot/src/provider.ts#L403](../../../../packages/bot/src/provider.ts#L403) - `chatRow`: one main chat for each bot and owner"
-  - "[code://packages/bot/src/plugin.ts#L583-L608](../../../../packages/bot/src/plugin.ts#L583-L608) - the `turn_end` listener, which reads the back chat and calls `finished`; the `turn_start` listener copies it"
+  - "[code://packages/bot/src/plugin.ts#L589-L614](../../../../packages/bot/src/plugin.ts#L589-L614) - the `turn_end` listener, which reads the back chat and calls `finished`; the `turn_start` listener copies it"
   - "[code://packages/bot/src/post.ts#L41](../../../../packages/bot/src/post.ts#L41) - `POST_INSTRUCTION`, true once a back turn has a waiting main turn"
   - "[code://packages/bot/src/post.ts#L80-L88](../../../../packages/bot/src/post.ts#L80-L88) - `post_message`, which refuses a session with no waiting main turn"
   - "[code://packages/sdk/src/types/events.ts#L98-L111](../../../../packages/sdk/src/types/events.ts#L98-L111) - `TurnStartEvent`: session, chat, turn and sender"
-  - "[code://packages/sdk/src/host/chatactions.ts#L1484-L1499](../../../../packages/sdk/src/host/chatactions.ts#L1484-L1499) - a steer with no turn running runs as a turn, since git://a3662128"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1491-L1506](../../../../packages/sdk/src/host/chatactions.ts#L1491-L1506) - a steer with no turn running runs as a turn, since git://a3662128"
   - plans/plugin/56-a-steered-bot-message-is-its-own-turn/plan.md - the steer path of the bot chat, which git://ca82b8af changed and this plan keeps
   - npm://@microsoft/agent-host-protocol@1.0.0 - `updateToolCallInParts` in `types/channels-chat/reducer.ts` ignores a tool call action whose `turnId` is not the active turn
 ---
@@ -72,6 +73,7 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 | The main chat of a back session is its owner's one main chat with the bot, found from the back row and the chat row | (defaulted: a back session row names one bot and one user, and `chatRow` keys one main chat by bot and owner) | 03 |
 | A main chat that has a turn open opens no turn for a back turn. The back session runs as it does today | Softov, 2026-11-02, chose "Show nothing for it" | 03 |
 | `post_message` in that turn posts into it | (defaulted: the main turn is held in `answering`, as a woken turn is) | 03 |
+| A stop of that main turn stops the back turn too, with the time it ran | (defaulted: since git://020669b1 a stop of a main turn cancels the turn of each back session in `answering`, as VS Code cancels a subagent's turn) | 03 |
 | The main turn's message is the back turn's text, with the back turn's sender when the event names one | (defaulted: the turn shows what the person said, where they said it) | 03 |
 | A main chat that this host is not running opens no turn | (defaulted: `turns` answers only a running chat, and starting one would start a new chat) | 03 |
 
