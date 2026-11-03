@@ -1239,14 +1239,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     channels: lists.channels,
     methods: lists.methods,
     /*
-     * The grants the two channels built above require, as `ahpd.grants` lists
-     * them.
+     * The grants the daemon's own channels and command require, as
+     * `ahpd.grants` lists them.
      *
-     * The channel that answers `client:drop` and the one that answers
-     * `tunnel:put` and `tunnel:delete` are the daemon's own, so no plugin
-     * registers these entries: the host says them itself, in the words of each
-     * channel's `describe`. What a client's role editor shows for `client` and
-     * `tunnel` is these operations, and a role may hold any of them.
+     * The channel that answers `client:drop`, the one that answers
+     * `tunnel:put` and `tunnel:delete`, and the command that runs an
+     * operation are the daemon's own, so no plugin registers these entries:
+     * the host says them itself, in the words of each channel's and command's
+     * `describe`. What a client's role editor shows for `client`, `tunnel` and
+     * `operation` is these operations, and a role may hold any of them.
      */
     grants: {
       client: {
@@ -1258,6 +1259,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
         title: 'Tunnels',
         description: 'The tunnels this host keeps, and the operations each one takes.',
         operations: ['put', 'delete'],
+      },
+      /*
+       * The one command over the channels that offer operations. It is served
+       * by the daemon too, so its grant is listed here rather than by a plugin.
+       */
+      operation: {
+        title: 'Operations',
+        description: 'The operations a channel offers, and the command that runs one of them.',
+        operations: ['invoke'],
       },
     },
     /*

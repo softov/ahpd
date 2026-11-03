@@ -1,6 +1,6 @@
 ---
 title: An unregistered grant is reported
-status: todo
+status: implemented
 depends: [task-02-the-host-lists-every-grant-it-uses.md]
 layer: "sdk"
 refs:
@@ -43,3 +43,9 @@ A grant that no entry lists is one line in `problems`, which names the plugin an
 
 ## Resume
 
+- Built: after the fold, `foldHostOptions` collects the grant of every served channel, method and tunnel kind operation, keeps the `by` beside each, and pushes one `problems` line per grant `grantEntries` does not list. The plugin still loads and serves.
+- A grant is listed when its subject has an entry and the operation is one of its operations or a group (`read`/`write`) of it, and `*:*`, `*:read` and `*:write` are always listed. The entries are the ones `ahpd.grants` carries: the table, the resource schemes and the registered grants.
+- The plan did not know the daemon serves `x-ahpd/invokeOperation` with `operation:invoke`, which nothing listed. `run.ts` now registers `operation` with `invoke` beside `client` and `tunnel`, and `docs/sdk/USERS.md` has its row (the subject count is nineteen). `grants-advertised.test.ts` asserts the entry.
+- Existing tests that used unlisted grants were pointed at listed ones: `host-methods.test.ts` (`session:list`), `plugin-validate.test.ts` (`session:read` and `session:list`), and `plugin-channel.test.ts` (`demo` registered) and `plugin-method.test.ts` (`session:list`) in the earlier edit.
+- Gates: `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary`, and the sdk, server and bot suites pass.
+- The daemon at main starts with no such line: `server-cli-start.test.ts` and `grants-advertised.test.ts` both pass.

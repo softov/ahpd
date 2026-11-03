@@ -212,7 +212,7 @@ describe('pluginHost', () => {
 
   it('accepts a complete channel, and refuses an empty one or a grant that is not one', () => {
     const { host, contribution } = pluginHost('alpha', context());
-    const channel = { grant: 'bot:read', snapshot: () => ({}), authorize: async () => true, left: () => {}, describe: () => ({ title: 'Bots' }) };
+    const channel = { grant: 'session:read', snapshot: () => ({}), authorize: async () => true, left: () => {}, describe: () => ({ title: 'Bots' }) };
     expect(() => host.registerChannel('x-bots', channel as never)).not.toThrow();
     expect(() => host.registerChannel('x-notes', {} as never)).toThrow(/alpha.*registerChannel.*grant/);
     expect(() => host.registerChannel('x-notes', { grant: 'nothing', snapshot: () => ({}) } as never)).toThrow(/grant like bot:read/);
@@ -228,7 +228,7 @@ describe('pluginHost', () => {
 
   it('accepts a complete method, and refuses an empty one or a grant that is not one', () => {
     const { host, contribution } = pluginHost('alpha', context());
-    const method = { grant: 'bot:read', handle: () => ({}), authorize: async () => true, describe: () => ({ title: 'Echo' }) };
+    const method = { grant: 'session:list', handle: () => ({}), authorize: async () => true, describe: () => ({ title: 'Echo' }) };
     expect(() => host.registerMethod('x-alpha/echo', method as never)).not.toThrow();
     expect(() => host.registerMethod('x-alpha/notes', {} as never)).toThrow(/alpha.*registerMethod.*grant/);
     expect(() => host.registerMethod('x-alpha/notes', { grant: 'nothing', handle: () => ({}) } as never)).toThrow(/grant like bot:read/);

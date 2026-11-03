@@ -28,6 +28,7 @@ import type { Catalogs } from '../i18n.js';
 import { idOf, schemeOf } from '../sessions/catalog.js';
 import { frozenCopy } from '../utils/frozen.js';
 import { holds, OPERATIONS } from '../access/users.js';
+import { grantEntries } from '../host/root.js';
 import { createPair } from '../utils/pair.js';
 import { isRecordPath, isRecordSlug, RECORD_PATH, RECORD_SLUG } from '../resources/records.js';
 import type { Pair } from '../utils/pair.js';
@@ -280,6 +281,55 @@ export interface FoldedOptions {
  * with an entry of its own.
  */
 const triggerEntries = new WeakMap<Contribution, PluginTriggers>();
+
+/**
+ * The grant each channel, each method and each tunnel kind operation asks for,
+ * with the name of the plugin that registered it.
+ *
+ * A channel and a method name one grant each. A kind's operation names one
+ * only when it says so: the host's own `tunnel:put` and `tunnel:delete` are
+ * the fallback for one that does not, and those are the daemon's to answer
+ * for. The name is the one the entry carries, which is `ahpd` for the
+ * daemon's own channels rather than a plugin's.
+ */
+const requiredGrants = (
+  channels: Record<string, ServedChannel>,
+  methods: Record<string, ServedMethod>,
+  tunnelKinds: Record<string, ServedTunnelKind>,
+): { by: string; grant: string }[] => {
+  const required: { by: string; grant: string }[] = [];
+  for (const served of Object.values(channels)) required.push({ by: served.by, grant: served.channel.grant });
+  for (const served of Object.values(methods)) required.push({ by: served.by, grant: served.method.grant });
+  for (const kind of Object.values(tunnelKinds)) {
+    for (const operation of kind.operations ?? []) {
+      if (operation.grant !== undefined) required.push({ by: kind.by, grant: operation.grant });
+    }
+  }
+  return required;
+};
+
+/**
+ * Whether the list `ahpd.grants` holds answers a grant a caller is asked for.
+ *
+ * The two wildcard forms are on every list, and so are the groups of a
+ * subject the list carries. An operation is listed when its subject's entry
+ * names it; a word the entry lacks is not, because the group it would be
+ * sorted into would not hold it either. The answer is about the list alone:
+ * a subject nobody registered has no entry, and a grant naming one is exactly
+ * what this reports.
+ */
+const listedGrant = (entries: ReturnType<typeof grantEntries>, grant: string): boolean => {
+  const at = grant.indexOf(':');
+  if (at <= 0 || at === grant.length - 1) return false;
+  const subject = grant.slice(0, at);
+  const operation = grant.slice(at + 1);
+  const group = operation === 'read' || operation === 'write';
+  if (subject === '*') return operation === '*' || group;
+  const entry = entries[subject];
+  if (entry === undefined) return false;
+  return operation === '*' || group || entry.operations.includes(operation);
+};
+
 
 /**
  * Fold contributions into a base `HostOptions`.
@@ -614,6 +664,22 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   }
   if (Object.keys(tunnelKinds).length > 0) options.tunnelKinds = tunnelKinds;
   if (Object.keys(grants).length > 0) options.grants = grants;
+
+  /*
+   * A grant a channel, a method or a kind's operation asks for that the list
+   * does not carry.
+   *
+   * The list is what a role editor draws, so a required grant nothing lists is
+   * one nobody can give to a role: every caller is refused, and no screen says
+   * why. It is reported and the plugin loads all the same, because the check is
+   * about the list and not about the caller, and a plugin is not refused for
+   * naming a grant its own subject has not registered yet.
+   */
+  const entries = grantEntries(resourceProviders, grants);
+  for (const { by, grant } of requiredGrants(channels, methods, tunnelKinds)) {
+    if (listedGrant(entries, grant)) continue;
+    problems.push(`plugin ${by} requires ${grant}, which no entry of ahpd.grants lists`);
+  }
 
   /*
    * The agents made from records, after the plugins' own.

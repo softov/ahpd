@@ -85,7 +85,7 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 | --- | --- | --- |
 | [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | implemented | - |
 | [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | implemented | 01 |
-| [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | todo | 02 |
+| [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -94,8 +94,8 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 ## Resume state
 
-- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. Task 02 - the `plugin` row holds `apply` and `reload` in `write`, the daemon registers `client` with `drop` and `tunnel` with `put` and `delete`, and the bot plugin registers `bot` with `chat`. The sdk, server and bot gates pass.
-- **Next action:** [task-03-an-unregistered-grant-is-reported.md](task-03-an-unregistered-grant-is-reported.md).
+- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. Task 02 - the `plugin` row holds `apply` and `reload` in `write`, the daemon registers `client` with `drop` and `tunnel` with `put` and `delete`, and the bot plugin registers `bot` with `chat`. Task 03 - the fold reports a grant no entry lists, naming the plugin and the grant, and the plugin loads; the daemon's own `operation:invoke` is registered too. The build, typecheck, boundary and the sdk, server and bot gates pass.
+- **Next action:** the final report; all three tasks are implemented and the plan is ready for its checklist.
 - **Open questions:** none.
 - **Watch out for:** a registration must not change what `holds` answers. Take the groups from `operationsOf`, never from the plugin.
 

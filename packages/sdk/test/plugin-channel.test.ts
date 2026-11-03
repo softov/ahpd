@@ -32,6 +32,9 @@ interface Heard { snapshots: { uri: string; reader: string | undefined; client: 
 function served(extra: Partial<PluginChannel> = {}, options: Partial<HostOptions> = {}) {
   const heard: Heard = { snapshots: [], left: [], authorized: [] };
   const { host: plugin, contribution } = pluginHost('demo', context());
+  // The channel's grant is on `ahpd.grants`, so the fold has a list to check
+  // it against.
+  plugin.registerGrants('demo', { operations: ['pin'] });
   const channel: PluginChannel = {
     grant: 'demo:read',
     snapshot: (uri, reader, client) => {
@@ -88,8 +91,8 @@ it('refuses a scheme without x-, and a scheme a plugin already took', () => {
 
   const first = pluginHost('first', context());
   const second = pluginHost('second', context());
-  first.host.registerChannel('x-same', { grant: 'demo:read', snapshot: () => ({}) });
-  second.host.registerChannel('x-same', { grant: 'demo:read', snapshot: () => ({}) });
+  first.host.registerChannel('x-same', { grant: 'session:read', snapshot: () => ({}) });
+  second.host.registerChannel('x-same', { grant: 'session:read', snapshot: () => ({}) });
   const { options, problems } = foldHostOptions({ path: root, agents: [] }, [first.contribution, second.contribution]);
   expect(problems).toEqual(['plugin second registers channel x-same, which plugin first already registered']);
   expect(options.channels?.['x-same']?.by).toBe('first');
