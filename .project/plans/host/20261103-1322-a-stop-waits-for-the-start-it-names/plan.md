@@ -7,6 +7,8 @@ created: 2026-11-03
 revalidated: 2026-11-03
 refs:
   - git://c97d8459 - the commit of ahpd this plan was checked at
+  - git://fa9afa9a - the commit task 02 was checked at, task 01 built and merged
+  - "https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480 - a client's action on a session the host holds is applied when it comes"
   - git://c97d8459 - the last commit that holds .project/problems/a-stop-sent-while-a-turn-starts-is-lost.md, which this plan covers
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L172 - a client's start is applied to the state at once, and its send to the agent follows"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486 - a client's cancel, applied, records its turn as cancelled"
@@ -64,6 +66,9 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 
 - A stop of a turn whose start is owed is lost, and the turn starts twice in every client's state.
 - A client that reconnects holds its start pending, and its stop on the new connection is not held behind the start.
+- A turn sent on a third connection while the stop waits reaches the backend before the stop.
+  Its start is said in the stopped turn's place, so the stop finds that turn running and stops nothing.
+  The turn the stop named is in no history.
 
 ## Answers
 
@@ -75,6 +80,8 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 | The stop's connection sends nothing more until the stop is answered | [reconciliation.md#L23-L24](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24) | 01 |
 | A stop still waiting after `WAIT_LIMIT` is refused with the wait's own sentence | (defaulted: the bound every other wait of a dispatch has) | 01 |
 | The stop is applied once the start is answered, whether or not its connection is still open | (defaulted: the reference host applies a stop when it comes, and the stop is about the chat) | 01 |
+| A dispatch on the chat that comes while the stop waits is applied after the stop, from any connection: the reference host applies a client's action when it comes and matches a stop to the active turn then, so the stop of a started turn stops it before a later start takes its place | [agentService.ts#L12476-L12480](https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480); [agentService.ts#L13530-L13535](https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535) | 02 |
+| That dispatch waits within the bound of a dispatch, and is refused with the wait's own sentence after it | (defaulted: the bound every other wait of a dispatch has) | 02 |
 
 ## Proposed architecture
 
@@ -87,20 +94,22 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A stop waits for an owed start](task-01-a-stop-waits-for-an-owed-start.md) | done | - |
+| [02 - What comes after a waiting stop waits for it](task-02-what-comes-after-a-waiting-stop-waits.md) | done | 01 |
 
 ## Risks and tradeoffs
 
 - A stop and the dispatches after it on its connection wait for the start, as long as the backend takes to begin.
+- So do the dispatches every other connection sends on the stop's chat meanwhile.
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-03.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a start the host says ahead of a turn's end, which answers the start and lets the stop go too.
 
 ## Final verification checklist
 
-- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] Each new case of task 01 fails on `c97d8459`'s sources, each of task 02 on `fa9afa9a`'s, and each passes after its change.
 - [x] The touched files' test files pass, one file at a time.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

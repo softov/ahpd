@@ -85,6 +85,18 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
         },
       };
     });
+    /*
+     * A turn cut off ends with VS Code's error for one, after its parts. ahpd
+     * resumes no ACP turn, so the part is not resumable, which the protocol
+     * reads as a turn that cannot be resumed.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L499-L500
+     */
+    if (watched.interrupted === true) {
+      (replay.parts as Bag[]).push({
+        kind: 'error',
+        error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+      });
+    }
     return {
       id: watched.turnId,
       startedAt: watched.startedAt,
@@ -167,6 +179,26 @@ export function replayedTurns(updates: SessionUpdate[], at: string, hostPlan = f
       else if (update.sessionUpdate === 'tool_call_update' && typeof update.status === 'string') last.set(update.toolCallId, update.status);
     }
     if ([...last.values()].some((status) => status !== 'completed' && status !== 'failed')) turn.state = 'cancelled';
+  }
+  /*
+   * The last turn of a replay that ends while its request still ran is cut
+   * off, as VS Code's reader ends a turn whose request is still active at the
+   * end of its events: a call still open, or no message of the agent after its
+   * last call or at all. It ends in error, and `turnsOf` lays VS Code's
+   * `executionInterrupted` part after its parts. A replay says no idle, so a
+   * turn whose last word is the agent's message reads as it ended.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
+   * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
+   */
+  const cut = turns.at(-1);
+  if (cut !== undefined) {
+    const kinds = cut.updates.map(({ update }) => update.sessionUpdate);
+    const said = kinds.lastIndexOf('agent_message_chunk');
+    const called = Math.max(kinds.lastIndexOf('tool_call'), kinds.lastIndexOf('tool_call_update'));
+    if (cut.state === 'cancelled' || said === -1 || said < called) {
+      cut.state = 'error';
+      cut.interrupted = true;
+    }
   }
   return turns;
 }

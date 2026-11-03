@@ -1571,13 +1571,14 @@ export function piSession(
     },
 
     /**
-     * The latest turn, failed on a model call, continued without a new message.
+     * The latest turn, failed on a model call or cut off as pi's file read it
+     * back, continued without a new message.
      *
      * The protocol reopens that turn rather than starting another: it moves
      * back to `active` with its message, parts and usage, and what the resumed
-     * run writes is added after them. pi continues from the call that failed -
-     * see `PiBackend.resume` - so the calls the turn already ran are not run
-     * again.
+     * run writes is added after them. pi continues from the call that failed or
+     * the request that was cut off - see `PiBackend.resume` - so the calls the
+     * turn already ran are not run again.
      *
      * `chat/turnResume` is said here, while the client's action is being
      * applied, so it goes out as that action's echo.
@@ -1619,7 +1620,7 @@ export function piSession(
         try {
           const backend = await opened();
           if (!await backend.resume()) {
-            finish('error', 'pi has no failed reply to continue from');
+            finish('error', 'pi has no failed reply or cut-off request to continue from');
             return;
           }
           // The run is over and pi raises no settle for it, so it is said here.

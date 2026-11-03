@@ -200,7 +200,7 @@ export function chatAction(
   const { connection } = conn;
   const { refuse } = ctx;
   const {
-    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
+    admitted, ahead, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
     contributedDefaults, decided,
     described, dispatch, drafts, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
@@ -258,6 +258,19 @@ export function chatAction(
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
     : undefined;
   const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
+  /*
+   * A chat whose backend runs it on another host has its bits there.
+   *
+   * The read or the archive goes to that host, which answers the client and
+   * says the bit as the chat's action, which is kept here as it is said: the
+   * host running a session is the one producer of its state, and a relay
+   * forwards a client's messages to it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+   */
+  if (bitOf !== undefined && byChat.get(channel)?.chat.flag?.(
+    bitOf === Status.IsRead ? 'read' : 'archived',
+    bitOf === Status.IsRead ? action.isRead === true : action.isArchived === true,
+  ) === true) return;
   /*
    * A session's default chat is not archived on its own.
    *
@@ -387,6 +400,26 @@ export function chatAction(
   const running = restarting.get(sessionFor(channel));
   if (running !== undefined) {
     return conn.bounded(running, `${channel} starting again`).then(
+      () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
+      (error: unknown) => {
+        refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+      },
+    );
+  }
+  /*
+   * A chat where a stop waits for the start of the turn it names applies what
+   * comes after it once the stop is applied, from any connection.
+   *
+   * The reference host applies a client's action when it comes and matches a
+   * stop to the active turn then, so a turn sent after the stop takes the
+   * stopped turn's place only once the stop has ended it. The wait is
+   * returned, so this connection's later dispatches go behind it in `waiting`.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
+   */
+  const stop = ahead.get(channel);
+  if (stop !== undefined) {
+    return conn.bounded(stop, `${channel} stopping a turn that starts`).then(
       () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
       (error: unknown) => {
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
@@ -1362,12 +1395,19 @@ export function chatAction(
       if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
         const starting = typeof action.turnId === 'string' && action.turnId !== '' ? ctx.startOwed(channel, action.turnId) : undefined;
         if (starting !== undefined) {
-          return conn.bounded(starting, `${channel} starting ${String(action.turnId)}`).then(
-            () => conn.applyNow(params, origin),
+          // Held in `ahead` until it is applied, so what comes after it on the chat waits for it.
+          const applied: Promise<void> = conn.bounded(starting, `${channel} starting ${String(action.turnId)}`).then(
+            () => {
+              if (ahead.get(channel) === applied) ahead.delete(channel);
+              return conn.applyNow(params, origin);
+            },
             (error: unknown) => {
+              if (ahead.get(channel) === applied) ahead.delete(channel);
               refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
             },
           );
+          ahead.set(channel, applied);
+          return applied;
         }
         dispatch(channel, action, origin);
         break;

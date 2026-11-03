@@ -758,6 +758,18 @@ export interface Session {
   setDraft(draft: Bag | undefined): void;
   /** Reorder what is waiting. Anything not named keeps its place behind what is. */
   reorder(order: string[]): void;
+  /**
+   * A client's read or archived bit for the chat, carried to the host that
+   * runs the chat, which answers the client.
+   *
+   * A backend that runs its chat on another host takes it, as the proxy of a
+   * session in a machine does: that host is the one producer of the chat's
+   * state, and its `chat/isReadChanged` and `chat/isArchivedChanged` are the
+   * chat's bits here. True when the backend carried it. A backend that leaves
+   * it out has its chat's bits kept by this host.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+   */
+  flag?(bit: 'read' | 'archived', on: boolean): boolean;
 
   /**
    * Answer a tool call the agent is waiting on.

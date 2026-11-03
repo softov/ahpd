@@ -1188,6 +1188,59 @@ it('reads a replayed call with no end back as one its turn ended around, and tha
   expect(call).toMatchObject({ toolCallId: 'call-1', status: 'cancelled', reason: 'skipped' });
 });
 
+/*
+ * A replay that ends while its last turn's request still ran reads that turn
+ * back interrupted, as VS Code's reader ends one whose request is still active:
+ * in error, its last part `executionInterrupted`, whether a call is still open
+ * or every tool returned and the agent said nothing after. ahpd resumes no ACP
+ * turn, so the part is not resumable.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
+ * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
+ */
+it.each([
+  ['a call still open', [
+    { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Read a.ts', kind: 'read', status: 'in_progress' },
+  ], 'cancelled'],
+  ['every tool returned and nothing after', [
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Reading it.' } },
+    { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Read a.ts', kind: 'read', status: 'in_progress' },
+    { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: 'completed' },
+  ], 'completed'],
+])('reads a replay that ends with %s back as interrupted', (_what, tail, status) => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'read it' } },
+    ...tail,
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns.map((one) => one.state)).toEqual(['error']);
+  const parts = turns[0]?.responseParts as Bag[];
+  expect((parts.find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined)?.status).toBe(status);
+  expect(parts.at(-1)).toEqual({
+    kind: 'error',
+    error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+  });
+});
+
+it('reads a replay whose last turn the agent answered back as complete', () => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'read it' } },
+    { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Read a.ts', kind: 'read', status: 'in_progress' },
+    { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: 'completed' },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'It reads a.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns.map((one) => one.state)).toEqual(['complete']);
+  expect((turns[0]?.responseParts as Bag[]).some((part) => part.kind === 'error')).toBe(false);
+});
+
 it('reads a message that arrived in several chunks as one turn', async () => {
   const { agent } = backend(['--replay']);
   // The first replayed message is two `user_message_chunk`s, as a message with
