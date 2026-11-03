@@ -1,6 +1,6 @@
 ---
 title: A cut-off turn reads back interrupted
-status: todo
+status: done
 depends: []
 layer: agent-pi, agent-acp
 refs:
@@ -18,7 +18,7 @@ A pi resume of it asks the model again from where the file ends.
 ## Files
 
 - `UPDATE: packages/agent-pi/src/replay.ts` - the last turn read back interrupted, with the error part.
-- `UPDATE: packages/agent-pi/src/backend.ts` - `resumePoint`, and `resume` from an interrupted request as well as a failed reply.
+- `UPDATE: packages/agent-pi/src/backend.ts` - `resumePoint` in the place of `failedReply`, and `resume` from an interrupted request as well as a failed reply.
 - `UPDATE: packages/agent-pi/src/session.ts` - the words of a resume with nothing to continue from.
 - `UPDATE: packages/agent-acp/src/transcript.ts` - the last replayed turn marked interrupted, and its error part in `turnsOf`.
 - `UPDATE: packages/agent-acp/src/types.ts` - `WatchedTurn.interrupted`.
@@ -38,6 +38,6 @@ A pi resume of it asks the model again from where the file ends.
 
 ## Validation
 
-- The new and changed cases fail on `296c9b01`'s sources and pass after.
+- The new and changed cases fail on `fa9afa9a`'s sources and pass after.
 - `agent-pi-disk.test.ts` and `agent-acp-catalog.test.ts` pass, one file at a time.
 - `pnpm run typecheck` and `pnpm run boundary` are clean.
