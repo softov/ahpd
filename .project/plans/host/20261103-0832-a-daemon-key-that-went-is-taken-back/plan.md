@@ -1,7 +1,7 @@
 ---
 title: A daemon key that went is taken back
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -56,7 +56,7 @@ the daemon's file changes -> daemonValuesMoved -> root/configChanged -> every cl
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A key that went sends a replacement](task-01-a-key-that-went-sends-a-replacement.md) | todo | - |
+| [01 - A key that went sends a replacement](task-01-a-key-that-went-sends-a-replacement.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -64,13 +64,13 @@ the daemon's file changes -> daemonValuesMoved -> root/configChanged -> every cl
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a connection reads the daemon's keys only with `config:read`, and the echo is filtered for it as any other is.
 
 ## Final verification checklist
 
-- [ ] The new case fails on `cde4dd6c` for the reason it names, and passes after the change.
-- [ ] The root config test file passes.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new case fails on `cde4dd6c` for the reason it names, and passes after the change.
+- [x] The root config test file passes.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

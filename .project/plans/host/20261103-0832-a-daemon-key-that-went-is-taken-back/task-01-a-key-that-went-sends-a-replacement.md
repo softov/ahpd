@@ -1,6 +1,6 @@
 ---
 title: A key that went sends a replacement
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -33,4 +33,6 @@ A key whose value moved still sends a merge of that key.
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s source the new case fails: the key is said as a `null` in a merge.
