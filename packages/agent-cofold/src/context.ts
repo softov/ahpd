@@ -69,12 +69,12 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   untaken: { id: string; text: string; from?: MessageFrom; attachments?: MessageAttachment[] }[];
   /**
-   * The steering messages a client took back while the run still held them.
+   * The steering messages a client took back once the turn they steered was
+   * over, while the run still held them.
    *
    * cofold's submit gives a steer back only by rejecting it, so one taken back
-   * is dropped when it comes back rather than run as a turn of its own, as the
-   * reference host has its provider withdraw a steering message a client
-   * removes after handing it over.
+   * is dropped when it comes back, as the reference host has its provider
+   * withdraw a steering message a client removes after handing it over.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
    */
   withdrawn: Set<string>;

@@ -1605,6 +1605,14 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       const kind = chat?.steeringMessage?.id === queueId ? 'steering' : 'queued';
       carry('chat', { type: 'chat/pendingMessageRemoved', kind, id: queueId });
     },
+    /*
+     * The host inside runs the turn the steering message was handed to, so
+     * whether it can be taken back is that host's to say, and its answer comes
+     * back as every action of the chat does.
+     */
+    withdraw: (steerId: string): void => {
+      carry('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steerId });
+    },
     reorder: (order: string[]): void => {
       carry('chat', { type: 'chat/queuedMessagesReordered', order });
     },

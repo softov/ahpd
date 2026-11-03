@@ -1794,21 +1794,23 @@ export function chatAction(
         no(`${id} is not a ${kind} message this chat holds`);
         break;
       }
-      session.unqueue(id);
-      if (ctx.unanswered()) {
-        /*
-         * The backend took nothing back. A steering message a running turn
-         * was handed stays with the agent, and its removal is refused in the
-         * reference's words; any other is the held state's alone, and the
-         * host says it gone.
-         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L13493-L13508
-         */
-        if (kind === 'steering' && activeHeld !== undefined) {
+      /*
+       * The steering message while the chat holds a running turn, which is
+       * handed to the agent, can be removed only where the backend can take it
+       * back. The reference host asks its provider's capability before the
+       * provider hears of the removal, and refuses it in these words.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
+       */
+      if (kind === 'steering' && activeHeld !== undefined) {
+        if (session.withdraw === undefined) {
           no('Cannot change a steering message while it is being processed.');
           break;
         }
-        dispatch(session.chatUri, action, origin);
+        session.withdraw(id);
       }
+      else session.unqueue(id);
+      // A backend that took it back and said nothing leaves the host to say it gone.
+      if (ctx.unanswered()) dispatch(session.chatUri, action, origin);
       // A queued message taken back never becomes a turn to let its sender go.
       if (kind === 'queued') ctx.forgetSender(id);
       break;

@@ -905,11 +905,11 @@ export function createTurns(ctx: SessionContext): Turns {
       const at = ctx.queued.findIndex((held) => str(held.id) === id);
       if (at < 0) {
         /*
-         * A steering message the CLI was handed and has not taken in, taken back
-         * by a client: withdrawn, as the reference host has its provider
-         * withdraw a steering message a client removes after handing it over.
-         * One the CLI has not read leaves its input; one it holds is answered
-         * nowhere. Nothing is said, and the host answers the client.
+         * A steering message the CLI was handed for a turn that is over, taken
+         * back by a client: the host leaves Claude a removal only while the chat
+         * holds no running turn, since this backend has no `withdraw`. One the
+         * CLI has not read leaves its input; one it holds is answered nowhere.
+         * Nothing is said, and the host answers the client.
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
          */
         for (const [uuid, owed] of [...ctx.owed]) {

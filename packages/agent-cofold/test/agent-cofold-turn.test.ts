@@ -717,6 +717,9 @@ it('refuses to take back a steering message the run holds, and the run still rea
   waiting[0]?.();
   await until(() => ended(p, chatUri));
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+  // Taken in by the run, so out of every client's chat.
+  const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
+  expect(after.snapshot.state.steeringMessage).toBeUndefined();
 });
 
 it('names the cofold session id from the AHP URI in one place', () => {
