@@ -1,7 +1,7 @@
 ---
 title: A client's start is said when it is handed on
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -78,7 +78,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The start is said at the hand-over](task-01-the-start-is-said-at-the-hand-over.md) | todo | - |
+| [01 - The start is said at the hand-over](task-01-the-start-is-said-at-the-hand-over.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -88,13 +88,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing yet.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a relaying backend, which takes the start and answers it from the host inside.
 
 ## Final verification checklist
 
-- [ ] Each new and changed case fails on `3945964a`'s sources and passes after the change.
-- [ ] The test files that hold the cases pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new and changed case fails on `3945964a`'s sources and passes after the change.
+- [x] The test files that hold the cases pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
