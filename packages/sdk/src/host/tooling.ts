@@ -24,7 +24,7 @@ import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
 import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy } from '../types/host.js';
-import type { Agent, BoundTool, McpServer } from '../types/agent.js';
+import type { Agent, BoundTool, McpServer, ToolCallFacts } from '../types/agent.js';
 import type { Session, TurnOptions } from '../types/session.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { ToolsEndpoint } from '../tools/server.js';
@@ -293,7 +293,7 @@ export interface Tooling {
   /** Give a session a title from its own channel, and its sole chat with it, and say so. */
   renameSession(uri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
-  toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
+  toolContext(uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall;
   /**
    * What a host tool sees of this host with no session behind the call.
    *
@@ -1703,10 +1703,12 @@ export function createTooling(ctx: HostContext): Tooling {
     });
   };
 
-  const toolContext = (uri: string, chatUri: string, provider?: string): ToolCall => ({
+  const toolContext = (uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall => ({
     session: uri,
     chat: chatUri,
     ...providerOf(uri, provider),
+    ...(call?.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),
+    ...(call?.opened === undefined ? {} : { opened: call.opened }),
     turn: () => activeTurnOf(chatUri),
     person: () => personOfCall(uri, chatUri),
     may: (grant) => mayDo(chatUri, grant),
@@ -2259,9 +2261,9 @@ export function createTooling(ctx: HostContext): Tooling {
         // The call and its outcome are one event, raised after the tool is
         // done, so a handler knows whether it answered and not only that it
         // ran. Raising it before would report an attempt as a result.
-        run: async (input: Record<string, unknown>): Promise<string> => {
+        run: async (input: Record<string, unknown>, call?: ToolCallFacts): Promise<string> => {
           try {
-            const answer = await one.run(input, toolContext(uri, chatUri, provider));
+            const answer = await one.run(input, toolContext(uri, chatUri, provider, call));
             void fire({ type: 'tool_call', session: uri, chat: chatUri, tool: definition.name, ok: true });
             return answer;
           }
@@ -2280,6 +2282,7 @@ export function createTooling(ctx: HostContext): Tooling {
         ...(one.effects !== undefined ? { effects: frozenCopy(one.effects) } : {}),
         ...(one.confirm !== undefined ? { confirm: one.confirm } : {}),
         ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
+        ...(one.overridesBuiltInTool !== undefined ? { overridesBuiltInTool: one.overridesBuiltInTool } : {}),
       }];
     }),
   ];
