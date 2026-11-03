@@ -425,49 +425,25 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
-   * The schema a *running* session publishes.
+   * The schema a *running* session publishes: the session's schema, each key
+   * as its backend or its plugin declared it, as the reference host publishes
+   * an agent's schema on a running session. A key that may not move once the
+   * session runs keeps its `sessionMutable`, and a client draws it as it
+   * would under the reference host.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2475-L2492
    *
-   * Every key that may not move once the session runs is marked
-   * `sessionMutable: true, readOnly: true`, so a client draws the value the
-   * session was created with as a chip that cannot be opened. Without this a
-   * fixed key disappears from the window the moment the first turn runs: VS
-   * Code draws a chip only for `sessionMutable` keys, with `isolation` and
-   * `branch` as the two names it carves out, and nothing said where a
-   * session's computer or Claude's thinking had gone.
+   * A frozen copy, because this one goes to the backend.
    *
-   * `sessionMutable: true` is not literally true - this host still refuses a
-   * change after the first turn, because `propertyOf` reads the schema before
-   * this rewrite, where the key does not say `sessionMutable: true`. It is the
-   * flag that makes the chip appear.
+   * `sessionSchema` reads the contributed keys out of the fold, which are
+   * another plugin's entries; a backend handed them live could change what a
+   * client is drawn. The host's own reads of the schema are elsewhere and keep
+   * the store, which is what a contributed key exists in.
    *
    * Only the backend's and a plugin's keys pass through here. This host's
    * own - `isolation`, `branch` and their companions - are added afterwards
-   * by `hostSchema`, and a client draws those by name already.
+   * by `hostSchema`.
    */
-  const runningSchema = (agent: Agent): Bag => {
-    const schema = sessionSchema(agent);
-    const properties = (typeof schema.properties === 'object' && schema.properties !== null
-      ? schema.properties
-      : {}) as Bag;
-    /*
-     * A frozen copy, because this one goes to the backend.
-     *
-     * `sessionSchema` reads the contributed keys out of the fold, which are
-     * another plugin's entries; a backend handed them live could change what a
-     * client is drawn. The host's own reads of the
-     * schema are elsewhere and keep the store, which is what a contributed key
-     * exists in.
-     */
-    return frozenCopy({
-      ...schema,
-      properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
-        if (typeof value !== 'object' || value === null) return [key, value];
-        const one = value as Bag;
-        if (one.sessionMutable === true) return [key, value];
-        return [key, { ...one, sessionMutable: true, readOnly: true }];
-      })),
-    });
-  };
+  const runningSchema = (agent: Agent): Bag => frozenCopy(sessionSchema(agent));
 
   /**
    * A contributed key's picker, seeded with what its own answerer says now.

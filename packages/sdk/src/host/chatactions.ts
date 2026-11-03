@@ -1074,7 +1074,7 @@ export function chatAction(
        * value the session actually has where a start changed it - a source is
        * made into a machine on the way in, so a client told the source back
        * would hold a value the session is not running with - and each key the
-       * backend took under keys of its own as those keys.
+       * backend took as the client sent it.
        */
       const said = (taken: Record<string, unknown>): void => {
         for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
@@ -1100,10 +1100,9 @@ export function chatAction(
        * a backend may answer a value only as it is closed, by the start a
        * later dispatch of the same connection asks for.
        *
-       * Taken under the backend's own keys: those are what the session runs
-       * on, so they are what is kept and what every client is told, as the
-       * server's echo wins.
-       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+       * A key taken is said in the client's own words, as the reference host
+       * says a client's config action in the client's own keys.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
        *
        * Every chat, or only this one, as the property says. A permission
        * mode and an output style are the session's: the chats are peers on
@@ -1116,34 +1115,18 @@ export function chatAction(
       const taking = async (): Promise<Record<string, unknown> | string> => {
         const taken: Record<string, unknown> = {};
         const done: string[] = [];
-        const wrote: [string, unknown][] = [];
         for (const [key, value] of Object.entries(config)) {
           if (!asked.some(([one]) => one === key)) {
             taken[key] = owning?.config[key] ?? value;
             continue;
           }
           const answer = await Promise.resolve(session.setConfig?.(key, value));
-          if (typeof answer !== 'object' && answer !== true) {
+          if (answer !== true) {
             for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
-            for (const [own, was] of wrote) {
-              if (owning === undefined) continue;
-              if (was === undefined) delete owning.config[own];
-              else owning.config[own] = was;
-            }
-            return answer ?? `${key} is not a config key this backend takes`;
+            return typeof answer === 'string' ? answer : `${key} is not a config key this backend takes`;
           }
           done.push(key);
-          if (answer === true) taken[key] = value;
-          else {
-            undo(key);
-            for (const [own, held] of Object.entries(answer)) {
-              if (owning !== undefined) {
-                wrote.push([own, owning.config[own]]);
-                owning.config[own] = held;
-              }
-              taken[own] = held;
-            }
-          }
+          taken[key] = value;
           const everywhere = propertyOf(owning?.agent, key)?.scope === 'chat'
             ? []
             : (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
@@ -1636,12 +1619,14 @@ export function chatAction(
        */
       const applied = store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }];
       /*
-       * The client's switch, said back to every client of the session with
-       * its origin once it is made, which answers the client that turned it.
-       * It carries the enablement this host applied, which is the session's
-       * own decision for a sender who may not keep one for every session.
+       * The client's switch is said back to every client of the session as it
+       * was sent, with its origin, once it is made, which answers the client
+       * that turned it. The reference host emits a client's action as sent
+       * and records the client's own enablement; what this host applies for a
+       * sender who may not keep a decision for every session is its own.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L414-L428
        */
-      const said = { ...action, enablement: applied };
       const toggled = ctx.toggleClientPlugin(session.uri, id, applied);
       if (toggled !== undefined) {
         /*
@@ -1654,7 +1639,7 @@ export function chatAction(
          */
         if (toggled.server !== undefined)
           void session.setCustomizationEnabled(id, onFor(session.uri, asked));
-        dispatch(session.uri, said, origin);
+        dispatch(session.uri, action, origin);
         break;
       }
       const on = onFor(session.uri, asked);
@@ -1669,7 +1654,7 @@ export function chatAction(
          */
         if (took) {
           ctx.keepDecision(session.uri, id, on);
-          dispatch(session.uri, said, origin);
+          dispatch(session.uri, action, origin);
         }
         else
           no(`${id} has no runtime switch`);

@@ -952,7 +952,12 @@ it('keeps the restart mark when a client writes the root config whole with the m
   expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(true);
 });
 
-it('keeps the restart mark when a client writes the root config whole with the mark changed', async () => {
+/*
+ * A push naming the mark is said as it was sent, as VS Code's host takes a root
+ * push as given: it reduces the client's action as the client sent it.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2899
+ */
+it('says a client\'s restart mark as it was sent', async () => {
   const { signedIn, rootOf, heardOnRoot, answerRestart } = served();
   const admin = await signedIn('admin', 'admin');
   answerRestart(true);
@@ -969,12 +974,20 @@ it('keeps the restart mark when a client writes the root config whole with the m
     params: { channel: ROOT, clientSeq: 8, action: { type: 'root/configChanged', replace: true, config: stale } },
   });
   await settle();
-
-  // The write is taken and its echo says the host's value, so the client puts
-  // its own copy back to what the host holds.
   const echoed = heardOnRoot(admin.heard).filter((heard) => heard.action.replace === true);
   expect(echoed.map((heard) => [heard.rejectionReason, (heard.action.config as Record<string, unknown>)['ahpd.restartNeeded']]))
-    .toEqual([[undefined, true]]);
+    .toEqual([[undefined, false]]);
+  expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(false);
+
+  // A push that merges is said as sent the same way.
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, clientSeq: 9, action: { type: 'root/configChanged', config: { 'ahpd.restartNeeded': true } } },
+  });
+  await settle();
+  const merged = heardOnRoot(admin.heard).filter((heard) => heard.action.replace !== true
+    && Object.hasOwn((heard.action.config ?? {}) as Record<string, unknown>, 'ahpd.restartNeeded'));
+  expect(merged.at(-1)?.action.config).toEqual({ 'ahpd.restartNeeded': true });
   expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(true);
 });
 

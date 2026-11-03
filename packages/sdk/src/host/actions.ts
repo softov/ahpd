@@ -364,13 +364,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * the daemon holds.
        */
       const said: Record<string, unknown> = {};
-      /*
-       * The restart mark is the host's, so a push that names it moves nothing
-       * and its echo says the host's value. VS Code's settings editor writes
-       * every root config property back on a save, this one included.
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
-       */
-      if (Object.hasOwn(config, RESTART_KEY)) said[RESTART_KEY] = ctx.restartNeeded;
       /**
        * The host's own half, applied and echoed.
        *
@@ -393,6 +386,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * the port, so a copy kept here would be a second opinion - and
          * `rootState` shows this map to every connection, which would hand a
          * member a credential it has no schema for.
+         *
+         * The restart mark is the daemon's answer, which `markRestart` keeps,
+         * so a client's value for it is not kept here either. It goes out as
+         * the client sent it, as the reference host takes a root push as
+         * given, and VS Code's settings editor writes every root config
+         * property back on a save, this one included.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2899
+         * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
          */
         const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key) && key !== RESTART_KEY));
         const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
