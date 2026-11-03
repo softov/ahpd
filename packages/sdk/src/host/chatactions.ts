@@ -1847,14 +1847,17 @@ export function chatAction(
         break;
       }
       /*
-       * An acceptance that leaves a required question unanswered SHOULD be
-       * rejected. The completion uses the request's synced answers and what
-       * it carries, so a question answered in either way is answered, and one
-       * skipped or absent from both is not. No VS Code client can tell: its
-       * host hands an answer on unchecked, and its clients send what their
-       * forms hold.
+       * An acceptance whose required questions "do not have submitted
+       * answers" SHOULD be rejected. The completion's answers are the
+       * request's synced ones with what it carries laid over them, as the
+       * reducer records them, so a required question stands answered only
+       * where that answer's state is `submitted`: a draft, a skip and no
+       * answer are not. No VS Code client can tell: its host hands an answer
+       * on unchecked, and its clients send each answer as submitted.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L358
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L874
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1913-L1919
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L642-L692
        */
       if (response === 'accept') {
         const request = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
@@ -1862,12 +1865,10 @@ export function chatAction(
           .find((one) => one?.id === requestId);
         const given = { ...(request?.answers ?? {}) as Bag, ...(typeof action.answers === 'object' && action.answers !== null ? action.answers : {}) as Bag };
         const missing = (Array.isArray(request?.questions) ? request.questions as Bag[] : [])
-          .find((question) => {
-            const one = given[String(question.id ?? '')] as Bag | undefined;
-            return question.required === true && (one === undefined || one.state === 'skipped');
-          });
+          .find((question) => question.required === true
+            && (given[String(question.id ?? '')] as Bag | undefined)?.state !== 'submitted');
         if (missing !== undefined) {
-          no(`${String(missing.id ?? '')} is required and has no answer`);
+          no(`${String(missing.id ?? '')} is required and has no submitted answer`);
           break;
         }
       }
@@ -2081,22 +2082,25 @@ export function chatAction(
         break;
       }
       /*
-       * A draft or submitted answer carries its value, of the kind it names:
-       * one missing either SHOULD be rejected. No VS Code client can tell:
-       * its host hands an answer on unchecked, and its clients send what
-       * their forms hold.
+       * A draft or submitted answer whose value is absent, or whose value's
+       * kind is missing the payload that kind names, SHOULD be rejected. The
+       * kinds are `@nonexhaustive`, so a value of a kind the protocol does
+       * not list names no payload to check, and is taken. No VS Code client
+       * can tell: its host hands an answer on unchecked, and its clients send
+       * what their forms hold.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L356
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L589-L650
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L583-L650
        */
       if (answer !== undefined && answer.state !== 'skipped') {
-        const value = (typeof answer.value === 'object' && answer.value !== null ? answer.value : {}) as Bag;
-        const fits = value.kind === 'text' || value.kind === 'selected' ? typeof value.value === 'string'
-          : value.kind === 'number' ? typeof value.value === 'number'
-            : value.kind === 'boolean' ? typeof value.value === 'boolean'
-              : value.kind === 'selected-many' ? Array.isArray(value.value) && value.value.every((one) => typeof one === 'string')
-                : false;
+        const value = typeof answer.value === 'object' && answer.value !== null ? answer.value as Bag : undefined;
+        const fits = value === undefined ? false
+          : value.kind === 'text' || value.kind === 'selected' ? typeof value.value === 'string'
+            : value.kind === 'number' ? typeof value.value === 'number'
+              : value.kind === 'boolean' ? typeof value.value === 'boolean'
+                : value.kind === 'selected-many' ? Array.isArray(value.value) && value.value.every((one) => typeof one === 'string')
+                  : true;
         if (!fits) {
-          no(`The answer to ${questionId} has no ${typeof value.kind === 'string' ? `${value.kind} ` : ''}value`);
+          no(`The answer to ${questionId} has no ${typeof value?.kind === 'string' ? `${value.kind} ` : ''}value`);
           break;
         }
       }
