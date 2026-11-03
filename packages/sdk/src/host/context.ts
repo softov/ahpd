@@ -358,6 +358,11 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   owe: (type: 'chat/turnStarted' | 'chat/pendingMessageSet', name: string) => void;
   /**
+   * Settled once the start of `turnId` that a backend owes on `channel` is
+   * said or refused, or nothing when no backend owes one.
+   */
+  startOwed: (channel: string, turnId: string) => Promise<void> | undefined;
+  /**
    * The client's dispatch `action`, said on `channel`, says back: the one
    * being applied, when `action` is on its channel, of its kind and names
    * what it names, or one owed on `channel` under the turn or the queued

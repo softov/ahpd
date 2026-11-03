@@ -1355,6 +1355,15 @@ export function chatAction(
      * its backend said. A stop stops the turn its `turnId` names, which the
      * protocol requires it to carry.
      *
+     * A stop of a turn whose start a backend owes waits for that start. The
+     * reference host applies a client's start at once, and a cancel that comes
+     * before the send reaches the agent drops the send; here the start is the
+     * backend's to say, so the stop is applied again once the start is said,
+     * and stops that turn, or once it is refused, and stops nothing. The wait
+     * is returned, so this connection's later dispatches go behind it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
+     *
      * A stop of no running turn stops nothing: a chat with no turn running, a
      * turn other than the running one, one the client saw end, or no turn at
      * all. It goes to every client of the chat as the client's own action, as
@@ -1367,6 +1376,15 @@ export function chatAction(
      */
     case 'chat/turnCancelled': {
       if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
+        const starting = typeof action.turnId === 'string' && action.turnId !== '' ? ctx.startOwed(channel, action.turnId) : undefined;
+        if (starting !== undefined) {
+          return conn.bounded(starting, `${channel} starting ${String(action.turnId)}`).then(
+            () => conn.applyNow(params, origin),
+            (error: unknown) => {
+              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+            },
+          );
+        }
         dispatch(channel, action, origin);
         break;
       }

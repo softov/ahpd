@@ -859,18 +859,19 @@ export function createHost(options: HostOptions): Host {
    */
   const said = new WeakSet<Origin>();
   /**
-   * The connections waiting on a dispatch's answer before they apply their
-   * next, by the dispatch's origin: what `applyNow` returns for a dispatch a
-   * backend answers later.
+   * What waits on a dispatch's answer, by the dispatch's origin: the
+   * connection that sent it, before it applies its next, which is what
+   * `applyNow` returns for a dispatch a backend answers later, and a stop of
+   * the turn a start names.
    */
-  const awaited = new Map<Origin, () => void>();
-  /** A dispatch answered: held in `said`, and the connection waiting on it let go. */
+  const awaited = new Map<Origin, Set<() => void>>();
+  /** A dispatch answered: held in `said`, and everything waiting on it let go. */
   const told = (origin: Origin): void => {
     said.add(origin);
-    const next = awaited.get(origin);
-    if (next === undefined) return;
+    const waiting = awaited.get(origin);
+    if (waiting === undefined) return;
     awaited.delete(origin);
-    next();
+    for (const go of waiting) go();
   };
   /**
    * The dispatches waiting on a chat whose backend still runs a turn the chat
@@ -1454,6 +1455,13 @@ export function createHost(options: HostOptions): Host {
       if (applying === undefined || applying.answered) return;
       applying.owed = true;
       owed.set(owedKey(applying.channel, type, name), applying);
+    },
+    startOwed: (channel: string, turnId: string) => {
+      const start = owed.get(owedKey(channel, 'chat/turnStarted', turnId));
+      if (start === undefined) return undefined;
+      return new Promise<void>((resolve) => {
+        awaited.set(start.origin, (awaited.get(start.origin) ?? new Set()).add(resolve));
+      });
     },
     answering,
     unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
@@ -2170,15 +2178,18 @@ export function createHost(options: HostOptions): Host {
         finally { applying = undefined; }
         if (said.has(origin) || (held.owed !== true && held.taken !== true)) return later;
         const answered = new Promise<void>((resolve) => {
+          const go = (): void => {
+            clearTimeout(timer);
+            resolve();
+          };
           const timer = setTimeout(() => {
-            awaited.delete(origin);
+            const waiting = awaited.get(origin);
+            waiting?.delete(go);
+            if (waiting?.size === 0) awaited.delete(origin);
             resolve();
           }, WAIT_LIMIT);
           timer.unref?.();
-          awaited.set(origin, () => {
-            clearTimeout(timer);
-            resolve();
-          });
+          awaited.set(origin, (awaited.get(origin) ?? new Set()).add(go));
         });
         return later === undefined ? answered : later.then(() => answered);
       };
