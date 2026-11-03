@@ -65,7 +65,7 @@ describe('tools the host contributes', () => {
       'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
       'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
-      'ahp_resource', 'ahp_terminals', 'schedule_wakeup',
+      'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
     ]);
 
     // A host given none contributes none, and the field is absent rather than
@@ -575,10 +575,10 @@ describe('tools the host contributes', () => {
 describe('the session tools, which an install may switch off', () => {
   type SessionClient = ReturnType<ReturnType<typeof createHost>['accept']>;
 
-  /** The six the option never covers: this host's own, in the order they are offered. */
+  /** The seven the option never covers: this host's own, in the order they are offered. */
   const HOST_OWN = [
     'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
-    'ahp_resource', 'ahp_terminals', 'schedule_wakeup',
+    'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
   ];
 
   /** The tool names one session's state carries, as a client reads them. */

@@ -1,6 +1,6 @@
 ---
 title: The ask_user tool
-status: todo
+status: implemented
 depends:
   - task-01-a-host-tool-asks-the-person.md
 layer: "@ahpd/sdk tools, @ahpd/agent-claude"
@@ -46,3 +46,10 @@ Claude drops it, so a Claude session keeps only its own question tool.
 - The sdk, agent-claude and agent-cofold suites pass, one at a time.
 
 ## Resume
+
+- **Done so far:** `ask_user` is in `hostTools()`, with cofold's input schema written in this host's code. It refuses a duplicate id and `multiSelect` without options before asking, sends every question of one call in one `chat/inputRequested`, and answers with one line for each question. A decline or a cancel is the tool's text, not a failure. Claude's `takes` leaves `ask_user` out of the `ahp` server at construction and in `setTools`, so a Claude session keeps its own question tool. *agent-backends.md* says which backends get the tool.
+- **Next action:** none; this is the last task.
+- **Open questions:** none.
+- **Watch out for:** the host still reports `ask_user` in a Claude session's `serverTools`, because that list is the host's contribution; the backend is what leaves the tool out. The sdk case uses the echo backend with its turn held open, since a Claude session is deliberately not handed the tool and echo would complete a turn before a question could be drawn.
+
+Files changed by this task: `packages/sdk/src/tools/askuser.ts`, `packages/sdk/src/tools/index.ts`, `packages/agent-claude/src/session/clienttools.ts`, `packages/agent-claude/src/session.ts`, `packages/sdk/test/ask-user-tool.test.ts`, `packages/sdk/test/host-tools.test.ts`, `packages/sdk/test/host-github.test.ts`, `packages/agent-claude/test/agent-claude-contributed-tools.test.ts`, `packages/agent-cofold/test/agent-cofold-tools.test.ts`, `.project/specs/agent-backends.md`.

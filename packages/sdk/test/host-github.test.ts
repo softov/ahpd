@@ -314,7 +314,7 @@ describe('what a session recorded', () => {
       'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
       'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
-      'ahp_resource', 'ahp_terminals', 'schedule_wakeup',
+      'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
     ]);
     expect(tools.find((one) => one.name === 'add_artifact_or_reference')?.description).toContain('Record one or more artifacts or references so they are surfaced next to the chat input.');
   });
