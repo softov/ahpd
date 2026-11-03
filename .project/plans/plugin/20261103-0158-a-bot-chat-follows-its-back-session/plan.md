@@ -111,4 +111,5 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 - [ ] No "Steering" message stays on the back session after such a send.
 - [ ] An approval answered on the back session clears its copy in the main chat at once, in a live client.
 - [ ] A message typed on the back session opens a main turn that shows running, and the back session's `post_message` reply ends it.
+- [ ] By hand: in ahpw, a message to a bot gets a reply, and the subagent call opens the back session. (Moved from [plan 52-p3](../52-p3-a-message-wakes-the-bot-and-it-replies/plan.md).)
 - [ ] `pnpm --filter @ahpd/bot test` passes, run alone.

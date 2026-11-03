@@ -1,6 +1,6 @@
 ---
 title: A main chat and its back sessions have names
-status: implemented
+status: done
 depends: []
 layer: "packages/bot"
 refs:

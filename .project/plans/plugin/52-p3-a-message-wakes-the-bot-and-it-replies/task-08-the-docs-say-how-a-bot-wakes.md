@@ -1,6 +1,6 @@
 ---
 title: The docs say how a bot wakes
-status: implemented
+status: done
 depends: [task-04-post-message-ends-the-main-turn.md, task-05-the-main-turn-shows-the-back-session.md, task-06-a-back-sessions-question-is-asked-in-the-main-chat.md, task-07-the-bots-rules-are-the-system-prompt.md, task-09-a-session-that-is-gone-is-started-again.md, task-10-a-bots-folder-has-its-agents-file.md, task-11-the-owners-first-wake-makes-the-bot.md, task-12-a-bot-session-loads-no-user-settings.md, task-13-a-turn-with-no-post-has-a-set-ending.md, task-14-a-bot-asks-with-the-question-tool.md, task-15-a-woken-message-carries-its-context.md, task-16-post-message-runs-without-asking.md]
 layer: "docs"
 refs:

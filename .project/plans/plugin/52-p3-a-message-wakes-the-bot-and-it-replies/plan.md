@@ -1,7 +1,7 @@
 ---
 title: A message wakes the bot and it replies
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-17
@@ -88,22 +88,22 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A main chat and its back sessions have names](task-01-a-main-chat-and-its-back-sessions-have-names.md) | implemented | - |
-| [02 - A main turn stays open](task-02-a-main-turn-stays-open.md) | implemented | - |
-| [03 - A message wakes a back session](task-03-a-message-wakes-a-back-session.md) | implemented | 01, 02 |
-| [04 - post_message ends the main turn](task-04-post-message-ends-the-main-turn.md) | implemented | 03 |
-| [05 - The main turn shows the back session as a subagent](task-05-the-main-turn-shows-the-back-session.md) | implemented | 03 |
-| [06 - A back session's question is asked in the main chat](task-06-a-back-sessions-question-is-asked-in-the-main-chat.md) | implemented | 05 |
-| [07 - The use of post_message is the system prompt](task-07-the-bots-rules-are-the-system-prompt.md) | implemented | 03 |
-| [08 - The docs say how a bot wakes](task-08-the-docs-say-how-a-bot-wakes.md) | implemented | 04, 05, 06, 07, 09, 10, 11, 12, 13, 14, 15, 16 |
-| [09 - A session that is gone is started again](task-09-a-session-that-is-gone-is-started-again.md) | implemented | 03 |
-| [10 - A bot's folder has its AGENTS.md](task-10-a-bots-folder-has-its-agents-file.md) | implemented | 03 |
-| [11 - The AGENTS.md template makes the bot](task-11-the-owners-first-wake-makes-the-bot.md) | implemented | 10 |
-| [12 - A bot session loads no user settings](task-12-a-bot-session-loads-no-user-settings.md) | implemented | 10 |
-| [13 - A turn with no post has a set ending](task-13-a-turn-with-no-post-has-a-set-ending.md) | implemented | 04 |
-| [14 - A bot asks with the question tool](task-14-a-bot-asks-with-the-question-tool.md) | implemented | 06 |
-| [15 - A woken message carries its context](task-15-a-woken-message-carries-its-context.md) | implemented | 03 |
-| [16 - post_message runs without asking](task-16-post-message-runs-without-asking.md) | implemented | 04 |
+| [01 - A main chat and its back sessions have names](task-01-a-main-chat-and-its-back-sessions-have-names.md) | done | - |
+| [02 - A main turn stays open](task-02-a-main-turn-stays-open.md) | done | - |
+| [03 - A message wakes a back session](task-03-a-message-wakes-a-back-session.md) | done | 01, 02 |
+| [04 - post_message ends the main turn](task-04-post-message-ends-the-main-turn.md) | done | 03 |
+| [05 - The main turn shows the back session as a subagent](task-05-the-main-turn-shows-the-back-session.md) | done | 03 |
+| [06 - A back session's question is asked in the main chat](task-06-a-back-sessions-question-is-asked-in-the-main-chat.md) | done | 05 |
+| [07 - The use of post_message is the system prompt](task-07-the-bots-rules-are-the-system-prompt.md) | done | 03 |
+| [08 - The docs say how a bot wakes](task-08-the-docs-say-how-a-bot-wakes.md) | done | 04, 05, 06, 07, 09, 10, 11, 12, 13, 14, 15, 16 |
+| [09 - A session that is gone is started again](task-09-a-session-that-is-gone-is-started-again.md) | done | 03 |
+| [10 - A bot's folder has its AGENTS.md](task-10-a-bots-folder-has-its-agents-file.md) | done | 03 |
+| [11 - The AGENTS.md template makes the bot](task-11-the-owners-first-wake-makes-the-bot.md) | done | 10 |
+| [12 - A bot session loads no user settings](task-12-a-bot-session-loads-no-user-settings.md) | done | 10 |
+| [13 - A turn with no post has a set ending](task-13-a-turn-with-no-post-has-a-set-ending.md) | done | 04 |
+| [14 - A bot asks with the question tool](task-14-a-bot-asks-with-the-question-tool.md) | done | 06 |
+| [15 - A woken message carries its context](task-15-a-woken-message-carries-its-context.md) | done | 03 |
+| [16 - post_message runs without asking](task-16-post-message-runs-without-asking.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -113,7 +113,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ## Resume state
 
 - **Done so far:** planned 2026-10-16. Tasks 01 to 04, 07 and 09 are on main. Task 10 is implemented. A plugin asks for trust with `trusted: true` on its session request. The host refuses it without `session:trust`, which `session:write` covers. The store keeps the trusted folder, so a restart keeps it. `trustedBy` trusts that one folder and no folder under it. Task 11 is implemented. At load, the plugin writes `<configDir>/templates/bots/AGENTS.md` when the file is absent, never over one a person edited. A bot's first wake fills the template it names, or that default file, with `name`, `description` and `instructions`. The result is the bot's `AGENTS.md`. The shipped text is the maker, so a bot with no instructions gets a file too. Before a back session starts, the bot writes `CLAUDE.md` and `AGENTS.md` when each is absent. Task 13 is implemented. When a back session's turn ends without a post, the plugin reads the turn's `markdown` parts from the session's chat. The main turn then ends as `mainTurnPostMessageAbsent` says. The default is the last words. A value outside those four is reported through `host.problem` and `post` is used. Task 12 is implemented. A request can say `userSettings: false`. The host keeps it with the session and puts it on `Start` at every spawn. Claude then removes `user` from `settingSources`. A trusted folder keeps `project` and `local`, and a folder with no trust loads no settings file. A bot's back session sets the flag. Task 15 is implemented. Each message that wakes a back session has a `<context>` block in front of the person's words. The block says the main chat `bot:/<bot>/<user>`, the person, and the time in the host's own offset. The block is `contextBlock` in `packages/bot/src/context.ts`, and the main chat keeps the plain text the person typed. Task 05 is implemented. The open main turn shows the back session as a `subagent` tool call. `working(chat, title)` on the turn handle starts that call. The call names the back chat in `_meta.subagentChatUri` and in its `subagent` content. `spawn.ts` and the call index keep a link to a chat of another session. A worker chat in the same session keeps its derived URI. Task 06 is implemented. The plugin copies a back session's request into the open main turn. An approval shows as a tool call in `pending-confirmation`, and a question shows as an `inputRequest` part. `ask.ts` sends the answer to the back session's chat as `chat/toolCallConfirmed` or `chat/inputCompleted`. On `input_needed_removed`, the plugin removes the copy and tells live clients that it is over. Task 14 is implemented. `POST_INSTRUCTION` tells a back session to ask with its harness's question tool. A harness with no question tool asks in the text it posts. No tool is named, because each harness names its own. Task 16 is implemented. A `HostTool` may say `confirm: false`. The bind carries it on `BoundTool`. In agent-claude, `canUseTool` allows a contributed tool with that flag without asking. The deny list still refuses it. `post_message` sets it. `agent-pi` and `agent-cofold` ask from `effects`, and `post_message` declares none, so neither asks; `agent-acp` asks only when its server asks. A bot's back session in the default mode posts with no approval. Task 08 is implemented. `docs/plugins/BOTS.md` and `packages/bot/README.md` say what a main chat and its back sessions are, with the two names. They say how `session` picks a back session, with `work` and `{turn}` as examples. They say what `post_message` and a turn end with no post do. They say how a question is answered in the main chat, and that `AGENTS.md` is the bot's rules. Both name the entry's grants, `session:read` and `session:write`, and `PLUGINS.md`'s bot example names both.
-- **Next action:** nothing is left in the tasks. The plan waits on the by-hand run in ahpw and on being marked built.
+- **Next action:** none. The plan is built. The by-hand run in ahpw moved to [the bot chat plan](../20261103-0158-a-bot-chat-follows-its-back-session/plan.md), which changes the same path.
 - **Open questions:** none.
 - **Watch out for:** a request's `instructions` are not kept, so a session started again after a restart is not told them. A rule that must hold for the whole session goes on a tool's `instruction`.
 - **Watch out for:** `post_message` finds its main chat from the calling session, never from an input, so a back session cannot post as another bot.
@@ -132,5 +132,5 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - [x] A test: `post_message` ends the main turn with its text, and a back session cannot post into another chat. (`packages/bot/test/bot-post.test.ts`, by task 04)
 - [x] A test: a back session's question is answered from the main chat. (`packages/bot/test/bot-ask.test.ts`, by task 06)
 - [x] The gates pass: build, typecheck, boundary, schema and vitest.
-- [ ] By hand: in ahpw, a message to a bot gets a reply, and the subagent call opens the back session.
+- [ ] By hand: in ahpw, a message to a bot gets a reply, and the subagent call opens the back session. (Moved to the final checklist of [the bot chat plan](../20261103-0158-a-bot-chat-follows-its-back-session/plan.md).)
 - [x] `docs/plugins/BOTS.md` and `plans/index.md` updated.

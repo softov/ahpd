@@ -1,6 +1,6 @@
 ---
 title: A bot's folder has its AGENTS.md
-status: implemented
+status: done
 depends: [task-03-a-message-wakes-a-back-session.md]
 layer: "packages/sdk, packages/bot"
 refs:
