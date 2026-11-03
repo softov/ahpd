@@ -8,6 +8,10 @@
  * running or queued turn, a person being asked something, `resumable()`
  * false, `busy()` true, and a client subscribed to it.
  *
+ * Its state stays resident, asleep or not, until the residency lets the
+ * session go: archived, or the least recent while more sessions are resident
+ * than the limit, and never while a client watches it.
+ *
  * The clock is the host's `now` and `timer`, so a case moves time and fires
  * the minute sweep by hand.
  */
@@ -310,22 +314,54 @@ it('keeps a session awake while a client is subscribed to it', async () => {
   expect(knobs.closes).toEqual([]);
 });
 
-it('answers a client back from a drop with the state read again while it was away', async () => {
+it('keeps the state of a session asleep while it is resident, and replays a client back from a drop', async () => {
   /*
-   * A session asleep holds its state while somebody watches it, and opens
-   * again from its record. A client whose state came from the earlier opening
-   * cannot be replayed onto the one held now: the actions since apply to a
-   * state it never had. The reference answers a client that holds no baseline
-   * from the state the host holds with the state itself.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   * The reference host lets a session's state go only as its residency does:
+   * archived, or the least recent over the limit. A session asleep and
+   * unwatched under the limit keeps it, so a client that comes back is
+   * replayed onto the state it holds.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L292-L299
    */
   const knobs: Knobs = { closes: [] };
   const { host, client, time, open } = await serving(knobs);
   const one = await open('one');
-  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
-  client.close();
+  await one.leave();
   time.pass(31);
   await until(() => knobs.closes.length > 0);
+
+  // A look at the chat asleep, and away again.
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
+  await client.handle({ method: 'unsubscribe', params: { channel: one.chatUri } });
+  client.close();
+
+  // The record moves, which a state let go would be read again from.
+  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
+  }) as { type: string };
+  expect(answer.type).toBe('replay');
+});
+
+it('answers a client back from a drop with the state read again once the residency let it go', async () => {
+  /*
+   * A client whose state came from the earlier opening cannot be replayed
+   * onto the one held now: the actions since apply to a state it never had.
+   * The reference answers a client that holds no baseline from the state the
+   * host holds with the state itself.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   */
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
+  await open('two');
+  // Two sessions over a limit of one, and the least recent is free once
+  // nobody watches it.
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
 
   // The record says the turn was stopped, which the client never held.
   knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
@@ -337,6 +373,31 @@ it('answers a client back from a drop with the state read again while it was awa
   expect(answer.type).toBe('snapshot');
   const chat = answer.snapshots?.find((one_) => one_.resource === one.chatUri);
   expect(((chat?.state.turns ?? []) as Bag[]).map((turn) => turn.state)).toEqual(['cancelled']);
+});
+
+it('lets an archived session go once nobody watches it, whatever the count', async () => {
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L318-L338
+  const knobs: Knobs = { closes: [] };
+  const { host, client, open } = await serving(knobs);
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+  });
+  await settle();
+  // Watched, so held.
+  expect(knobs.closes).toEqual([]);
+
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.chatUri] },
+  }) as { type: string };
+  expect(answer.type).toBe('snapshot');
 });
 
 it('sleeps the least recently used quiet session over the count limit', async () => {
@@ -360,6 +421,24 @@ it('sleeps the least recently used quiet session over the count limit', async ()
   const rows = await listed();
   expect(rows).toEqual(expect.arrayContaining([one.resource, two.resource, 'ahp-session:/three']));
   expect(rows).toHaveLength(3);
+});
+
+it('counts a subscribe as recent, so the session looked at last is not the one let go', async () => {
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { client, open, awake } = await serving(knobs, { sessionResidencyLimit: 2 });
+  const one = await open('one');
+  await one.leave();
+  const two = await open('two');
+  await two.leave();
+  // A look at the first: it is the more recent of the two now.
+  await client.handle({ method: 'subscribe', params: { channel: one.channel } });
+  await client.handle({ method: 'unsubscribe', params: { channel: one.channel } });
+
+  await open('three');
+  await until(() => knobs.closes.length > 0);
+  expect(awake()).toBe(2);
+  expect(knobs.closed).toEqual(['two']);
 });
 
 it('sleeps an archived session at once', async () => {

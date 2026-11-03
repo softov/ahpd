@@ -52,8 +52,6 @@ export interface Held {
   createdAt: string;
   /** Milliseconds, when the session last emitted or received an action. What a sleep for quiet is measured from. */
   quietSince: number;
-  /** Milliseconds, when a turn last started in it, or when it was loaded. The recency order a count limit sleeps by. */
-  turnedAt: number;
 }
 
 /**

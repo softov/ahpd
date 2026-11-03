@@ -413,10 +413,10 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** Every state held, by channel. */
   heldStates: ReadonlyMap<string, HeldState>;
   /**
-   * Let the state of a session this host is not running go, with its chats',
-   * once no connection watches any of them.
+   * Let the state this host holds of a session go, its own and its chats',
+   * for a session the residency lets go.
    */
-  statesUnwatched: (channel: string) => void;
+  letStateGo: (session: string) => void;
   /**
    * The channels each client holds a state of that this host let go of since
    * it served it, by client id. Such a client is owed the state the channel

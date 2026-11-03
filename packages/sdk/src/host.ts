@@ -1278,32 +1278,15 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
-   * Let the state of a session this host is not running go, with its chats',
-   * once no connection watches any of them.
-   *
-   * A running session holds its state for as long as it runs. One asleep, or
-   * read from its record, holds it while somebody watches it, and opens again
-   * from the record at the next subscribe: what was held belonged to nobody
-   * still looking at it. The reference host lets a session's state go on the
-   * same terms, never while a client is subscribed to it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   * Let the state this host holds of a session go, its own and its chats'.
    *
    * Each client that was served a state let go is owed the state its channel
    * opens with next, since what it holds is the state let go.
    */
-  const statesUnwatched = (channel: string): void => {
-    const open = states.get(channel);
-    if (open === undefined || open.kind === 'root') return;
-    const session = open.kind === 'session' ? channel : sessionFor(channel);
-    if (sessions.has(session)) return;
-    const its = [...states]
-      .filter(([one, held]) => one === session || (held.kind === 'chat' && sessionFor(one) === session))
-      .map(([one]) => one);
-    for (const connection of connections) {
-      if (its.some((one) => connection.watching.has(one))) return;
-    }
-    for (const one of its) {
-      for (const client of states.get(one)?.baselines ?? []) {
+  const letStateGo = (session: string): void => {
+    for (const [one, open] of [...states]) {
+      if (one !== session && (open.kind !== 'chat' || sessionFor(one) !== session)) continue;
+      for (const client of open.baselines) {
         const channels = lapsed.get(client) ?? new Set<string>();
         lapsed.set(client, channels.add(one));
       }
@@ -1471,7 +1454,7 @@ export function createHost(options: HostOptions): Host {
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,
-    statesUnwatched,
+    letStateGo,
     lapsed,
     asleep: new Set<string>(),
   } as HostContext;
@@ -2237,7 +2220,9 @@ export function createHost(options: HostOptions): Host {
           // protocol says a client stops being active in it.
           leaves(channel, connection.clientId || 'anonymous');
           leftChannel(connection.clientId, channel);
-          statesUnwatched(meantBy(channel));
+          // A session nobody watches is one the residency may let go.
+          // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11752
+          ctx.reconcile();
         },
         /**
          * What the client says happened.
@@ -2426,7 +2411,7 @@ export function createHost(options: HostOptions): Host {
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);
-          for (const channel of was) statesUnwatched(meantBy(channel));
+          ctx.reconcile();
           log(`${connection.clientId || 'a client'} went away`);
         },
       };

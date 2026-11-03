@@ -1,7 +1,7 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
-import { chatIdFor, chatUriFor } from './channels.js';
-import { CLOSING } from './common.js';
+import { baseOf, chatIdFor, chatOfCanvas, chatUriFor, MARKS, spaceOf } from './channels.js';
+import { CLOSING, ENDINGS } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
@@ -42,8 +42,19 @@ export interface Sleep {
   hold(uri: string): () => void;
   /** Settles once every sleep begun has closed its agents and every resume begun has ended. */
   slept(): Promise<void>;
-  /** Sleep what is due: quiet past the timeout, archived, or over the count limit. */
+  /** Sleep each session quiet past the timeout, then reconcile the residency. */
   sweep(): void;
+  /**
+   * Move the session a channel belongs to to the newest end of the
+   * residency's recency: when it starts, when a client subscribes to it and
+   * when a turn starts in it.
+   */
+  touch(channel: string): void;
+  /**
+   * Let resident sessions go: each archived one, and then the least recent
+   * while more are resident than `sessionResidencyLimit`.
+   */
+  reconcile(): void;
   /** One action on a channel, which moves its session's quiet time. */
   stirred(channel: string, action: Bag): void;
   /** Start the sweep's clock. */
@@ -54,7 +65,10 @@ export interface Sleep {
 
 /** Minutes of quiet before a session sleeps, when `sleepAfterMinutes` is unset. */
 const SLEEP_AFTER_MINUTES = 30;
-/** Sessions loaded at most, when `sessionResidencyLimit` is unset. */
+/**
+ * Sessions resident at most, when `sessionResidencyLimit` is unset.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L19
+ */
 const RESIDENCY_LIMIT = 10;
 /** How often the sweep runs. */
 const SWEEP_MS = 60_000;
@@ -72,6 +86,7 @@ export function createSleep(ctx: HostContext): Sleep {
     options, sessions, byChat, connections, restarting, kept, owners, wheres, moves,
     running, log, activeSessionsMoved, summaryMoved, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
     waitingFor, past, nameOf, storedConfig, charged, charge, recordedChats, spawn, keepProvider, dispatch, leadOf,
+    heldStates,
   } = ctx;
 
   const sleepAfterMs = (options.sleepAfterMinutes ?? SLEEP_AFTER_MINUTES) * 60_000;
@@ -91,6 +106,45 @@ export function createSleep(ctx: HostContext): Sleep {
   const waking = new Map<string, Promise<{ uri: string; chat: Session }>>();
   /** Holds taken on sessions by wakers, by session id, as a count. */
   const holds = new Map<string, number>();
+  /**
+   * The sessions resident here, the least recent first: the reference host's
+   * recency, where a session is touched as new.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L102-L116
+   */
+  const recency = new Set<string>();
+
+  /**
+   * The session a channel keeps resident: the session itself, or the one its
+   * chat, worker chat, changeset or chat's canvas belongs to. A session's
+   * annotations keep nothing resident.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L118-L140
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSubscriptionService.ts#L42-L62
+   */
+  const residentOf = (channel: string): string | undefined => {
+    if (channel.endsWith(MARKS)) return undefined;
+    const base = chatOfCanvas(channel) ?? baseOf(channel);
+    return sessionHolding(base) ?? (spaceOf(base) === 'chat' ? sessionFor(base) : base);
+  };
+
+  /**
+   * The sessions resident here: each one this host runs, and each whose state
+   * or a chat's it holds. A session running with nothing said in it yet is a
+   * draft, which the reference host neither counts nor touches.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L279-L290
+   */
+  const residents = (): Set<string> => {
+    const found = new Set(sessions.keys());
+    for (const [channel, open] of heldStates) {
+      if (open.kind === 'session') found.add(channel);
+      if (open.kind !== 'chat') continue;
+      const session = sessionHolding(channel) ?? sessionFor(channel);
+      if (session !== channel) found.add(session);
+    }
+    for (const [uri, held] of sessions) {
+      if ([...held.chats].every(([chat, one]) => one.allTurns().length === 0 && !running(chat))) found.delete(uri);
+    }
+    return found;
+  };
 
   /** Whether a chat waits on a person: a tool confirmation or an input request. */
   const waitingOnPerson = (chat: Session): boolean => {
@@ -109,11 +163,11 @@ export function createSleep(ctx: HostContext): Sleep {
     return Array.isArray(waiting) && waiting.length > 0;
   };
 
-  /** Whether any connection is subscribed to the session or to one of its channels. */
+  /** Whether any connection is subscribed to the session or to a channel that keeps it resident. */
   const watched = (uri: string): boolean => {
     for (const connection of connections) {
       for (const channel of connection.watching) {
-        if (channel === uri || sessionHolding(channel) === uri || sessionFor(channel) === uri) return true;
+        if (channel === uri || residentOf(channel) === uri) return true;
       }
     }
     return false;
@@ -167,10 +221,9 @@ export function createSleep(ctx: HostContext): Sleep {
     }
     const dir = dirOf(uri);
     sessions.delete(uri);
-    // Asleep and still open: counted as one this host holds, and its state
-    // kept for whoever is watching it.
+    // Asleep and still open: counted as one this host holds, and resident
+    // with the state it holds until the residency lets it go.
     ctx.asleep.add(uri);
-    ctx.statesUnwatched(uri);
     if (row !== undefined) {
       wheres.set(uri, row.workingDirectories);
       moves.set(uri, row.modifiedAt);
@@ -190,41 +243,77 @@ export function createSleep(ctx: HostContext): Sleep {
     return true;
   };
 
-  const sweep = (): void => {
-    const at = now();
-    const asleep = new Set<string>();
-    for (const [uri, held] of sessions) {
-      const due = archived(uri) || (sleepAfterMs > 0 && at - held.quietSince >= sleepAfterMs);
-      if (due && quiet(uri)) {
-        asleep.add(uri);
-        void sleep(uri);
+  const touch = (channel: string): void => {
+    const uri = residentOf(channel);
+    if (uri === undefined || !residents().has(uri)) return;
+    recency.delete(uri);
+    recency.add(uri);
+  };
+
+  /**
+   * Let a resident session go where nothing holds it: its agent, where this
+   * host runs it, and the state this host holds of it. Never one a client
+   * watches, one with a turn running, or one a waker is bringing back.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   */
+  const release = (uri: string): boolean => {
+    const id = idOf(uri);
+    if (sessions.has(uri)) {
+      if (!quiet(uri)) return false;
+      void sleep(uri);
+    } else {
+      if (watched(uri) || waking.has(id) || holds.has(id)) return false;
+      for (const [channel, open] of heldStates) {
+        const turn = open.state.activeTurn;
+        if (open.kind === 'chat' && sessionFor(channel) === uri && typeof turn === 'object' && turn !== null) return false;
       }
     }
-    if (limit <= 0) return;
-    let loaded = sessions.size;
-    if (loaded <= limit) return;
-    // The least recently used first: the oldest turn start.
-    const order = [...sessions].sort(([, a], [, b]) => a.turnedAt - b.turnedAt);
-    for (const [uri] of order) {
-      if (loaded <= limit) return;
-      if (asleep.has(uri) || !quiet(uri)) continue;
-      loaded -= 1;
-      void sleep(uri);
+    ctx.letStateGo(uri);
+    recency.delete(uri);
+    return true;
+  };
+
+  /**
+   * The reference host's reconcile: each archived session, and then the
+   * residents oldest first while more are resident than the limit, each let
+   * go where nothing holds it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L292-L344
+   */
+  const reconcile = (): void => {
+    if (ctx.closed) return;
+    const resident = residents();
+    for (const uri of [...recency]) if (!resident.has(uri)) recency.delete(uri);
+    let count = recency.size;
+    for (const uri of new Set([...[...resident].filter(archived), ...recency])) {
+      if (!archived(uri) && (limit <= 0 || count <= limit)) break;
+      const counted = recency.has(uri);
+      if (release(uri) && counted) count -= 1;
     }
+  };
+
+  const sweep = (): void => {
+    const at = now();
+    for (const [uri, held] of sessions) {
+      if (sleepAfterMs > 0 && at - held.quietSince >= sleepAfterMs && quiet(uri)) void sleep(uri);
+    }
+    reconcile();
   };
 
   const stirred = (channel: string, action: Bag): void => {
     const uri = sessions.has(channel) ? channel : sessionHolding(channel);
     const held = uri === undefined ? undefined : sessions.get(uri);
-    if (held === undefined) return;
+    if (uri === undefined || held === undefined) return;
     const type = String(action.type ?? '');
     if (PRESENCE.has(type)) return;
-    const at = now();
-    held.quietSince = at;
-    if (type !== 'chat/turnStarted') return;
-    held.turnedAt = at;
-    // After the action is out, so the turn it starts is the one `quiet` reads.
-    queueMicrotask(sweep);
+    held.quietSince = now();
+    /*
+     * A turn's start makes its session the most recent, and its start and its
+     * end move the residency: each after the action is out, so the turn is
+     * the one `quiet` and `touch` read.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L84-L89
+     */
+    if (type === 'chat/turnStarted') queueMicrotask(() => { touch(uri); sweep(); });
+    else if (ENDINGS.has(type)) queueMicrotask(reconcile);
   };
 
   const rearm = (): void => {
@@ -440,5 +529,5 @@ export function createSleep(ctx: HostContext): Sleep {
     await Promise.all([...closing.values(), ...[...waking.values()].map(settled)]);
   };
 
-  return { quiet, sleep, wake, hold, slept, sweep, stirred, startSleep, stopSleep };
+  return { quiet, sleep, wake, hold, slept, sweep, touch, reconcile, stirred, startSleep, stopSleep };
 }
