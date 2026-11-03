@@ -1,7 +1,7 @@
 ---
 title: A turn sent while one runs takes its place
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -112,7 +112,7 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn sent while one runs is taken](task-01-a-turn-sent-while-one-runs-is-taken.md) | todo | - |
+| [01 - A turn sent while one runs is taken](task-01-a-turn-sent-while-one-runs-is-taken.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -124,13 +124,13 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a turn still switching its model, whose start is said once the switch answers.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `feb72387`'s sources and passes after the change.
-- [ ] The touched packages' test files pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `feb72387`'s sources and passes after the change.
+- [x] The touched packages' test files pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
