@@ -1,7 +1,7 @@
 ---
 title: An active client entry is held as sent
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -63,7 +63,7 @@ a client unsubscribes or goes -> host.ts leaves -> its own entry out -> session/
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An entry naming another client is held as sent](task-01-an-entry-naming-another-is-held.md) | todo | - |
+| [01 - An entry naming another client is held as sent](task-01-an-entry-naming-another-is-held.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -71,13 +71,13 @@ a client unsubscribes or goes -> host.ts leaves -> its own entry out -> session/
 
 ## Resume state
 
-- **Done so far:** nothing yet.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the presence map is the host's copy of the reduced list, so its key is the entry's `clientId`.
 
 ## Final verification checklist
 
-- [ ] The changed case fails on `f419294d` for the reason it names, and passes after the change.
-- [ ] The presence test file passes.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The changed case fails on `f419294d` for the reason it names, and passes after the change.
+- [x] The presence test file passes.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
