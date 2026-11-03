@@ -49,7 +49,10 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 | What | Source | Task |
 | --- | --- | --- |
 | A creator's `clientId` other than the connection's is refused with `-32602`, "createSession.activeClient.clientId must match the connection's clientId" | [protocolServerHandler.ts#L2209-L2213](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213); [commands.ts#L77-L85](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85) | 01 |
-| A creator's entry with no `clientId` takes the connection's, as a `session/activeClientSet` entry does here; the reference host's comparison refuses it, and this plan leaves it as it is | [code://packages/sdk/src/host/actions.ts#L787-L810](../../../../packages/sdk/src/host/actions.ts#L787-L810); [protocolServerHandler.ts#L2211](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2211) | - |
+| A creator's entry with no `clientId` is refused with the same `-32602` and sentence, as the reference host's comparison refuses it | [protocolServerHandler.ts#L2209-L2213](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213) | 02 |
+| No VS Code client sends such an entry: each builds its entry from the connection's own `clientId`, so no VS Code client can tell | [agentHostActiveClientService.ts#L259-L275](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostActiveClientService.ts#L259-L275); [agentHostSessionHandler.ts#L1160](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1160) | 02 |
+| The specification's text says the `clientId` MUST match and the field is required, and names no answer of the host's; its one `createSession` error is `SessionAlreadyExists`, so the reference host's refusal is the rule | [commands.ts#L77-L85](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85); [state.ts#L268](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L268); [session-channel.md#L36](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L36) | 02 |
+| The cases that sent a creator's entry with no `clientId` name the connection's, and the one that read the filled id moves with the behavior | `(defaulted: each case tests something else, and the id it names is the one filled before)` | 02 |
 | The check comes after the provider and the caller's use of it are checked, and before anything is claimed or made | [protocolServerHandler.ts#L2205-L2213](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2205-L2213) | 01 |
 
 ## Proposed architecture
@@ -63,6 +66,7 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A creator naming another client is refused](task-01-a-creator-naming-another-client-is-refused.md) | done | - |
+| [02 - A creator naming no client is refused](task-02-a-creator-naming-no-client-is-refused.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -70,7 +74,7 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
+- **Done so far:** tasks 01 and 02, 2026-11-02.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a creator's entry with no `clientId`, which the cases send and which takes the connection's.

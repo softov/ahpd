@@ -2,12 +2,12 @@
 title: A session for another client is refused - implemented
 date: 2026-11-02
 refs:
-  - git://d32cfe51 - the change
+  - git://769538f9 - the last change
   - "[code://packages/sdk/src/host/sessionmethods.ts](../../../../packages/sdk/src/host/sessionmethods.ts)"
 ---
 
-A `createSession` whose `activeClient` names a `clientId` other than the connection's is refused with `-32602`, before anything is claimed or made.
-A creator naming its own id, or none, is held in the session as it was.
+A `createSession` whose `activeClient` names a `clientId` other than the connection's, or none, is refused with `-32602`, before anything is claimed or made.
+A creator naming its own id is held in the session as it sent its entry.
 
 ## What was built
 
@@ -16,16 +16,13 @@ A creator naming its own id, or none, is held in the session as it was.
 
 ## Verified
 
-- The changed presence case fails on `89ebe4d5`'s source, the request resolving, and passes with the change.
-- The eleven files that create a session with a creator's entry pass.
+- Task 01's changed presence case fails on `89ebe4d5`'s source, the request resolving, and passes with the change.
+- Task 02's new case fails on `7e87e7da`'s source, the session made, and passes with the change.
+- The presence and remote session files pass, their creators naming the connection's id.
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
 ## Departures from the plan
 
-- The plan refused an entry with no `clientId` too, as the reference host's comparison does.
-- The task takes the connection's id for it, as a set's entry here takes it, and refuses an entry naming another id alone.
-- A creator's entry with no `clientId` is what plan `20261102-1435-an-active-client-keeps-the-tools-it-sent` holds as sent.
-
-## Left for later
-
-- Left as it is: an entry with no `clientId` takes the connection's; VS Code's host refuses it ([protocolServerHandler.ts#L2211](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2211)).
+- Task 01 is in upstream main since #193, so task 02 sits on `15f02030`.
+- That commit holds main's case for a creator's entry with no `clientId`, which task 02 changes.
+- Task 02 was built and checked on task 01 rebased onto `f419294d` (`7e87e7da`), and its changed lines on `15f02030` are the same.
