@@ -1,6 +1,6 @@
 ---
 title: The key reaches every backend
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -37,4 +37,6 @@ A change of the key on a running session goes to every chat's `setConfig`, and t
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the new case fails: the start's settings carry no locations.

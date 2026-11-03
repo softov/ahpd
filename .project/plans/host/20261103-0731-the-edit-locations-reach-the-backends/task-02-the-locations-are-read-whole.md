@@ -1,6 +1,6 @@
 ---
 title: The locations are read whole
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -33,4 +33,6 @@ A value whose every entry fits the property's shape is the locations, and any ot
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the new case fails: the good entry of a malformed value asks.

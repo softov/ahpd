@@ -1,7 +1,7 @@
 ---
 title: The edit locations reach the backends
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -71,8 +71,8 @@ a command line -> spawn.ts getAutoApproval -> the locations, whole or none -> th
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The key reaches every backend](task-01-the-key-reaches-every-backend.md) | todo | - |
-| [02 - The locations are read whole](task-02-the-locations-are-read-whole.md) | todo | - |
+| [01 - The key reaches every backend](task-01-the-key-reaches-every-backend.md) | done | - |
+| [02 - The locations are read whole](task-02-the-locations-are-read-whole.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,13 @@ a command line -> spawn.ts getAutoApproval -> the locations, whole or none -> th
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a restart already starts the backend on the session's config, so only `taking` hands a change.
 
 ## Final verification checklist
 
-- [ ] The new cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The autoapproval and command approver test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The autoapproval and command approver test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
