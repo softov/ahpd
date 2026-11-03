@@ -15,6 +15,7 @@ import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { ROOT, chatIdFor, chatUriFor } from './channels.js';
 import { NO_AGENT, need } from './common.js';
+import { asksForTool } from './spawn.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
@@ -2097,6 +2098,17 @@ export function createTooling(ctx: HostContext): Tooling {
         // ran. A call with no session names the person it was made by instead.
         run: async (input: Record<string, unknown>): Promise<string> => {
           try {
+            /*
+             * A tool the operator's rule names is refused here.
+             *
+             * The rule is the operator saying the call asks every time, and
+             * this door has no session to ask in: a refusal is the one answer
+             * that keeps the rule. The message names the key so a person can
+             * find what refused them.
+             */
+            if (asksForTool(rootConfig, `ahp/${definition.name}`)) {
+              throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names ahp/${definition.name}, and /mcp has no session to ask in`);
+            }
             const answer = await one.run(input, sessionlessContext(caller));
             void fire({ type: 'tool_call', tool: definition.name, ok: true, ...(person === undefined ? {} : { person }) });
             return answer;

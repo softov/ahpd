@@ -900,7 +900,9 @@ describe('a tool a person calls with no session', () => {
    * host's events, which is how a case watches `tool_call`.
    */
   const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[]) => {
-    const users = directory({ member: MEMBER, guest: GUEST });
+    // A third person holding the grant a root config push needs, so a case can
+    // set the operator's rule the way a window does.
+    const users = directory({ member: MEMBER, guest: GUEST, owner: ['config:change'] });
     const store = fileSessions({ dir: join(root, 'sessions') });
     const base: HostOptions = {
       path: root, agents: agents ?? [claude({ paths: [root] })], ...machine(),
@@ -957,6 +959,31 @@ describe('a tool a person calls with no session', () => {
     expect(names).not.toContain('plain_tool');
     expect(names).not.toContain('advanced_tool');
     expect(names).toHaveLength(7);
+  });
+
+  it('refuses a tool the operator\'s rule names, before the tool runs', async () => {
+    const calls: string[] = [];
+    const probe = (name: string): HostTool => ({
+      definition: { name, title: name, description: `${name}, and sessionless.`, inputSchema: { type: 'object', properties: {} } },
+      sessionless: true,
+      run: () => { calls.push(name); return name; },
+    });
+    const { host, users } = hosting([probe('notify'), probe('ping')]);
+    const client = host.accept(peer());
+    await hello(client);
+    await signIn(client, 'owner');
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'ahp/notify': false } } } },
+    });
+    await settle();
+    const member = await principal(users, 'member');
+
+    await expect(run(host, { principal: member }, 'notify', {})).rejects.toThrow('eligibleForAutoApproval');
+    // The rule is read before the tool's own work, and a tool it does not name runs.
+    expect(calls).toEqual([]);
+    expect(await run(host, { principal: member }, 'ping', {})).toBe('ping');
+    expect(calls).toEqual(['ping']);
   });
 
   it('makes a session the caller owns, with no parent, when it is independent', async () => {
