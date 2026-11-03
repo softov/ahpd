@@ -99,8 +99,8 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A connection knows its address](task-01-a-connection-knows-its-address.md) | implemented | - |
-| [02 - The host lists and drops its clients](task-02-the-host-lists-and-drops-clients.md) | todo | 01 |
-| [03 - A row counts frames and bytes](task-03-a-row-counts-frames-and-bytes.md) | todo | 02 |
+| [02 - The host lists and drops its clients](task-02-the-host-lists-and-drops-clients.md) | implemented | 01 |
+| [03 - A row counts frames and bytes](task-03-a-row-counts-frames-and-bytes.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -112,10 +112,10 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 
 ## Resume state
 
-- **Done so far:** task 01 implemented. `Opened` and `Connection` hold the socket number, the address, the forwarded claim and the connect time, on all four transports, and `Host.clientRegistry.connected()` answers the rows.
-- **Next action:** [task-02-the-host-lists-and-drops-clients.md](task-02-the-host-lists-and-drops-clients.md).
+- **Done so far:** tasks 01, 02 and 03 implemented. `Opened` and `Connection` hold the socket number, the address, the forwarded claim and the connect time. `Host.clientRegistry` lists, watches and drops connections. `x-ahpd-clients://` serves the rows with `client:read`, offers `drop` with `client:drop`, and carries the frames and bytes in each direction. The daemon counts them in its `Tap` and serves the list. It refreshes on each arrival and departure, and once each 5 seconds while someone reads it.
+- **Next action:** every task is implemented. Review the plan, run the by-hand checks, and then set it `done`.
 - **Open questions:** task 02 says to add `clients: ClientRegistry` to `Host`, and that name is taken by `Clients`, the resource-provider view. Its `watch(client, uri, options)` would clash with `ClientRegistry.watch(onChange)` on any merged type. The build used `clientRegistry`, named for its type as `HostOptions.nodes` is. If you want another name, it is one property and one export to rename.
-- **Watch out for:** `acceptConnection` in `run.ts` and `overStdio` both call `host.accept` without `opened`. Pass it on both paths.
+- **Watch out for:** an arrival is said from `host/handshake.ts`, through `clientsChanged` on the host context, because `host.ts` cannot see the handshake. The counter timer starts in the channel's `snapshot`, because the host records the subscription after the snapshot returns.
 
 ## Final verification checklist
 
