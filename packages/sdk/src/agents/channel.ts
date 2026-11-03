@@ -43,7 +43,7 @@
  */
 
 import { INVALID_PARAMS, INTERNAL_ERROR, RpcError } from '../rpc.js';
-import { sameOwnerOrHost } from '../automations/automations.js';
+import { connectorRefusal } from '../connectors/fields.js';
 import {
   AGENT_SECRETS,
   asOwner,
@@ -130,13 +130,6 @@ export interface AgentsChannelOptions {
   /** Where a record that could not be opened is said. */
   onProblem?(message: string): void;
 }
-
-/** The adapter a schema node's `x-ahpd-connector` mark names, or nothing for a node it does not mark. */
-const markedAdapter = (node: unknown): string | undefined => {
-  const wanted = bag(node)['x-ahpd-connector'];
-  const adapter = typeof wanted === 'string' ? wanted : bag(wanted)['adapter'];
-  return typeof adapter === 'string' && adapter !== '' ? adapter : undefined;
-};
 
 /** The live values one opened record is read through. */
 interface OpenView {
@@ -621,25 +614,13 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   const refuseConnectors = (config: Record<string, unknown>, owner: AgentOwner, engine: ServedEngine): void => {
     const served = options.connectors?.();
     if (served === undefined) return;
-    for (const [field, property] of Object.entries(bag(engine.schema['properties']))) {
-      const one = markedAdapter(property);
-      const each = markedAdapter(bag(property)['items']);
-      const adapter = one ?? each;
-      if (adapter === undefined) continue;
-      const value = config[field];
-      const ids = one !== undefined ? [value] : Array.isArray(value) ? value : [];
-      for (const id of ids) {
-        // A value of another type is the schema's own refusal, and an empty one names nothing.
-        if (typeof id !== 'string' || id === '') continue;
-        const found = served.find((ref) => ref.id === id && ref.adapter === adapter);
-        if (found === undefined) {
-          throw new RpcError(INVALID_PARAMS, `${field} names ${id}, and this host serves no ${adapter} connector with that id`);
-        }
-        if (!sameOwnerOrHost(found.owner, owner === 'host' ? undefined : owner)) {
-          throw new RpcError(INVALID_PARAMS, `${field} names ${id}, which belongs to ${found.owner ?? 'nobody'}, so ${owner} may not use it`);
-        }
-      }
+    const refused = connectorRefusal(config, engine.schema, served, owner === 'host' ? undefined : owner);
+    if (refused === undefined) return;
+    const { field, id, adapter, found } = refused;
+    if (found === undefined) {
+      throw new RpcError(INVALID_PARAMS, `${field} names ${id}, and this host serves no ${adapter} connector with that id`);
     }
+    throw new RpcError(INVALID_PARAMS, `${field} names ${id}, which belongs to ${found.owner ?? 'nobody'}, so ${owner} may not use it`);
   };
 
   /**

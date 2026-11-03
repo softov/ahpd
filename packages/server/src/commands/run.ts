@@ -21,6 +21,8 @@ import {
   clientsChannel,
   clientPluginsIn,
   connectorsChannel,
+  completionsCommand,
+  COMPLETIONS_COMMAND,
   invokeOperation,
   OPERATION_COMMAND,
   tunnelsChannel,
@@ -907,6 +909,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * arrives rather than what was known when it was built.
    */
   let automationsStore: AutomationStore | undefined;
+  /** What sends the engines again, once their channel is built below. */
+  let engineRefresh: (() => Promise<void>) | undefined;
   let pluginTypes: ReturnType<typeof pluginTriggerTypes> = [];
   const adapterLists = adaptersChannel({
     adapters: () => adapters,
@@ -939,6 +943,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       return { ...listed, models: listed.models.map(({ callable: _callable, ...rest }) => rest) };
     },
     onProblem: listProblem,
+    // A schema the tunnels and engines send lists the connectors as a field's
+    // choices, so each sends it again when one changes. Both are built after
+    // this channel, and neither is asked before the first listing.
+    onRefs: () => {
+      tunnelLists?.refreshOperations();
+      void engineRefresh?.();
+    },
   });
   /*
    * The tunnel list, beside the connectors.
@@ -953,6 +964,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     kinds: () => tunnelKinds,
     vault: () => held,
     check: (value, schema, label) => { check(value, schema as JsonSchema, label); },
+    // What a field marked `x-ahpd-connector` is checked against at a create
+    // and an update, and the choices its form is sent.
+    connectors: () => connectorLists.refs(),
     onProblem: listProblem,
   });
   tunnelLists = tunnels;
@@ -1001,9 +1015,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   const engineLists = enginesChannel({
     engines: () => engines,
+    // The choices a field marked `x-ahpd-connector` is sent with.
+    connectors: () => connectorLists.refs(),
     pluginIcons: (name) => loaded.find((one) => one.name === name)?.manifest?.icons,
     onProblem: listProblem,
   });
+  engineRefresh = engineLists.refresh;
   /**
    * What serves an agent id the records do not hold.
    *
@@ -1079,7 +1096,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const lists = servedRecords(
     'ahpd',
     [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel, clients.channel],
-    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: channelOperations },
+    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: channelOperations, [COMPLETIONS_COMMAND]: completionsCommand({ connectors: () => connectorLists.refs() }) },
   );
 
   /*

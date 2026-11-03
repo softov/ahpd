@@ -180,6 +180,7 @@ The verbs that read or change this host's own settings, one line each. The rest 
 | Subscribe to the connectors channel | `connector:list` | `x-ahpd-connectors` |
 | List the caller's own, their teams' and the host's connectors | `connector:list` | `x-ahpd-connectors`, and no other person's connector with it |
 | List every connector | `connector:all` | `x-ahpd-connectors`, and it is admitted without `connector:list` |
+| List the connector choices of a form field | `connector:list`, or `connector:all` | `x-ahpd/completions`, and the host's and the caller's own connectors only |
 | Make or change a connector | `connector:put`, and `connector:host` for a host connector | `x-ahpd/connectors/put` |
 | Remove a connector | `connector:remove`, and `connector:host` for a host connector | `x-ahpd/connectors/remove` |
 | Check a connector | `connector:put`, and `connector:host` for a host connector | `x-ahpd/connectors/check` |

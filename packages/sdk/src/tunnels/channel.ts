@@ -48,7 +48,9 @@ import {
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { reason } from '../utils/values.js';
+import { connectorRefusal, withConnectorChoices } from '../connectors/fields.js';
 import type { OperationChannel } from '../kinds/operations.js';
+import type { ConnectorRef } from '../types/connectors.js';
 import type { Operation, OperationStatus } from '../types/kinds.js';
 import type { PluginChannel } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
@@ -78,6 +80,16 @@ export interface TunnelsChannelOptions {
    * runtime, and the schema checker the daemon uses belongs to the server.
    */
   check(value: unknown, schema: Record<string, unknown>, label: string): void;
+  /**
+   * The connectors this host serves, read at each create and update.
+   *
+   * A field of a kind's schema marked `x-ahpd-connector` names one of these,
+   * and a tunnel is host work, so it may name only a host connector. The
+   * create and update inputs a client is sent list those connectors as the
+   * field's choices. Absent on an embedder with no connectors, which checks no
+   * such field.
+   */
+  connectors?(): readonly ConnectorRef[];
   /** Where a kind that failed is said, as one line. */
   onProblem?(message: string): void;
 }
@@ -100,6 +112,8 @@ export interface TunnelsChannel {
   urls(): string[];
   /** Send every subscriber what the list is now. */
   refresh(): Promise<void>;
+  /** Send every subscriber the operations again, as when the connectors change their choices. */
+  refreshOperations(): void;
 }
 
 /** What the host knows of one tunnel while the daemon runs. */
@@ -190,6 +204,26 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
 
   /** The id a tunnel the host makes is kept under: the kind's name and a run of hex. */
   const freshId = (kind: string): string => `${kind}-${randomBytes(4).toString('hex')}`;
+
+  /**
+   * Refuse settings whose marked field names a connector a tunnel may not use.
+   *
+   * A tunnel has no owner, so the rule is a host record's: the field has to
+   * name a host connector of the adapter its mark says. Asked at a create and
+   * an update, and not at a start: a record read back may name a connector
+   * that opens after the tunnels.
+   */
+  const refuseConnectors = (settings: Record<string, unknown>, schema: Record<string, unknown>): void => {
+    const served = options.connectors?.();
+    if (served === undefined) return;
+    const refused = connectorRefusal(settings, schema, served, undefined);
+    if (refused === undefined) return;
+    const { field, id, adapter, found } = refused;
+    if (found === undefined) {
+      throw new RpcError(INVALID_PARAMS, `${field} names ${id}, and this host serves no ${adapter} connector with that id`);
+    }
+    throw new RpcError(INVALID_PARAMS, `${field} names ${id}, which belongs to ${found.owner ?? 'nobody'}, so a tunnel may not use it`);
+  };
 
   /**
    * The saves a kind asked for through its reports, one after the next.
@@ -299,9 +333,27 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     return out;
   };
 
+  /**
+   * The operations as a client is sent them: each create and update input
+   * with the host's connectors as the choices of a marked field.
+   *
+   * `run` reads `operationsOf`, so a call is checked against the kind's own
+   * schema, and a wrong id is refused by the sentence `refuseConnectors` says
+   * rather than by an `enum` that names no connector.
+   */
+  const servedOperations = (): Operation[] => {
+    const served = options.connectors?.();
+    if (served === undefined) return operationsOf();
+    return operationsOf().map((operation) => {
+      const name = operation.id.slice(operation.kind.length + 1);
+      if ((name !== 'create' && name !== 'update') || operation.input === undefined) return operation;
+      return { ...operation, input: withConnectorChoices(operation.input, served, false) };
+    });
+  };
+
   /** Tell each subscriber of the list what its operations are now. */
   const publishOperations = (): void => {
-    handle?.publish(URI, { type: `${SCHEME}/operations`, operations: operationsOf() });
+    handle?.publish(URI, { type: `${SCHEME}/operations`, operations: servedOperations() });
   };
 
   const source = {
@@ -333,7 +385,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     ...records.channel,
     snapshot: async (asked, reader, client) => {
       const state = await records.channel.snapshot(asked, reader, client) as Record<string, unknown>;
-      return { ...state, operations: operationsOf() };
+      return { ...state, operations: servedOperations() };
     },
   };
 
@@ -413,6 +465,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     if (name === 'create') {
       const settings = input ?? {};
       options.check(settings, kind.schema, `${kind.name}'s settings`);
+      refuseConnectors(settings, kind.schema);
       const id = freshId(kind.name);
       const moved = await movedSecrets(id, kind.schema, settings, {});
       const record: StoredRecord = { id, kind: kind.name, plugin: kind.by, purpose: 'person', enabled: true, ...moved };
@@ -448,6 +501,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
       }
       const settings = input ?? {};
       options.check(settings, kind.schema, `${kind.name}'s settings`);
+      refuseConnectors(settings, kind.schema);
       const moved = await movedSecrets(record.id, kind.schema, settings, settingsOf(record));
       const next: StoredRecord = { ...hostFieldsOf(record), ...moved };
       await options.collection.put(next);
@@ -548,5 +602,5 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     return out;
   };
 
-  return { channel: tunnelChannel, operations, startAll, stopAll, urls, refresh };
+  return { channel: tunnelChannel, operations, startAll, stopAll, urls, refresh, refreshOperations: publishOperations };
 }
