@@ -254,11 +254,6 @@ const BROKEN = {
     row: 'A10',
     by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L260-L262 at a4e689ae)',
   },
-  otherClientRefused: {
-    breaks: 'types/channels-session/actions.ts: session/activeClientSet is @clientDispatchable and upserts the entry its clientId names; this host refuses an entry naming another client than the connection',
-    row: 'C12',
-    by: 'none, host policy: a client announces itself and no other',
-  },
   removalUnserved: {
     breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
     row: 'A11',
@@ -369,8 +364,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
   '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '035-session-activeclientset-adds-client': [{ refused: ['vscode-1 is another client; this connection is cases-035-session-activeclientset-adds-client'], ...BROKEN.otherClientRefused }],
-  '036-session-activeclientset-replaces-client': [{ refused: ['vscode-1 is another client; this connection is cases-036-session-activeclientset-replaces-client'], ...BROKEN.otherClientRefused }],
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
