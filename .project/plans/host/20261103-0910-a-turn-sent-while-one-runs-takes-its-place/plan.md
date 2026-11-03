@@ -1,7 +1,7 @@
 ---
 title: A turn sent while one runs takes its place
 domain: host
-status: built
+status: planned
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -33,6 +33,10 @@ refs:
   - "[code://packages/bot/src/chat.ts#L1046-L1052](../../../../packages/bot/src/chat.ts#L1046-L1052) - the bot's `begin`, which queues a turn sent while one is open"
   - "[code://examples/echo/agent.ts#L149-L211](../../../../examples/echo/agent.ts#L149-L211) - the echo example's turn, whose run ends whatever turn is active then"
   - ".project/problems/a-backend-keeps-a-steer-the-client-took-back.md - the problem filed for a steer a backend keeps after a client took it back"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65 - a turn that ends cancelled takes every pending steering message out, and starts nothing queued"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617 - \"Cancellation clears every pending steering entry, including prompts handed off but not yet consumed by the SDK\""
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873 - a resume whose agent fails ends in an error marked resumable"
+  - ".project/problems/a-pi-resume-after-a-failed-continue-is-refused.md - the problem filed for a pi resume refused after its continue threw"
 ---
 
 ## Goal
@@ -81,6 +85,8 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 - pi and the bot queue it as a pending message, and ACP drops it.
 - The host holds a chat's action sent after a stop until the backend lets the stopped turn go.
 - A steering message a stopped run still holds runs later, though a client took it back after the stop.
+- A stop leaves the chat's steering message in place, and pi keeps the steer it was handed for its next run.
+- A pi resume whose continue threw is marked resumable, and the next resume is refused, since pi's file now ends at the context edit.
 
 ## Answers
 
@@ -97,6 +103,8 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 | Steering goes to the agent only while the chat has an active turn; a client's removal of steering handed over has the provider withdraw it | [queueDrainContribution.ts#L193-L195](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L193-L195); [queueDrainContribution.ts#L165-L173](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173) | 01 |
 | Plan 87's refusal rests on a person's choice, and the failure its goal measured is the reducer's own replacement | `.project/plans/host/87-a-turn-is-refused-while-one-runs/plan.md`; the ledger's judgment of B | 01 |
 | The wait for a stopped turn's end was added because the backends refused a turn while they held one, and a message queued then waited for an end that never came | the 20261102-0759 plan's task 08 | 01 |
+| A turn that ends cancelled takes every pending steering message out, those handed to the agent included, and starts nothing queued | [queueDrainContribution.ts#L55-L65](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65); [AGENTS.md#L617](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617) | 02 |
+| A resume whose agent fails ends in an error marked resumable, so the agent has to take the same resume again | [agentSideEffects.ts#L1850-L1873](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873); the spec's `resumable`, "whether the turn can be resumed" (types/channels-chat/actions.ts L500 at v1.0.0) | 02 |
 
 ## Proposed architecture
 
@@ -113,6 +121,7 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A turn sent while one runs is taken](task-01-a-turn-sent-while-one-runs-is-taken.md) | done | - |
+| [02 - A stop takes the steering with it](task-02-a-stop-takes-the-steering-with-it.md) | todo | 01 |
 
 ## Risks and tradeoffs
 
@@ -125,7 +134,7 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 ## Resume state
 
 - **Done so far:** task 01, 2026-11-03.
-- **Next action:** none; see [implemented.md](implemented.md).
+- **Next action:** task 02.
 - **Open questions:** none.
 - **Watch out for:** a turn still switching its model, whose start is said once the switch answers.
 
