@@ -185,7 +185,7 @@ async function serving(knobs: Knobs, options: Options = {}) {
 
   const root = async (): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } })) as { snapshot: { state: Bag } }).snapshot.state;
-  /** The sessions the root says are running a turn. */
+  /** The sessions the root says are not disposed. */
   const active = async (): Promise<number> => Number((await root()).activeSessions);
   /** The sessions whose agent runs now: every start less every close. */
   const awake = (): number => (knobs.starts ?? 0) - knobs.closes.length;
@@ -430,7 +430,7 @@ it('closes each chat with close(\'stopping\'), and keeps its terminals and rule 
   opened[0]?.close();
 });
 
-it('lists a sleeping session in the catalogue, and counts it among no sessions running a turn', async () => {
+it('lists a sleeping session in the catalogue, and counts it among the sessions not disposed', async () => {
   const knobs: Knobs = { closes: [] };
   const { time, open, active, awake, listed } = await serving(knobs);
   const one = await open('one');
@@ -438,8 +438,8 @@ it('lists a sleeping session in the catalogue, and counts it among no sessions r
   time.pass(31);
   await until(() => knobs.closes.length > 0);
   expect(awake()).toBe(0);
-  // Asleep is not disposed, and a session asleep runs no turn.
-  expect(await active()).toBe(0);
+  // Asleep is not disposed, and the protocol counts the non-disposed.
+  expect(await active()).toBe(1);
   expect(await listed()).toContain(one.resource);
 });
 
