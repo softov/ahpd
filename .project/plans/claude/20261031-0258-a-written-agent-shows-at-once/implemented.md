@@ -26,7 +26,7 @@ The list on the root channel shows a change in the personal folder too.
 - `agent-claude-reread.test.ts` has five cases for steps 10 and 11 of task 02.
 - `host-snapshots.test.ts` has two new cases: a second probe, and a fold that removes the backend.
 - `pnpm typecheck` is clean, and the whole suite passes.
-- The checks by hand wait in [claude-reload-checks.md](../../../pending/claude-reload-checks.md).
+- Softov passed the checks by hand on 2026-11-03. An agent and a skill show once their frontmatter is valid. A rename and a delete reach the list. A new session shows the agent, and a turn runs it.
 
 ## Departures from the plan
 

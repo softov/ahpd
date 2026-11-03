@@ -1,7 +1,7 @@
 ---
 title: A written agent shows at once
 domain: claude
-status: implemented
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -85,9 +85,9 @@ a file written under the personal .claude -> the backend's watcher -> probeAgent
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The Claude folders are watched](task-01-the-claude-folders-are-watched.md) | implemented | - |
-| [02 - A session reads its list again](task-02-a-session-reads-its-list-again.md) | implemented | 01 |
-| [03 - The probe is read again](task-03-the-probe-is-read-again.md) | implemented | 01 |
+| [01 - The Claude folders are watched](task-01-the-claude-folders-are-watched.md) | done | - |
+| [02 - A session reads its list again](task-02-a-session-reads-its-list-again.md) | done | 01 |
+| [03 - The probe is read again](task-03-the-probe-is-read-again.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -98,16 +98,16 @@ a file written under the personal .claude -> the backend's watcher -> probeAgent
 ## Resume state
 
 - **Done so far:** planned 2026-10-31, and tasks 01 to 03 implemented on 2026-10-31. See [implemented.md](implemented.md).
-- **Next action:** review, and the checks by hand in [claude-reload-checks.md](../../../pending/claude-reload-checks.md).
+- **Next action:** none. Softov passed the checks by hand on 2026-11-03.
 - **Open questions:** none.
 - **Watch out for:** the line numbers in the refs are from before the skills plan merged.
 
 ## Final verification checklist
 
-- [ ] An agent written from VS Code's Agent Customizations shows in that session and in the `/agent` picker with no restart.
-- [ ] An agent written by hand into `~/.claude/agents/` shows in an open session.
-- [ ] A new session and the list outside a session show the agent.
-- [ ] A skill written into `<working directory>/.claude/skills/` shows in that session's project directory.
-- [ ] An edit of an agent's `name` and a delete of an agent file reach the list.
-- [ ] A running turn can call the new agent through its Task tool after the reload.
-- [ ] `pnpm typecheck` and the agent-claude and sdk suites pass, and Windows CI is green.
+- [x] An agent written from VS Code's Agent Customizations shows in that session and in the `/agent` picker with no restart.
+- [x] An agent written by hand into `~/.claude/agents/` shows in an open session.
+- [x] A new session and the list outside a session show the agent.
+- [x] A skill written into `<working directory>/.claude/skills/` shows in that session's project directory.
+- [x] An edit of an agent's `name` and a delete of an agent file reach the list.
+- [x] A running turn can call the new agent through its Task tool after the reload.
+- [x] `pnpm typecheck` and the agent-claude and sdk suites pass, and Windows CI is green.

@@ -1,6 +1,6 @@
 ---
 title: A session reads its list again
-status: implemented
+status: done
 depends:
   - task-01-the-claude-folders-are-watched.md
 layer: agent-claude

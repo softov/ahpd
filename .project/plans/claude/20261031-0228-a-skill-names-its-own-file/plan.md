@@ -1,7 +1,7 @@
 ---
 title: A skill names its own file
 domain: claude
-status: implemented
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -97,9 +97,9 @@ the CLI's handshake -> initializationResult, reloadSkills, reloadPlugins -> laid
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The disk read finds each file](task-01-the-disk-read-finds-each-file.md) | implemented | - |
-| [02 - Each entry names its file](task-02-each-entry-names-its-file.md) | implemented | 01 |
-| [03 - The rules are listed](task-03-the-rules-are-listed.md) | implemented | 02 |
+| [01 - The disk read finds each file](task-01-the-disk-read-finds-each-file.md) | done | - |
+| [02 - Each entry names its file](task-02-each-entry-names-its-file.md) | done | 01 |
+| [03 - The rules are listed](task-03-the-rules-are-listed.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -110,17 +110,17 @@ the CLI's handshake -> initializationResult, reloadSkills, reloadPlugins -> laid
 ## Resume state
 
 - **Done so far:** planned 2026-10-31, and tasks 01 to 03 implemented on 2026-10-31. See [implemented.md](implemented.md).
-- **Next action:** review, and the checks by hand in [claude-skill-file-checks.md](../../../pending/claude-skill-file-checks.md).
+- **Next action:** none. Softov passed the checks in VS Code on 2026-11-03.
 - **Open questions:** none.
 - **Watch out for:** the reload plan [claude/20261031-0258-a-written-agent-shows-at-once](../20261031-0258-a-written-agent-shows-at-once/plan.md) edits `customizations.ts` and `servers.ts` too, so it starts after this plan is merged.
 
 ## Final verification checklist
 
-- [ ] `advisor` names `~/.claude/skills/advisor/SKILL.md`, and a client opens it.
-- [ ] A synced skill names its `SKILL.md` under `~/.claude/skills/synced/`, in a directory a client is not offered to write.
+- [x] `advisor` names `~/.claude/skills/advisor/SKILL.md`, and a client opens it.
+- [x] A synced skill names its `SKILL.md` under `~/.claude/skills/synced/`, in a directory a client is not offered to write.
 - [x] `code-review` is in the `builtin` directory, with an internal URI.
 - [x] A session whose working directory has `.claude/skills` lists those skills in a project directory.
 - [x] A personal skill and a project skill with the same name list the personal one only.
 - [x] Each scope sends its `agents`, `skills`, `commands` and `rules` directories with no children too.
 - [x] `CLAUDE.md` and a file in `.claude/rules` show as rules.
-- [ ] `pnpm typecheck` and the agent-claude suite pass, and Windows CI is green.
+- [x] `pnpm typecheck` and the agent-claude suite pass, and Windows CI is green.

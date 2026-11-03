@@ -24,7 +24,7 @@ An entry with no file goes in a read-only `builtin` directory with a `claude-int
 - `customizations.test.ts` has ten new cases for task 02 and task 03, and three changed cases.
 - Seven sdk tests changed, because each session now opens with its writable directories.
 - `pnpm typecheck` is clean, and the whole suite passes with 7921 tests.
-- The checks in VS Code wait in [claude-skill-file-checks.md](../../../pending/claude-skill-file-checks.md).
+- Softov passed the checks in VS Code on 2026-11-03. `advisor`, `do-spec` and a synced skill open their `SKILL.md`. The synced folder offers no add, `code-review` is built in, and `CLAUDE.md` opens.
 
 ## Departures from the plan
 

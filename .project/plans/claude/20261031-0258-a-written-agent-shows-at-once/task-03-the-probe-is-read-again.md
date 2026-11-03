@@ -1,6 +1,6 @@
 ---
 title: The probe is read again
-status: implemented
+status: done
 depends:
   - task-01-the-claude-folders-are-watched.md
 layer: sdk

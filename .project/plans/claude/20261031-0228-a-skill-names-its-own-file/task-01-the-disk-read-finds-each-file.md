@@ -1,6 +1,6 @@
 ---
 title: The disk read finds each file
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:
