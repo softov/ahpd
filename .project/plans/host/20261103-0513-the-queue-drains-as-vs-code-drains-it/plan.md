@@ -6,7 +6,7 @@ priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
-  - git://a8eff676 - the commit of ahpd this plan was checked at
+  - git://cde4dd6c - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69 - a turn's end starts the queue only when the turn succeeded or ran a local command"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90 - a client's pending-message action, once applied, runs the drain"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L123-L152 - the drain runs for a set, a removal and a reorder"
@@ -37,9 +37,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 ### Searches performed
 
 - `rg -n "startNext" packages/agent-*/src packages/bot/src examples` - every place a backend starts its queue.
-- Claude starts it at every result, after a refused turn, after a failed resume and after a failed move to another login.
-- pi starts it at every turn's end; the bot at its stop and after a failure; ACP and cofold after a failure.
+- Claude starts it at every result it does not hold back.
+- Claude starts it too after a refused turn, a failed resume or a failed move to another login.
+- pi starts it at every turn's end but a stop's; the bot and ACP and cofold after a failure.
 - No backend's `unqueue` or `reorder` starts the queue.
+- A stop holds the queue in Claude, pi and the bot already, through `#195`.
 
 ### What the sources say
 
@@ -120,8 +122,7 @@ a client's chat/pendingMessageSet, pendingMessageRemoved or queuedMessagesReorde
 
 ### Gaps
 
-- Claude, pi and the bot start their queue when a turn is stopped.
-- Claude, pi, ACP, cofold and the bot start it after a failed turn.
+- Claude, pi, ACP, cofold and the bot start their queue after a failed turn.
 - A message queued after a turn that failed in a way a client can resume starts at once.
 - A client's removal or reorder while the chat is idle starts nothing, so a queue that waits after a stop or a failure stays held.
 
@@ -166,6 +167,6 @@ a client's chat/pendingMessageSet, pendingMessageRemoved or queuedMessagesReorde
 
 ## Final verification checklist
 
-- [x] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] Each new case fails on `cde4dd6c` for the reason it names, and passes after the change.
 - [x] The touched test files pass.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

@@ -52,7 +52,7 @@ No backend that writes a resumable failure starts its queue while its latest tur
 
 ## Validation
 
-- The new cases fail on `a8eff676` and pass after.
+- The new cases fail on `cde4dd6c` and pass after.
 - The touched test files pass, one at a time.
 - `pnpm run typecheck` and `pnpm run boundary` are clean.
 

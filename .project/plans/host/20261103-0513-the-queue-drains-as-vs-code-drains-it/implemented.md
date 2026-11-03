@@ -2,8 +2,8 @@
 title: The queue drains as VS Code drains it - implemented
 date: 2026-11-03
 refs:
-  - git://631c1419 - task 01, `ff7f255e` applied to upstream main
-  - git://edde348e - task 02
+  - git://ff7f255e - task 01's change, which upstream merged
+  - git://1abdad89 - task 02
   - "[code://packages/sdk/src/sessions/catalog.ts](../../../../packages/sdk/src/sessions/catalog.ts)"
 ---
 
@@ -26,8 +26,8 @@ Claude, pi and cofold start nothing while their latest turn is a failure a clien
 
 ## Verified
 
-- `631c1419` and `ff7f255e` remove and add the same 143 lines; on `a8eff676`'s sources its three cases fail, the queued message started at the stop.
-- On `a8eff676`'s sources the fifteen cases of task 02 fail, and with `edde348e` they pass.
+- Task 01's three cases pass on `cde4dd6c`, which carries its change through `#195`.
+- On `cde4dd6c`'s sources the fifteen cases of task 02 fail, and with `1abdad89` they pass.
 - Each touched test file passes alone at one worker, as do 26 other files that touch the queue or a failed turn.
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
