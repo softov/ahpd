@@ -325,11 +325,14 @@ const begin = (client: Client, chatUri: string, turnId: string, text: string): v
   });
 };
 
-/** A client's own word on the call it ran, dispatched the way the protocol says. */
+/**
+ * A client's own word on the call it ran, dispatched the way the protocol says:
+ * in the turn the call is in, `t1`, the turn every case here begins.
+ */
 const complete = (client: Client, chatUri: string, toolCallId: string, result: Bag): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId, result } },
+    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId, result } },
   });
 
 /** The text of each MCP result the agent was told, which is what a client said. */

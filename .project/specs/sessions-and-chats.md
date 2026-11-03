@@ -90,13 +90,14 @@ WHEN a client sends `chat/turnCancelled` for a chat that runs no turn
 THEN the host says the client's own action to every client of the chat and stops nothing
 AND a session asleep in the catalogue stays asleep.
 
-WHEN the stop names another turn than the running one
+WHEN the stop names another turn than the running one, or names no turn
 THEN the host says it back the same way and stops nothing.
 
-WHEN the stop names the running turn, or no turn
-THEN the host hands the backend the running turn's id.
+WHEN the stop names the running turn
+THEN the host hands the backend that turn's id.
 
 The reason: VS Code's host takes a stop of an inactive turn as the client's action and aborts nothing.
+It matches the turn a stop names before it stops anything.
 The chat reducer leaves the chat as it was.
 See [`code://packages/sdk/src/host/chatactions.ts`](../../packages/sdk/src/host/chatactions.ts).
 

@@ -778,23 +778,27 @@ it('runs an idle steering message ahead of what a stopped turn left queued', asy
   expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'now' } });
 });
 
-it('ends the running turn on a cancel that names no turn, with the cancel reaching the server', async () => {
+it('stops nothing on a cancel that names no turn', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'please wait');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
-  // A client with no id to give means the running turn: the stop is said
-  // under that turn's own id, and the backend is handed the same.
-  const before = types(p, chatUri).length;
+  // A stop stops the turn it names: one naming none is said as sent, and the
+  // running turn is still there for the stop that names it.
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  const before = types(p, chatUri).length;
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
   await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
 
   const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
-  expect(said.map((e) => e.action.turnId)).toEqual(['t1']);
+  expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
 });
 
 it("runs a !command in the host's shell rather than asking the server", async () => {

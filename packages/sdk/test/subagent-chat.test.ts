@@ -689,13 +689,14 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
-  await ask('subscribe', { channel: worker });
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  const running = String(opened.snapshot.state.activeTurn?.id);
   await settle();
   const refusals = (): string[] => wire
     .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
     .map((one) => String(one.params.rejectionReason));
 
-  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: running } });
   await settle();
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'stop', id: 'toolu_bg' }]);
@@ -703,10 +704,10 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
   finishWorker();
   await settle();
   told.length = 0;
-  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: running } });
   await settle();
   expect(refusals()).toEqual([]);
-  expect(saidBack(worker).filter((one) => one.clientSeq === 2)).toEqual([{ turnId: '', clientSeq: 2, rejectionReason: undefined }]);
+  expect(saidBack(worker).filter((one) => one.clientSeq === 2)).toEqual([{ turnId: running, clientSeq: 2, rejectionReason: undefined }]);
   expect(told).toEqual([]);
 });
 

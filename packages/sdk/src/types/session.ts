@@ -637,11 +637,11 @@ export interface Session {
    * Stop the running turn, named by its id, and answer anything it was
    * blocked on.
    *
-   * The host calls this while the chat runs a turn, with that turn's id, once
-   * it has said the client's stop to every client of the chat: the turn has
-   * ended in their state, and what the backend says of it afterwards is not
-   * said again. The host refuses a stop on a chat with no turn running, as
-   * the protocol has a server do.
+   * The host calls this when a client's stop names the turn the chat runs,
+   * with that turn's id, once it has said the client's stop to every client
+   * of the chat: the turn has ended in their state, and what the backend says
+   * of it afterwards is not said again. A stop naming any other turn, or none,
+   * reaches no backend.
    */
   cancel(turnId: string): void;
 

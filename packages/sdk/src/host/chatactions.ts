@@ -639,8 +639,8 @@ export function chatAction(
   const chatHeld = (ctx.stateOf(worker ? channel : session.chatUri) ?? {}) as Bag;
   const activeHeld = chatHeld.activeTurn as Bag | undefined;
   /**
-   * A stop of `turn`, the held running turn of the chat it was sent on, said
-   * when it is taken: the client's own stop under the turn it ends and with
+   * A stop of `turn`, the held running turn of the chat it was sent on and
+   * the turn the stop names, said when it is taken: the client's own stop with
    * the time that turn ran, so the turn ends in every client's state at once.
    * The backend is told to stop after, and what it says of that turn then
    * reduces to nothing. The reference host takes a client's cancel into its
@@ -650,7 +650,7 @@ export function chatAction(
    */
   const stopped = (turn: Bag, duration?: unknown): void => {
     const ran = typeof duration === 'number' ? duration : Date.now() - Date.parse(String(turn.startedAt ?? ''));
-    dispatch(channel, { ...action, turnId: String(turn.id ?? ''), duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
+    dispatch(channel, { ...action, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
   };
   /**
    * Whether the held running turn has an input request by this id that has
@@ -1387,27 +1387,27 @@ export function chatAction(
      * The running turn is the one the chat's held state has, the one every
      * client of the chat was told of: a worker's chat holds the worker's turn,
      * which this host opened and reduces itself, and every other chat the turn
-     * its backend said. A stop that names no turn means the running one, the
-     * one turn a client with no id to give can mean.
+     * its backend said. A stop stops the turn its `turnId` names, which the
+     * protocol requires it to carry.
      *
-     * A stop of no running turn stops nothing: a chat with no turn running, or
-     * a turn other than the running one, one the client saw end. It goes to
-     * every client of the chat as the client's own action, as the reference
-     * host takes it, and the protocol's reducer ends a turn only when the id it
-     * names is the active turn's, so every client's chat stays as it was.
-     * Nothing is asked of a backend for it.
+     * A stop of no running turn stops nothing: a chat with no turn running, a
+     * turn other than the running one, one the client saw end, or no turn at
+     * all. It goes to every client of the chat as the client's own action, as
+     * the reference host takes it, matching the turn before anything is
+     * stopped, and the protocol's reducer ends a turn only when the id it names
+     * is the active turn's, so every client's chat stays as it was. Nothing is
+     * asked of a backend for it.
      * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
      * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
      */
     case 'chat/turnCancelled': {
-      const named = String(action.turnId ?? '');
-      if (activeHeld === undefined || (named !== '' && named !== String(activeHeld.id ?? ''))) {
+      if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
         dispatch(channel, action, origin);
         break;
       }
       if (!worker) {
-        // The stop is said under the running turn's id when it is taken, and
-        // the backend running that turn is told after.
+        // The stop is said when it is taken, and the backend running the turn
+        // it names is told after.
         const turn = String(activeHeld.id ?? '');
         stopped(activeHeld, action.duration);
         if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
@@ -2129,12 +2129,8 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * The result goes back to the harness, the harness writes the tool
-     * result, and the session reports the completion to every client from
-     * that - the same path every other tool call takes, so the row is drawn
-     * finished once, from what actually happened. That completion is the
-     * answer to the client that gave the result: owed to it under the call,
-     * it goes out with that client's origin.
+     * The result goes back to the harness, which writes the tool result, and
+     * the client's action is the completion every client is told of.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
@@ -2178,16 +2174,15 @@ export function chatAction(
       }
       /*
        * Said once the backend has taken it, as the client sent it: the call is
-       * complete in every client's state with the result its client gave, and
-       * what the harness says of the call after reduces to nothing. The
-       * reference host says a client's action when it takes it and runs the
-       * side effect after. A turn the client left out is the running turn the
-       * call is in.
+       * complete in every client's state with the result its client gave, in
+       * the turn the action names, and what the harness says of the call after
+       * reduces to nothing. The reference host says a client's action when it
+       * takes it and runs the side effect after, and the protocol's reducer
+       * completes a call only in the turn the action names.
        * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
        */
-      if (ctx.unanswered()) {
-        dispatch(channel, { ...action, turnId: typeof action.turnId === 'string' ? action.turnId : String(activeHeld?.id ?? '') }, origin);
-      }
+      if (ctx.unanswered()) dispatch(channel, action, origin);
       break;
     }
     /*
