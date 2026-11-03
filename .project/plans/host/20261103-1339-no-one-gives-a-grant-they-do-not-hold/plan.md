@@ -74,7 +74,7 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | todo | - |
+| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -83,17 +83,17 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-write-is-bounded-by-the-callers-grants.md](task-01-a-write-is-bounded-by-the-callers-grants.md).
+- **Done so far:** task-01 is built. `Records` gained an optional `bound(reader, id, body)`; `putRecord` and `removeRecord` ask it and both doors pass their `reader`, so `x-ahpd/users/put`, `x-ahpd/roles/put`, their `remove`, and writes and deletes of `user://<id>` and `role://<id>` all keep one rule. `people.ts` writes it for the two schemes that hold grants: a `user` write is bounded by the grants of the roles in the body and by `grantsOfPerson(id)`, a `role` write by the body's grants and by its grants now, and either removal by what it holds now. `packages/sdk/test/people-bound.test.ts` has seven cases, each run through both doors. The `user` and `role` rows of `docs/sdk/USERS.md` say so.
+- **Next action:** none; the plan has one task and it is implemented.
 - **Open questions:** none.
-- **Watch out for:** two doors reach the same records, the commands and the resource provider. Bound both, through `putRecord` and `removeRecord`, and test both.
+- **Watch out for:** the bound is asked only where a scheme declares one, so `team`, `project` and `policy` are written exactly as they were and do not gain a turn of the loop between a write and the next frame. Two doors reach the same records, the commands and the resource provider, so a bound added anywhere other than `putRecord` and `removeRecord` would have covered only one of them.
 
 ## Final verification checklist
 
-- [ ] `mo` with `role:put` cannot write a role with a grant he does not hold, through `x-ahpd/roles/put` or `role://`.
-- [ ] `mo` cannot write his own role as `*:*`.
-- [ ] `mo` with `user:put` cannot give a role whose grants he does not hold, through `x-ahpd/users/put` or `user://`.
-- [ ] `mo` cannot edit or remove a person or a role that holds more than he does.
-- [ ] `mo` can write a role, and give a role, made only of grants he holds.
-- [ ] An admin and the root connection write any role and any person.
-- [ ] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass.
+- [x] `mo` with `role:put` cannot write a role with a grant he does not hold, through `x-ahpd/roles/put` or `role://`.
+- [x] `mo` cannot write his own role as `*:*`.
+- [x] `mo` with `user:put` cannot give a role whose grants he does not hold, through `x-ahpd/users/put` or `user://`.
+- [x] `mo` cannot edit or remove a person or a role that holds more than he does.
+- [x] `mo` can write a role, and give a role, made only of grants he holds.
+- [x] An admin and the root connection write any role and any person.
+- [x] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass.

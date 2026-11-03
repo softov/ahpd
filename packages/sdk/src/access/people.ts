@@ -19,9 +19,10 @@
 import { line, lines, recordsProvider, type Records, type RecordsProvider } from '../resources/records.js';
 import { recordsDomain, type RecordsChannel } from '../resources/recordschannel.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
+import { refusalReason } from '../host/gate.js';
 import { grantProblem } from './users.js';
 import type { PluginMethod } from '../types/plugin.js';
-import type { Grant, Named, Users } from '../types/users.js';
+import type { Grant, Named, Principal, Users } from '../types/users.js';
 
 /** The four, in the order a client's screen would draw them. */
 const SCHEMES = ['user', 'team', 'project', 'role'] as const;
@@ -66,6 +67,22 @@ const listOf = (held: Record<string, unknown>, key: string, scheme: string): str
 };
 
 /**
+ * Refuse a caller that does not hold every grant a write would give or touch.
+ *
+ * The rule the command line keeps in `bounded`, at
+ * `packages/server/src/commands/user.ts`: a caller gives only what it holds, or
+ * `admin` is one role edit away from anybody who may edit a role. Nobody is
+ * the root connection and a host with no users directory, and is held to
+ * nothing. The first grant missing is the one the refusal names, in the words
+ * every channel refusal already uses.
+ */
+const bounded = (reader: Principal | undefined, grants: readonly Grant[]): void => {
+  if (reader === undefined) return;
+  const missing = grants.find((one) => !reader.can(one));
+  if (missing !== undefined) throw new RpcError(-32009, refusalReason(reader.id, missing));
+};
+
+/**
  * `user:`: a person, and the whole of what the file holds about them.
  *
  * The record is the one `ahpd user list` prints, and a client that read one and
@@ -103,6 +120,17 @@ const people = (directory: Users): Records => ({
   find: async (id) => {
     const held = (await directory.list()).find((one) => one.id === id);
     return held === undefined ? undefined : { ...held } as Record<string, unknown>;
+  },
+  /*
+   * A person is bounded by the roles a write would give them and by the ones
+   * they hold now, which is what `user add` bounds as well: a body that names
+   * no roles leaves theirs alone, and the grants they already hold are still
+   * something the caller would be editing.
+   */
+  bound: async (reader, id, body) => {
+    const held = await directory.grantsOfPerson(id) ?? [];
+    const given = body === undefined ? [] : await directory.grantsOfRoles(listOf(body, 'roles', 'person') ?? []);
+    bounded(reader, [...given, ...held]);
   },
   put: async (id, body) => {
     const was = (await directory.list()).find((one) => one.id === id);
@@ -196,6 +224,17 @@ const roles = (directory: Users): Records => ({
   find: async (id) => {
     const held = (await directory.roles()).find((one) => one.id === id);
     return held === undefined ? undefined : { id: held.id, grants: [...held.grants] };
+  },
+  /*
+   * A role is bounded by the grants a write would give it and by the ones it
+   * holds now: a removal has no body and is bounded by those alone, and an edit
+   * cannot quietly drop what is above the caller either, since the record it
+   * replaces is no shorter than what it was bounded by.
+   */
+  bound: async (reader, id, body) => {
+    const held = (await directory.roles()).find((one) => one.id === id)?.grants ?? [];
+    const given = body === undefined ? [] : listOf(body, 'grants', 'role') ?? [];
+    bounded(reader, [...given, ...held] as Grant[]);
   },
   put: async (id, body) => {
     const grants = listOf(body, 'grants', 'role');
