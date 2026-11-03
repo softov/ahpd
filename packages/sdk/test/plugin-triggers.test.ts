@@ -140,6 +140,44 @@ it('lists a trigger type a plugin registered', async () => {
   expect(answer.items.map((one) => one.type)).toEqual(['session', 'watch', 'weather']);
 });
 
+it('lists a connector field with the host\'s connectors as its choices, marked to ask', async () => {
+  const marked: TriggerTypeDefinition = {
+    ...DEPLOY,
+    configSchema: {
+      type: 'object',
+      properties: {
+        connector: { type: 'string', title: 'Connector', 'x-ahpd-connector': { adapter: 'webhook' } } as never,
+      },
+      required: ['connector'],
+    },
+  };
+  const { client } = offered([marked], undefined, {
+    connectors: {
+      refs: () => [
+        { id: 'ci', adapter: 'webhook', owner: 'host', title: 'CI calls' },
+        { id: 'ana-ci', adapter: 'webhook', owner: 'user:ana' },
+      ],
+      run: async () => ({}),
+    },
+  });
+  await client.handle(hello(['0.9.0'], { clientId: 'probe', initialSubscriptions: [ROOT] }));
+
+  const answer = await client.handle({
+    method: 'listAutomationTriggerDefinitions', params: { channel: ROOT },
+  }) as { items: Bag[] };
+
+  const webhook = answer.items.find((one) => one['type'] === 'webhook');
+  expect(bag(bag(webhook?.['configSchema'])['properties'])['connector']).toEqual({
+    type: 'string',
+    title: 'Connector',
+    'x-ahpd-connector': { adapter: 'webhook' },
+    enum: ['ci'],
+    enumLabels: ['CI calls'],
+    enumDynamic: true,
+    'x-ahpd-completions': { command: 'x-ahpd/completions', ref: 'connector:webhook' },
+  });
+});
+
 it('starts a run when the plugin fires its event', async () => {
   const { plugin, store, client } = offered([WEATHER], BATTEN);
   await client.handle(hello(['0.9.0'], { clientId: 'probe', initialSubscriptions: [ROOT] }));

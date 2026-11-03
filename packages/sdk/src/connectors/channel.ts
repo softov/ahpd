@@ -79,7 +79,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import { INVALID_PARAMS, INTERNAL_ERROR, RpcError } from '../rpc.js';
-import { sameOwnerOrHost } from '../automations/automations.js';
+import { sameOwnerOrHost } from './fields.js';
 import { fromEnvRef, scopeOf, secretRef } from '../access/vault.js';
 import {
   CONNECTOR_SECRETS,
@@ -177,6 +177,13 @@ export interface ConnectorsChannelOptions {
   models?(connector: ProviderConnector, reader: Principal | undefined): Promise<ConnectorModels>;
   /** Where a connector that could not be opened is said. */
   onProblem?(message: string): void;
+  /**
+   * Called when the id, adapter, owner or title of a stored connector changes.
+   *
+   * A schema the host sends lists the connectors as a field's choices, so the
+   * channels that send one are told to send it again.
+   */
+  onRefs?(): void;
 }
 
 /** One open connector: what `open` was handed, and what stops it. */
@@ -310,8 +317,17 @@ export interface ConnectorsChannel {
 export function connectorsChannel(options: ConnectorsChannelOptions): ConnectorsChannel {
   /** The owner of each stored connector, as the last read of the collection found it. */
   const owners = new Map<string, ConnectorOwner | undefined>();
-  /** The same connectors as a reference is checked against: id, adapter and owner. */
+  /** The same connectors as a reference is checked against: id, adapter, owner and title. */
   const known = new Map<string, ConnectorRef>();
+  /** One record as a reference reads it. */
+  const refOf = (record: StoredRecord): ConnectorRef => ({
+    id: record.id,
+    adapter: String(record.adapter),
+    owner: asOwner(record.owner),
+    ...(typeof record.title === 'string' ? { title: record.title } : {}),
+  });
+  /** The references as one string, so a change is said only when there is one. */
+  const refsKey = (): string => JSON.stringify([...known.values()].sort((left, right) => left.id.localeCompare(right.id)));
   /** What stops each open connector, by id; an id in the map was opened. */
   const open = new Map<string, Opened>();
   /** What the host knows of each open connector's health, by id, in memory only. */
@@ -378,12 +394,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   /** The connector records the store holds, and the owner each names. */
   const stored = async (): Promise<StoredRecord[]> => {
     const records = await options.collection.list();
+    const before = refsKey();
     owners.clear();
     known.clear();
     for (const one of records) {
       owners.set(one.id, asOwner(one.owner));
-      known.set(one.id, { id: one.id, adapter: String(one.adapter), owner: asOwner(one.owner) });
+      known.set(one.id, refOf(one));
     }
+    if (refsKey() !== before) options.onRefs?.();
     return records;
   };
 
@@ -795,7 +813,9 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     await close(id);
     await options.collection.put(record);
     owners.set(id, owner);
-    known.set(id, { id, adapter: adapter.name, owner });
+    const refsBefore = refsKey();
+    known.set(id, refOf(record));
+    if (refsKey() !== refsBefore) options.onRefs?.();
     // The secrets kept under the owner it left are no record's any more.
     if (moving && was !== undefined && before !== undefined) {
       await forgetRecordSecrets(configOf(before), was, id, CONNECTOR_SECRETS, options.vault(), problem);
@@ -1248,6 +1268,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       await options.collection.remove(id);
       owners.delete(id);
       known.delete(id);
+      options.onRefs?.();
       await channel.refresh();
       return {};
     },

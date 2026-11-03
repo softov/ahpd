@@ -627,10 +627,7 @@ host.registerAdapter({
   `{ "$secret": "<name>" }` in the record, so no record, snapshot, answer or log
   holds it. A client sends an empty value for a field it is never shown, and the
   connector keeps the secret it has. A `secret` field of a host connector may also hold `{ "fromEnv": "<NAME>" }`, the form an agent record's `env` already uses: the host reads that variable of its own environment when it opens the connector, and keeps the name in the record, which is not a secret. A team's or a person's connector that names a variable is refused, on a put and again when the record is opened, because the daemon's environment is nobody's own and a person's connector that read it could send any variable to an endpoint they choose.
-- A field marked `x-ahpd-connector` with `{ "adapter": "<name>" }` names a
-  connector of that adapter. It is checked when the automation whose trigger
-  holds it is saved: the host refuses an id it serves no such connector for, and
-  one whose owner the automation may not read. A field marked
+- A field marked `x-ahpd-connector` with `{ "adapter": "<name>" }`, or with the adapter's name alone, names a connector of that adapter. It is checked when the automation whose trigger holds it is saved: the host refuses an id it serves no such connector for, and one whose owner the automation may not read. The host sends the field with its choices, as [Connector choices](#connector-choices) says. A field marked
   `x-ahpd-automation: true` names an automation, and is checked when the
   connector is put: the host refuses an id it holds no such automation for, and
   one whose owner the connector may not start. A client draws either as a list.
@@ -755,7 +752,14 @@ host.registerTunnelKind({
 - `schema` is the JSON Schema a client draws a tunnel's settings from, and what
   the host checks a `create` input against. A field it marks `secret` goes to
   the vault under `tunnel/<id>/<field>`, as a connector's does, and a blank
-  value on a change keeps the stored one.
+  value on a change keeps the stored one. A field it marks `x-ahpd-connector`
+  names a connector of that adapter. A tunnel is host work, so a create or an
+  update is refused when the field names an id the host serves no such
+  connector for, or a person's connector. The create and update inputs carry
+  the host's connectors as the field's choices, as
+  [Connector choices](#connector-choices) says. The tunnels the host reads back
+  at a start, and its own system tunnel, are not checked, because the
+  connectors can open after the tunnels.
 - `operations` are the verbs a kind offers beyond the host's own. `create` and
   `update` are on the list; `remove`, `enable` and `disable` are on a tunnel,
   and the kind's listed ones are on a tunnel too. An id the host serves -
@@ -837,7 +841,8 @@ host.registerEngine({
   agent never runs on another person's account. A record read back at a start
   is not checked, because the agents open before the connectors; the backend
   that uses a connector asks again. `@ahpd/agent-claude` names its logins
-  this way.
+  this way. The engine's row carries the field with its choices, as
+  [Connector choices](#connector-choices) says.
 - `templates` is what a new record starts from, each with a `name` and
   optionally a `description`, an `icon`, a `model` and a `config`. A template's
   `config` may leave a key variable empty, for the record to fill in. The host
@@ -1758,6 +1763,33 @@ It refuses a channel it does not have, with `-32001`. It refuses an operation th
 The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
 
 The answer goes to the caller alone: the record the operation left, or `{}` for an operation that removed it. When the work throws, the caller is told the message and the operation's status is `error`.
+
+### Connector choices
+
+A schema field marked `x-ahpd-connector` names a connector of one adapter, and a list field may mark its `items` instead. The host sends a client every such field with its choices, so a client draws it as a list to pick from:
+
+| Where the schema is sent | `enum` and `enumLabels` | `enumDynamic` and `x-ahpd-completions` |
+| --- | --- | --- |
+| A tunnel kind's create and update inputs, on `x-ahpd-tunnels://` | The host's connectors of the adapter | No: a tunnel is host work, so the list is whole |
+| An engine's `schema`, on `x-ahpd-engines://` | The host's connectors of the adapter | Yes |
+| A plugin trigger's `configSchema`, in `listAutomationTriggerDefinitions` | The host's connectors of the adapter | Yes |
+
+`enum` holds the ids and `enumLabels` the titles, or the id of a connector with no title. A field gets no `enum` when the host has no connector of its adapter. A schema goes to every reader, so it never lists a person's connector.
+
+`enumDynamic: true` says, as the protocol does for a session setting, that `enum` holds the first choices and not all of them. The field then also carries `x-ahpd-completions: { command, ref }`, such as `{ "command": "x-ahpd/completions", "ref": "connector:devtunnel" }`. A client sends the command with the ref to get the choices for the person who reads the form. When a connector is added, renamed or removed, the tunnels channel sends `x-ahpd-tunnels/operations` again and the engines channel sends its rows again.
+
+### `x-ahpd/completions`
+
+One command answers the choices of every field the host stamped with `x-ahpd-completions`. It takes `{ ref, query? }`:
+
+| Parameter | What it is |
+| --- | --- |
+| `ref` | The ref the field's stamp carries, such as `connector:devtunnel` |
+| `query` | Text the id or the title of a choice holds, in any case. Absent, it answers every choice |
+
+It answers `{ items: [{ value, label }] }`. For a `connector:<adapter>` ref, the items are the connectors of that adapter the caller may use: the host's, and the caller's own. The root connection, and a caller who is nobody, get the host's only. A ref the host does not know answers `{ items: [] }`.
+
+It needs `connector:list`, and a caller who holds `connector:all` is let in too.
 
 ### `x-ahpd-engines`
 

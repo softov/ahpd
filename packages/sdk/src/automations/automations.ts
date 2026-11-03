@@ -10,7 +10,8 @@ import { WATCH_PRESETS } from './triggerpresets.js';
 import type { AgentOwner } from '../types/agents.js';
 import type { Automation, AutomationEntry, AutomationRun, AutomationStore, StartSession } from '../types/automations.js';
 import type { Bag } from '../types/common.js';
-import type { ConnectorOwner, ConnectorRef } from '../types/connectors.js';
+import { connectorRefusal } from '../connectors/fields.js';
+import type { ConnectorRef } from '../types/connectors.js';
 import type { PluginTriggers } from '../types/plugin.js';
 import type { SessionEventKind } from '../types/triggers.js';
 import type { Owner } from '../types/usage.js';
@@ -80,23 +81,6 @@ export interface AutomationsOptions {
    */
   hasUsers?: () => boolean;
 }
-
-/**
- * Whether a connector may be the one an automation of `automation` names.
- *
- * The same owner, or the connector is the host's, which everyone it serves may
- * use. An automation owned by `root:<host>` is the host's own and compares as
- * the host rather than as a fifth kind of owner, and an automation nobody owns
- * is host work too - it reaches the host's connectors and none of a person's.
- * A `project:` owner is not the host: it reaches the host's connectors and
- * nothing else.
- */
-export const sameOwnerOrHost = (connector: ConnectorOwner | undefined, automation: Owner | undefined): boolean => {
-  if (connector === undefined) return false;
-  if (connector === 'host') return true;
-  if (automation === undefined || automation.startsWith('root:')) return false;
-  return connector === automation;
-};
 
 /** How many runs a summary list carries before it needs a cursor. */
 const PAGE = 20;
@@ -379,23 +363,13 @@ export const checkReferences = (
     if (trigger.kind !== 'event') continue;
     const type = types.find((one) => one.type === trigger.type);
     if (type?.configSchema === undefined) continue;
-    const config = bag(trigger.config);
-    for (const [field, property] of Object.entries(type.configSchema.properties ?? {})) {
-      const wanted = bag(property)['x-ahpd-connector'];
-      const adapter = typeof wanted === 'string' ? wanted : String(bag(wanted)['adapter'] ?? '');
-      if (adapter === '') continue;
-      const id = config[field];
-      // A field left out is the schema's own refusal, by its `required`, and a
-      // value of another type is `wrongIn`'s. Neither is a reference to check.
-      if (typeof id !== 'string' || id === '') continue;
-      const found = served.find((one) => one.id === id && one.adapter === adapter);
-      if (found === undefined) {
-        throw new Error(`${field} names ${id}, and this host serves no ${adapter} connector with that id`);
-      }
-      if (!sameOwnerOrHost(found.owner, owner)) {
-        throw new Error(`${field} names ${id}, which belongs to ${found.owner ?? 'nobody'}, so this automation cannot read its calls`);
-      }
+    const refused = connectorRefusal(bag(trigger.config), type.configSchema as unknown as Record<string, unknown>, served, owner);
+    if (refused === undefined) continue;
+    const { field, id, adapter, found } = refused;
+    if (found === undefined) {
+      throw new Error(`${field} names ${id}, and this host serves no ${adapter} connector with that id`);
     }
+    throw new Error(`${field} names ${id}, which belongs to ${found.owner ?? 'nobody'}, so this automation cannot read its calls`);
   }
 };
 

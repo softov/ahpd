@@ -13,7 +13,7 @@
  */
 
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
-import { sameOwnerOrHost } from '../automations/automations.js';
+import { sameOwnerOrHost } from './fields.js';
 import { isRecordSlug } from '../resources/records.js';
 import type { ConnectorRef } from '../types/connectors.js';
 import type { Owner } from '../types/usage.js';

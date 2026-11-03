@@ -1,7 +1,8 @@
 import { computerSource } from '../machines/computers.js';
 import { Status, idOf, uriFor } from '../sessions/catalog.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
-import { EVENT_TRIGGERS, pluginTriggerTypes, sameOwnerOrHost, wrongIn } from '../automations/automations.js';
+import { EVENT_TRIGGERS, pluginTriggerTypes, wrongIn } from '../automations/automations.js';
+import { sameOwnerOrHost, withConnectorChoices } from '../connectors/fields.js';
 import { presetById } from '../automations/triggerpresets.js';
 import { localPath } from '../resources/fileuri.js';
 import { createRuleEngine } from '../automations/triggers.js';
@@ -1528,8 +1529,15 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
             : {}),
         }),
         // Beside the store's own, because a plugin's type is a trigger this
-        // host fires and the store has never heard of it.
-        ...pluginTriggerTypes(options.pluginTriggers),
+        // host fires and the store has never heard of it. A config field that
+        // names a connector carries the host's as its choices, and asks
+        // `x-ahpd/completions` for the reader's own.
+        ...pluginTriggerTypes(options.pluginTriggers).map((type) => {
+          const served = options.connectors?.refs();
+          if (served === undefined || type.configSchema === undefined) return type;
+          const configSchema = withConnectorChoices(type.configSchema as unknown as Record<string, unknown>, served, true);
+          return { ...type, configSchema: configSchema as unknown as typeof type.configSchema };
+        }),
       ],
     }),
     /**
