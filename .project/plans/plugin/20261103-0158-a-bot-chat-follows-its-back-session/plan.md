@@ -76,6 +76,7 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 | A stop of that main turn stops the back turn too, with the time it ran | (defaulted: since git://020669b1 a stop of a main turn cancels the turn of each back session in `answering`, as VS Code cancels a subagent's turn) | 03 |
 | The main turn's message is the back turn's text, with the back turn's sender when the event names one | (defaulted: the turn shows what the person said, where they said it) | 03 |
 | A main chat that this host is not running opens no turn | (defaulted: `turns` answers only a running chat, and starting one would start a new chat) | 03 |
+| A back turn that ends before its main turn opens still opens the main turn, which then ends at once with the back turn's text or error | Softov, 2026-11-03, chose "Show it as ended" | 03 |
 
 ## Proposed architecture
 
@@ -90,8 +91,8 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - the back session checks pass](task-01-the-back-session-checks-pass.md) | todo | - |
-| [02 - a withdrawn copy clears at once](task-02-a-withdrawn-copy-clears-at-once.md) | todo | - |
-| [03 - a back turn opens a main turn](task-03-a-back-turn-opens-a-main-turn.md) | todo | 02 |
+| [02 - a withdrawn copy clears at once](task-02-a-withdrawn-copy-clears-at-once.md) | implemented | - |
+| [03 - a back turn opens a main turn](task-03-a-back-turn-opens-a-main-turn.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -101,10 +102,10 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-back-session-checks-pass.md](task-01-the-back-session-checks-pass.md).
-- **Open questions:** none.
-- **Watch out for:** a test daemon writes Softov's `~/.config/ahpd` unless `XDG_CONFIG_HOME` points at a scratch folder. Never use ports 5180 or 37537.
+- **Done so far:** [task-02-a-withdrawn-copy-clears-at-once.md](task-02-a-withdrawn-copy-clears-at-once.md) and [task-03-a-back-turn-opens-a-main-turn.md](task-03-a-back-turn-opens-a-main-turn.md) are implemented, with their cases in the bot package tests. A withdrawn copy clears at once, and a turn begun in a back session opens a turn in the main chat.
+- **Next action:** [task-01-the-back-session-checks-pass.md](task-01-the-back-session-checks-pass.md) by hand: it needs a test daemon, and this build was told not to start one. Its checks are waiting.
+- **Open questions:** none. The plan's Answers table covered every choice the two built tasks met.
+- **Watch out for:** a test daemon writes Softov's `~/.config/ahpd` unless `XDG_CONFIG_HOME` points at a scratch folder. Never use ports 5180 or 37537. Task 03's `began` also takes the main chat's session and the back session's chat, more than the four parameters of its step 6. `stopped` matches on the first, and `working` shows the second.
 
 ## Final verification checklist
 

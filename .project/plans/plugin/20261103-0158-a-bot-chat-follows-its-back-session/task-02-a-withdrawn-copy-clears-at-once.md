@@ -1,6 +1,6 @@
 ---
 title: A withdrawn copy clears at once
-status: todo
+status: implemented
 depends: []
 layer: bot
 refs:
@@ -35,3 +35,11 @@ When the back session stops asking, the copy in the main chat leaves the open tu
 - `pnpm typecheck` passes.
 
 ## Resume
+
+- **Done so far:** `withdrawAsked` in `packages/bot/src/chat.ts` removes the copy from `held.asked` and `held.responseParts` and says the end. A question ends with `chat/inputCompleted`, the request id and `response: 'cancel'`. A call ends with `chat/toolCallConfirmed`, `turnId: held.id`, the call id, `approved: false` and `reason: 'skipped'`. Its comment says why, and names Softov's choice of 2026-11-02. Two cases in `bot-chat.test.ts` replay a withdrawal through `openedFrom` and `replayed`, so the protocol's own reducer reads it. The call ends `cancelled` with `reason: 'skipped'`, and the question carries `response: 'cancel'`.
+- **Next action:** [task-03-a-back-turn-opens-a-main-turn.md](task-03-a-back-turn-opens-a-main-turn.md).
+- **Open questions:** none.
+- **Watch out for:** `bot-ask.test.ts` held a case that asserted the old behaviour, `leaves the copy in the main chat when the back session withdraws its question, and says nothing`. The new behaviour makes that assertion wrong, so the case is now `takes the copy out of the main chat when the back session withdraws its question`; the task's Files list does not name that file. The reducer keeps the part and marks it, because no action removes a response part. The turn that the host serves to a late client does not have the part.
+
+Files changed by this task: `packages/bot/src/chat.ts`, `packages/bot/test/bot-ask.test.ts`, `packages/bot/test/bot-chat.test.ts`.
+

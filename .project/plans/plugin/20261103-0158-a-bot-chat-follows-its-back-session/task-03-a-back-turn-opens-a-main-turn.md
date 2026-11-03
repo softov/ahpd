@@ -1,6 +1,6 @@
 ---
 title: A back turn opens a main turn
-status: todo
+status: implemented
 depends:
   - task-02-a-withdrawn-copy-clears-at-once.md
 layer: bot
@@ -64,3 +64,10 @@ The main turn shows the back session working, its requests and its answer, as a 
 - The back session's reply ends that main turn.
 
 ## Resume
+
+- **Done so far:** `TurnHandle.begin(text, from?)` opens a turn and answers its id, or `undefined` while a turn is open. `beginTurn` now only opens the turn, and `beginMessage` hands a message's turn to `onMessage`, so `begin` wakes no session. `BackSessions.of(bot, session)` answers the row a session is named by. `Wake.began` holds the `answering` entry, shows the back chat as the call, and sets the `begun` clock. `plugin.ts` listens to `turn_start`. A back session that the wake does not hold opens a turn in its owner's one main chat, with the back turn's text. The cases the Validation names are in the three test files, and the by-hand checks below are still waiting.
+- **Next action:** none: tasks 02 and 03 are done, and task 01 is by hand.
+- **Open questions:** none.
+- **Watch out for:** `began` takes six parameters, not the four step 6 names. `stopped` matches on the main chat's session, and `working` needs the back session's chat. The wake cannot find them synchronously, and the plugin has both when it calls. The bot's name comes from `started`, which `filled` read at load. `TurnHandle.begin` is required, so the stub handles in `bot-post.test.ts` and `bot-context.test.ts` answer `undefined` from it. Those files are not in the task's list. The listener reads the back chat after a `subscribe`. `wake.finished` cannot find a back turn that ends during that read.
+
+Files changed by this task: `packages/bot/src/chat.ts`, `packages/bot/src/names.ts`, `packages/bot/src/plugin.ts`, `packages/bot/src/wake.ts`, `packages/bot/test/bot-chat.test.ts`, `packages/bot/test/bot-context.test.ts`, `packages/bot/test/bot-names.test.ts`, `packages/bot/test/bot-post.test.ts`, `packages/bot/test/bot-wake.test.ts`.

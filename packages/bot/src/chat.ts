@@ -160,6 +160,18 @@ export interface ChatMessage {
  * says to a bot reaches the session that does the work.
  */
 export interface TurnHandle {
+  /**
+   * Begin a turn nobody in this chat said, and answer with the turn's id.
+   *
+   * What a turn somebody began in a back session is shown as here: the person
+   * typed there, and this chat shows a turn of its own waiting on that work.
+   * Nobody is told about it the way `onMessage` is told - nothing here woke a
+   * session, and the work the turn waits on is already running.
+   *
+   * Nothing where a turn is open: a chat runs one turn at a time, and a back
+   * turn with no turn to be shown in is one this chat does not show.
+   */
+  begin(text: string, from?: MessageFrom): string | undefined;
   /** End the open turn with this as its answer. */
   reply(text: string): void;
   /** End the open turn with a notice rather than an answer. */
@@ -648,17 +660,43 @@ export function botChatAgent(
     };
 
     /**
-     * Stop handing on answers to a request the back session no longer asks.
+     * Take a request's copy out of the open turn.
      *
-     * The copy stays in the open turn, and the chat is told nothing: no client
-     * answered it, and the reference host says no completion in nobody's name,
-     * so the request ends with its turn. An answer a person gives it meanwhile
-     * goes nowhere.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L239
+     * The protocol has no action that removes a response part, so the copy is
+     * spliced out of the state a client subscribes to and a live client is told
+     * the part is resolved: a question is cancelled and a call is skipped. The
+     * back session asked and no longer asks, and a person left drawing it would
+     * be answering a question that is over.
+     *
+     * It clears at once rather than with the turn it is in, which is the choice
+     * Softov made on 2026-11-02: a copy nobody can answer is not worth drawing
+     * until the turn ends.
      */
     const withdrawAsked = (held: OpenTurn, id: string): void => {
       const at = held.asked.findIndex((one) => one.id === id);
-      if (at >= 0) held.asked.splice(at, 1);
+      if (at < 0) return;
+      const [copy] = held.asked.splice(at, 1);
+      const part = copy?.part;
+      if (part === undefined) return;
+      const inTurn = held.responseParts.indexOf(part);
+      if (inTurn >= 0) held.responseParts.splice(inTurn, 1);
+      if (part['kind'] === 'inputRequest') {
+        const request = part['request'] as Bag;
+        start.emit('chat', {
+          type: 'chat/inputCompleted',
+          requestId: String(request['id'] ?? id),
+          response: 'cancel',
+        });
+        return;
+      }
+      const toolCall = part['toolCall'] as Bag;
+      start.emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: held.id,
+        toolCallId: String(toolCall['toolCallId'] ?? id),
+        approved: false,
+        reason: 'skipped',
+      });
     };
 
     /**
@@ -752,6 +790,12 @@ export function botChatAgent(
      * to answer has ended, and a second ending would be a second turn.
      */
     const handle: TurnHandle = {
+      begin: (text, from) => {
+        if (open !== undefined) return undefined;
+        const turnId = crypto.randomUUID();
+        beginTurn(turnId, text, from);
+        return turnId;
+      },
       reply: (text) => {
         const held = open;
         if (held === undefined) return;
@@ -805,7 +849,7 @@ export function botChatAgent(
     handles.set(start.uri, handle);
 
     /**
-     * Say one turn, and keep the beginning of it.
+     * Open a turn in this chat with what it began with, and say so.
      *
      * The line goes down before the turn is announced, so a log that could not
      * be written is a turn that did not happen rather than one a client watched
@@ -814,6 +858,10 @@ export function botChatAgent(
      * `queuedMessageId` names what a queued message was waiting as. A client's
      * reducer takes that entry out of its queue on the turn naming it, which is
      * how the queue empties as its turns start.
+     *
+     * Nobody is told who answers it: `beginMessage` is a turn somebody's
+     * message starts, and `begin` on the handle is a turn another session's
+     * work is the answer to.
      */
     const beginTurn = (
       turnId: string,
@@ -822,7 +870,7 @@ export function botChatAgent(
       queuedMessageId?: string,
       model?: Chosen,
       attachments?: MessageAttachment[],
-    ): void => {
+    ): OpenTurn => {
       const startedAt = new Date().toISOString();
       const message = messageOf(text, from, model, attachments);
       const held: OpenTurn = { id: turnId, startedAt, message, responseParts: [], calls: [], asked: [] };
@@ -838,23 +886,38 @@ export function botChatAgent(
         message,
         ...(queuedMessageId === undefined ? {} : { queuedMessageId }),
       });
-      /*
-       * The turn is open before anybody is told about it, because what is told
-       * is what answers it - and it is over at once when nobody is. That is a
-       * chat with no bot behind it: one a person opened to read, or one this
-       * host has just restarted and not answered again.
-       */
-      if (handle.onMessage === undefined) finish(held, 'complete', []);
-      else {
-        handle.onMessage({
-          session: start.uri,
-          turnId,
-          text,
-          ...(model === undefined ? {} : { model }),
-          ...(from?.agent === undefined ? {} : { agent: from.agent }),
-          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
-        });
+      return held;
+    };
+
+    /**
+     * Say one turn, and hand it to whoever answers this chat.
+     *
+     * The turn is open before anybody is told about it, because what is told
+     * is what answers it - and it is over at once when nobody is. That is a
+     * chat with no bot behind it: one a person opened to read, or one this
+     * host has just restarted and not answered again.
+     */
+    const beginMessage = (
+      turnId: string,
+      text: string,
+      from?: MessageFrom,
+      queuedMessageId?: string,
+      model?: Chosen,
+      attachments?: MessageAttachment[],
+    ): void => {
+      const held = beginTurn(turnId, text, from, queuedMessageId, model, attachments);
+      if (handle.onMessage === undefined) {
+        finish(held, 'complete', []);
+        return;
       }
+      handle.onMessage({
+        session: start.uri,
+        turnId,
+        text,
+        ...(model === undefined ? {} : { model }),
+        ...(from?.agent === undefined ? {} : { agent: from.agent }),
+        ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+      });
     };
 
     /**
@@ -891,7 +954,7 @@ export function botChatAgent(
       const next = waiting.shift();
       if (next === undefined) return;
       start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: next.steering === true ? 'steering' : 'queued', id: next.id });
-      beginTurn(next.turnId, next.text, next.from, next.id, next.model, next.attachments);
+      beginMessage(next.turnId, next.text, next.from, next.id, next.model, next.attachments);
     };
 
     return {
@@ -982,7 +1045,7 @@ export function botChatAgent(
        */
       begin: (turnId, text, model, from, attachments) => {
         if (open === undefined) {
-          beginTurn(turnId, text, from, undefined, model, attachments);
+          beginMessage(turnId, text, from, undefined, model, attachments);
           return;
         }
         enqueue({ turnId, id: turnId, text, from, model, attachments });
