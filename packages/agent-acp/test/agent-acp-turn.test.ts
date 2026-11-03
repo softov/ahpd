@@ -862,6 +862,72 @@ it('refuses a !command sent as a turn during a turn, and runs one queued behind 
   expect(answers()).toHaveLength(1);
 });
 
+/** A client's queued message, as `chat/pendingMessageSet` names it. */
+const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+  });
+
+/** The queued message each turn started from, in the order the turns started. */
+const startedFrom = (p: ReturnType<typeof peer>, chatUri: string): unknown[] => actions(p, chatUri)
+  .filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
+
+/*
+ * A failed turn starts nothing behind it, as the reference host drains its
+ * queue after a success alone, and a client taking a message back while nothing
+ * runs starts the head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
+ */
+it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hold it stop=refusal');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+  await queue(client, chatUri, 'waiting', 'second');
+  await queue(client, chatUri, 'later', 'third');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-hold', approved: true } },
+  });
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' } },
+  });
+  await until(() => startedFrom(p, chatUri).length === 2);
+  expect(startedFrom(p, chatUri)).toEqual([undefined, 'later']);
+  await until(() => finished(p, chatUri, 1));
+});
+
+/*
+ * A client's reorder while nothing runs runs the reference host's drain, which
+ * starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the head once a client reorders a stopped turn\'s queue', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'please wait');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  await queue(client, chatUri, 'waiting', 'second');
+  await queue(client, chatUri, 'later', 'third');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/queuedMessagesReordered', order: ['later', 'waiting'] } },
+  });
+  await until(() => startedFrom(p, chatUri).length === 2);
+  expect(startedFrom(p, chatUri)).toEqual([undefined, 'later']);
+  await until(() => finished(p, chatUri, 2));
+});
+
 /**
  * The status the catalogue announced as a turn ended.
  *

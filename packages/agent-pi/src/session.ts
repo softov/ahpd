@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, startOf, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
+import { activityOf, bag, callTimes, createClientCalls, holdsTheQueue, idFor, partsOf, reason, startOf, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session, Start, StatusBits, ToolEffects,
 } from '@ahpd/sdk';
@@ -186,14 +186,15 @@ export function piSession(
   let closed = false;
   let cancelled = false;
   /**
-   * Whether a message was queued while a stop was in flight.
+   * Whether a client changed the queue while a stop was in flight.
    *
    * A stopped turn starts nothing behind it, as the reference host leaves
-   * queued messages queued, and a message queued after the stop starts the
-   * head of the queue once pi lets the turn go, as the reference host takes the
-   * first queued message once one is set while idle.
+   * queued messages queued, and a message queued, taken back or reordered
+   * after the stop starts the head of the queue once pi lets the turn go, as
+   * the reference host's drain takes the head once a client changes the queue
+   * while idle.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
    */
   let askedSinceStop = false;
   /** What it is doing, and the one handle that says it. */
@@ -734,9 +735,15 @@ export function piSession(
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
     touch();
+    /*
+     * Only a turn that completed starts the queue, as the reference host drains
+     * it after a success: a stopped or failed turn leaves it waiting, and starts
+     * only what a client's change to it asked for.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+     */
     const asked = askedSinceStop;
     askedSinceStop = false;
-    if (ending !== 'cancelled' || asked) startNext();
+    if (ending === 'complete' || asked) startNext();
   };
 
   /**
@@ -1177,6 +1184,8 @@ export function piSession(
    */
   const startNext = (): void => {
     if (closed || active !== undefined) return;
+    // Nor behind a failure a client can resume, which waits to be resumed.
+    if (holdsTheQueue(turns.at(-1))) return;
     const next = queued.shift();
     if (next === undefined) return;
     const id = String(next.id);
@@ -1281,6 +1290,10 @@ export function piSession(
       finish('complete');
     }).catch((error: unknown) => {
       finish('error', reason(error));
+      // A command's turn starts the queue however it ended, as the reference
+      // host drains after every local command.
+      // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+      startNext();
     });
   };
 
@@ -1543,12 +1556,20 @@ export function piSession(
       startNext();
     },
 
+    /*
+     * A client taking a message back, or reordering what waits, runs the
+     * reference host's drain, so the head starts once nothing runs: a queue a
+     * stop or a failure left waiting starts from here as well.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+     */
     unqueue: (id) => {
       const at = queued.findIndex((held) => String(held.id) === id);
       if (at < 0) return;
       const [held] = queued.splice(at, 1);
       emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
       touch();
+      if (cancelled) askedSinceStop = true;
+      startNext();
     },
 
     setDraft: (next) => {
@@ -1564,6 +1585,8 @@ export function piSession(
       }
       queued.unshift(...moved);
       emit('chat', { type: 'chat/queuedMessagesReordered', order: queued.map((held) => String(held.id)) });
+      if (cancelled) askedSinceStop = true;
+      startNext();
     },
 
     /*

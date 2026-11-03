@@ -1,5 +1,5 @@
 import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
-import { titleFrom } from '@ahpd/sdk';
+import { holdsTheQueue, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, OnWire, RunCommand, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, list, str, UUID } from './common.js';
@@ -260,9 +260,9 @@ export function createTurns(ctx: SessionContext): Turns {
     ctx.beginning = turnId;
     const refused = ctx.refreshPreset() ?? ctx.switchAgent(from?.agent?.uri);
     ctx.beginning = undefined;
+    // A failed turn, which leaves the queue behind it waiting.
     if (refused !== undefined) {
       refuseTurn(turnId, text, refused, queuedMessageId, from, attachments);
-      ctx.startNext();
       return;
     }
     /*
@@ -280,13 +280,6 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.beginning = undefined;
       if (refused !== undefined) {
         refuseTurn(turnId, text, refused, queuedMessageId, from, attachments);
-        /*
-         * The queue keeps going, which it does for any other turn that ends.
-         *
-         * Not the way an exited CLI's turn does, because that session has
-         * nothing left to answer what is behind it, and this one does.
-         */
-        ctx.startNext();
         return;
       }
       ctx.chosen = model.id;
@@ -374,10 +367,12 @@ export function createTurns(ctx: SessionContext): Turns {
   /**
    * The head of the queue, once there is nothing running.
    *
-   * Called wherever a turn ends, which is the only place it can be: a queue
-   * that waited for a client to notice would be a list, and every client
-   * watching this chat would have to agree about which of them sends it. A
-   * turn still switching its model is running as far as this is concerned.
+   * Called where a turn completes or a command's turn ends, and where a client
+   * queues, takes back or reorders a message: the reference host's drain runs
+   * at those, and a stopped or failed turn leaves the queue waiting for one of
+   * them. A turn still switching its model is running as far as this is
+   * concerned.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
    */
   const startNext = (): void => {
     if (busy() || ctx.closed)
@@ -390,6 +385,8 @@ export function createTurns(ctx: SessionContext): Turns {
       return;
     }
     ctx.deferred = false;
+    // Nor behind a failure a client can resume, which waits to be resumed.
+    if (holdsTheQueue(ctx.turns.at(-1))) return;
     const next = ctx.queued.shift();
     if (!next)
       return;
@@ -646,14 +643,16 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     ran: (turnId, command, run, queuedAs) => {
       /*
-       * A turn is already running, so the command waits its turn.
+       * A turn is already running, or a queued command finds the queue
+       * waiting, so the command waits its turn.
        *
        * A shell command that jumped the queue would run against a tree the
        * turn in front of it is still editing - and what waits is the command
        * itself, not the text of it: when its turn comes `startNext` runs it
-       * rather than handing `!ping` to the CLI.
+       * rather than handing `!ping` to the CLI. A queued one set while nothing
+       * runs starts the head, as a queued message does.
        */
-      if (busy() || (queuedAs !== undefined && ctx.queued.length > 0)) {
+      if (busy() || (queuedAs !== undefined && (ctx.queued.length > 0 || holdsTheQueue(ctx.turns.at(-1))))) {
         const id = queuedAs ?? turnId;
         const message = { text: `!${command}`, origin: { kind: 'user' } };
         const entry = { id, command: { text: command, run }, message };
@@ -662,6 +661,7 @@ export function createTurns(ctx: SessionContext): Turns {
         else ctx.queued.push(entry);
         ctx.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         ctx.touch();
+        ctx.startNext();
         return;
       }
       runCommand(turnId, command, run, queuedAs);
@@ -753,12 +753,19 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
     },
 
+    /*
+     * A client taking a message back, or reordering what waits, runs the
+     * reference host's drain, so the head starts once nothing runs: a queue a
+     * stop or a failure left waiting starts from here as well.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+     */
     unqueue: (id) => {
       const at = ctx.queued.findIndex((held) => str(held.id) === id);
       if (at < 0) return;
       const [held] = ctx.queued.splice(at, 1);
       ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
       ctx.touch();
+      ctx.startNext();
     },
 
     reorder: (order) => {
@@ -780,6 +787,7 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.queued.push(...moved);
       ctx.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => str(held.id) ?? '') });
       ctx.touch();
+      ctx.startNext();
     },
 
     /*
@@ -844,9 +852,8 @@ export function createTurns(ctx: SessionContext): Turns {
           await ctx.again([]);
           return;
         }
+        // A failed turn, which leaves the queue behind it waiting.
         ctx.failTurn(`The conversation could not start over: ${restarted.failed}`);
-        // A message sent while the turn ran again goes now, as after a failed `moveOn`.
-        ctx.startNext();
       })();
       return true;
     },

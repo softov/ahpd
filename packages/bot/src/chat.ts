@@ -731,8 +731,10 @@ export function botChatAgent(
      * line it began with did: a turn a client watched end is a turn a restart
      * can read back.
      *
-     * `next` says whether what was waiting starts now. A stop ends a turn
-     * without it, and what waits starts when a message is queued after it.
+     * What was waiting starts once a turn completes. A stop or a failure ends a
+     * turn without it, and what waits starts when a client changes the queue,
+     * as the reference host drains it.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
      *
      * `answered` says the back session answered, which is the one ending its
      * calls finish by. Any other ending leaves them unfinished, and the turn's
@@ -741,7 +743,7 @@ export function botChatAgent(
      * left behind.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
      */
-    const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true, answered = false): void => {
+    const finish = (held: OpenTurn, state: Ending, parts: Bag[], answered = false): void => {
       open = undefined;
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
@@ -794,10 +796,11 @@ export function botChatAgent(
           ? { type: 'chat/turnCancelled', turnId: held.id, duration }
           : { type: 'chat/turnComplete', turnId: held.id, duration });
       }
-      // Whatever was waiting behind it, now that there is nothing in front of
-      // it. After the turn is said to be over, so a client reads one ending and
-      // then the next beginning rather than the other way round.
-      if (next) startNext();
+      // Whatever was waiting behind a turn that completed, now that there is
+      // nothing in front of it. After the turn is said to be over, so a client
+      // reads one ending and then the next beginning rather than the other way
+      // round.
+      if (state === 'complete') startNext();
     };
 
     /**
@@ -822,7 +825,7 @@ export function botChatAgent(
          * there are no `chat/delta`s after it - and the id is the turn's, which
          * is what a delta would have appended to.
          */
-        finish(held, 'complete', [answerPart(held, text)], true, true);
+        finish(held, 'complete', [answerPart(held, text)], true);
       },
       say: (text) => {
         const held = open;
@@ -842,7 +845,7 @@ export function botChatAgent(
         const held = open;
         if (held === undefined) return;
         // A turn with an answer `say` gave it was answered, and its calls complete.
-        finish(held, 'complete', [], true, held.answers > 0);
+        finish(held, 'complete', [], held.answers > 0);
       },
       /*
        * A turn whose work failed ends as failed, with an error part, as the
@@ -1089,13 +1092,21 @@ export function botChatAgent(
         startNext();
       },
 
-      /** Take one back, while it is still waiting. */
+      /**
+       * Take one back, while it is still waiting.
+       *
+       * A client taking a message back, or reordering what waits, runs the
+       * reference host's drain, so the head starts once nothing runs: a queue a
+       * stop or a failure left waiting starts from here as well.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+       */
       unqueue: (id) => {
         const at = waiting.findIndex((held) => held.id === id);
         if (at < 0) return;
         const [held] = waiting.splice(at, 1);
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
         touch();
+        startNext();
       },
 
       /** Reorder what is waiting. Anything the order does not name keeps its place behind what it does. */
@@ -1114,6 +1125,7 @@ export function botChatAgent(
         waiting.push(...moved);
         start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => held.id) });
         touch();
+        startNext();
       },
 
       /**
@@ -1175,7 +1187,7 @@ export function botChatAgent(
       cancel: (turnId) => {
         const held = open;
         if (held === undefined || held.id !== turnId) return;
-        finish(held, 'cancelled', [], false);
+        finish(held, 'cancelled', []);
         handle.onStop?.(start.uri, turnId);
       },
 

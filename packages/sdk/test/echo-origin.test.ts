@@ -473,3 +473,26 @@ it('answers a config change naming only a fixed key that did not move', async ()
   expect(answered.map((one) => [one.action, one.rejectionReason])).toEqual([[{ type: 'session/configChanged', config: { room: 'a' } }, undefined]]);
   await host.close();
 });
+
+/*
+ * The echo example's queue as VS Code's host drains it: a stop leaves it
+ * waiting, and a client taking a message back while nothing runs starts the
+ * head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the echo example\'s head once a client takes a message back from a stopped turn\'s queue', async () => {
+  const { host, p, dispatch } = await serving(echo({ path: dir, pace: 20 }));
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second' } });
+  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third' } });
+  await dispatch(4, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  const startedFrom = (): unknown[] => p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);
+  expect(startedFrom()).toEqual([undefined]);
+
+  await dispatch(5, { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' });
+  await until(() => startedFrom().length === 2, 'the head');
+  expect(startedFrom()).toEqual([undefined, 'later']);
+  await host.close();
+});

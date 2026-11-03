@@ -1035,7 +1035,7 @@ export function createQuery(ctx: SessionContext): Query {
            * turn left, is running when it comes. It says the turn was stopped,
            * which is not a failure. The queue behind a stopped turn stays, as
            * the reference host keeps it, so the start made here is only one a
-           * message queued since asked for.
+           * client's change to the queue asked for since.
            * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
@@ -1159,9 +1159,13 @@ export function createQuery(ctx: SessionContext): Query {
           ctx.touch();
           // A turn that failed or stopped leaves its steering messages with the CLI.
           if (turn) ctx.handOver(String(turn.id));
-          // A stopped turn leaves the queue behind it waiting, and starts only
-          // what a message queued since asked for.
-          if (!stopped || ctx.deferred) ctx.startNext();
+          /*
+           * Only a turn that completed starts the queue, as the reference host
+           * drains it after a success: a stopped or failed turn leaves it
+           * waiting, and starts only what a client's change to it asked for.
+           * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+           */
+          if (turn?.state === 'complete' || ctx.deferred) ctx.startNext();
         }
       }
     } catch (error) {
