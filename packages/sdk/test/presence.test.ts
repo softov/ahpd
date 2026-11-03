@@ -635,7 +635,7 @@ it('says how many sessions there are when that changes', async () => {
   const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { defaultChat: string } } };
   await a.client.handle({
     method: 'dispatchAction',
-    params: { channel: opened.snapshot.state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: opened.snapshot.state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   const said = (): unknown[] => actions(a.peer, 'ahp-root://')

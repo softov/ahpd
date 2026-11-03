@@ -40,7 +40,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   const guest = await withRole(made, 'g');
   expect(await call(guest.client, 'subscribe', { channel: 'file:///one' })).not.toHaveProperty('result');
   await guest.send('file:///one', { type: 'session/titleChanged', title: 'Taken' });
-  await guest.send('file:///one', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run this' } });
+  await guest.send('file:///one', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run this' } });
   await guest.send('file:///one/annotations', { type: 'annotations/set', annotations: [] });
 
   // Nor by a relayed watch named after the session: the name is the session's.
@@ -382,7 +382,7 @@ it('keeps every family of action to its own kind of channel', async () => {
   await admin.send('ahp-session:/one', { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } });
   await admin.send('file:///x', { type: 'automationRun/cancelRequested', resource: 'ahp-automation-run:/r' });
   await admin.send('ahp-automations://', { type: 'annotations/set', annotations: [] });
-  await admin.send('ahp-automations://', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+  await admin.send('ahp-automations://', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
   expect(admin.refused().slice(before)).toEqual([
     'ahp-terminal:/t: ahp-terminal:/t is not a session here',
     'ahp-session:/one: ahp-session:/one is not a terminal here',

@@ -236,7 +236,7 @@ async function refusedBox(): Promise<{ users: Users; policies: Policies }> {
 const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
 };
 

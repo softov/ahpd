@@ -361,8 +361,8 @@ describe('the plugin connection', () => {
   it('resolves a dispatch with the rejectionReason of the action that carries its clientSeq', async () => {
     const { conn, notified, say } = stub();
     const sender = dispatcher(conn, 'ahpd-webhook');
-    const first = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1' });
-    const second = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't2' });
+    const first = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } });
+    const second = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'two', origin: { kind: 'user' } } });
     expect(notified.map((one) => one.params['clientSeq'])).toEqual([1, 2]);
     // Another client's action with the same seq is not this one's answer.
     say({ method: 'action', params: { channel: 'ahp-chat:/c1', origin: { clientId: 'other', clientSeq: 2 }, rejectionReason: 'no' } });
@@ -376,7 +376,7 @@ describe('the plugin connection', () => {
     const { conn } = stub();
     const silent: string[] = [];
     const sender = dispatcher(conn, 'ahpd-webhook', 20, (channel) => { silent.push(channel); });
-    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1' })).toBeUndefined();
+    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } })).toBeUndefined();
     expect(silent).toEqual(['ahp-chat:/c1']);
   });
 });

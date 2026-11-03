@@ -666,7 +666,7 @@ it('holds the machine while a session resumed from the list runs in it', async (
   await before.client.handle({ method: 'subscribe', params: { channel: chat } });
   await before.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
   });
   await until(() => actions(before.peer, chat).some((one) => one.type === 'chat/turnComplete'));
 
@@ -682,7 +682,7 @@ it('holds the machine while a session resumed from the list runs in it', async (
   await after.client.handle({ method: 'subscribe', params: { channel: chat } });
   await after.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await wait(200);
   await settle();
@@ -1186,7 +1186,7 @@ it('takes the session an alone machine was made for back into it after a restart
   await here.client.handle({ method: 'subscribe', params: { channel: chat } });
   await here.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'again' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await until(() => actions(here.peer, chat).some((one) => one.type === 'chat/turnComplete'));
 

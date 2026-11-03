@@ -93,7 +93,7 @@ async function talking(
 const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -134,7 +134,7 @@ it('keeps the origin a client sent with the message, on the wire and in the cata
   const sent = { text: 'who am i', origin: { kind: 'user' }, _meta: { probe: 'origin' } };
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: sent } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: sent } },
   });
   await until(() => ended(p, chatUri));
 
@@ -154,7 +154,7 @@ it('carries the model a turn runs on, on the message', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'open_router/x' } } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'open_router/x' } } },
     },
   });
   await until(() => ended(p, chatUri));
@@ -225,7 +225,7 @@ it('runs a turn on the model the turn names, with no model in the session config
       method: 'dispatchAction',
       params: {
         channel: chatUriFor('ahp-session:/picked'),
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
       },
     });
     await until(() => ended(p, chatUriFor('ahp-session:/picked')));
@@ -474,7 +474,7 @@ it('says a turn sent after a stop at once, and runs it once the stopped run has 
   // is said meanwhile.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second' } } },
   });
   await until(() => answer(p, chatUri, 7) !== undefined);
   expect(asked.some((prompt) => prompt.includes('second'))).toBe(false);
@@ -500,7 +500,7 @@ it('takes up a message queued after a stop at once, and runs it once the stopped
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   // Taken up as the chat's turn before the stopped run lets go.
   await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q1'));
@@ -524,7 +524,7 @@ it('runs an idle steering message ahead of what a stopped turn left queued', asy
   await until(() => types(p, chatUri).includes('chat/delta'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   client.handle({
     method: 'dispatchAction',
@@ -554,7 +554,7 @@ const fold = (p: ReturnType<typeof peer>, chatUri: string): ChatState => actions
 const steer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } } },
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -858,7 +858,7 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   const changed = (): Note['action'] | undefined => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
   await until(() => changed() !== undefined);
@@ -1033,7 +1033,7 @@ function failingOnCue(): { model: ModelAdapter; fail: () => void } {
 const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
   });
 
 /** The queued message each turn started from, in the order the turns started. */
@@ -1210,7 +1210,7 @@ it('holds a message queued during a resume that fails, and starts it once a resu
   });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two', origin: { kind: 'user' } } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/error').length === 2);
   const started = (): unknown[] => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
@@ -1331,7 +1331,7 @@ it('starts a queued turn only after the one before it has ended', async () => {
   begin(client, chatUri, 't1', 'one');
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two', origin: { kind: 'user' } } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
   const said = actions(p, chatUri).map((e) => String(e.action.type));

@@ -252,7 +252,7 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
 
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: workerUri, action: { type: 'chat/turnStarted', turnId: 'no', message: { text: 'hello' } } },
+    params: { channel: workerUri, action: { type: 'chat/turnStarted', turnId: 'no', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
   const refused = notes.filter((one) => one.method === 'action'
@@ -321,7 +321,7 @@ it('keeps a restored session\'s workers listed and linked once it is sent a turn
   await client.handle({ method: 'subscribe', params: { channel: leadChat } });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: leadChat, action: { type: 'chat/turnStarted', turnId: 'live-1', message: { text: 'are you there' } } },
+    params: { channel: leadChat, action: { type: 'chat/turnStarted', turnId: 'live-1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'are you there' } } },
   });
   await settle(40);
 

@@ -115,7 +115,7 @@ const gated = (agent: Agent) => {
 it('gives the echo the origin of the dispatch, and the actions it causes none', async () => {
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }));
   p.heard.length = 0;
-  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   // The turn renames the session, says what it is doing and answers, all
@@ -131,7 +131,7 @@ it('gives the echo the origin of the dispatch, and the actions it causes none', 
 it('gives a turn its origin when the backend says it began after an await', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 0 })));
   p.heard.length = 0;
-  await dispatch(7, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(7, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   const started = p.heard.find((one) => one.action.type === 'chat/turnStarted');
@@ -155,10 +155,10 @@ it('gives each chat its own turn\'s origin when two chats start a turn of the sa
   await client.handle({ method: 'subscribe', params: { channel: otherChat } });
   p.heard.length = 0;
 
-  await dispatch(3, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await dispatch(3, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one' } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'two' } } },
+    params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'two' } } },
   });
   // The second is applied once the first is answered: the client's answers
   // go out in the order it sent its actions.
@@ -180,7 +180,7 @@ it('gives a turn its origin when the machine it runs in is set to the host first
   const computers = { how: async () => undefined, follow: async (id: string) => { followed.push(id); } };
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }), { computers } as Partial<HostOptions>, { computer: 'computer://box' });
   p.heard.length = 0;
-  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   expect(followed).toEqual(['box']);
@@ -191,11 +191,11 @@ it('gives a turn its origin when the machine it runs in is set to the host first
 
 it('gives a stop its origin when the backend says it once the turn has let go', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 50 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
-  await dispatch(9, { type: 'chat/turnCancelled', turnId: 't1' });
+  await dispatch(9, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
 
   const stopped = p.heard.find((one) => one.action.type === 'chat/turnCancelled');
@@ -215,7 +215,7 @@ it.each([
   ['no turn id', {}],
 ])('says a stop naming %s as sent, with its origin, and stops nothing', async (_, named) => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 20 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
@@ -262,11 +262,11 @@ it('stops a turn whose start its backend owed when the stop came, once the backe
     },
   };
   const { host, client, dispatch } = await serving(stopping);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
   client.close();
   const { q, dispatch: again } = await reconnected(host);
 
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
+  await again(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await settle();
   release();
   await until(() => told.length > 0 || q.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn\'s end');
@@ -300,11 +300,11 @@ it('says a stop as sent, and stops nothing, once its backend refuses the start t
     },
   };
   const { host, client, dispatch } = await serving(refusing);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   client.close();
   const { q, dispatch: again } = await reconnected(host);
 
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
+  await again(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await settle();
   for (const refuse of refusals.splice(0)) refuse();
   await until(() => q.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
@@ -313,7 +313,7 @@ it('says a stop as sent, and stops nothing, once its backend refuses the start t
     .map((one) => ({ action: one.action, origin: one.origin, refused: one.rejectionReason }));
   expect(said).toEqual([
     { action: expect.objectContaining({ type: 'chat/turnStarted', turnId: 't1' }), origin: { clientId: 'window', clientSeq: 1 }, refused: 'Not now' },
-    { action: { type: 'chat/turnCancelled', turnId: 't1' }, origin: { clientId: 'window', clientSeq: 2 }, refused: undefined },
+    { action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 }, origin: { clientId: 'window', clientSeq: 2 }, refused: undefined },
   ]);
   await host.close();
 });
@@ -337,17 +337,17 @@ it('stops the turn a waiting stop names before a turn another window sent after 
     },
   };
   const { host, client, dispatch } = await serving(stopping);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
   client.close();
   const { q, dispatch: again } = await reconnected(host);
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
+  await again(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   const r = listening();
   const other = host.accept(r);
   await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await other.handle({ method: 'subscribe', params: { channel: CHAT } });
   await other.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'seven eight' } } },
+    params: { channel: CHAT, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'seven eight' } } },
   });
   await settle();
   release();
@@ -430,7 +430,7 @@ it('says a stop when it is taken, and nothing of the turn its backend ends after
   };
   const { host, p, client, dispatch } = await serving(finishing);
   p.heard.length = 0;
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the start');
   await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 3 });
   const stopped = p.heard.filter((one) => one.action.type === 'chat/turnCancelled');
@@ -568,7 +568,7 @@ it('answers a draft sent after a turn start after that start', async () => {
   const { agent, release } = gated(echo({ path: dir, pace: 0 }));
   const { host, p, dispatch } = await serving(agent);
   p.heard.length = 0;
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one' } });
   await dispatch(2, { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' } } });
   await settle();
   // The start is the backend's to say, and it has not begun the turn yet.
@@ -634,10 +634,10 @@ it('answers a config change naming only a fixed key that did not move', async ()
  */
 it('starts the echo example\'s head once a client takes a message back from a stopped turn\'s queue', async () => {
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 20 }));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
-  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second' } });
-  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third' } });
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second', origin: { kind: 'user' } } });
+  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third', origin: { kind: 'user' } } });
   await dispatch(4, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await settle();
   const startedFrom = (): unknown[] => p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);

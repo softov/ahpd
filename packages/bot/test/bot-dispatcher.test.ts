@@ -33,7 +33,7 @@ it('waits for the host to answer a dispatch, however long it takes, and takes a 
   const { conn, sent, answer } = connection();
   const sender = dispatcher(conn, 'ahpd-bot');
   let settled: { refused: string | undefined } | undefined;
-  void sender.dispatch('ahp-chat:/1', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } })
+  void sender.dispatch('ahp-chat:/1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } })
     .then((refused) => { settled = { refused }; });
   await vi.advanceTimersByTimeAsync(30_000);
   expect(settled).toBeUndefined();

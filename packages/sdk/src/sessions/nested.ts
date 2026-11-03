@@ -1560,13 +1560,21 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         halted = undefined;
         void reopen('');
       }
+      /*
+       * Carried as a client of the host inside sends it, as VS Code's client
+       * does: the time it starts and a message with its origin, a person's
+       * where the message names none. The host inside says it as it came.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L435-L442
+       */
       carry('chat', {
         type: 'chat/turnStarted',
         turnId,
+        startedAt: new Date(turnBegan).toISOString(),
         message: {
           text,
+          origin: from?.origin ?? { kind: 'user' },
           ...(model === undefined ? {} : { model }),
-          ...(from?.origin === undefined ? {} : { origin: from.origin }),
           ...(from?._meta === undefined ? {} : { _meta: from._meta }),
         },
       });
@@ -1594,8 +1602,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         id: queueId,
         message: {
           text,
+          origin: from?.origin ?? { kind: 'user' },
           ...(model === undefined ? {} : { model }),
-          ...(from?.origin === undefined ? {} : { origin: from.origin }),
           ...(from?._meta === undefined ? {} : { _meta: from._meta }),
         },
       });
@@ -1620,9 +1628,14 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return true;
     },
     /* Taken only while the inner chat has a turn running. */
-    steer: (steerId: string, text: string): boolean => {
+    steer: (steerId: string, text: string, _attachments?: MessageAttachment[], from?: MessageFrom): boolean => {
       if (chat?.activeTurn === undefined) return false;
-      carry('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: steerId, message: { text } });
+      carry('chat', {
+        type: 'chat/pendingMessageSet',
+        kind: 'steering',
+        id: steerId,
+        message: { text, origin: from?.origin ?? { kind: 'user' }, ...(from?._meta === undefined ? {} : { _meta: from._meta }) },
+      });
       return true;
     },
     /* Taken only for the inner chat's last turn, when it failed and nothing runs. */
@@ -1632,9 +1645,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       carry('chat', { type: 'chat/turnResume', turnId });
       return true;
     },
+    /* With the time the turn ran, as VS Code's client sends a stop. */
     cancel: (turnId: string): void => {
+      const duration = turn === turnId ? Math.max(0, Date.now() - turnBegan) : 0;
       if (turn === turnId) turn = undefined;
-      carry('chat', { type: 'chat/turnCancelled', turnId });
+      carry('chat', { type: 'chat/turnCancelled', turnId, duration });
     },
     /* Taken only for a tool call of the running inner turn that waits on a confirmation. */
     confirm: (toolCallId: string, approved: boolean, optionId?: string): boolean => {

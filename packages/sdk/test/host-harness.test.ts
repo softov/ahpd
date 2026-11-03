@@ -154,7 +154,8 @@ describe('what the harness offers', () => {
         action: {
           type: 'chat/turnStarted',
           turnId: 't1',
-          message: { text: 'hi', model: { id: 'sonnet', config: { thinkingLevel: 'xhigh' } } },
+          startedAt: new Date().toISOString(),
+          message: { text: 'hi', origin: { kind: 'user' }, model: { id: 'sonnet', config: { thinkingLevel: 'xhigh' } } },
         },
       },
     });
@@ -183,7 +184,7 @@ describe('what the harness offers', () => {
     const { client, peer: p, uri, chatUri } = await running();
     const turn = (turnId: string, model: Record<string, unknown>) => client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'hi', model } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' }, model } } },
     });
     const held = async (): Promise<Record<string, unknown>> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { config: { values: Record<string, unknown> } } };

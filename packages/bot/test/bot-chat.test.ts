@@ -161,13 +161,13 @@ async function talkTo(client: Client): Promise<void> {
 /** A client says something in the chat. */
 const said = (client: Client, turnId: string, text: string): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 /** A client holds a message for later. */
 const queued = (client: Client, id: string, text: string): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+  params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
 });
 
 /** A client takes one back. */
@@ -353,7 +353,8 @@ it('tells whoever answers the chat the words and the chat they were said in, and
       action: {
         type: 'chat/turnStarted',
         turnId: 't1',
-        message: { text: 'read this', model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments },
+        startedAt: new Date().toISOString(),
+        message: { text: 'read this', origin: { kind: 'user' }, model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments },
       },
     },
   });
@@ -402,7 +403,7 @@ it('tells the chat\'s holder which turn a client stopped', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   expect(stops).toEqual([[HELD, 't1']]);
 });
@@ -433,7 +434,7 @@ it('ends a turn with a notice, and with a cancellation', async () => {
   await said(client, 't2', 'again');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't2' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
   });
   expect(actions(notes, CHAT).map((one) => one['type'])).toContain('chat/turnCancelled');
   const state = await stateOf(client);
@@ -464,7 +465,7 @@ it('steers a message into the open turn, which goes on', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   const life = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/turn'));
@@ -502,7 +503,7 @@ it('answers a steer to the client that sent it', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, clientSeq: 9, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, clientSeq: 9, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   // The client holds its message until an action with its own origin answers it.
@@ -550,7 +551,7 @@ it('keeps a queued message behind the steered turn', async () => {
   await queued(client, 'q1', 'and then this');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   // The steered turn is the open one, and what was waiting is still waiting.
@@ -585,7 +586,7 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   await queued(client, 'q1', 'and then this');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   const stopped = await stateOf(client);
   expect(stopped['activeTurn']).toBeUndefined();
@@ -614,7 +615,7 @@ it('starts the head once a client reorders a stopped turn\'s queue', async () =>
   await queued(client, 'q2', 'one more');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   expect((await stateOf(client))['activeTurn']).toBeUndefined();
 
@@ -1075,7 +1076,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and this' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and this', origin: { kind: 'user' } } } },
   });
 
   // The steered turn is the open one, waiting on the back session's chat by one call.
@@ -1184,7 +1185,7 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
   await client.handle({ method: 'subscribe', params: { channel: backChat } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', message: { text: 'typed on the back session' } } },
+    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'typed on the back session' } } },
   });
   const backState = async (): Promise<Bag> => (await client.handle({ method: 'subscribe', params: { channel: backChat } }) as {
     snapshot: { state: Bag };
@@ -1234,7 +1235,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   // A client's message as the protocol declares one, with its origin.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', origin: { kind: 'user' } } } },
+    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
   chat.reply('done');
 

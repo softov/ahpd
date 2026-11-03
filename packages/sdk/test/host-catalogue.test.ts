@@ -65,7 +65,7 @@ describe('the catalogue', () => {
     expect(await count()).toBe(3);
 
     // A turn moves nothing.
-    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } } });
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } } });
     await settle();
     expect(await count()).toBe(3);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
@@ -258,7 +258,7 @@ describe('a session that already happened', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUriFor('ahp-session:/older'),
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } },
       },
     });
     await settle(6);
@@ -366,7 +366,7 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -383,7 +383,7 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -484,7 +484,7 @@ describe('a session row\'s status', () => {
     await client.handle({ method: 'subscribe', params: { channel: second } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'hi' } } },
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['no'], duration_ms: 4 });
@@ -646,7 +646,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   it('marks the one chat read when its session is marked read, though the session was read already', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     // A turn's start makes the chat unread and leaves the session read.
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     expect(await isRead(client, chatUri)).toBe(false);
     expect(await isRead(client, uri)).toBe(true);
     p.notes.length = 0;
@@ -689,7 +689,7 @@ describe('a chat\'s read bit and its session\'s', () => {
 
   it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
     const { client, peer: p, uri, chatUri } = await running();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
 
     expect(await isRead(client, chatUri)).toBe(false);
     expect(await isRead(client, uri)).toBe(true);
@@ -707,7 +707,7 @@ describe('a chat\'s read bit and its session\'s', () => {
    */
   it('keeps a chat marked read while its turn runs, and marks the chat and its session unread when the turn completes', async () => {
     const { client, peer: p, uri, chatUri } = await running();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     await send(client, chatUri, chatRead(true));
     expect(await isRead(client, chatUri)).toBe(true);
     expect(await isRead(client, uri)).toBe(true);
@@ -724,7 +724,7 @@ describe('a chat\'s read bit and its session\'s', () => {
 
   it('marks a chat and its session unread when a turn fails', async () => {
     const { client, uri, chatUri } = await running();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['no'], duration_ms: 4 });
 
     expect(await isRead(client, chatUri)).toBe(false);
@@ -733,8 +733,8 @@ describe('a chat\'s read bit and its session\'s', () => {
 
   it('marks a chat and its session unread when a turn is cancelled', async () => {
     const { client, peer: p, uri, chatUri } = await running();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
-    await send(client, chatUri, { type: 'chat/turnCancelled', turnId: 't1' });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
 
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled')).toBe(true);
     expect(await isRead(client, chatUri)).toBe(false);
@@ -744,7 +744,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   it('says nothing more of a session that is unread when a turn ends', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, uri, sessionRead(false));
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
 
     expect(await isRead(client, uri)).toBe(false);
@@ -778,7 +778,7 @@ describe('a chat\'s read bit and its session\'s', () => {
     for (const [clientSeq, turnId] of [[7, 't1'], [8, '']] as const) {
       started.client.handle({
         method: 'dispatchAction',
-        params: { channel: started.chatUri, clientSeq, action: { type: 'chat/turnCancelled', turnId } },
+        params: { channel: started.chatUri, clientSeq, action: { type: 'chat/turnCancelled', turnId, duration: 0 } },
       });
       await settle();
     }
@@ -786,8 +786,8 @@ describe('a chat\'s read bit and its session\'s', () => {
     for (const p of [started.peer, two]) {
       const said = actions(p, started.chatUri);
       expect(said.map((e) => [e.action, e.origin, e.rejectionReason])).toEqual([
-        [{ type: 'chat/turnCancelled', turnId: 't1' }, { clientId: 'probe', clientSeq: 7 }, undefined],
-        [{ type: 'chat/turnCancelled', turnId: '' }, { clientId: 'probe', clientSeq: 8 }, undefined],
+        [{ type: 'chat/turnCancelled', turnId: 't1', duration: 0 }, { clientId: 'probe', clientSeq: 7 }, undefined],
+        [{ type: 'chat/turnCancelled', turnId: '', duration: 0 }, { clientId: 'probe', clientSeq: 8 }, undefined],
       ]);
     }
     expect(sdk.interrupted).toBe(0);
@@ -796,11 +796,11 @@ describe('a chat\'s read bit and its session\'s', () => {
   it('stops the running turn when the cancel names it, and tells every client', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
-    await send(started.client, started.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(started.client, started.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     started.peer.notes.length = 0;
     two.notes.length = 0;
 
-    await send(started.client, started.chatUri, { type: 'chat/turnCancelled', turnId: 't1' });
+    await send(started.client, started.chatUri, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
 
     expect(actions(started.peer, started.chatUri).some((e) => e.action.type === 'chat/turnCancelled')).toBe(true);
     expect(actions(two, started.chatUri).some((e) => e.action.type === 'chat/turnCancelled')).toBe(true);
@@ -808,12 +808,12 @@ describe('a chat\'s read bit and its session\'s', () => {
 
   it('leaves the running turn alone when the cancel names another one', async () => {
     const started = await running();
-    await send(started.client, started.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await send(started.client, started.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     started.peer.notes.length = 0;
 
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.chatUri, clientSeq: 9, action: { type: 'chat/turnCancelled', turnId: 't2' } },
+      params: { channel: started.chatUri, clientSeq: 9, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
     });
     await settle();
 
@@ -821,7 +821,7 @@ describe('a chat\'s read bit and its session\'s', () => {
     // backend was never asked to end the turn that is really running.
     const said = actions(started.peer, started.chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
     expect(said).toHaveLength(1);
-    expect(said[0]?.action).toEqual({ type: 'chat/turnCancelled', turnId: 't2' });
+    expect(said[0]?.action).toEqual({ type: 'chat/turnCancelled', turnId: 't2', duration: 0 });
     expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 9 });
   });
 
@@ -962,7 +962,7 @@ describe('a session read from its transcript', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/old'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/old'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     // Most of what the schema offers is fixed when the query is built, so a
@@ -1063,7 +1063,7 @@ describe("a row lists the session's chats", () => {
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 
@@ -1119,7 +1119,7 @@ describe("a row lists the session's chats", () => {
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } } },
     });
     await settle(8);
     // Subscribing again is what reads the backend's record of the workers it
@@ -1144,7 +1144,7 @@ describe('one conversation, one row', () => {
     const { client } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: 'ahp-session:/live', action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // The client named the channel `live`; the agent names its own transcript
@@ -1267,7 +1267,7 @@ describe('a summary that did not change', () => {
     const said = rowsMoved(p, 'ahp-session:/live').length;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'read it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'read it' } } },
     });
     await settle();
     const busy = rowsMoved(p, 'ahp-session:/live');
@@ -1464,12 +1464,12 @@ describe("a row's counts are the session's own", () => {
   const turn = async (client: Client, chatUri: string, turnId = 't1') => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId } },
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId, duration: 0 } },
     });
     // The counts are read behind the checkpoint of that turn, which is two
     // answers away - and a row nobody waited for is a row a test cannot read.
@@ -1486,7 +1486,7 @@ describe("a row's counts are the session's own", () => {
   const failed = async (client: Client, chatUri: string, turnId = 't1') => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['the agent died'], duration_ms: 12 });

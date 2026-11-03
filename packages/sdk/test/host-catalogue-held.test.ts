@@ -325,7 +325,7 @@ describe('a refresh and a session this host is running', () => {
     const chat = opened.snapshot.state.defaultChat;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await settle(8);
     return chat;
@@ -348,7 +348,7 @@ describe('a refresh and a session this host is running', () => {
     notes.length = 0;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
     });
     await settle(8);
     expect(said(notes, 'root/sessionSummaryChanged').map((one) => one.session)).toContain('ahp-session:/one');

@@ -307,7 +307,7 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/turn') } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/turn'), action: { type: 'chat/turnStarted', turnId: 'turn-1', message: { text: 'hello there' } } },
+    params: { channel: chatUriFor('ahp-session:/turn'), action: { type: 'chat/turnStarted', turnId: 'turn-1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await wait(500);
 
@@ -333,7 +333,7 @@ it('names the queued message a turn took up on its turn_start', async () => {
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/queued') } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/queued'), action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q-1', message: { text: 'later' } } },
+    params: { channel: chatUriFor('ahp-session:/queued'), action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q-1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   await wait(200);
 
@@ -349,12 +349,12 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/cancel') } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnStarted', turnId: 'turn-c', message: { text: 'one two three four five' } } },
+    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnStarted', turnId: 'turn-c', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five' } } },
   });
   await settle(1);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnCancelled', turnId: 'turn-c' } },
+    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnCancelled', turnId: 'turn-c', duration: 0 } },
   });
   await wait(200);
 
@@ -370,7 +370,7 @@ it('fires turn_end error, with the message, when a turn ends in chat/error', asy
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/fail') } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/fail'), action: { type: 'chat/turnStarted', turnId: 'turn-f', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/fail'), action: { type: 'chat/turnStarted', turnId: 'turn-f', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await wait(100);
 

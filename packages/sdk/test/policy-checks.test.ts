@@ -254,7 +254,7 @@ const turnOn = async (
     method: 'dispatchAction',
     params: {
       channel: chat,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', ...(model === undefined ? {} : { model: { id: model } }) } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello', ...(model === undefined ? {} : { model: { id: model } }) } },
     },
   });
   await settle();
@@ -367,7 +367,7 @@ describe('a turn, with the switch on', () => {
       params: {
         channel: chat,
         clientSeq: 11,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', model: { id: 'anthropic/sonnet-5' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello', model: { id: 'anthropic/sonnet-5' } } },
       },
     });
     await settle();
@@ -388,7 +388,7 @@ describe('a turn, with the switch on', () => {
       params: {
         channel: chat,
         clientSeq: 12,
-        action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'hello', model: { id: 'anthropic/sonnet-5' } } },
+        action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'hello', model: { id: 'anthropic/sonnet-5' } } },
       },
     });
     await settle();

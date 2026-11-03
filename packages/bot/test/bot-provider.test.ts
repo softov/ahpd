@@ -1352,7 +1352,7 @@ it('keeps a bot, its chat rows, its back session rows and its logs in bots/<slug
   const channel = String(opened.snapshot.state['defaultChat']);
   got(await call(soft, 'dispatchAction', {
     channel,
-    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } },
+    action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } },
   }));
   await vi.waitFor(() => {
     expect(reported).toEqual([]);

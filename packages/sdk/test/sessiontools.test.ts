@@ -376,7 +376,7 @@ describe('what a session tool asks of the turn it runs in', () => {
   const saying = async (client: Client, chat: string, turnId: string, text: string) => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle(8);
   };
@@ -1128,7 +1128,7 @@ describe('a tool a person calls with no session', () => {
     // A turn the member sent, which is where a session tool reads its person.
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle(8);
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;

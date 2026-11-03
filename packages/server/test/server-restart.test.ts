@@ -945,7 +945,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
   const say = async (client: Client, chat: string, text: string, turnId: string): Promise<void> => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
   };

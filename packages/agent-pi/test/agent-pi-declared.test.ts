@@ -60,7 +60,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   const begin = (turnId: string, text: string): void => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -144,7 +144,7 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     .find((action) => action.type === type);
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   await until(() => sent('chat/toolCallContentChanged') !== undefined);
 

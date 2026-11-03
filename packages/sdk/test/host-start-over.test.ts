@@ -77,7 +77,7 @@ const answered = async (seen: Seen, deletes = true) => {
   await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
   const chat = String(((await client.handle({ method: 'subscribe', params: { channel: LIVE } }) as { snapshot: { state: Bag } }).snapshot.state).defaultChat);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
-  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
   await settle();
   return { client, p, chat };
 };
@@ -117,7 +117,7 @@ describe('a chat truncated whole', () => {
     const seen: Seen = { starts: [], steps: [] };
     const { client, chat } = await answered(seen);
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/truncated' } } });
-    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } } });
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } } });
     await settle(30);
     expect(seen.steps).toEqual(['stopped stopping', 'deleted live']);
     expect(await turnsOf(client, chat)).toEqual(['t2']);
@@ -148,7 +148,7 @@ describe('a chat truncated whole', () => {
     const chat = String(((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }) as { snapshot: { state: Bag } }).snapshot.state).defaultChat);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     expect(sessionQueries().at(-1)?.options.sessionId).toBe(id);
-    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } } });
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
     await settle();
     await emit({ type: 'system', subtype: 'init', session_id: id });
     await emit({ type: 'assistant', uuid: 'reply-1', session_id: id, message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });

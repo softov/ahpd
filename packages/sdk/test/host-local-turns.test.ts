@@ -78,7 +78,7 @@ const ended = async (p: ReturnType<typeof peer>, chat: string, turnId: string): 
 const say = (client: Client, chat: string, turnId: string, text: string): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -589,7 +589,7 @@ describe('a Claude chat', () => {
   const steer = async (client: Client, chat: string, id: string, text: string): Promise<void> => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
   };
@@ -702,7 +702,7 @@ describe('a Claude chat', () => {
     await settle();
     await before.client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and then' } } },
+      params: { channel: chat, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and then', origin: { kind: 'user' } } } },
     });
     await settle();
     const [prompt, steer] = sdk.uuids.map(String);

@@ -142,7 +142,7 @@ async function serving(world: { dir: string; kept: SessionStore; time: Clock; co
     seq += 1;
     return client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId: `t${String(seq)}`, message: { text } } },
+      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId: `t${String(seq)}`, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
 

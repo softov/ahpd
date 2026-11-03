@@ -240,7 +240,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   // than a session it has never heard of.
   await bo.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle(60);
 
@@ -255,7 +255,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   await settle();
   await ana.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
   });
   await settle(60);
 

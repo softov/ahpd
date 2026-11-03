@@ -393,7 +393,7 @@ describe('a client that dropped, coming back', () => {
     a.close();
     a.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'while away' } } },
     });
     await settle();
 
@@ -455,7 +455,7 @@ describe('a client that dropped, coming back', () => {
     });
     back.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'after' } } },
     });
     await settle();
     expect(actions(p, chatUriFor('ahp-session:/live')).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);

@@ -266,7 +266,7 @@ const open = (client: Client): Promise<unknown> => client.handle({
 
 const ask = (client: Client, text = 'go', turn = 't1'): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, message: { text } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 /** Watch the chat, which is what makes its actions arrive on this connection. */
@@ -275,7 +275,7 @@ const watch = (client: Client): Promise<unknown> =>
 
 const stop = (client: Client, turn = 't1'): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: turn } },
+  params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: turn, duration: 0 } },
 });
 
 /** Claude Code's final report, cost in `_meta['ahpd.cost']`. */
@@ -363,7 +363,7 @@ it('names the model the turn asked for when no report said which one ran', async
   // The turn names the model as a client would pick it from a session's list.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go', model: { id: 'deepseek-chat' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go', model: { id: 'deepseek-chat' } } } },
   });
   await settle();
 

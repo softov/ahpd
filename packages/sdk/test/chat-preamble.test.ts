@@ -90,7 +90,7 @@ async function opened(preambles: ChatPreamble[]) {
   await client.handle({ method: 'subscribe', params: { channel: lead } });
   await settle();
   const say = async (chat: string, text: string, turnId: string = crypto.randomUUID()): Promise<void> => {
-    await client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } } });
+    await client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } } });
     await settle();
   };
   const createChat = async (params: Record<string, unknown>): Promise<void> => {

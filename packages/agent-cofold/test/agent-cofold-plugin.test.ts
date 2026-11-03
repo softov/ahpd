@@ -178,7 +178,7 @@ const begin = (
 ): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -424,7 +424,7 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
    */
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'carry on' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'carry on', origin: { kind: 'user' } } } },
   });
   await until(() => actions(p, 'ahp-session:/one').some((e) => e.action.type === 'session/inputNeededSet'));
 

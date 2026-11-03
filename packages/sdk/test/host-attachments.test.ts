@@ -205,7 +205,7 @@ const png = (label = 'pasted.png'): Bag => ({
 it.skipIf(!posix)('writes an embedded image to a file the message names', async () => {
   const said = saidNothing();
   const { dir, turn, state } = await serving(said);
-  await turn({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is this', attachments: [png()] } });
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'what is this', attachments: [png()] } });
   await until(() => said.begun.length > 0);
 
   const { folder, names } = written(dir);
@@ -240,8 +240,10 @@ it('writes each attachment of a message to its own file', async () => {
   await turn({
     type: 'chat/turnStarted',
     turnId: 't1',
+    startedAt: new Date().toISOString(),
     message: {
       text: 'look',
+      origin: { kind: 'user' },
       attachments: [
         png(),
         { type: 'embeddedResource', label: 'notes.txt', contentType: 'text/plain', data: Buffer.from('hello\n').toString('base64') },
@@ -268,7 +270,8 @@ it('names the file inside the folder whatever the label says', async () => {
   await turn({
     type: 'chat/turnStarted',
     turnId: 't1',
-    message: { text: 'here', attachments: [png('../../outside.png')] },
+    startedAt: new Date().toISOString(),
+    message: { text: 'here', origin: { kind: 'user' }, attachments: [png('../../outside.png')] },
   });
   await until(() => said.begun.length > 0);
 
@@ -287,8 +290,10 @@ it('reads a file only the client has, and leaves one this host has as it came', 
   await turn({
     type: 'chat/turnStarted',
     turnId: 't1',
+    startedAt: new Date().toISOString(),
     message: {
       text: 'these',
+      origin: { kind: 'user' },
       attachments: [
         { type: 'resource', label: 'elsewhere.png', uri: 'file:///nowhere/elsewhere.png', contentType: 'image/png' },
         { type: 'resource', label: 'mine.png', uri: uriOf(here), contentType: 'image/png' },
@@ -320,7 +325,7 @@ it('asks no client for a file above the size it will fetch', async () => {
     type: 'resource', label: 'huge.bin', uri: 'file:///nowhere/huge.bin',
     contentType: 'application/octet-stream', sizeHint: 33 * 1024 * 1024,
   };
-  await turn({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'huge', attachments: [huge] } });
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'huge', attachments: [huge] } });
   await until(() => said.begun.length > 0);
   expect(p.asked).toEqual([]);
   // Nothing was written, so nothing about it changed.
@@ -330,7 +335,7 @@ it('asks no client for a file above the size it will fetch', async () => {
 it('leaves every attachment as it was sent when the store keeps no files', async () => {
   const said = saidNothing();
   const { dir, turn } = await serving(said, temp(), false);
-  await turn({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', attachments: [png()] } });
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', attachments: [png()] } });
   await until(() => said.begun.length > 0);
   expect(sent(first(said.begun))).toEqual([png()]);
   expect(() => readdirSync(join(dir, 'attachments'))).toThrow();
@@ -339,7 +344,7 @@ it('leaves every attachment as it was sent when the store keeps no files', async
 it('removes the folder with its session', async () => {
   const said = saidNothing();
   const { dir, turn, client } = await serving(said);
-  await turn({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', attachments: [png()] } });
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', attachments: [png()] } });
   await until(() => said.begun.length > 0);
   expect(written(dir).names).toHaveLength(1);
 
@@ -354,20 +359,20 @@ it('hands a queued and a steering message their attachments', async () => {
   // A turn over more than one tick, because a message mid-turn needs one
   // running to be taken and a queued one needs one to queue behind.
   const { dir, turn } = await serving(said, temp(), true, 60);
-  await turn({ type: 'chat/turnStarted', turnId: 't0', message: { text: 'go' } });
+  await turn({ type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } });
   await until(() => said.begun.length > 0);
   // One queued and one steering, each with a picture of its own.
   await turn({
     type: 'chat/pendingMessageSet',
     id: 'q1',
     kind: 'queued',
-    message: { text: 'later', attachments: [png('later.png')] },
+    message: { text: 'later', origin: { kind: 'user' }, attachments: [png('later.png')] },
   });
   await turn({
     type: 'chat/pendingMessageSet',
     id: 's1',
     kind: 'steering',
-    message: { text: 'stop', attachments: [png('now.png')] },
+    message: { text: 'stop', origin: { kind: 'user' }, attachments: [png('now.png')] },
   });
   await until(() => said.queued.length > 0 && said.steered.length > 0);
 
@@ -390,12 +395,12 @@ it('applies a message with attachments before what the client sent behind it', a
   // Sent without waiting in between, which is how a composer sends a message
   // and how a client corrects one - and neither is awaited, because the wait
   // is the thing being asked about.
-  void turn({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'look', attachments: [png()] } }, 7);
+  void turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } }, 7);
   void turn({
     type: 'chat/pendingMessageSet',
     id: 's1',
     kind: 'steering',
-    message: { text: 'stop', attachments: [png('now.png')] },
+    message: { text: 'stop', origin: { kind: 'user' }, attachments: [png('now.png')] },
   });
   await until(() => said.steered.length > 0);
 

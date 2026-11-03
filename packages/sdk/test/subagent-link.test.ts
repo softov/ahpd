@@ -168,7 +168,7 @@ async function linked() {
   await ask('subscribe', { channel: backChat });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: mainChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work on it' } } },
+    params: { channel: mainChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work on it' } } },
   });
   await settle();
   return { ask, mainChat, backChat };

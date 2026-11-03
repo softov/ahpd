@@ -145,7 +145,7 @@ const change = (client: Awaited<ReturnType<typeof opened>>['client'], uri: strin
 
 const turn = (client: Awaited<ReturnType<typeof opened>>['client'], chatUri: string, text = 'go') => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 it('starts the session again for a fixed key, and the first turn lands there', async () => {

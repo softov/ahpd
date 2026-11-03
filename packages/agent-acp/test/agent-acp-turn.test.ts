@@ -141,7 +141,7 @@ afterEach(async () => {
 const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -758,7 +758,7 @@ it('refuses a steering message with nothing running, as it cannot steer', async 
   const { client, peer: p, chatUri } = await talking();
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now', origin: { kind: 'user' } } } },
   });
   await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 8));
 
@@ -829,7 +829,7 @@ it('takes a !command sent as a turn during a turn, said at once, and a stop of i
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-took' } } },
+    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo acp-took' } } },
   });
   await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 6));
   const took = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6);
@@ -862,7 +862,7 @@ it('runs a !command queued behind a turn once that turn ends', async () => {
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo acp-queued' } } },
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { origin: { kind: 'user' }, text: '!echo acp-queued' } } },
   });
   await until(() => types(p, chatUri).includes('chat/pendingMessageSet'));
   const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
@@ -887,7 +887,7 @@ it('runs a !command queued behind a turn once that turn ends', async () => {
 const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
   });
 
 /** The queued message each turn started from, in the order the turns started. */

@@ -45,7 +45,7 @@ describe('driving a turn', () => {
     const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await settle();
     expect(sdk.said).toEqual(['hello']);
@@ -55,7 +55,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -77,7 +77,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -140,7 +140,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
       });
       await settle();
       await emit(...frames);
@@ -186,7 +186,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
       });
       await settle();
       const progress = (extra: Record<string, unknown>) => ({
@@ -248,7 +248,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
       });
       await settle();
       const held = async () => (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
@@ -289,7 +289,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -343,7 +343,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'weather?' } } },
     });
     await settle();
 
@@ -399,7 +399,7 @@ describe('driving a turn', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
@@ -422,7 +422,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Working' }] } });
@@ -503,7 +503,7 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({
@@ -523,7 +523,7 @@ describe('driving a turn', () => {
     // stop saying the last one failed.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
     });
     await settle();
     expect(await statusOf()).toBe(Status.InProgress);
@@ -538,7 +538,7 @@ describe('driving a turn', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // A subtype that is not `success` and no `errors` at all - which happens,
@@ -571,7 +571,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -595,7 +595,7 @@ describe('a turn asked for while one is running', () => {
     const started = await running();
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Working' }] } });
@@ -613,7 +613,7 @@ describe('a turn asked for while one is running', () => {
   const say = (client: Awaited<ReturnType<typeof busy>>['client'], chatUri: string, turnId: string, text: string) => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -668,7 +668,7 @@ describe('a turn asked for while one is running', () => {
     // A turn naming another model says its start once the switch answers.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first', model: { id: 'claude-other' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first', model: { id: 'claude-other' } } } },
     });
     say(client, chatUri, 't2', 'second');
     await settle();
@@ -723,7 +723,7 @@ describe('what the client is told about its own turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // Reducing it privately is not enough. A client applies what the host
@@ -751,7 +751,7 @@ describe('one tool call, one row', () => {
     const started = await running({ terminalAutoApproveDefaults: 'none' });
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run it' } } },
+      params: { channel: started.uri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
     });
     await settle();
     await emit({
@@ -889,7 +889,7 @@ describe('what a Claude session sends', () => {
     const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'read it', origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'read it', origin: { kind: 'user' } } } },
     });
     await settle();
     await emit(
@@ -914,7 +914,7 @@ describe('a compacted context', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'a long one' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'a long one' } } },
     });
     await settle();
     await emit({
@@ -943,7 +943,7 @@ describe('running a failed turn again', () => {
     const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'do it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 5 });
@@ -997,7 +997,7 @@ describe('running a failed turn again', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'do it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
     });
     await settle();
     const clis = sessionQueries().length;

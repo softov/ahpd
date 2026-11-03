@@ -131,7 +131,7 @@ describe('a command typed into the conversation', () => {
   const ran = async (client: Client, p: ReturnType<typeof peer>, chatUri: string, turnId: string, command: string) => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: `!${command}` } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: `!${command}`, origin: { kind: 'user' } } } },
     });
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 25); });
@@ -222,7 +222,7 @@ describe('a command typed into the conversation', () => {
     // chat can be cut back to it.
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     await emit({ type: 'user', session_id: 'sdk-1', uuid: 'prompt-1', message: { role: 'user', content: 'first' } });
@@ -622,7 +622,7 @@ describe('a host started again on the same store', () => {
     // A turn wakes the session, and every chat of it is read again.
     void after.client.handle({
       method: 'dispatchAction',
-      params: { channel: TAIL, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'wake up' } } },
+      params: { channel: TAIL, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'wake up' } } },
     });
     for (let i = 0; i < 200 && second.starts.length < 2; i += 1) await settle(1);
     // Woken as the peer that took the default, with the other peer beside it.

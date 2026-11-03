@@ -77,7 +77,7 @@ async function running() {
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words here' } } },
+    params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words here' } } },
   });
   await settle();
   const steer = (clientSeq: number, text: string) => client.handle({
@@ -189,7 +189,7 @@ it('takes the steering message out of the chat when the turn it was sent into is
   const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   const dispatch = (clientSeq: number, action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq, action } });
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words here' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words here' } });
   await settle();
   await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and the tests', origin: { kind: 'user' } } });
   await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } });

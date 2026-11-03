@@ -272,7 +272,7 @@ const studio = async (dir: string, agent: Agent, over: Partial<HostOptions> = {}
   const say = async (text: string): Promise<void> => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
   };

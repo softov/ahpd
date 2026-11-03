@@ -133,7 +133,7 @@ async function live(over: Partial<HostOptions> = {}) {
 const begins = async (client: Client, chat: string, turnId: string): Promise<void> => {
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text: 'go' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
   });
   await settle();
 };

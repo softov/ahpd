@@ -169,7 +169,7 @@ async function serving(knobs: Knobs, options: Options = {}) {
       const before = await turns(chatUri);
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, clientSeq, action: { type: 'chat/turnStarted', turnId: `${name}-${String(before)}`, message: { text } } },
+        params: { channel: chatUri, clientSeq, action: { type: 'chat/turnStarted', turnId: `${name}-${String(before)}`, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
       });
       for (let i = 0; i < 200 && await turns(chatUri) === before; i++) await settle(1);
     };

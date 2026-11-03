@@ -294,8 +294,8 @@ const says = (client: Client, chat: string, text: string, waiting?: string) => c
   params: {
     channel: chat,
     action: waiting === undefined
-      ? { type: 'chat/turnStarted', turnId: crypto.randomUUID(), message: { text } }
-      : { type: 'chat/pendingMessageSet', kind: 'queued', id: waiting, message: { text } },
+      ? { type: 'chat/turnStarted', turnId: crypto.randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } }
+      : { type: 'chat/pendingMessageSet', kind: 'queued', id: waiting, message: { text, origin: { kind: 'user' } } },
   },
 });
 

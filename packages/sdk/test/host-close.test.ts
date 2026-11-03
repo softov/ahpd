@@ -291,7 +291,7 @@ describe('Host.close refuses what would start', () => {
     await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/one') } });
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!ls' } } },
+      params: { channel: chatUriFor('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!ls' } } },
     });
     expect(run).toBeDefined();
     await host.close();

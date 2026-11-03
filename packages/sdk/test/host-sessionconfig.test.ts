@@ -262,7 +262,7 @@ describe('choosing a model', () => {
         // `ModelSelection`, which is an object. This test used to send a bare
         // string and the host used to read one, so the two agreed with each
         // other and with nothing a client sends.
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'haiku' } } },
       },
     });
     await settle();
@@ -282,7 +282,7 @@ describe('choosing a model', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'haiku' } } },
       },
     });
     await settle();
@@ -437,7 +437,7 @@ describe('a session\'s config across a restart', () => {
     const client = await hostOnFile();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options;
@@ -624,7 +624,7 @@ describe('a session\'s config across a restart', () => {
     const { client, said } = await staleHost({ permissionMode: 'nope', permissions: { allow: ['Bash'] } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     const options = sessionQueries().at(-1)?.options;
@@ -657,7 +657,7 @@ describe('a session\'s config across a restart', () => {
     const { client } = await staleHost(config, preset);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options as { settings?: Record<string, unknown> } | undefined;

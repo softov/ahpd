@@ -192,7 +192,7 @@ const applied = async (
 it('sends a message with nothing attached as the plain text it always was', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
   const { client, chatUri } = await talking(model);
-  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
   await until(() => model.requests.length > 0);
 
   expect(input(model)).toEqual([{ type: 'text', text: 'hi' }]);
@@ -204,7 +204,8 @@ it('sends a pasted image as an image part to a model that takes images', async (
   await send(client, chatUri, {
     type: 'chat/turnStarted',
     turnId: 't1',
-    message: { text: 'look', attachments: [pasted('shot.png', 'image/png', PNG)] },
+    startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'look', attachments: [pasted('shot.png', 'image/png', PNG)] },
   });
   await until(() => model.requests.length > 0);
 
@@ -221,7 +222,8 @@ it('names that image by path when the model takes none', async () => {
   await send(client, chatUri, {
     type: 'chat/turnStarted',
     turnId: 't1',
-    message: { text: 'look', attachments: [pasted('shot.png', 'image/png', PNG)] },
+    startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'look', attachments: [pasted('shot.png', 'image/png', PNG)] },
   });
   await until(() => model.requests.length > 0);
 
@@ -238,7 +240,8 @@ it('inlines a pasted text, which the host wrote for this message', async () => {
   await send(client, chatUri, {
     type: 'chat/turnStarted',
     turnId: 't1',
-    message: { text: 'read this', attachments: [pasted('note.txt', 'text/plain', Buffer.from('one\ntwo\n'))] },
+    startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'read this', attachments: [pasted('note.txt', 'text/plain', Buffer.from('one\ntwo\n'))] },
   });
   await until(() => model.requests.length > 0);
 
@@ -255,7 +258,8 @@ it('names a file somebody picked, which is one they work in rather than paste', 
   await send(client, chatUri, {
     type: 'chat/turnStarted',
     turnId: 't1',
-    message: { text: 'look at this', attachments: [picked(mine, 'picked.txt', 'text/plain')] },
+    startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'look at this', attachments: [picked(mine, 'picked.txt', 'text/plain')] },
   });
   await until(() => model.requests.length > 0);
 
@@ -271,14 +275,14 @@ it('holds a queued message\'s attachments and sends them when its turn comes', a
     features: { images: true },
   });
   const { client, chatUri } = await talking(model);
-  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } });
   await until(() => model.requests.length === 1);
 
   await send(client, chatUri, {
     type: 'chat/pendingMessageSet',
     kind: 'queued',
     id: 'q1',
-    message: { text: 'second', attachments: [pasted('shot.png', 'image/png', PNG)] },
+    message: { text: 'second', origin: { kind: 'user' }, attachments: [pasted('shot.png', 'image/png', PNG)] },
   });
   // Waiting behind the turn, so only the first has reached the model.
   expect(model.requests).toHaveLength(1);
@@ -318,14 +322,14 @@ it('steers the running turn with the parts of what was sent', async () => {
     features: { images: true },
   });
   const { client, peer: p, chatUri } = await talking(model, [tool]);
-  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+  await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } });
   await until(() => waiting.length === 1);
 
   await send(client, chatUri, {
     type: 'chat/pendingMessageSet',
     kind: 'steering',
     id: 's1',
-    message: { text: 'actually', attachments: [pasted('shot.png', 'image/png', PNG)] },
+    message: { text: 'actually', origin: { kind: 'user' }, attachments: [pasted('shot.png', 'image/png', PNG)] },
   });
   await applied(client, p, chatUri);
   // The bytes come off the disk on their own schedule, and nothing on the wire

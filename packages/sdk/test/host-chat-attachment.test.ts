@@ -69,7 +69,7 @@ describe('a chat attached to a message', () => {
   const started = async (client: Client, chat: string, turnId: string, text: string): Promise<void> => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
   };
@@ -93,7 +93,7 @@ describe('a chat attached to a message', () => {
     const before = sdk.blocks.length;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, ...message } } },
     });
     await until(() => sdk.blocks.length > before);
     return (sdk.blocks.at(-1) ?? []) as Bag[];
@@ -213,7 +213,8 @@ describe('a chat attached to a message', () => {
     await gus.send(live, {
       type: 'chat/turnStarted',
       turnId: 't1',
-      message: { text: 'see this', attachments: [attached({ endTurn: 'r1' })] },
+      startedAt: new Date().toISOString(),
+      message: { text: 'see this', origin: { kind: 'user' }, attachments: [attached({ endTurn: 'r1' })] },
     });
     await until(() => sdk.blocks.length > 0);
 
@@ -237,7 +238,7 @@ describe('a chat attached to a message', () => {
       method: 'dispatchAction',
       params: {
         channel: live,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'see this', attachments: [attached({ endTurn: 'r1' })] } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'see this', attachments: [attached({ endTurn: 'r1' })] } },
       },
     });
     await settle();
@@ -258,7 +259,7 @@ describe('a chat attached to a message', () => {
       method: 'dispatchAction',
       params: {
         channel: live,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'see this', attachments: [attached({ endTurn: 'r9' })] } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'see this', attachments: [attached({ endTurn: 'r9' })] } },
       },
     });
     await settle();

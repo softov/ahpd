@@ -93,7 +93,7 @@ it('carries a turn from the client to the backend and back', async () => {
   const { client, peer: p, chatUri } = await talking();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await settle(12);
 
@@ -124,7 +124,7 @@ it('says it back in the voice the session was created with', async () => {
   });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/two'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/two'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle(12);
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/two') } }) as {
@@ -137,7 +137,7 @@ it('leaves a finished session in the catalogue, and opens it again from its tran
   const { client, uri, chatUri } = await talking();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'remember me' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'remember me' } } },
   });
   await settle(12);
   await client.handle({ method: 'disposeSession', params: { channel: uri } });

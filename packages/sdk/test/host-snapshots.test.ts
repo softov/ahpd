@@ -66,7 +66,7 @@ describe('what it says it is doing', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     await emit({
@@ -105,7 +105,7 @@ describe('what it says it is doing', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'a question about paging' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'a question about paging' } } },
     });
     await settle();
     // The catalogue learned it; a client with the session already open holds
@@ -193,7 +193,7 @@ describe('what it says it is doing', () => {
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatOf(`claude:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatOf(`claude:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     const opened = await client.handle({ method: 'subscribe', params: { channel: `claude:/${id}` } }) as {
@@ -238,7 +238,7 @@ describe('what it says it is doing', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     await emit({
@@ -259,7 +259,7 @@ describe('what it says it is doing', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     await emit({
@@ -318,7 +318,7 @@ describe('the fields a client reads by name', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -464,7 +464,7 @@ describe('the fields a client reads by name', () => {
     // starting would be one that ate what was in the composer.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on then' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on then' } } },
     });
     await settle();
     expect(sessionQueries().length).toBeGreaterThan(0);
@@ -619,7 +619,7 @@ describe('the fields a client reads by name', () => {
       params: {
         channel: chatUri,
         clientSeq: 41,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } },
       },
     });
     await settle();
@@ -648,7 +648,7 @@ describe('the fields a client reads by name', () => {
       params: {
         channel: chatUri,
         clientSeq: 42,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'sonnet' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'sonnet' } } },
       },
     });
     await settle();
@@ -732,7 +732,7 @@ describe('the fields a client reads by name', () => {
     await new Promise((r) => { setTimeout(r, 5); });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -858,7 +858,7 @@ describe('the fields a client reads by name', () => {
     // lists no chats - so the worker's chat is only there once one is.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -998,7 +998,7 @@ describe('the fields a client reads by name', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     // Unread, as the protocol's chat reducer makes it on a turn's start.
@@ -1344,7 +1344,7 @@ describe("a browsed session's _meta", () => {
     // typing into it does. The row is not created again: its id is held.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatOf('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatOf('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
 

@@ -58,9 +58,9 @@ it('refuses to take back a steering message pi holds, and keeps it in the chat',
     .map((one) => one.params as Bag)
     .find((envelope) => (envelope.origin as Bag | undefined)?.clientSeq === clientSeq);
 
-  dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'list it', origin: { kind: 'user' } } });
+  dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'list it', origin: { kind: 'user' } } });
   await until(() => pi.asked.some((one) => one.kind === 'prompt'));
-  dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually, stop' } });
+  dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'actually, stop' } });
   await until(() => pi.asked.some((one) => one.kind === 'steer'));
   expect(answer(2)?.rejectionReason).toBeUndefined();
 
@@ -95,11 +95,11 @@ it('lets go of the steering pi holds when the turn it was sent into is stopped',
   const state = async (): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUri } })) as { snapshot: { state: Bag } }).snapshot.state;
 
-  dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'list it', origin: { kind: 'user' } } });
+  dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'list it', origin: { kind: 'user' } } });
   await until(() => pi.asked.some((one) => one.kind === 'prompt'));
-  dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and the tests' } });
+  dispatch(2, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'and the tests' } });
   await until(() => pi.asked.some((one) => one.kind === 'steer'));
-  dispatch(3, { type: 'chat/turnCancelled', turnId: 't1' });
+  dispatch(3, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await until(() => pi.asked.some((one) => one.kind === 'abort'));
   expect(pi.asked.some((one) => one.kind === 'clearSteering')).toBe(true);
   for (let i = 0; i < 50 && (await state()).steeringMessage !== undefined; i++) await new Promise((done) => { setTimeout(done, 0); });

@@ -211,7 +211,7 @@ describe('a host tool asks the person', () => {
 
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
     });
     await settle();
 

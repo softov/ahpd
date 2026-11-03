@@ -118,7 +118,7 @@ function serving(store: SessionStore, agents: Agent[], given: Peer = peer()) {
 async function talk(client: ReturnType<typeof serving>['client'], channel: string, turnId: string): Promise<void> {
   client.handle({
     method: 'dispatchAction',
-    params: { channel, action: { type: 'chat/turnStarted', turnId, message: { text: 'hi' } } },
+    params: { channel, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await settle();
 }
@@ -169,7 +169,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await first.client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -184,7 +184,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await second.client.handle({ method: 'listSessions', params: { channel: ROOT } });
   second.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await settle();
   expect(store.provider('made')).toBe('echo');
@@ -199,7 +199,7 @@ it('records the harness a fork was cut on, under the id the new transcript is wr
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({
@@ -272,7 +272,7 @@ it('keeps the harness a session runs on through a change of directory', async ()
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/second' } });
@@ -456,7 +456,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 
@@ -480,7 +480,7 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['two:/shared']);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 
@@ -589,7 +589,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 

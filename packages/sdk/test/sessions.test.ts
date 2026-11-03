@@ -138,7 +138,7 @@ const ask = (
   turnId: string,
 ): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text: 'hello there' } } },
+  params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hello there', origin: { kind: 'user' } } } },
 });
 
 /** The turns of a chat as a fresh subscribe answer carries them. */
@@ -261,7 +261,7 @@ it('hands the attachments on a client\'s message to the backend that begins the 
     method: 'dispatchAction',
     params: {
       channel: chat,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is this?', attachments: [shot] } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'what is this?', attachments: [shot] } },
     },
   });
   await new Promise((tick) => { setTimeout(tick, 100); });
@@ -290,6 +290,7 @@ it('hands the agent a live message picked to the backend that begins the turn', 
       action: {
         type: 'chat/turnStarted',
         turnId: 't1',
+        startedAt: new Date().toISOString(),
         message: { text: 'what is this?', origin: { kind: 'user' }, agent: { uri: 'file:///home/ana/.claude/agents/Plan.md' } },
       },
     },
@@ -298,36 +299,13 @@ it('hands the agent a live message picked to the backend that begins the turn', 
   expect(seen).toEqual([{ origin: { kind: 'user' }, agent: { uri: 'file:///home/ana/.claude/agents/Plan.md' } }]);
 });
 
-it('hands the agent of a message that carried nothing else but the pick on', async () => {
-  const seen: (MessageFrom | undefined)[] = [];
-  const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
-  const chat = await chatOf(client);
-  // Neither `origin` nor `_meta`, which is what a client that only picked an
-  // agent and said nothing else sends. Answering undefined here would drop the
-  // pick on the one message that was nothing but a pick.
-  await client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: chat,
-      action: {
-        type: 'chat/turnStarted',
-        turnId: 't1',
-        message: { text: 'what is this?', agent: { uri: 'claude-internal:/agent/Explore' } },
-      },
-    },
-  });
-  await new Promise((tick) => { setTimeout(tick, 100); });
-  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Explore' } }]);
-});
-
-it('hands over nothing at all for a message that picked no agent', async () => {
+it('hands over the origin alone for a message that picked no agent', async () => {
   const seen: (MessageFrom | undefined)[] = [];
   const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
   const chat = await chatOf(client);
   await ask(client, chat, 't1');
   await new Promise((tick) => { setTimeout(tick, 100); });
-  // An `agent` of no uri is no pick, and the message said nothing else either.
-  expect(seen).toEqual([undefined]);
+  expect(seen).toEqual([{ origin: { kind: 'user' } }]);
 });
 
 it('hands the agent of a queued message to the backend before the turn runs', async () => {
@@ -342,12 +320,12 @@ it('hands the agent of a queued message to the backend before the turn runs', as
         type: 'chat/pendingMessageSet',
         kind: 'queued',
         id: 'q1',
-        message: { text: 'and then this', agent: { uri: 'claude-internal:/agent/Plan' } },
+        message: { text: 'and then this', origin: { kind: 'user' }, agent: { uri: 'claude-internal:/agent/Plan' } },
       },
     },
   });
   await new Promise((tick) => { setTimeout(tick, 100); });
-  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Plan' } }]);
+  expect(seen).toEqual([{ origin: { kind: 'user' }, agent: { uri: 'claude-internal:/agent/Plan' } }]);
 });
 
 it('hands the agent of the first message of a session that was not running to the backend that resumes it', async () => {
@@ -373,12 +351,13 @@ it('hands the agent of the first message of a session that was not running to th
       action: {
         type: 'chat/turnStarted',
         turnId: 't2',
-        message: { text: 'again', agent: { uri: 'claude-internal:/agent/Plan' } },
+        startedAt: new Date().toISOString(),
+        message: { text: 'again', origin: { kind: 'user' }, agent: { uri: 'claude-internal:/agent/Plan' } },
       },
     },
   });
   await new Promise((tick) => { setTimeout(tick, 100); });
-  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Plan' } }]);
+  expect(seen).toEqual([{ origin: { kind: 'user' }, agent: { uri: 'claude-internal:/agent/Plan' } }]);
 });
 
 it('carries the archived bit into the status a client reads', async () => {

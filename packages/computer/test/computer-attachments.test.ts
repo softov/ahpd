@@ -211,8 +211,10 @@ async function room(hostOptions: HostOptions) {
         action: {
           type: 'chat/turnStarted',
           turnId: 't1',
+          startedAt: new Date().toISOString(),
           message: {
             text: 'what is this',
+            origin: { kind: 'user' },
             attachments: [{ type: 'embeddedResource', label, contentType: 'image/png', data: PNG.toString('base64') }],
           },
         },

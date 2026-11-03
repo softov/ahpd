@@ -99,7 +99,7 @@ describe('dropping the turns after one', () => {
     const { client, chatUri } = running_;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
@@ -109,7 +109,7 @@ describe('dropping the turns after one', () => {
     wrote('sdk-1', String(sessionQueries().at(-1)?.options.cwd));
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second' } } },
     });
     await settle();
     await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
@@ -169,7 +169,7 @@ describe('dropping the turns after one', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // Finished without the CLI ever naming what it did - which is every turn
@@ -195,7 +195,7 @@ describe('dropping the turns after one', () => {
     const { client, peer: p, chatUri } = await twice();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', message: { text: 'third' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'third' } } },
     });
     await settle();
     const before = actions(p, chatUri).length;
@@ -272,7 +272,7 @@ describe('a chat made out of another', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // The CLI names its conversation and then answers, and the answer's id is
@@ -309,7 +309,7 @@ describe('a chat made out of another', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'the weather' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'the weather' } } },
     });
     await settle();
     await emit({ type: 'result', session_id: 'sdk-1', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -347,7 +347,7 @@ describe('a chat made out of another', () => {
   const oneTurn = async (client: ReturnType<ReturnType<typeof serving>['accept']>, chatUri: string, turnId = 't1'): Promise<void> => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
     });
     await settle();
     await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
@@ -379,7 +379,7 @@ describe('a chat made out of another', () => {
     });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+      params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
     });
     await settle();
     const updated = actions(p, uri)
@@ -541,7 +541,7 @@ describe('more than one chat in a session', () => {
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'over here' } } },
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'over here' } } },
     });
     await settle();
     // Two CLIs, one directory, one config - which is what makes them peers.
@@ -601,7 +601,7 @@ describe('more than one chat in a session', () => {
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     void sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_1' });
@@ -845,7 +845,7 @@ describe('more than one chat in a session', () => {
       : channel;
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle(8);
   };
@@ -1464,7 +1464,7 @@ describe('more than one chat in a session', () => {
       const { client, p } = await three(join(root, 'sessions'), backend([], 50));
       void client.handle({
         method: 'dispatchAction',
-        params: { channel: THIRD, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hold on now' } } },
+        params: { channel: THIRD, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hold on now' } } },
       });
       await settle();
 
@@ -1925,7 +1925,7 @@ describe('a chat renamed on its own channel', () => {
       [uri, { type: 'session/chatUpdated', chat: second, changes: { title: 'Renamed' } }, undefined],
     ]);
 
-    client.handle({ method: 'dispatchAction', params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'go' } } } });
+    client.handle({ method: 'dispatchAction', params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
     const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -1979,7 +1979,7 @@ describe('a session renamed on its own channel', () => {
       [uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title: 'Whole' } }, undefined],
     ]);
 
-    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'w1', message: { text: 'go' } } } });
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'w1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
     const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
@@ -2092,7 +2092,7 @@ describe('a chat of another backend', () => {
       : channel;
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle(8);
   };
@@ -2407,7 +2407,7 @@ describe('an action naming a chat or session nobody has', () => {
     const before = sessionQueries().length;
     p.notes.length = 0;
 
-    client.handle({ method: 'dispatchAction', params: { channel: gone, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 'g1', message: { text: 'still here?' } } } });
+    client.handle({ method: 'dispatchAction', params: { channel: gone, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 'g1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'still here?' } } } });
     await settle(8);
     expect(actions(p).map((e) => [e.channel, e.action.type, e.origin, e.rejectionReason])).toEqual([
       [gone, 'chat/turnStarted', { clientId: 'probe', clientSeq: 6 }, undefined],

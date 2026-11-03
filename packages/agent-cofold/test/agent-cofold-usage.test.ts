@@ -179,7 +179,7 @@ const begin = (
 ): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -208,7 +208,7 @@ it('grows the total it sends with every step, and ends on the run\'s own tally',
   const { client, peer: p, chatUri } = await talking(model, [lookup]);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'find x' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find x' } } },
   });
   await until(() => ended(p, chatUri));
 
@@ -242,7 +242,7 @@ it('sends the run\'s cost, in dollars, with the total that ends the turn', async
   const { client, peer: p, chatUri } = await talking(model, [lookup]);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'find x' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find x' } } },
   });
   await until(() => ended(p, chatUri));
 
@@ -262,7 +262,7 @@ it('sends no cost for a model with no price row', async () => {
   const { client, peer: p, chatUri } = await talking(model);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await until(() => ended(p, chatUri));
 
@@ -284,12 +284,12 @@ it('counts the second turn from nothing, rather than on what the first used', as
   const { client, peer: p, chatUri } = await talking(model);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one' } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 1);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'two' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'two' } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
 

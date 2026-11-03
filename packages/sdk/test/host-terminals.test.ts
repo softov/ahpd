@@ -87,7 +87,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo ran-from-the-composer' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo ran-from-the-composer' } } },
     });
     const said = await ended(p, chatUri);
     // Not the agent's. A command handed to the CLI would be answered with
@@ -125,7 +125,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
     });
     const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
     for (const until = Date.now() + WAIT_MS; changed() === undefined && Date.now() < until;) {
@@ -157,7 +157,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, uri, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo read' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo read' } } },
     });
     const said = await ended(p, chatUri);
     // Unread while it runs, as a client reduces the turn's start, and read
@@ -184,11 +184,11 @@ describe('a command typed into the conversation', () => {
     await client.handle({ method: 'subscribe', params: { channel: otherChat } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!sleep 0.5; echo long' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!sleep 0.5; echo long' } } },
     });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: otherChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo short' } } },
+      params: { channel: otherChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo short' } } },
     });
     await ended(p, otherChat);
     await ended(p, chatUri);
@@ -204,7 +204,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!exit 3' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!exit 3' } } },
     });
     const said = await ended(p, chatUri);
     const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as {
@@ -218,7 +218,7 @@ describe('a command typed into the conversation', () => {
     const { client, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!  ' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!  ' } } },
     });
     await new Promise((r) => { setTimeout(r, 30); });
     // Somebody typing an exclamation mark, not somebody running nothing.
@@ -229,7 +229,7 @@ describe('a command typed into the conversation', () => {
   const queue = (client: Awaited<ReturnType<typeof shelled>>['client'], channel: string, id: string, text: string) => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -237,7 +237,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     queue(client, chatUri, 'q1', '!echo from-the-queue');
@@ -257,7 +257,7 @@ describe('a command typed into the conversation', () => {
     const { client, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     queue(client, chatUri, 'q1', '!echo one');
@@ -292,7 +292,7 @@ describe('a command typed into the conversation', () => {
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo from-disk' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo from-disk' } } },
     });
     const said = await ended(p, chatUri);
     expect(sdk.said).toEqual([]);
@@ -303,7 +303,7 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, uri, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo kept' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo kept' } } },
     });
     await ended(p, chatUri);
     const listed = () => (actions(p, 'ahp-root://')
@@ -323,12 +323,12 @@ describe('a command typed into the conversation', () => {
     // arrives, which is what leaves the session busy enough to queue behind.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo queued-command' } } },
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { origin: { kind: 'user' }, text: '!echo queued-command' } } },
     });
     await settle();
     // Waiting, and not run: a command that jumped the queue would run against
@@ -364,12 +364,12 @@ describe('a command typed into the conversation', () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo took-its-place' } } },
+      params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo took-its-place' } } },
     });
     await ended(p, chatUri, 't2');
     const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
@@ -404,7 +404,7 @@ describe('a command typed into the conversation', () => {
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo must-not-run' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo must-not-run' } } },
     });
     await settle();
     // Refused, not asked. `echo` implements no `ran`, and a host that handed
@@ -444,7 +444,7 @@ describe('the terminal a command runs in', () => {
     }).snapshot.state.defaultChat;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
     });
     const run = runs[0];
     if (run === undefined) throw new Error('the host handed the backend no run');

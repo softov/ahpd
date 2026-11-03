@@ -103,7 +103,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   const told = (type: string): boolean => notes
     .filter((one) => one.method === 'action')
@@ -117,7 +117,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
   // The new session opens pi lazily, on the turn after it.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await until(() => pi.opens.some((one) => one.forkAt !== undefined));
   // The source conversation and the point the turn ended at, which is what a

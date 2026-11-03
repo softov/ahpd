@@ -134,7 +134,7 @@ it('hands the machine the host\'s branch before a turn starts, and not after', a
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => said.includes('follow box'));
   await settle(4);
@@ -172,7 +172,7 @@ it('does not hand it over for a message queued behind a running turn', async () 
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', id: 'q1', kind: 'queued', message: { text: 'later' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', id: 'q1', kind: 'queued', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   await settle(4);
   // The turn a queued message becomes runs behind the one that is running, in a
@@ -191,7 +191,7 @@ it('starts the turn anyway where the machine could not be moved, and says so', a
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => turnEnded(p, chatUri));
   // A machine that could not be moved costs one turn on a branch that is
@@ -220,7 +220,7 @@ it('asks for nothing where the session is in no machine', async () => {
   // arrived in, with nothing asked of a port.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => turnEnded(p, chatUri));
   expect(said).toEqual([]);

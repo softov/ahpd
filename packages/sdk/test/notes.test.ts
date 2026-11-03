@@ -89,7 +89,7 @@ const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
 const say = (client: { handle(r: { method: string; params: unknown }): unknown }, chatUri: string, text: string): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: `t${String(Date.now())}`, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: `t${String(Date.now())}`, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -278,7 +278,7 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
   const running = actions(p, chatUri).find((a) => a.type === 'chat/turnStarted')?.turnId;
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: running } },
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: running, duration: 0 } },
   });
   await settle();
 
