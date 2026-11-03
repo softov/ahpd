@@ -1,6 +1,6 @@
 ---
 title: The comments say what answers a result
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -29,4 +29,4 @@ Each comment says what the code does with a client's tool result.
 
 ## Resume
 
-Not started.
+Built 2026-11-03.

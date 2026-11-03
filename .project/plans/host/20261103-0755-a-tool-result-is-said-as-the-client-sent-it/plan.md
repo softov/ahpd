@@ -1,7 +1,7 @@
 ---
 title: A tool result is said as the client sent it
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -50,7 +50,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The comments say what answers a result](task-01-the-comments-say-what-answers-a-result.md) | todo | - |
+| [01 - The comments say what answers a result](task-01-the-comments-say-what-answers-a-result.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -58,11 +58,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** nothing.
 
 ## Final verification checklist
 
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
