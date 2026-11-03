@@ -54,6 +54,7 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       turnId: watched.turnId,
       parts: [],
       calls: new Map(),
+      opening: [],
       ...(watched.hostPlan === true ? { hostPlan: true } : {}),
     };
     for (const { update, at } of watched.updates) mapUpdate(replay, update, at);

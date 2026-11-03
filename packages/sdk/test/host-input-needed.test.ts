@@ -177,6 +177,32 @@ it('takes a question\'s entry down once the question has its response', async ()
   expect(await entries()).toEqual([]);
 });
 
+/*
+ * An entry names a call in the state its kind is raised for: the reference
+ * host raises a confirmation at a pending confirmation, a client execution
+ * while the call runs with a client contributor, and an authentication at
+ * auth-required. A call still being announced is in none of them.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+ */
+it('takes down an entry whose call is still being announced', async () => {
+  const { start, entries } = await opened();
+  start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
+  for (const [id, kind] of [['own', 'toolConfirmation'], ['client', 'toolClientExecution'], ['auth', 'toolAuthentication']] as const) {
+    start.emit('session', {
+      type: 'session/inputNeededSet',
+      request: { id, kind, chat: start.chatUri, turnId: 't1', toolCall: { toolCallId: 'c1', status: 'streaming' } },
+    });
+  }
+  await settle();
+  expect((await entries()).map((one) => one.id)).toEqual(['own', 'client', 'auth']);
+
+  // The next action about the chat reads each entry against its call, which is
+  // still streaming.
+  start.emit('chat', { type: 'chat/responsePart', turnId: 't1', part: { id: 'p1', kind: 'markdown', content: 'thinking' } });
+  await settle();
+  expect(await entries()).toEqual([]);
+});
+
 it('keeps an entry while its call waits on a confirmation', async () => {
   const { start, entries } = await opened();
   start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
