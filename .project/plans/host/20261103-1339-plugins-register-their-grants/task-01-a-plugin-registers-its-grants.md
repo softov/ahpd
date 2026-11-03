@@ -1,6 +1,6 @@
 ---
 title: A plugin registers its grants
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -53,4 +53,8 @@ A registration never changes what the access check answers.
 - `pnpm typecheck` and `pnpm --filter @ahpd/sdk test` pass.
 
 ## Resume
+
+- Built: `registerGrants` records a contribution, `foldHostOptions` merges it into `HostOptions.grants`, and `grantEntries` in `root.ts` lists it on `ahpd.grants` with groups from `operationsOf`. `packages/sdk/test/plugin-grants.test.ts` covers registration, the merge, the groups, the dropped table operation and the refusals.
+- Gates: `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary` and `pnpm --filter @ahpd/sdk test` pass.
+- The merged entry keeps the first title and the first description that were written, so a second plugin's description stands when the first wrote none.
 

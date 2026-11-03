@@ -281,6 +281,16 @@ export const groupOf = (subject: string, operation: string): 'read' | 'write' | 
 const SPELLED = /^[a-z][a-zA-Z]*$/;
 
 /**
+ * Whether a word is an operation the table does not decide may be named.
+ *
+ * The word half of `grantProblem`'s rule and not its subject half: a
+ * registration names a subject's operations, and whether the subject's own
+ * entry has one is the fold's to report, so this says only that the word is
+ * spelled like an operation.
+ */
+export const isOperationWord = (value: unknown): value is string => typeof value === 'string' && SPELLED.test(value);
+
+/**
  * Why a string is not a grant a role may hold, and nothing when it is one.
  *
  * On a subject the table decides, only one of its own operations, one of the

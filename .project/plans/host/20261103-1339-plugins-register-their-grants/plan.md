@@ -83,7 +83,7 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | todo | - |
+| [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | implemented | - |
 | [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | todo | 01 |
 | [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | todo | 02 |
 
@@ -94,8 +94,8 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-plugin-registers-its-grants.md](task-01-a-plugin-registers-its-grants.md).
+- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. The sdk gates pass.
+- **Next action:** [task-02-the-host-lists-every-grant-it-uses.md](task-02-the-host-lists-every-grant-it-uses.md).
 - **Open questions:** none.
 - **Watch out for:** a registration must not change what `holds` answers. Take the groups from `operationsOf`, never from the plugin.
 

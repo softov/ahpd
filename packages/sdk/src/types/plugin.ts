@@ -876,6 +876,27 @@ export interface PluginView {
 export type InstallAnswer = { version: string } | { error: string };
 
 /**
+ * What a plugin registers a subject's grants as.
+ *
+ * A registration names operations and never groups. The group an operation is
+ * in is the host's answer, from `operationsOf`, so putting a grant on the list
+ * cannot change what the access check answers for it - an operation the
+ * resource subjects do not have, such as a scheme's own `pin`, is in neither
+ * group and must be granted by its own name.
+ *
+ * It is on the list a client draws its role editor from, `ahpd.grants`, and
+ * gives it to nobody: an operator still writes a role naming it.
+ */
+export interface GrantEntry {
+  /** What a client shows for the subject, when no earlier one named it. */
+  title?: string;
+  /** One sentence on what the subject covers, in the same case. */
+  description?: string;
+  /** The operations this subject has, as the words a grant is made of. */
+  operations: string[];
+}
+
+/**
  * The contribution surface, which is `HostOptions` named back.
  *
  * Every method that contributes a value is named `register*` (), and the set of kinds is closed, one
@@ -1184,6 +1205,25 @@ export interface PluginHost extends PluginContext {
    * `ResourceProvider`'s business.
    */
   registerResourceProvider(scheme: string, provider: ResourceProvider): void;
+  /**
+   * Put a subject's operations on the list a client draws its role editor from.
+   *
+   * A registration adds to the list and gives the grant to nobody: an operator
+   * still writes a role naming it, or hands it to a team. A subject any plugin
+   * may register is shared, so a second registration of one subject adds its
+   * operations to the entry the first made; the first title and description
+   * stay.
+   *
+   * The operations are the words a grant is made of, never `read`, `write` or
+   * `*`, which are the groups and the wildcard. The groups are the host's
+   * answer, read from the subject's own entry or the resource operations, so a
+   * registration cannot change what the access check answers.
+   *
+   * Registering a subject the table already decides adds nothing to what a
+   * client sees: the table's entry stands, and an operation it does not have is
+   * reported as a problem and dropped.
+   */
+  registerGrants(subject: string, entry: GrantEntry): void;
   /**
    * Serve every URI on one `x-` scheme as a channel a client subscribes to.
    *
@@ -1645,6 +1685,14 @@ export interface Contribution {
    * conflict rule is the fold's and not `setPort`'s.
    */
   providers: Record<string, unknown>;
+  /**
+   * The grants this plugin registered, keyed by subject.
+   *
+   * A registration adds operations and never a group, so the fold can join two
+   * plugins' entries without either deciding what a grant means at the gate.
+   * Absent when the plugin registered none.
+   */
+  grants?: Record<string, GrantEntry>;
   /**
    * The channels this plugin serves, keyed by scheme in lowercase.
    *
