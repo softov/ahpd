@@ -30,7 +30,7 @@ function served(extra: Partial<PluginMethod> = {}, options: Partial<HostOptions>
   const heard: Heard = { authorized: [] };
   const { host: plugin, contribution } = pluginHost('test', context());
   plugin.registerMethod('x-test/echo', {
-    grant: 'demo:call',
+    grant: 'session:list',
     handle: (params, reader, client) => ({ params, reader: reader?.id ?? null, client }),
     ...extra,
   });
@@ -82,7 +82,7 @@ it('answers -32601 for a method named like an Object built-in, signed in or not'
   for (const method of BUILT_INS) {
     expect(await call(ana.one, method, {})).toMatchObject({ code: -32601, message: `This host does not serve ${method} yet` });
   }
-  const users = directory({ ana: ['demo:call' as Grant] });
+  const users = directory({ ana: ['session:list' as Grant] });
   const gated = served({}, { users });
   const signed = await client(gated.made, 'ana', 'ana');
   for (const method of BUILT_INS) {
@@ -91,7 +91,7 @@ it('answers -32601 for a method named like an Object built-in, signed in or not'
 });
 
 it('needs the method grant, unless authorize lets the caller in', async () => {
-  const users = directory({ ana: ['demo:call' as Grant], bo: [], cy: [] });
+  const users = directory({ ana: ['session:list' as Grant], bo: [], cy: [] });
   const { heard, made } = served({
     authorize: async (params, reader) => { heard.authorized.push(reader.id); return reader.id === 'cy' && params.say === 'hi'; },
   }, { users });
@@ -107,7 +107,7 @@ it('needs the method grant, unless authorize lets the caller in', async () => {
 });
 
 it('asks a caller who has not signed in to sign in', async () => {
-  const { made } = served({}, { users: directory({ ana: ['demo:call' as Grant] }) });
+  const { made } = served({}, { users: directory({ ana: ['session:list' as Grant] }) });
   const nobody = await client(made, 'nobody');
   expect(await call(nobody.one, 'x-test/echo', {})).toMatchObject({ code: -32007 });
 });
@@ -127,13 +127,13 @@ it('serves the daemon\'s own methods from HostOptions.methods', async () => {
 it('advertises each served method on initialize and in root state', async () => {
   const { made } = served({ describe: () => ({ title: 'Echo', description: 'Says it back.' }) });
   const ana = await client(made, 'ana');
-  const entry = [{ method: 'x-test/echo', title: 'Echo', description: 'Says it back.', grant: 'demo:call' }];
+  const entry = [{ method: 'x-test/echo', title: 'Echo', description: 'Says it back.', grant: 'session:list' }];
   expect(ana.ready._meta?.['ahpd.methods']).toEqual(entry);
   expect(ana.ready.snapshots[0]?.state._meta?.['ahpd.methods']).toEqual(entry);
 
   const plain = served();
   const bo = await client(plain.made, 'bo');
-  expect(bo.ready._meta?.['ahpd.methods']).toEqual([{ method: 'x-test/echo', title: 'x-test/echo', grant: 'demo:call' }]);
+  expect(bo.ready._meta?.['ahpd.methods']).toEqual([{ method: 'x-test/echo', title: 'x-test/echo', grant: 'session:list' }]);
 });
 
 it('advertises no methods on a host that serves none', async () => {

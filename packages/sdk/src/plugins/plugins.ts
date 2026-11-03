@@ -17,7 +17,7 @@ import type { SessionConfigAnswerer } from '../types/completions.js';
 import type { ServedAdapter } from '../types/connectors.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from '../types/events.js';
 import type { HostOptions, HostTool, NodeRegistry } from '../types/host.js';
-import type { ChannelHandle, Contribution, LoaderContext, Alert, InstallAnswer, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginStarts, PluginView, SessionMetaKey, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition, ViewSurface } from '../types/plugin.js';
+import type { ChannelHandle, Contribution, GrantEntry, LoaderContext, Alert, InstallAnswer, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginStarts, PluginView, SessionMetaKey, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition, ViewSurface } from '../types/plugin.js';
 import type { CollectionOptions, RecordCollection, RecordStore } from '../types/records.js';
 import type { SessionStore } from '../types/sessions.js';
 import type { ServedTunnelKind } from '../types/tunnels.js';
@@ -27,13 +27,14 @@ import type { Vault } from '../types/vault.js';
 import type { Catalogs } from '../i18n.js';
 import { idOf, schemeOf } from '../sessions/catalog.js';
 import { frozenCopy } from '../utils/frozen.js';
-import { holds } from '../access/users.js';
+import { holds, OPERATIONS } from '../access/users.js';
+import { grantEntries } from '../host/root.js';
 import { createPair } from '../utils/pair.js';
 import { isRecordPath, isRecordSlug, RECORD_PATH, RECORD_SLUG } from '../resources/records.js';
 import type { Pair } from '../utils/pair.js';
 import { reason } from '../utils/values.js';
 import { readSecret } from '../access/vault.js';
-import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, checkTunnelKind, declared, miss, reservedName, type CheckedSchema } from './validate.js';
+import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkGrants, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, checkTunnelKind, declared, miss, reservedName, type CheckedSchema } from './validate.js';
 import { checkView } from './view.js';
 import { gapLine, schemaGaps } from './schemagaps.js';
 
@@ -282,6 +283,55 @@ export interface FoldedOptions {
 const triggerEntries = new WeakMap<Contribution, PluginTriggers>();
 
 /**
+ * The grant each channel, each method and each tunnel kind operation asks for,
+ * with the name of the plugin that registered it.
+ *
+ * A channel and a method name one grant each. A kind's operation names one
+ * only when it says so: the host's own `tunnel:put` and `tunnel:delete` are
+ * the fallback for one that does not, and those are the daemon's to answer
+ * for. The name is the one the entry carries, which is `ahpd` for the
+ * daemon's own channels rather than a plugin's.
+ */
+const requiredGrants = (
+  channels: Record<string, ServedChannel>,
+  methods: Record<string, ServedMethod>,
+  tunnelKinds: Record<string, ServedTunnelKind>,
+): { by: string; grant: string }[] => {
+  const required: { by: string; grant: string }[] = [];
+  for (const served of Object.values(channels)) required.push({ by: served.by, grant: served.channel.grant });
+  for (const served of Object.values(methods)) required.push({ by: served.by, grant: served.method.grant });
+  for (const kind of Object.values(tunnelKinds)) {
+    for (const operation of kind.operations ?? []) {
+      if (operation.grant !== undefined) required.push({ by: kind.by, grant: operation.grant });
+    }
+  }
+  return required;
+};
+
+/**
+ * Whether the list `ahpd.grants` holds answers a grant a caller is asked for.
+ *
+ * The two wildcard forms are on every list, and so are the groups of a
+ * subject the list carries. An operation is listed when its subject's entry
+ * names it; a word the entry lacks is not, because the group it would be
+ * sorted into would not hold it either. The answer is about the list alone:
+ * a subject nobody registered has no entry, and a grant naming one is exactly
+ * what this reports.
+ */
+const listedGrant = (entries: ReturnType<typeof grantEntries>, grant: string): boolean => {
+  const at = grant.indexOf(':');
+  if (at <= 0 || at === grant.length - 1) return false;
+  const subject = grant.slice(0, at);
+  const operation = grant.slice(at + 1);
+  const group = operation === 'read' || operation === 'write';
+  if (subject === '*') return operation === '*' || group;
+  const entry = entries[subject];
+  if (entry === undefined) return false;
+  return operation === '*' || group || entry.operations.includes(operation);
+};
+
+
+/**
  * Fold contributions into a base `HostOptions`.
  *
  * The rules, made literal:
@@ -366,6 +416,16 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
    * schemes are, so a plugin is told when the host already serves one.
    */
   const channels: Record<string, ServedChannel> = { ...base.channels };
+  /*
+   * The grants each subject carries, by subject, joined across contributions.
+   *
+   * Seeded from the base, so the daemon's own registrations come first and a
+   * plugin may add to one without taking its title or its operations away. A
+   * registration only ever adds an operation; the groups are not here at all,
+   * and `advertisedGrants` reads them from `operationsOf`, so what is on the
+   * list cannot change what the gate answers.
+   */
+  const grants: Record<string, GrantEntry> = { ...base.grants };
   /*
    * The adapters, by name, and the plugin each belongs to. Seeded from the
    * base for the same reason the channels are: a plugin that offers a name the
@@ -467,6 +527,34 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
       }
       schemes.set(scheme.toLowerCase(), contribution.by);
       resourceProviders[scheme] = provider as Schemes[string];
+    }
+
+    for (const [subject, entry] of Object.entries(contribution.grants ?? {})) {
+      /*
+       * An operation the table lacks on a subject the table decides is
+       * reported and dropped: `grantProblem` and the users-file check keep the
+       * table strict, so a registration may not widen what a role may hold
+       * there. A scheme's own operations are taken as written, because there is
+       * no table of them to check against.
+       */
+      const mine = OPERATIONS[subject];
+      const operations = entry.operations.filter((one) => {
+        if (mine === undefined || mine.operations.includes(one)) return true;
+        problems.push(`plugin ${contribution.by} registers ${subject}:${one}, which is not one of ${subject}'s operations; it is dropped`);
+        return false;
+      });
+      const before = grants[subject];
+      const joined = [...(before?.operations ?? [])];
+      for (const one of operations) if (!joined.includes(one)) joined.push(one);
+      // The first title and description of a subject stay, which is the base's
+      // and an earlier plugin's before this one's.
+      const title = before?.title ?? entry.title;
+      const description = before?.description ?? entry.description;
+      grants[subject] = {
+        ...(title === undefined ? {} : { title }),
+        ...(description === undefined ? {} : { description }),
+        operations: joined,
+      };
     }
 
     for (const [scheme, served] of Object.entries(contribution.channels)) {
@@ -575,6 +663,23 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     }
   }
   if (Object.keys(tunnelKinds).length > 0) options.tunnelKinds = tunnelKinds;
+  if (Object.keys(grants).length > 0) options.grants = grants;
+
+  /*
+   * A grant a channel, a method or a kind's operation asks for that the list
+   * does not carry.
+   *
+   * The list is what a role editor draws, so a required grant nothing lists is
+   * one nobody can give to a role: every caller is refused, and no screen says
+   * why. It is reported and the plugin loads all the same, because the check is
+   * about the list and not about the caller, and a plugin is not refused for
+   * naming a grant its own subject has not registered yet.
+   */
+  const entries = grantEntries(resourceProviders, grants);
+  for (const { by, grant } of requiredGrants(channels, methods, tunnelKinds)) {
+    if (listedGrant(entries, grant)) continue;
+    problems.push(`plugin ${by} requires ${grant}, which no entry of ahpd.grants lists`);
+  }
 
   /*
    * The agents made from records, after the plugins' own.
@@ -1114,6 +1219,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
     sessionCompletions: {},
     ports: {},
     providers: {},
+    grants: {},
     channels: {},
     adapters: {},
     engines: {},
@@ -1514,6 +1620,28 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
         throw new Error(miss(by, 'registerResourceProvider', named, 'a scheme no other provider in this plugin uses'));
       }
       contribution.providers[named] = provider;
+    },
+    /*
+     * A subject is shared, so a plugin's second call for one joins the first
+     * rather than being refused: the operations are added and the first title
+     * and description stay, which is the same rule the fold applies across
+     * plugins.
+     */
+    registerGrants(subject, entry) {
+      open();
+      const named = checkGrants(subject, entry, by);
+      declared(by, options.contracts, 'grants', named);
+      const held = contribution.grants ??= {};
+      const before = held[named];
+      const operations = [...(before?.operations ?? [])];
+      for (const one of entry.operations) if (!operations.includes(one)) operations.push(one);
+      const title = before?.title ?? entry.title;
+      const description = before?.description ?? entry.description;
+      held[named] = {
+        ...(title === undefined ? {} : { title }),
+        ...(description === undefined ? {} : { description }),
+        operations,
+      };
     },
     /*
      * The handle is a closure over the entry the fold carries, so a publish

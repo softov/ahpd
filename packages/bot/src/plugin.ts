@@ -563,6 +563,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     available,
   }));
   /*
+   * The one grant a bot asks for: talking to it. The provider's own entry on
+   * `ahpd.grants` takes its title, description and groups from the `bot` row
+   * of the host's table, so this says only that the operation exists.
+   */
+  host.registerGrants('bot', { operations: ['chat'] });
+  /*
    * The wake: every turn one of those chats begins, and every message steered
    * into an open one, goes to the back session the bot's record names. A chat
    * this plugin did not open - one a client started by itself - names no bot

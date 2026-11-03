@@ -76,6 +76,7 @@
     "contracts": {
       "agents": ["bot-chat"],
       "channels": ["x-ahpd-bots"],
+      "grants": ["bot"],
       "resourceProviders": ["bot"],
       "tools": ["post_message"],
       "bindings": ["*"]

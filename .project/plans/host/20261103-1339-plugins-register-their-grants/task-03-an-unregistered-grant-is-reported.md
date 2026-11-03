@@ -1,6 +1,6 @@
 ---
 title: An unregistered grant is reported
-status: todo
+status: done
 depends: [task-02-the-host-lists-every-grant-it-uses.md]
 layer: "sdk"
 refs:
@@ -43,3 +43,10 @@ A grant that no entry lists is one line in `problems`, which names the plugin an
 
 ## Resume
 
+- Built: after the fold, `foldHostOptions` collects the grant of each channel, method and tunnel kind operation, with its plugin.
+- It adds one `problems` line per grant that `grantEntries` does not list, and the plugin still loads.
+- A grant is listed when its subject has an entry and its operation is an operation or a group of that entry.
+- `*:*`, `*:read` and `*:write` are always listed.
+- The plan did not know that `x-ahpd/invokeOperation` requires `operation:invoke`. `run.ts` registers `operation` with `invoke`, and `USERS.md` has its row.
+- Tests that used unlisted grants now use listed ones: `host-methods`, `plugin-validate`, `plugin-method` and `plugin-channel`, which registers `demo`.
+- The gates pass, and `server-cli-start.test.ts` and `grants-advertised.test.ts` show no such line at start.

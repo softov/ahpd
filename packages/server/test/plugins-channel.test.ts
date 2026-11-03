@@ -656,6 +656,24 @@ it('enables with plugin:enable over the protocol and over HTTP, and refuses conf
   await close();
 });
 
+it('applies and reloads as a role holding plugin:write, and refuses one holding only config:write', async () => {
+  const { host, users, close } = await live();
+  const cy = await as(host, users, 'cy');
+
+  // `plugin:apply` and `plugin:reload` are in the `write` group now, so the
+  // role that already changes configured plugins may ask the daemon to load
+  // the file again, or to import a plugin whose code moved.
+  expect(await cy.call('x-ahpd/plugins/apply', {})).toEqual({ result: { restart: false } });
+  expect(await cy.call('x-ahpd/plugins/reload', { id: 'declared' })).toEqual({
+    result: { id: 'declared', restart: false },
+  });
+
+  const gi = await as(host, users, 'gi');
+  expect(await gi.call('x-ahpd/plugins/apply', {})).toMatchObject({ code: -32009 });
+  expect(await gi.call('x-ahpd/plugins/reload', { id: 'declared' })).toMatchObject({ code: -32009 });
+  await close();
+});
+
 it('installs a source as a role holding plugin:install, and lists the new row', async () => {
   const { runner, calls } = fakeNpm({ demo: 'github:someone/demo' });
   const { host, users, close } = await served({ run: runner });

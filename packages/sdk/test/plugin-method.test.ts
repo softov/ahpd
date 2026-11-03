@@ -11,7 +11,7 @@ import type { LoaderContext, PluginMethod, ServedMethod } from '../src/types/plu
 
 const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {} });
 
-const echo: PluginMethod = { grant: 'demo:read', handle: (params) => params };
+const echo: PluginMethod = { grant: 'session:list', handle: (params) => params };
 
 it('registers x-test/echo, and the fold carries it into methods', () => {
   const { host: plugin, contribution } = pluginHost('test', context());
@@ -50,7 +50,7 @@ it('refuses a name another plugin serves, and names the holder', () => {
 it('refuses a name the daemon serves, and keeps the daemon\'s', () => {
   const own: ServedMethod = { by: 'ahpd', name: 'x-ahpd/usage/totals', method: echo };
   const { host: plugin, contribution } = pluginHost('test', context());
-  plugin.registerMethod('x-ahpd/usage/totals', { grant: 'demo:read', handle: () => 'theirs' });
+  plugin.registerMethod('x-ahpd/usage/totals', { grant: 'session:list', handle: () => 'theirs' });
   plugin.registerMethod('x-test/echo', echo);
   const { options, problems } = foldHostOptions({ path: root, agents: [], methods: { [own.name]: own } }, [contribution]);
   expect(problems).toEqual(['plugin test registers method x-ahpd/usage/totals, which the daemon already serves']);

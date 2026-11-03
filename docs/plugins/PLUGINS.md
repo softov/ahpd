@@ -466,6 +466,34 @@ host.registerResourceProvider('computer', {
 });
 ```
 
+### Registering grants
+
+The list a client draws its role editor from is `_meta['ahpd.grants']`, and it
+holds every subject a grant may name with the operations each one has. A plugin
+puts its own there with `registerGrants`, naming the subject and its operations:
+
+```ts
+host.registerGrants('notes', {
+  title: 'Notes',
+  description: 'The notes this session keeps.',
+  operations: ['pin', 'put'],
+});
+```
+
+A registration names operations and never a group: `read`, `write` and `*` are
+refused, because they are what a grant is made of rather than acts a subject
+has. The group an operation falls in is the host's answer, read from
+`operationsOf`, so a registration never gives a grant to anybody and never
+changes what the access check answers. An operation the resource subjects do not
+have, such as a plugin's own `pin`, is in neither group and must be held by its
+own name, `notes:pin`, or by the subject's wildcard.
+
+A subject is shared: any plugin may register one, and a second registration of a
+subject adds its operations to the entry the first made. The first title and
+description stay. Registering a subject the host's table already decides adds
+nothing, because the table's entry stands, and an operation the table lacks is
+reported as a problem beside the plugin that registered it and dropped.
+
 ### Reserved names
 
 A harness names its session channels, `claude:/<id>`, and a scheme names its

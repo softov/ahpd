@@ -20,7 +20,7 @@
 import type { StartSession } from '../types/automations.js';
 import type { ChatRequest, PluginContracts, PortKey } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
-import { SUBJECTS, isGrant } from '../access/users.js';
+import { SUBJECTS, grantProblem, isGrant, isOperationWord } from '../access/users.js';
 import { isSecret, secretFields } from '../channels/owners.js';
 import { RECORD_SLUG, isRecordSlug } from '../resources/records.js';
 import { schemaGaps, type SchemaGap } from './schemagaps.js';
@@ -381,6 +381,46 @@ export const reservedName = (name: string): string | undefined => {
   const lower = name.toLowerCase();
   for (const [prefix, why] of RESERVED_PREFIXES) if (lower.startsWith(prefix)) return why;
   return RESERVED_NAMES.get(lower);
+};
+
+/**
+ * Check one `registerGrants` subject and entry.
+ *
+ * A registration names operations and never a group: `read`, `write` and `*`
+ * are refused, because they are the two groups and the wildcard and not acts a
+ * subject has. The groups are the host's answer at the gate, so a registration
+ * that named one would be saying what a grant means rather than what the
+ * subject does.
+ *
+ * The subject is checked the way `grantProblem` reads one, so a subject with a
+ * space, a colon or nothing in it is refused. An operation word is checked for
+ * its spelling only: an operation a table subject lacks is not refused here,
+ * because the table keeps itself strict and the fold reports the word as a
+ * problem beside the plugin that registered it.
+ */
+export const checkGrants = (subject: unknown, value: unknown, by: string): string => {
+  if (typeof subject !== 'string' || grantProblem(`${subject}:*`) !== undefined) {
+    throw new Error(miss(by, 'registerGrants', 'the subject', 'a subject a grant may name, like notes'));
+  }
+  const object = asObject(value, by, 'registerGrants', subject);
+  for (const member of ['title', 'description']) {
+    if (object[member] === undefined) continue;
+    if (typeof object[member] !== 'string' || (object[member] as string).trim() === '') {
+      throw new Error(miss(by, 'registerGrants', member, 'a non-empty string, or nothing'));
+    }
+  }
+  if (!Array.isArray(object.operations) || object.operations.length === 0) {
+    throw new Error(miss(by, 'registerGrants', 'operations', 'a list of operation words'));
+  }
+  for (const one of object.operations) {
+    if (one === 'read' || one === 'write' || one === '*') {
+      throw new Error(miss(by, 'registerGrants', `operation ${one}`, 'an operation, not a group or the wildcard'));
+    }
+    if (!isOperationWord(one)) {
+      throw new Error(miss(by, 'registerGrants', `operation ${String(one)}`, 'an operation word, spelled like a grant\'s operation'));
+    }
+  }
+  return subject;
 };
 
 /** Check one `registerResourceProvider` value against `ResourceProvider`. */

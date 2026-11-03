@@ -12,7 +12,7 @@ import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { EnablementStore } from '../plugins/enablement.js';
-import type { ChatPreamble, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
+import type { ChatPreamble, GrantEntry, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
 import type { ConnectorRef, ServedAdapter } from './connectors.js';
 import type { AgentOwner, ServedEngine } from './agents.js';
 import type { ServedTunnelKind } from './tunnels.js';
@@ -246,6 +246,17 @@ export interface HostOptions {
    * `fileResources()` says about a foreign scheme.
    */
   resourceProviders?: Record<string, ResourceProvider>;
+  /**
+   * The grants plugins and the daemon registered, by subject.
+   *
+   * The fold fills this from `registerGrants`. It is the list a client draws a
+   * role editor from, `ahpd.grants`, and it gives nothing to anybody: a
+   * registration says an operation exists, and an operator still writes the
+   * role that holds it. The groups are kept out of it deliberately - they come
+   * from the subject's own entry, so a registration cannot change what the
+   * access check answers.
+   */
+  grants?: Record<string, GrantEntry>;
   /**
    * The channels plugins serve, by `x-` scheme in lowercase.
    *
