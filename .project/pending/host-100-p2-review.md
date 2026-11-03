@@ -6,9 +6,30 @@ plans:
 
 # Review the owner's command check
 
-I reviewed host/100 p2 on main at `e7b172de` on 2026-10-20. The code does what the plan says, with one security problem.
+One check by hand is left: the `vscode` defaults approve a command in a session from VS Code. The earlier results are in *Earlier results*.
 
-## Results
+## Set up
+
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
+
+## Check by hand
+
+1. In VS Code, open a new Claude session on your daemon, in Ask Before Edits mode.
+2. Ask the agent: `Run pnpm ls --depth 0 in the terminal.`
+3. Check that it runs with no question.
+
+## Reply
+
+Write "pass", or what you saw.
+
+## Earlier results
+
+### Review
 
 1. **Pass.** `getAutoApproval` in `spawn.ts` reads the connection that started the session, and only when that connection's person owns the session. A turn from another window does not widen the rules.
 2. **Pass.** A start that no connection asked for, such as an automation, has no rules, so every command asks.
@@ -19,7 +40,7 @@ I reviewed host/100 p2 on main at `e7b172de` on 2026-10-20. The code does what t
 7. **Fail.** A member can push a rule key that is a slow regular expression, and the daemon stops while it matches. Task 03 of the plan carries the fix.
 8. **Note.** Task 02 named `config.ts:247-258` and `run.ts:732-741`. The key is parsed in `commands/options.ts:572` and passed at `run.ts:845`. The plan refs are out of date, not the code.
 
-## Results by hand
+### Results by hand
 
 Softov ran the checks with a Claude session from VS Code on 2026-10-20.
 
@@ -28,9 +49,9 @@ Softov ran the checks with a Claude session from VS Code on 2026-10-20.
 - Check 3 asked, as written. It shows nothing while check 1 fails, because every command asks.
 - Check 4 was not run.
 
-My first steps named `ls`. Claude Code approves `ls` and other read-only commands itself, before ahpd is asked, so `ls` cannot show the check. Auto mode also skips ahpd. The steps below use a command that only the defaults approve.
+My first steps named `ls`. Claude Code approves `ls` and other read-only commands itself, before ahpd is asked, so `ls` cannot show the check. Auto mode also skips ahpd. The check uses a command that only the defaults approve.
 
-## Results on a test daemon
+### Results on a test daemon
 
 I ran the four checks on 2026-11-02 at `893051dc`, on a test daemon with its own XDG folders and port 47100. The session was Claude with `haiku`, started over ahpc by alice, an admin.
 
@@ -40,11 +61,3 @@ I ran the four checks on 2026-11-02 at `893051dc`, on a test daemon with its own
 4. **Changed.** Fork commit `8e6cbbc5` made the terminal keys one value for the whole host, as VS Code has them, and a push needs `config:change`. Result 4 in *Results* no longer holds.
    - bob as a member pushed `{"rm": true}`. The push did not apply, and `rm` asked.
    - bob as an admin pushed `{"rm": true}`. `rm` ran with no question, in alice's session.
-
-## Check by hand
-
-Restart your daemon on `893051dc` or later. Use a new Claude session from VS Code in Ask Before Edits mode, with no terminal rules pushed. Ask the agent to run `pnpm ls --depth 0`. It runs with no question.
-
-## Reply
-
-- Write "pass" or what you saw for the check by hand.

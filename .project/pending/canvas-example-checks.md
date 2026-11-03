@@ -5,23 +5,28 @@ plans: []
 
 # Check that examples/canvas opens beside a chat
 
-The example plugin `examples/canvas` serves one page and opens it as a canvas from its tool `open_check_canvas`. Its tests pass, and a scratch daemon loads it and serves the page with 200. No client has drawn it yet. The same branch makes `--plugin` add to the config's `plugins` list. These checks need a daemon from main after the merge. A window on another machine needs the plugin's `origin` option set to the address it reaches the daemon at.
+The example plugin `examples/canvas` is on main. It serves one page and opens it as a canvas from its tool `open_check_canvas`. On 2026-11-03 a test daemon loaded it with no `No backend is loaded` line, and `/plugins/example-canvas/` answered 200 with its "Served at" time. No client has drawn it yet.
 
 ## Set up
 
-1. Restart the daemon in your terminal with your config and `--plugin /github/ahpd/examples/canvas/plugin.json`. Leave `routes.port` unset.
-2. For a window on another machine, put the plugin in the config instead: `{ "source": "/github/ahpd/examples/canvas/plugin.json", "options": { "origin": "http://<address>:<port>" } }` beside the backends, and restart without the flag.
-3. Turn canvases on in the window: `chat.canvases.enabled` in VS Code, or the canvases host feature in ahpw.
+1. Start a test daemon with the canvas plugin:
+
+```bash
+source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude examples/canvas/plugin.json
+ahpd plugin install @ahpd/web && ahpd restart
+```
+
+2. Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `settings.json`, set `"chat.remoteAgentHostsEnabled": true`, and reload the window.
+3. Turn on `chat.canvases.enabled` in VS Code.
 
 ## Steps
 
-1. Read the daemon's log. Expect no line that starts `No backend is loaded`.
-2. Open the plugins page in ahpw. Expect the config's backends and `example-canvas`, each loaded.
-3. Open the page URL in a browser: `<origin>/plugins/example-canvas/`, or `http://127.0.0.1:<port>/plugins/example-canvas/` without `origin`. Expect the page with its "Served at" time.
-4. In a chat, ask the agent to call `open_check_canvas`. Expect the page beside the chat.
-5. Ask for the tool a second time. Expect the same canvas drawn again, with a new "Served at" time, and no second canvas.
-6. Turn canvases off in the window, and ask for the tool again. Expect the tool to fail with `Canvases are disabled.`
+1. Open http://127.0.0.1:39200/plugins/web/, sign in with `check-token`, and open the plugins page. Expect `agent-claude` and `example-canvas`, each loaded.
+2. In a VS Code chat on `ahpd-check`, ask the agent to call `open_check_canvas`. Expect the page beside the chat.
+3. Ask for the tool a second time. Expect the same canvas drawn again, with a new "Served at" time, and no second canvas.
+4. Turn canvases off in the window, and ask for the tool again. Expect the tool to fail with `Canvases are disabled.`
 
 ## Reply
 
-- Write "ok", or what went wrong at which step.
+- Write "pass", or what went wrong at which step.
+- Stop the test daemon with `ahpd stop`.

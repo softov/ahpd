@@ -94,12 +94,12 @@ Each run used XDG folders under the scratchpad, a prefix install and port 38911.
 ## Resume state
 
 - **Done so far:** built 2026-10-26 in PR #100, see [implemented.md](implemented.md).
-- **Next action:** the checks by hand in [daemon-40-old-plugin-checks.md](../../../pending/daemon-40-old-plugin-checks.md), on a 0.14.1 candidate.
+- **Next action:** a fix for [the problem](../../../problems/a-client-cannot-update-a-scoped-plugin-that-failed-to-load.md); then the update from a client is checked again.
 - **Open questions:** none.
 - **Watch out for:** never touch `~/.config/ahpd`. A test daemon gets XDG folders under a temp folder and a port other than 37537.
 
 ## Final verification checklist
 
-- [ ] 0.14.1 with a 0.13.0 agent plugin starts, lists no agent, and logs the refusal with `ahpd plugin update all`.
-- [ ] `x-ahpd/plugins/update` moves that plugin, and the agent appears after the reload.
+- [x] 0.14.1 with a 0.13.0 agent plugin starts, lists no agent, and logs the refusal with `ahpd plugin update all`. Checked on main at git://e19997c8 on 2026-11-03: a session create got `-32002`.
+- [ ] `x-ahpd/plugins/update` moves that plugin, and the agent appears after the reload. Fails on 2026-11-03, see [the problem](../../../problems/a-client-cannot-update-a-scoped-plugin-that-failed-to-load.md).
 - [x] `plans/index.md` updated.

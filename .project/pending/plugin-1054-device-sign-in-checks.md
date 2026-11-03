@@ -6,23 +6,34 @@ plans:
 
 # Check a devtunnel device sign-in
 
-Plan plugin 1054 signs a `devtunnel` connector in to Dev Tunnels with a device code. Its tests use a fake GitHub and no network. This check needs your daemon, a real GitHub account and the network.
-Restart the daemon on main before you start.
-Do these checks from a terminal that is not a Claude Code session.
+plugin/20261102-1054 is on main, and ahpw main has the sign-in button. A `devtunnel` connector signs in to Dev Tunnels with a GitHub device code. This check needs a real GitHub account.
+
+## Set up
+
+Run this from a terminal that is not a Claude Code session. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## Steps
 
-1. In ahpw, add a `devtunnel` connector and press the sign-in button.
+1. In ahpw, add a `devtunnel` connector, and press the sign-in button.
 2. Open the page it shows, type the code, and approve on github.com.
-3. Check that the connector row is `ready`, and that the form says who it is signed in as.
-4. Check that the vault holds `connector/<id>/token` and `connector/<id>/refresh`.
-5. Check that the record holds `account` and two `$secret` references, and no token.
-6. Check that the daemon log, the answers and every row show no token, no refresh token and no device handle.
-7. Sign in again on the same connector with the same account. Check that the id stays.
-8. Sign in again with another GitHub account. Check that the host refuses it.
-9. Restart the daemon more than 8 hours after the sign-in. Check that the row is `ready`.
-10. Check that an OpenRouter connector still signs in with a pasted code.
+3. Check that the connector row is `ready`, and that the form says which account it signed in as.
+4. Check the record, with the connector's id in place of `<id>`. Expect `account` and two `$secret` references, and no token:
+
+```bash
+cat ~/.config/ahpd/connectors/<id>.json
+```
+
+5. Check that the daemon's terminal, the answers and every row show no token, no refresh token and no device code.
+6. Sign in again on the same connector with the same account. Check that the id stays.
+7. Sign in again with another GitHub account. Check that the host refuses it.
+8. More than 8 hours after the sign-in, restart the daemon. Check that the row is `ready`.
+9. Check that an OpenRouter connector still signs in.
 
 ## Reply
 
-Write "done" when each step works, or say which step stopped.
+Write "pass", or say which step stopped.

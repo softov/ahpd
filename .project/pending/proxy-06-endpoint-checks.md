@@ -6,21 +6,61 @@ plans:
 
 # Check the proxy model endpoints
 
-Plan proxy 06 makes the proxy answer every model endpoint. Its tests use fake providers and no network. These checks need your daemon, real connectors and the network.
-Restart the daemon on main before you start.
-Do these checks from a terminal that is not a Claude Code session.
+proxy/06 is on main. The proxy answers every model endpoint of OpenAI and Anthropic. Its tests use fake providers.
+
+## Set up
+
+Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* turns `httpApi` on. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
+
+```bash
+export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token) B=http://127.0.0.1:37537
+```
 
 ## Steps
 
-1. Set the OpenAI SDK base URL to `http://host:port`, with no `/v1`.
-2. Through an `openai` connector, ask for embeddings, and check that the answer has vectors.
-3. Through the same connector, create a Response, then send a follow-up with its `previous_response_id`.
-4. Get the same Response with `GET /responses/{id}`, and check that the id starts with `resp_`.
-5. Through the same connector, create an image, a speech file and a transcription.
-6. With the Anthropic SDK, count tokens through an `anthropic` connector.
-7. Through an `openrouter` connector, send a rerank call.
-8. Check that the daemon log and every answer show no key.
+The model names are examples. Take another from `$B/models` when the proxy refuses one.
+
+1. Embeddings through `openai`, and check that the answer has vectors:
+
+```bash
+curl -s $B/embeddings -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"openai/text-embedding-3-small","input":"hello"}' | head -c 300
+```
+
+2. A Response, then a follow-up with its id in place of `<id>`:
+
+```bash
+curl -s $B/responses -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"openai/gpt-4.1-mini","input":"Say ok."}' | head -c 300
+curl -s $B/responses -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"openai/gpt-4.1-mini","input":"Again.","previous_response_id":"<id>"}' | head -c 300
+```
+
+3. Get the Response, and check that its id starts with `resp_`:
+
+```bash
+curl -s $B/responses/<id> -H "Authorization: Bearer $AHPD_TOKEN" | head -c 300
+```
+
+4. An image, a speech file and a transcription:
+
+```bash
+curl -s $B/images/generations -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"openai/gpt-image-1","prompt":"a red square","size":"1024x1024"}' | head -c 200
+curl -s $B/audio/speech -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"openai/gpt-4o-mini-tts","voice":"alloy","input":"hello"}' -o /tmp/speech.mp3 && ls -l /tmp/speech.mp3
+curl -s $B/audio/transcriptions -H "Authorization: Bearer $AHPD_TOKEN" -F model=openai/whisper-1 -F file=@/tmp/speech.mp3
+```
+
+5. Count tokens through `anthropic`:
+
+```bash
+curl -s $B/v1/messages/count_tokens -H "x-api-key: $AHPD_TOKEN" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' -d '{"model":"anthropic/claude-haiku-4-5","messages":[{"role":"user","content":"hello"}]}'
+```
+
+6. A rerank through `openrouter`, with a rerank model from `$B/models` in place of `<model>`:
+
+```bash
+curl -s $B/rerank -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"<model>","query":"cat","documents":["a cat","a car"]}'
+```
+
+7. Check that the daemon's terminal and every answer show no key.
 
 ## Reply
 
-Write "done" when each step works, or say which step stopped.
+Write "pass", or say which step stopped.

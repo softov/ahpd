@@ -1,33 +1,41 @@
 ---
-title: Check a steered bot message on a real bot
+title: Check a message sent while a bot works
 plans:
+  - plans/host/20261102-1814-a-pending-message-runs-when-its-turn-comes/plan.md
   - plans/plugin/56-a-steered-bot-message-is-its-own-turn/plan.md
 ---
 
-# Check a steered bot message on a real bot
+# Check a message sent while a bot works
 
-plugin/56 is built and its tests pass.
-This run uses a real bot and a real daemon.
-It is the plan's final verification checklist.
+A message sent in a bot chat while the bot works is a steer. Since ca82b8af (host/20261102-1814 task 03), it goes into the running turn, as VS Code's host does, and that turn goes on. Before, the steer ended the turn and began a new one. Nobody has checked this on a real bot yet.
+
+With PR #200 merged, the main turn ends when the back session's turn ends. Run this check after that merge.
 
 ## Set up
 
-1. Restart the daemon from a build that holds plugin/56.
-2. In ahpw or VS Code, open a bot chat with a bot whose back session takes some seconds to answer.
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
 
-## A steer is its own turn
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
-1. Send a message that starts a long turn.
-2. While the turn runs, send a second message.
-3. Make sure that the first turn ends and the second message shows as a new turn.
-4. Make sure that the answer after the second message shows under the new turn.
+Open a bot chat in ahpw or VS Code.
 
-## The turns stay after a restart
+## A message while the bot works
 
-1. Restart the daemon.
-2. Open the same bot chat again.
-3. Make sure that the chat shows the same two turns, each with its own answer.
+1. Send: `Count slowly from 1 to 30, one number per line, then post the last number.`
+2. While the bot works, send: `Stop at 10 instead.`
+3. Check that the main chat shows one turn, not two, with your second message in it.
+4. Open the back session from the subagent call. Check that your second message reached it.
+5. Check that the bot stops near 10, and that its post shows in the same main turn.
+6. Check that the main turn ends when the back session's turn ends.
+
+## After a reload
+
+1. Reload the window, and open the same bot chat.
+2. Write down whether the chat shows one turn or two. Two is the known [problem](../problems/a-bot-steer-shows-differently-after-a-reload.md).
 
 ## Reply
 
-Write "pass" for each section, or what you saw.
+Write "pass" for the first section, or what you saw. For the second, write "one turn" or "two turns".

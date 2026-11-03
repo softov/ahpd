@@ -93,6 +93,6 @@ ahpd config / plugin list -> `<set>` for a `writeOnly` or a `secret` value
 
 - [ ] `pnpm typecheck` passes.
 - [ ] `pnpm test` passes.
-- [ ] A connector with a `secret` field lists `{ "$secret": "<name>" }` for it.
+- [x] A connector with a `secret` field lists `{ "$secret": "<name>" }` for it. Checked on 2026-11-03: an `openrouter` put answered `{"$secret":"host:connector/secret-check/key"}`.
 - [ ] A plugin whose adapter marks a vault field `writeOnly` loads, keeps the value in the vault, and gives one problem line.
-- [ ] `rg -n "writeOnly" packages/*/src` names only plugin options and the `writeOnly` fallback.
+- [x] `rg -n "writeOnly" packages/*/src` names only plugin options and the `writeOnly` fallback. Checked on 2026-11-03.

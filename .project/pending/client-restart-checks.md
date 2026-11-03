@@ -1,34 +1,32 @@
 ---
-title: Check a restart from a client on a real daemon
+title: Check that ahpc connects again after a restart from a client
 plans:
   - plans/daemon/20261030-0635-a-client-restarts-the-daemon/plan.md
 ---
 
-# Check a restart from a client on a real daemon
+# Check that ahpc connects again after a restart from a client
 
-daemon/20261030-0635 is built and its tests pass.
-This run uses a test daemon from `ahpd start` and a client that sends `x-ahpd/restart`.
-It is the plan's final verification checklist.
+daemon/20261030-0635 is on main (#145). On 2026-11-03 a test daemon passed the checks over the protocol. `x-ahpd/restart` restarted it, and while a turn ran it refused and named the session. With `force: true` it restarted. One check is left: a client connects again by itself.
 
 ## Set up
 
-1. Start a test daemon with `ahpd start` from a build that holds the plan.
-2. Connect ahpc to it as the host's own connection.
+```bash
+source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude
+ahpc
+```
 
-## A restart with no turn running
+## Steps
 
-1. Send `x-ahpd/restart` with no params.
-2. Make sure that the answer is `{ restarting: true, pid }`.
-3. Make sure that the daemon restarts and the client connects again.
+1. In a second terminal, restart the test daemon from a client:
 
-## A restart while a turn runs
+```bash
+node /github/ahpd.worktrees/pending-check/.project/pending/rpc.mjs x-ahpd/restart '{}'
+```
 
-1. Start a long turn in a session.
-2. Send `x-ahpd/restart` with no params.
-3. Make sure that the refusal names the session and says `force: true`.
-4. Send `x-ahpd/restart` with `force: true`.
-5. Make sure that the daemon restarts.
+2. Check that it prints `{"restarting":true,"pid":...}`.
+3. Check that ahpc in the first terminal connects again, with no key pressed.
+4. Close ahpc, and stop the test daemon with `ahpd stop`.
 
 ## Reply
 
-Write "pass" for each section, or what you saw.
+Write "pass", or what you saw.

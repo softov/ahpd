@@ -13,15 +13,40 @@ This workstation must also reach the node's VM network, directly or through a bo
 ## Steps
 
 1. Name the node, its storage for VM disks, and its bridge, for example `pve`, `local-lvm` and `vmbr0`.
-2. On the node, make a template VM called `ahpd-template` from the Debian 13 cloud image.
-3. Give the template a cloud-init drive, and install `qemu-guest-agent` in it.
-4. Make a user for ahpd: `pveum user add ahpd@pve`.
-5. Give it the VM role on the node: `pveum aclmod / -user ahpd@pve -role PVEVMAdmin`.
-6. Give it the storage: `pveum aclmod /storage/local-lvm -user ahpd@pve -role PVEDatastoreUser`.
-7. Give it the bridge: `pveum aclmod /sdn/zones/localnetwork -user ahpd@pve -role PVESDNUser`.
-8. Make its token: `pveum user token add ahpd@pve ahpd --privsep 0`, and keep the secret it prints.
-9. Put the secret in the vault of a test ahpd, from standard input: `ahpd vault set host:proxmox`.
-10. If the node's certificate is its own, copy `/etc/pve/pve-root-ca.pem` from the node to this workstation.
+2. On the node, make the template `ahpd-template` from the Debian 13 cloud image, with `qemu-guest-agent` and a cloud-init drive. Put your storage and bridge in place of `local-lvm` and `vmbr0`:
+
+```bash
+apt install -y libguestfs-tools
+wget https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+virt-customize -a debian-13-genericcloud-amd64.qcow2 --install qemu-guest-agent
+qm create 9000 --name ahpd-template --memory 2048 --net0 virtio,bridge=vmbr0 --agent enabled=1
+qm importdisk 9000 debian-13-genericcloud-amd64.qcow2 local-lvm
+qm set 9000 --scsihw virtio-scsi-pci --scsi0 local-lvm:vm-9000-disk-0 --ide2 local-lvm:cloudinit --boot order=scsi0 --serial0 socket --vga serial0
+qm template 9000
+```
+
+3. On the node, make the user, its rights and its token, and keep the secret it prints. Put your storage and bridge zone in place of `local-lvm` and `localnetwork`:
+
+```bash
+pveum user add ahpd@pve
+pveum aclmod / -user ahpd@pve -role PVEVMAdmin
+pveum aclmod /storage/local-lvm -user ahpd@pve -role PVEDatastoreUser
+pveum aclmod /sdn/zones/localnetwork -user ahpd@pve -role PVESDNUser
+pveum user token add ahpd@pve ahpd --privsep 0
+```
+
+4. On this workstation, put the secret in the test daemon's vault. It reads the secret from standard input:
+
+```bash
+source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude computer
+ahpd vault set host:proxmox
+```
+
+5. If the node's certificate is its own, copy it here:
+
+```bash
+scp root@<node>:/etc/pve/pve-root-ca.pem ~/ahpd-check/pve-root-ca.pem
+```
 
 ## Reply
 

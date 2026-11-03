@@ -6,15 +6,18 @@ plans:
 
 # Check the dev container route in VS Code on Windows
 
-container/02 waits on this run. VS Code on Windows connects to ahpd on Linux through a dev tunnel, and makes a dev container there. The last try, on 2026-09-26, stopped because the tunnel did not show in VS Code. The tunnel labels match VS Code's, so the likely cause is a tunnel made under another account.
+container/02 waits on this run. VS Code on Windows connects to your daemon through a Dev Tunnel, and makes a dev container on this Linux host. The last try, on 2026-09-26, stopped because the tunnel did not show in VS Code. Since 184ca4c8 the tunnel runs on the Dev Tunnels SDK and signs in with a `devtunnel` connector, not the `devtunnel` CLI.
 
 ## Set up
 
-1. On the Linux host, run `devtunnel user login` with the provider and the account that VS Code on Windows is signed in with.
-2. Install the Dev Containers CLI and Docker on the Linux host, and check that `devcontainer --version` and `docker ps` both answer.
-3. Add `@ahpd/tunnel-devtunnel` and `@ahpd/computer` to the daemon's plugins, then run `ahpd restart`. The computer plugin holds the dev container launcher.
-4. Run `ahpd status`, and check that it shows the tunnel.
-5. In VS Code 1.140 on Windows, check that `chat.remoteAgentHostsEnabled` and `chat.agentHost.devContainer.enabled` are on.
+1. Do [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md) and [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) first. Sign in with the GitHub account that VS Code on Windows uses.
+2. On this host, check the tools. `devcontainer` and `docker` are installed here:
+
+```bash
+devcontainer --version && docker ps
+```
+
+3. In VS Code on Windows, turn on `chat.remoteAgentHostsEnabled` and `chat.agentHost.devContainer.enabled`.
 
 ## The tunnel shows in VS Code
 
@@ -23,7 +26,7 @@ container/02 waits on this run. VS Code on Windows connects to ahpd on Linux thr
 
 ## The folder offers "Use Dev Container"
 
-1. In New, pick the `.scratch/devc-work` folder on the Linux host. It has a `devcontainer.json`.
+1. In New, pick `/github/ahpapp/.scratch/devc-work` on the Linux host. It has a `devcontainer.json`.
 2. Check that the workspace picker shows "Use Dev Container".
 
 ## The first send makes the container
@@ -45,9 +48,9 @@ container/02 waits on this run. VS Code on Windows connects to ahpd on Linux thr
 ## If a step fails
 
 1. Copy VS Code's Agent Host output log.
-2. Copy the lines with `vscode/devContainers/isDockerAvailable` from the daemon log.
+2. Copy the lines with `vscode/devContainers/isDockerAvailable` from the daemon's terminal.
 3. Add both to your reply.
 
 ## Reply
 
-Write "pass" for each section, or what you saw. A pass ticks the matching line in the plan.
+Write "pass" for each section, or what you saw.

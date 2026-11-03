@@ -31,10 +31,15 @@ The plan host/20261030-1037 ships Portuguese and Spanish text for the new sessio
 
 ## In a client
 
-1. Start a test daemon on this build, with its own XDG_CONFIG_HOME and XDG_STATE_HOME.
-2. Set ahpw to Portuguese.
-3. Open the new session form, and read the host's keys and the agent's keys.
-4. Open the plugins screen, and read each first-party plugin's title, description and options.
+```bash
+source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude agent-cofold agent-pi agent-acp bot computer push tasks tunnel-devtunnel webhook activepieces
+ahpd plugin install @ahpd/web && ahpd restart
+```
+
+1. Open http://127.0.0.1:39200/plugins/web/, sign in with `check-token`, and set ahpw to Portuguese.
+2. Open the new session form, and read the host's keys and the agent's keys.
+3. Open the plugins screen, and read each first-party plugin's title, description and options.
+4. Stop the test daemon with `ahpd stop`.
 
 ## Reply
 

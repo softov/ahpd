@@ -6,15 +6,17 @@ plans:
 
 # Check daemon/31 under systemd and launchd
 
-daemon/31 is implemented, and its tests pass against a fake service manager. This run checks `ahpd service` with a real systemd user session on Debian and a real launchd on macOS. Tasks 03 and 04 name these checks in their Validation, and the plan names them in its final checklist.
+daemon/31 is on main. Its tests use a fake service manager. Debian passed on 2026-10-20. macOS with a real launchd is left.
 
 ## Set up
 
-1. Clone `git@github.com:softov/ahpd.git` at `main`, then run `pnpm install` and `pnpm build`.
-2. Run `ahpd stop`, so no daemon from `ahpd start` runs.
-3. Log in as a user with a desktop or SSH session, not as root.
+On the Mac, as your own user, not root:
 
-Below, `ahpd` means `node packages/server/dist/main.js` in the clone. The published 0.12.0 has no `ahpd service`.
+```bash
+git clone git@github.com:softov/ahpd.git ~/ahpd-check && cd ~/ahpd-check && pnpm install && pnpm build
+alias ahpd="node $HOME/ahpd-check/packages/server/dist/main.js"
+ahpd stop
+```
 
 ## Debian results
 
@@ -47,9 +49,9 @@ Softov ran the Debian sections on 2026-10-20. The log is in `/home/softov/projec
 
 1. Run `ahpd restart`.
 2. Check that `ahpd status` shows a new pid.
-3. Check that `pgrep -fa dist/main.js` shows one daemon process.
+3. Check that `pgrep -fl dist/main.js` shows one daemon process.
 4. Run `ahpd stop`.
-5. Check that `ahpd status` says `None running.`, and that `pgrep -fa dist/main.js` shows nothing.
+5. Check that `ahpd status` says `None running.`, and that `pgrep -fl dist/main.js` shows nothing.
 
 ## macOS: uninstall leaves nothing
 
@@ -57,7 +59,7 @@ Softov ran the Debian sections on 2026-10-20. The log is in `/home/softov/projec
 2. Check that `~/Library/LaunchAgents/dev.ahpd.daemon.plist` is gone.
 3. Check that `~/.config/ahpd/daemon.json` is gone.
 4. Check that `launchctl print gui/$(id -u)/dev.ahpd.daemon` finds no service.
-5. Check that `pgrep -fa dist/main.js` shows nothing.
+5. Check that `pgrep -fl dist/main.js` shows nothing.
 
 ## Reply
 

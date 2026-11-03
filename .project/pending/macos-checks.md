@@ -9,18 +9,23 @@ Nobody has run ahpd on macOS. These checks cover what differs from Linux: the in
 
 ## Set up
 
-1. Install Node 22 or later, pnpm, and ahpc with `npm i -g @softov/ahpc`.
-2. Clone `git@github.com:softov/ahpd.git` and check out `main`.
-3. Run `pnpm install` and `pnpm build`. Write down any error from `node-pty`.
-4. Write a token to a file: `echo chk-token > /tmp/ahpd-token`.
-5. Use a config folder of its own: `export XDG_CONFIG_HOME=/tmp/ahpd-chk`.
-6. Run `ahpd paths add <folder>`, then add `<clone>/packages/agent-claude/dist/index.js` to `"plugins"` in `/tmp/ahpd-chk/ahpd/config.json`.
+On the Mac:
 
-Below, `ahpd` means `node packages/server/dist/main.js`.
+```bash
+npm i -g @softov/ahpc
+git clone git@github.com:softov/ahpd.git ~/ahpd-check && cd ~/ahpd-check && pnpm install && pnpm build
+echo check-token > /tmp/ahpd-token
+export XDG_CONFIG_HOME=/tmp/ahpd-chk
+alias ahpd="node $HOME/ahpd-check/packages/server/dist/main.js"
+mkdir -p ~/ahpd-work && git -C ~/ahpd-work init -q && ahpd paths add ~/ahpd-work
+node -e 'const fs=require("fs"),f="/tmp/ahpd-chk/ahpd/config.json",c=JSON.parse(fs.readFileSync(f,"utf8"));c.plugins=[process.env.HOME+"/ahpd-check/packages/agent-claude"];fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
+```
+
+Write down any error from `node-pty` in `pnpm install`.
 
 ## The install from npm
 
-1. In a clean shell, run `npm i -g @ahpd/server`.
+1. In a new shell, without the alias and the `XDG_CONFIG_HOME` of *Set up*, run `npm i -g @ahpd/server`.
 2. Run `ahpd --version`.
 3. Run `ahpd configure`, and choose the three agent plugins.
 4. Check that each plugin is in `~/.config/ahpd/node_modules`, and that `ahpd plugin list` shows each one loaded.

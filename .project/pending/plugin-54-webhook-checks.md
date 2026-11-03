@@ -6,12 +6,19 @@ plans:
 
 # Check a webhook against real senders
 
-plugin/54 is merged in PR 67, and its tests pass. These checks need a daemon on this build, and a GitHub repository and a Slack app that can reach it. `docs/plugins/WEBHOOKS.md` gives each connector's fields.
+plugin/54 is on main (PR 67). These checks need a GitHub repository and a Slack app that reach your daemon. `docs/plugins/WEBHOOKS.md` gives each connector's fields.
 
-## Before the checks
+## Set up
 
-1. Rewrite the stored `hook-test` connector to the new form, as the plan's resume state says.
-2. Make the daemon's webhook port reachable from GitHub and Slack, as "A public port" in `docs/plugins/WEBHOOKS.md` says.
+The stored `hook-test` connector is already in the new form: its config holds `bot`, `reply` and `secret`.
+
+1. Make the daemon's webhook port reachable from GitHub and Slack, as "A public port" in `docs/plugins/WEBHOOKS.md` says.
+2. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## GitHub
 
@@ -48,4 +55,4 @@ plugin/54 is merged in PR 67, and its tests pass. These checks need a daemon on 
 
 ## Reply
 
-Write "pass", or what you saw. A pass ticks the matching line in the plan.
+Write "pass" for each section, or what you saw.

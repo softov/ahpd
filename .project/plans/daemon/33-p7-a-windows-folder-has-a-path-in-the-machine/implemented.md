@@ -33,7 +33,7 @@ On Linux and macOS the pair is the path itself, so nothing changes there.
 
 - On Softov's Windows machine, 2026-10-19: the computer suite passed 397 with 53 skipped, each skip POSIX by nature with its reason; the full unit suite, `pnpm -s typecheck` and `pnpm -s boundary` passed.
 - On a Windows 10 VM with Docker Desktop 29.9.1, 2026-10-20: the 38 real-Docker cases of the three `computer-git-` files pass; before tasks 07 and 08, 17 of 37 failed.
-- The same VM, by hand, with `ahpc` 0.9.0 and the scripted ACP agent in a disposable `node:22` machine on `C:\work\demo`: the machine works at `/c/work/demo`, the files the agent and a command in the machine wrote are on Windows, `git status` in the machine names only them, and the session's changes list both. The results are in [`.project/pending/windows-machine-paths-checks.md`](../../../pending/windows-machine-paths-checks.md).
+- The same VM, by hand, with `ahpc` 0.9.0 and the scripted ACP agent in a disposable `node:22` machine on `C:\work\demo`: the machine works at `/c/work/demo`, the files the agent and a command in the machine wrote are on Windows, `git status` in the machine names only them, and the session's changes list both. The results are in *Results on Windows, 2026-10-20*.
 - PR #43's CI run passed every job, `check-windows` with 5780 cases, and Softov merged it on 2026-10-20 and chose to close the plan.
 
 ## Departures from the plan
@@ -45,3 +45,16 @@ On Linux and macOS the pair is the path itself, so nothing changes there.
 
 - A turn in which an ACP agent opens a terminal fails in the hand check, because the terminal runs on the host; that is [acp/19](../../acp/19-a-terminal-in-a-machine-runs-in-the-machine/plan.md), and the hand check's terminal turn is run again when it is built.
 - The rest is in [deferred.md](deferred.md).
+
+## Results on Windows, 2026-10-20
+
+Run on a Windows 10 Pro 22H2 VM with Docker Desktop 29.9.1 (WSL 2), Git for Windows 2.56 with its default `core.autocrlf=true`, and Node 22.23.3, from a build of the branch that holds daemon/33 p7 tasks 07 and 08 on `main` at `8826a4be`.
+The session was driven with `ahpc` 0.9.0 instead of VS Code, in a disposable machine of a `node:22` profile with `sessionFolder`, with the scripted ACP agent of `packages/agent-acp/test/fixtures/acp-server.mjs` as the agent.
+
+- **How Docker Desktop names the folder:** the bind whose `Destination` is `/c/work/demo` showed `Source` `/run/desktop/mnt/host/c/work/demo` in two runs and `C:\work\demo` in another, from the same config. A plain `docker run -v 'C:\work\demo:/c/work/demo'` showed `C:\work\demo`.
+- **A turn runs in the folder:** pass, apart from a turn that opens a terminal.
+  - The machine works at `/c/work/demo`.
+  - A file the agent wrote through `fs/write_text_file`, and one a command in the machine wrote, are in `C:\work\demo` on Windows.
+  - `git status` in the machine names only those two files: the CRLF `README.md`, `0777` in the machine, is clean. Before task 07 it showed ` M README.md`.
+  - The session's changes list both files as new.
+  - A turn that opens a terminal fails: an ACP agent's `terminal/create` runs on the host, where `/c/work/demo` is no folder (`Cannot create process, error code: 267`). That is [acp/19](../../acp/19-a-terminal-in-a-machine-runs-in-the-machine/plan.md), and the `paint` turn is checked again when it is built.

@@ -6,13 +6,20 @@ plans:
 
 # Check each Activepieces piece with a real account
 
-Plugin/50 ships fourteen pieces as adapters, and the tests load each piece and check its adapter. A call to a real service needs a key and a receiving account, which the build machine does not have.
+plugin/50 is on main. It ships fourteen pieces as adapters, and its tests load each piece. Each check below needs a real account of that service. Do the sections you have accounts for.
 
 ## Set up
 
-1. Set the plugin's `pieces` option to the packages of the pieces to check, in the daemon's configuration file.
-2. Restart the daemon, and check its log names no piece error.
-3. Check that a client lists an `ap-` adapter for each package.
+Your `config-dev.json` already names all fourteen pieces in the activepieces options.
+
+1. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
+
+2. Check that the daemon's terminal shows no piece error, and that ahpw's connectors page offers an `ap-` adapter for each piece.
 
 ## Resend
 

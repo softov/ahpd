@@ -6,16 +6,23 @@ plans:
 
 # Check daemon/41 on Windows
 
-daemon/41 is built, and its cases pass on Linux, the Windows branch among them, against a stand-in of Bun.
+daemon/41 is on main. Its cases pass on Linux against a stand-in of Bun.
 This run checks the binding with a real Bun on Windows.
 Bun 1.3.14 makes a ConPTY there, and Bun 1.3.13 makes no terminal on Windows.
 
 ## Set up
 
-1. Check out the plan's branch, or `main` once it is merged.
-2. Run `pnpm install` and `pnpm build`.
-3. Get `bun.exe` of Bun 1.3.14 or later, and of Bun 1.3.13, from each release's `bun-windows-x64.zip` on GitHub.
-4. Save this script as `check.mjs` in the checkout:
+In PowerShell on Windows:
+
+```powershell
+git clone git@github.com:softov/ahpd.git $HOME\ahpd-check; cd $HOME\ahpd-check; pnpm install; pnpm build
+foreach ($v in '1.3.14','1.3.13') {
+  Invoke-WebRequest "https://github.com/oven-sh/bun/releases/download/bun-v$v/bun-windows-x64.zip" -OutFile "bun-$v.zip"
+  Expand-Archive "bun-$v.zip" -DestinationPath "bun-$v" -Force
+}
+```
+
+Save this script as `check.mjs` in `$HOME\ahpd-check`:
 
 ```js
 const { pty } = await import('./packages/server/dist/pty.js');
@@ -41,9 +48,9 @@ setTimeout(() => long.kill(), 1000);
 console.log('kill with no signal:', JSON.stringify(await ended));
 ```
 
-## Bun 1.3.14 or later: Bun's own terminal
+## Bun 1.3.14: Bun's own terminal
 
-1. Run `bun.exe check.mjs` with Bun 1.3.14 or later.
+1. Run `.\bun-1.3.14\bun-windows-x64\bun.exe check.mjs`.
 2. Check that the first line ends with `Bun's own terminal`.
 3. Check that `cmd.exe line:` shows `3 true`, so `cmd.exe` got its line as written.
 4. Check that `PowerShell argv:` shows `4 true`.
@@ -52,13 +59,17 @@ console.log('kill with no signal:', JSON.stringify(await ended));
 
 ## Bun 1.3.13: pipes
 
-1. Run `bun.exe check.mjs` with Bun 1.3.13.
+1. Run `.\bun-1.3.13\bun-windows-x64\bun.exe check.mjs`.
 2. Check that the line shows `1.3.13 pipes`.
 
-## The daemon on Bun 1.3.14 or later
+## The daemon on Bun 1.3.14
 
-1. Start the daemon with `bun packages/server/dist/main.js`.
+1. Start the daemon with `.\bun-1.3.14\bun-windows-x64\bun.exe packages/server/dist/main.js`.
 2. Open a terminal from a client, such as VS Code's agent host.
 3. Check that the client draws the shell's prompt.
 4. Run `ping -t 127.0.0.1`, and check that `^C` stops it.
 5. Close the terminal, and check in Task Manager that its shell is gone.
+
+## Reply
+
+Write "pass" for each section, or what you saw.

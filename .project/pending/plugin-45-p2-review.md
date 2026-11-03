@@ -6,26 +6,45 @@ plans:
 
 # Review the bot record store
 
-I ran the three checks on a second daemon on 2026-10-13, over the protocol and not in ahpapp. Steps 1 and 3 pass. Step 2 fails in two ways.
+A bot is a `.md` file under `~/.config/ahpd/bots/`. Two checks by hand and one choice are left.
 
-## Results
+## Set up
 
-1. **Pass over the protocol.** I changed a bot's description in its `.md` file. The next read gives the new text, with no restart. The bot's `updatedAt` does not change, so a client that compares it does not see the edit.
-2. **Fail.** I changed `owner` in a bot file by hand. The daemon keeps the old owner, but the log shows no line. After a restart, the bot has the new owner. See [the problem](../problems/a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md).
-3. **Pass.** A deleted bot's file goes, and a make with the same slug is refused with `-32010`.
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
 
-## Your choice for step 2
-
-After a restart, the store has only the file to read. To keep the owner, the true owner must be kept where a file edit does not reach, such as the host's records. The other way is to accept the file as the truth after a restart, and log the change. Tell me which you want.
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## Check by hand
 
-Softov edited a bot's information in ahpw on 2026-10-20, and the bot's file took the change. That is the edit from the screen to the file. The two checks below go the other way, or delete.
+1. In ahpw, open a bot.
+2. Change its `description` in its file, with the bot's slug in place of `<slug>`:
 
-1. In ahpapp or ahpw, open a bot, then change its description in the file. The screen shows the change without a restart.
-2. In ahpapp or ahpw, delete a bot. It goes from the list.
+```bash
+${EDITOR:-nano} ~/.config/ahpd/bots/<slug>.md
+```
+
+3. Check that ahpw shows the new description without a restart.
+4. In ahpw, delete a test bot, and check that it leaves the list.
+
+## Your choice: the owner after a restart
+
+The daemon ignores a hand edit of `owner` in a bot file until a restart. After a restart the bot has the new owner, with no log line. See [the problem](../problems/a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md).
+
+- Keep the owner in the host's records, where a file edit does not reach.
+- Or take the file as the truth after a restart, and log the change.
 
 ## Reply
 
-- Write "pass" or what you saw for the two checks.
-- Say how the owner is kept after a restart.
+- Write "pass" or what you saw for the check by hand.
+- Say which way the owner is kept.
+
+## Earlier results
+
+On a second daemon on 2026-10-13, over the protocol:
+
+1. **Pass.** A changed description in the `.md` file reads back at once. The bot's `updatedAt` does not change.
+2. **Fail.** A hand edit of `owner` is ignored until a restart, then taken, with no log line.
+3. **Pass.** A deleted bot's file goes, and a make with the same slug is refused with `-32010`.

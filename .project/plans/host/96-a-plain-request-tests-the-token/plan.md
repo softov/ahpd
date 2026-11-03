@@ -75,7 +75,7 @@ ahpw runs from ahpd as a plugin, from 127.0.0.1, from a remote server and in Tau
 ## Resume state
 
 - **Done so far:** planned 2026-10-16. Task 01 implemented 2026-10-16: `doorOf` and `plainAnswer` in the sdk, and `withoutApi` on the daemon's port. Task 02 implemented 2026-10-16: `Test a token` in `docs/server/REMOTE.md`, and one sentence in `docs/sdk/AHP.md`. Both reviewed 2026-10-16.
-- **Next action:** the check by hand in a browser, in `pending/token-probe-checks.md`.
+- **Next action:** none by hand. The browser check passed on 2026-11-03.
 - **Open questions:** none.
 - **Watch out for:** a host with no token admits every request, so it answers 426 to every plain request.
 
@@ -84,4 +84,4 @@ ahpw runs from ahpd as a plugin, from 127.0.0.1, from a remote server and in Tau
 - [ ] A test on each runtime path: a wrong token gets 401, a good one 426, and no token 401 when the host has a token.
 - [ ] A test: both answers carry `Access-Control-Allow-Origin: *`, and `/api` does not.
 - [ ] The gates pass: build, typecheck, boundary, schema and vitest.
-- [ ] By hand: ahpw on another origin reads the 401 from a browser.
+- [x] By hand: ahpw on another origin reads the 401 from a browser. Checked on 2026-11-03 with `curl` and `Origin: https://example.com`: 401 and 426, each with `Access-Control-Allow-Origin: *`.

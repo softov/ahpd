@@ -6,21 +6,36 @@ plans:
 
 # Check that the Dev Tunnel plugin shows its state
 
-The plan `plugin/20261031-1200-a-plugin-shows-its-state` merged in #175, and its tests pass. The `show` fixtures come from the field names, not from a captured answer. These checks need a machine with the `devtunnel` CLI, signed in.
+plugin/20261031-1200 is on main (#175). The Dev Tunnel plugin's row carries `views.main` with the tunnel's state. Since 184ca4c8 the plugin runs on the Dev Tunnels SDK, with no `devtunnel` CLI. Do [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) first, so a tunnel runs.
 
 ## Set up
 
-1. Start a test ahpd from main with the Dev Tunnel plugin, with `XDG_CONFIG_HOME` and `XDG_DATA_HOME` set to scratch folders.
-2. Keep a client open that reads the `x-ahpd-plugins` channel.
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
+
+In a second terminal:
+
+```bash
+export AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.vscode/cli/agent-host-token
+rpc() { node /github/ahpd/.project/pending/rpc.mjs "$@"; }
+```
 
 ## Steps
 
-1. Run `devtunnel show <id> --json` on the plugin's tunnel, and keep the output for the fixtures. Passed on 2026-10-31 with CLI 1.0.2094: the answer matches the parser, and PR #178 adds it as a fixture.
-2. Read `views.main` on the plugin's row. Expect the address, tunnel id, port, relay state and client count.
-3. Connect a client through the tunnel, and wait 30 seconds. Expect the client count to go up.
-4. Stop the tunnel. Expect `views.main` to be gone from the row.
-5. Start the tunnel, and cut the network for one poll. Expect the last view to stay.
+1. Read the plugin rows. Check that `views.main` of `tunnel-devtunnel` shows the address, tunnel id, port, relay state and client count:
+
+```bash
+rpc subscribe '{"channel":"x-ahpd-plugins://"}' | grep -o '"views":.\{0,600\}'
+```
+
+2. Connect a client through the tunnel, wait 30 seconds, and read the rows again. Check that the client count went up.
+3. Disable the tunnel in ahpw, and read the rows again. Check that `views.main` is gone.
+4. Enable the tunnel, turn off the network for one minute, and read the rows again. Check that the last view stayed.
 
 ## Reply
 
-- Write "ok", or what went wrong at which step.
+Write "pass", or say which step stopped.

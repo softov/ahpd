@@ -6,24 +6,33 @@ plans:
 
 # Check an OpenRouter sign-in
 
-Plan plugin 71 signs a connector in to OpenRouter. Its tests use a fake provider and no network. This check needs your daemon, a real OpenRouter account and the network.
-Restart the daemon on main before you start.
-Do these checks from a terminal that is not a Claude Code session.
-The Connect button in ahpw is its own plan. Until it lands, call the two commands from a client.
+plugin/71 is on main, and ahpw main has the sign-in button. A connector of the `openrouter` adapter signs in to OpenRouter. This check needs a real OpenRouter account.
+
+## Set up
+
+Run this from a terminal that is not a Claude Code session.
+
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## Steps
 
-1. Start a sign-in with `x-ahpd/connectors/signin` for a connector of the `openrouter` adapter.
-2. Open the URL it answered, sign in to OpenRouter, and copy the code the page shows.
-3. Finish with `x-ahpd/connectors/signin-finish`, the state and the code.
-4. Check that the answer is the connector row with `state: "ready"`.
-5. Check that the vault holds the key under `connector/<id>/key` in the owner's scope.
-6. Check that the connector's record holds a `$secret` reference and no key.
-7. Check that the daemon log, the answer and every row show no code and no key.
-8. Finish the sign-in from step 1 again with the same state and code. Check that the host refuses it.
-9. Ask the proxy for a model through the connector, and check that the call works.
-10. When ahpw has the Connect button, do steps 1 to 3 from that button, and check the same rows.
+1. In ahpw, add a connector of the `openrouter` adapter, and press the sign-in button.
+2. Sign in to OpenRouter on the page it opens.
+3. Check that the connector row is `ready`.
+4. Check the record, with the connector's id in place of `<id>`. Expect a `$secret` reference and no key:
+
+```bash
+cat ~/.config/ahpd/connectors/<id>.json
+```
+
+5. Check that the daemon's terminal, the answers and every row show no code and no key.
+6. Call a model through the connector, as [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) step 2 does, and check that the call works.
 
 ## Reply
 
-Write "done" when each step works, or say which step stopped.
+Write "pass", or say which step stopped.

@@ -6,23 +6,26 @@ plans:
 
 # Engines replace agent kinds
 
-Host 123 tasks 02 and 03 are on main and not committed.
-Task 03 renames the agent record field `kind` to `engine`, and the daemon reads a record with `kind` as `unavailable`.
-Your three records in `~/.config/ahpd/agents/` still say `kind`.
-ahpw plugins 08 task 05 is on ahpw main and not committed, and it reads `x-ahpd-engines`. Run ahpw from that tree for steps 6 to 8.
-Do these checks from a terminal that is not a Claude Code session.
+host/123 is on main. Every record in `~/.config/ahpd/agents/` already says `engine` and no `kind`. ahpw main reads `x-ahpd-engines`.
+
+## Set up
+
+Run this from a terminal that is not a Claude Code session.
+
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## Steps
 
-1. Stop the daemon.
-2. In each file in `~/.config/ahpd/agents/`, rename the key `kind` to `engine`.
-3. Start the daemon on main.
-4. Check that its log has no line "names no engine".
-5. List the agents in a client, and check that no agent is `unavailable`.
-6. Open the agents page in ahpw, and check that each engine shows its icon.
-7. Check that page in light and dark.
-8. Add an agent from an engine, and send it one turn.
+1. Check that the daemon's terminal shows no line with `names no engine`.
+2. List the agents in a client, and check that no agent is `unavailable`.
+3. Open the agents page in ahpw, and check that each engine shows its icon, in light and in dark.
+4. Add an agent from an engine, and send it one turn.
 
 ## Reply
 
-Write "done" when each step works, or say which step stopped.
+Write "pass", or say which step stopped.

@@ -6,20 +6,26 @@ plans:
 
 # Agents are records after the first start
 
-Host 122 is merged in #89, and the plan closes after these checks.
-Do them after the restart of your daemon, from a terminal that is not a Claude Code session.
+host/122 is on main (#89). The move is done: `~/.config/ahpd/agents/` holds 18 records, and `config-dev.json.bak-2026-10-24T22-18-21-373Z` is next to the configuration file. The turns are left.
+
+## Set up
+
+Run this from a terminal that is not a Claude Code session.
+
+Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+
+```bash
+cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
+node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
+```
 
 ## Steps
 
-1. Restart your daemon on main.
-2. Find the line "Moved N presets to agent records" in its log.
-3. Check that `~/.config/ahpd/agents/` holds one file for each preset.
-4. Check that a `config.json.bak-<stamp>` file is next to the configuration file.
-5. List the agents in a client, and find `claude-deepseek-build` and the others.
-6. Start a build session on `claude-deepseek-build`, and send one turn.
-7. Add a second agent-cofold record, and send it one turn.
-8. Change the key of a record while its session runs, and send one more turn.
+1. List the agents in a client, and find `claude-deepseek-build` and the others.
+2. Start a session on `claude-deepseek-build`, and send one turn.
+3. Add a second agent-cofold record in ahpw, and send it one turn.
+4. Change the key of a record in ahpw while its session runs, and send one more turn.
 
 ## Reply
 
-Write "done" when each step works, or say which step stopped.
+Write "pass", or say which step stopped.

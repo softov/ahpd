@@ -102,13 +102,14 @@ curl | bash -> install.sh -> node >= 22 -> npm prefix -> npm install -g @ahpd/se
 ## Resume state
 
 - **Done so far:** the proposal and the research, 2026-10-15. Task 04 and its answers, 2026-10-16. Tasks 01 to 04 written 2026-10-19. Tasks 01, 02 and 04 implemented 2026-10-19: `scripts/install/install.sh`, `scripts/install/install.ps1`, their tests in `scripts/install/test/`, the `install` and `install-windows` CI jobs, and the Uninstall section of `docs/server/INSTALL.md`. Task 03 implemented 2026-10-19 in the ahpio-site worktree `/github/ahpio-site.worktrees/ahpd-27-install-scripts`, branch `ahpd/27-install-scripts`. The build step writes `public/ahpd/install.sh` and `install.ps1` from the newest `v*` tag. The three language catalogues show the one line, and INSTALL.md and GET-STARTED.md lead with it.
-- **Next action:** run [the site checks](../../../pending/daemon-27-install-site-checks.md), which include the curl check after deploy. No task in this plan is `todo`.
+- **Next action:** the clean installs in *Final verification checklist*. The site checks passed on 2026-11-03. No task in this plan is `todo`.
 - **Open questions:** none. The tag `v0.14.0` contains `scripts/install/`.
 - **Note:** `NVM_INSTALL_URL` is pinned to `v0.40.8`, the latest nvm release on 2026-10-19. The task files say `ahpd service` reports a service, and the CLI has no such verb. The uninstall reads the daemon/31 service file, or the `service` field in `ahpd status --json`, and then runs `ahpd service uninstall`.
 - **Watch out for:** `irm | iex` cannot pass parameters, so each flag needs an environment twin. Under `iex`, `exit` closes the person's window; use `throw`. A container often has no `SHELL`, so the shell name falls back to `~/.profile`.
 
 ## Final verification checklist
 
+- [x] ahpio.com serves `/ahpd/install.sh` and `/ahpd/install.ps1` with 200, equal to `v0.14.0`, and its three home pages and the install docs lead with the one line. Checked on 2026-11-03.
 - [ ] The script installs on a clean Debian, a clean macOS and a clean Windows.
 - [ ] A second run upgrades and does not add a second PATH line.
 - [x] `plans/index.md` updated.

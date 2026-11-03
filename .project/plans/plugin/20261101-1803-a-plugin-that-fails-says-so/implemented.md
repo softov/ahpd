@@ -25,7 +25,7 @@ A plugin that the daemon enables while it runs now hears `listening`, and one it
 - `tunnel-devtunnel`: 42 tests pass.
 - `server`: 1729 tests pass, with `plugin-live.test.ts` at 18.
 - `sdk`: 3900 tests pass. One fails, `users-gate-commands.test.ts` on usage pools, and it fails the same way on a tree without this change.
-- The by-hand checks wait on Softov in [`plugin-fails-says-so-checks.md`](../../../pending/plugin-fails-says-so-checks.md).
+- The by-hand checks used the `devtunnel` CLI, which git://184ca4c8 removed. They are not run, and the tunnel is checked by plugin/20261102-1122 now.
 
 ## Departures from the plan
 

@@ -1,56 +1,27 @@
 ---
-title: Check host/83 in VS Code's window
+title: Check host/104, host/105 and host/99 in VS Code's window
 plans:
+  - plans/host/104-a-session-switch-on-a-builtin-stays/plan.md
+  - plans/host/105-a-synced-skill-is-named-by-its-plugin/plan.md
+  - plans/host/99-a-client-sees-the-agent-account/plan.md
   - plans/host/83-p1-the-host-describes-itself/plan.md
-  - plans/host/83-p2-a-run-is-stopped-and-runs-are-capped/plan.md
-  - plans/host/83-p3-a-remote-session-keeps-its-origin/plan.md
-  - plans/host/83-p4-customization-switched-for-all-sessions/plan.md
 ---
 
-# Check host/83 in VS Code's window
+# Check host/104, host/105 and host/99 in VS Code's window
 
-host/83 p1 to p4 are implemented, and their tests pass. Each one has one check that only VS Code's window can do. Use VS Code 1.140 or later.
+host/83 p1 to p4 passed on Windows on 2026-10-16, see *Results on Windows, 2026-10-16*. Three window checks of later plans are left. Use VS Code 1.140 or later, on this Linux machine.
 
 ## Set up
 
-1. Clone `git@github.com:softov/ahpd.git` at `main`, then run `pnpm install` and `pnpm build`.
-2. Write a token to a file: `echo chk-token > /tmp/ahpd-token`.
-3. Use a config folder of its own: `export XDG_CONFIG_HOME=/tmp/ahpd-chk`.
-4. Run `ahpd paths add <folder>`, then add `<clone>/packages/agent-claude/dist/index.js` to `"plugins"` in `/tmp/ahpd-chk/ahpd/config.json`.
-5. Run `ahpd start --port 39111 --connection-token-file /tmp/ahpd-token`.
-6. In VS Code's `settings.json`, set `"chat.remoteAgentHostsEnabled": true` and add `{ "name": "ahpd", "address": "ws://127.0.0.1:39111", "connectionToken": "chk-token" }` to `"chat.remoteAgentHosts"`.
-7. Reload the window, and check that ahpd shows in the Chat view.
+```bash
+source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude agent-acp
+```
 
-Below, `ahpd` means `node packages/server/dist/main.js`.
-
-## p1: the host version in the Output channel
-
-1. Open the Output panel, and choose the Agent Host channel.
-2. Check that the channel shows ahpd's version, the same one `ahpd --version` prints.
-
-## p2: Stop ends a running automation as cancelled
-
-1. Make an automation in the window with a prompt that takes a minute or more, for example "count slowly to 200".
-2. Run it, and press Stop while it runs.
-3. Check that the run shows as cancelled, and that its session is still in the list.
-
-## p3: a session sent from the window reports back
-
-1. Also set `"chat.remoteSessions.tools.enabled": true`, and reload the window.
-2. In a local chat, ask the agent to send a task to the ahpd host. For example: "list the files in the folder on ahpd, and report back".
-3. Check that a new session opens on ahpd and runs the task.
-4. Check that its answer comes back to the local chat that sent it.
-
-## p4: a plugin stays off for all sessions after a restart
-
-1. Open the customizations list for the ahpd host, and switch one plugin off for all sessions.
-2. Open a new session, and check that the plugin is off there.
-3. Run `ahpd restart`, and reload the window.
-4. Open one more session, and check that the plugin is still off.
+Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `settings.json`, set `"chat.remoteAgentHostsEnabled": true`, and reload the window.
 
 ## host/104: Disable (Session) on a built-in plugin stays
 
-1. Open a session on ahpd, and open its customizations list.
+1. Open a session on `ahpd-check`, and open its customizations list.
 2. Choose "Disable (Session)" on `cc-plugin-agents-md`.
 3. Check that the switch stays off and does not flicker back.
 4. Check that the plugin's skills leave the slash list of that session.
@@ -59,20 +30,20 @@ Below, `ahpd` means `node packages/server/dist/main.js`.
 ## host/105: a synced skill is named by its plugin
 
 1. Sync a plugin from the window that has only `.plugin/plugin.json`, such as the Windows run's `advisor` skill.
-2. Open a session on ahpd, and type `/` in the composer.
+2. Open a session on `ahpd-check`, and type `/` in the composer.
 3. Check that the skill is in the slash list once, as `vs-code-synced-data:advisor`, with no number in its name.
 4. Run the skill, and check that it answers.
 
 ## host/99: the account menu shows the Codex account
 
-1. Sign in to Codex on the host with `codex login`, and restart ahpd.
-2. Connect the window to ahpd as the owner.
+1. Sign in to Codex on this machine with `codex login`, and run `ahpd restart`.
+2. Connect the window to `ahpd-check` with `check-token`.
 3. Open the account menu, and check that it shows the Codex account email.
 4. Connect as a guest without `account:read`, and check that the menu shows no email.
 
 ## Reply
 
-Write "pass" for each section, or what you saw. A pass ticks the matching line in the plan.
+Write "pass" for each section, or what you saw. Stop the test daemon with `ahpd stop`.
 
 ## Results on Windows, 2026-10-16
 

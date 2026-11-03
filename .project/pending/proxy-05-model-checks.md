@@ -6,18 +6,42 @@ plans:
 
 # Call a provider's own model and the root paths
 
-Proxy 05 is merged in #88, and the plan closes after these checks.
-Do them after the restart, with the `openrouter` connector from proxy 04 ready.
+proxy/05 is on main (#88). Every model of a provider is callable as `<provider>/<id>`, and the OpenAI paths answer at the root too.
+
+## Set up
+
+Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* turns `httpApi` on. Then, in a second terminal:
+
+```bash
+export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token)
+```
 
 ## Steps
 
-1. Call `GET /models` on the proxy, and find names that start with `openrouter/`.
-2. Check that an `openrouter/` row carries `name`, `context_length` and `pricing`.
-3. Send one chat call to `openrouter/<id>` for a model that is not in the table.
-4. Check that the usage record names the `openrouter` connector and a price.
-5. Point an OpenAI SDK at the proxy's base URL with no `/v1`, and send one chat call.
-6. Point an Anthropic SDK at the same base URL, and send one message.
+1. List the models, and check that an `openrouter/` row has `name`, `context_length` and `pricing`:
+
+```bash
+curl -s http://127.0.0.1:37537/models -H "Authorization: Bearer $AHPD_TOKEN" | head -c 3000
+```
+
+2. Call an `openrouter/` model that is not in `modelProxy.models`, with its name in place of `<model>`:
+
+```bash
+curl -s http://127.0.0.1:37537/v1/chat/completions -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"<model>","messages":[{"role":"user","content":"Say ok."}]}'
+```
+
+3. Call the same model on the root path, as an OpenAI SDK with no `/v1` does:
+
+```bash
+curl -s http://127.0.0.1:37537/chat/completions -H "Authorization: Bearer $AHPD_TOKEN" -H 'Content-Type: application/json' -d '{"model":"<model>","messages":[{"role":"user","content":"Say ok."}]}'
+```
+
+4. Send one message as an Anthropic SDK does, to a `claude` model from the list:
+
+```bash
+curl -s http://127.0.0.1:37537/v1/messages -H "x-api-key: $AHPD_TOKEN" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' -d '{"model":"<claude model>","max_tokens":50,"messages":[{"role":"user","content":"Say ok."}]}'
+```
 
 ## Reply
 
-Write "done" when the calls work, or say which step stopped.
+Write "pass", or say which step stopped.

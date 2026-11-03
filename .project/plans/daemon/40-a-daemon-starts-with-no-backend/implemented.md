@@ -26,7 +26,7 @@ A daemon whose plugins load no backend now starts. It lists no agent and refuses
 - `pnpm -s typecheck && pnpm -s build && pnpm -s boundary && pnpm -s test`: 7048 passed, 29 skipped.
 - New cases in `host-replace.test.ts`, `daemon-backend.test.ts`, `plugins-channel.test.ts`, `plugin-compat.test.ts` and `plugin-resolve.test.ts`.
 - CI on PR #100 and on `main` after the merge passed.
-- The checks by hand on a 0.14.1 candidate wait in [daemon-40-old-plugin-checks.md](../../../pending/daemon-40-old-plugin-checks.md).
+- The checks by hand ran on main on 2026-11-03. The start passes. The update from a client fails, see [the problem](../../../problems/a-client-cannot-update-a-scoped-plugin-that-failed-to-load.md).
 
 ## Departures from the plan
 
