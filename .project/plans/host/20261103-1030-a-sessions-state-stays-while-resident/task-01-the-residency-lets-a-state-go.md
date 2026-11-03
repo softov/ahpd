@@ -1,6 +1,6 @@
 ---
 title: The residency lets a session's state go
-status: todo
+status: done
 depends: []
 layer: host
 refs:

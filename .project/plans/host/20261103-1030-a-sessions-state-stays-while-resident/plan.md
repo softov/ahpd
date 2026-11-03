@@ -1,7 +1,7 @@
 ---
 title: A session's state stays while it is resident
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -102,7 +102,7 @@ release -> a running session sleeps, and the state goes with it
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The residency lets a session's state go](task-01-the-residency-lets-a-state-go.md) | todo | - |
+| [01 - The residency lets a session's state go](task-01-the-residency-lets-a-state-go.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -111,13 +111,13 @@ release -> a running session sleeps, and the state goes with it
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a session whose chat has no conversation yet, which counts as a draft and is never let go.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `feb72387`'s sources and passes after the change.
-- [ ] The touched files' test files pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `feb72387`'s sources and passes after the change.
+- [x] The touched files' test files pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
