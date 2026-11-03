@@ -1186,7 +1186,13 @@ export function piSession(
     if (closed || active !== undefined) return;
     // Nor behind a failure a client can resume, which waits to be resumed.
     if (holdsTheQueue(turns.at(-1))) return;
-    const next = queued.shift();
+    /*
+     * The first steering message waiting, in the order they came, and then the
+     * head: the reference host's drain runs steering that came too late to
+     * steer a turn ahead of queued messages.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+     */
+    const [next] = queued.splice(Math.max(0, queued.findIndex((held) => held.steering === true)), 1);
     if (next === undefined) return;
     const id = String(next.id);
     const command = bag(next.command);
@@ -1362,11 +1368,12 @@ export function piSession(
       ...(active !== undefined ? { activeTurn: active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      // A steering message no turn was running to take waits at the head of
-      // the queue, and is still a steering message while it waits.
+      // A steering message no turn was running to take waits ahead of the
+      // queue, and is still a steering message while it waits: the one set
+      // last, as the protocol's reducer holds the latest.
       ...(steering !== undefined
         ? { steeringMessage: steering }
-        : queued.filter((held) => held.steering === true).slice(0, 1)
+        : queued.filter((held) => held.shown === true)
           .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
       queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
@@ -1386,14 +1393,17 @@ export function piSession(
       begin(turnId, text, model, from, undefined, attachments);
     },
 
-    ran: (turnId, command, run, queuedAs) => {
+    ran: (turnId, command, run, queuedAs, kind = 'queued') => {
       if (active !== undefined || queuedAs !== undefined) {
         const id = queuedAs ?? turnId;
         const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-        const entry: Bag = { id, command: { text: command, run }, message };
+        // A steering command waits as steering, as a steering message does,
+        // and runs as a command.
+        const entry: Bag = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
         const at = queued.findIndex((held) => String(held.id) === id);
+        if (kind === 'steering') for (const held of queued) delete held.shown;
         if (at >= 0) queued[at] = entry; else queued.push(entry);
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
+        emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
         touch();
         // At once when nothing runs, as a queued message is.
         if (cancelled) askedSinceStop = true;
@@ -1541,9 +1551,12 @@ export function piSession(
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
       const at = queued.findIndex((held) => String(held.id) === id);
-      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}), ...(kind === 'steering' ? { steering: true } : {}) };
-      // A steering message no turn was running to take is the next turn.
-      if (at >= 0) queued[at] = entry; else if (kind === 'steering') queued.unshift(entry); else queued.push(entry);
+      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}), ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
+      // In the order things came; a steering message no turn was running to
+      // take runs ahead of what is queued, and the one set last is what the
+      // chat shows, as the protocol's reducer holds the latest.
+      if (kind === 'steering') for (const held of queued) delete held.shown;
+      if (at >= 0) queued[at] = entry; else queued.push(entry);
       emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
       touch();
       /*

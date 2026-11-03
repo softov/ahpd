@@ -750,32 +750,22 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 });
 
 /*
- * Steering that came too late to steer a turn runs next, ahead of what the
- * stopped turn left queued, though this backend cannot steer a running turn
- * (queueDrainContribution.ts L260-L262 at a4e689ae).
+ * A steering message to this backend is refused, a turn running or not: it
+ * advertises no `steer`, and the reference host refuses steering to a provider
+ * that cannot take it (agentService.ts L13513-L13516 at a4e689ae).
  */
-it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
+it('refuses a steering message with nothing running, as it cannot steer', async () => {
   const { client, peer: p, chatUri } = await talking();
-  begin(client, chatUri, 't1', 'please wait');
-  await until(() => types(p, chatUri).includes('chat/delta'));
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
-  });
-  const before = types(p, chatUri).length;
-  client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
-  });
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
-
   await client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
   });
-  await until(() => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').length >= 2);
-  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
-  expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'now' } });
+  await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 8));
+
+  const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 8);
+  expect(answers.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
+    .toEqual(['This backend cannot take a message mid-turn']);
+  expect(types(p, chatUri)).not.toContain('chat/turnStarted');
 });
 
 it('stops nothing on a cancel that names no turn', async () => {

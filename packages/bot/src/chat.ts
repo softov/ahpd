@@ -121,8 +121,10 @@ interface Waiting {
   model: Chosen | undefined;
   /** What it carried beside its words. */
   attachments: MessageAttachment[] | undefined;
-  /** A steering message no turn was running to take, which goes first. */
+  /** A steering message no turn was running to take, which goes ahead of what is queued. */
   steering?: boolean;
+  /** The steering message set last, which the chat shows as its steering message. */
+  shown?: boolean;
 }
 
 /**
@@ -958,8 +960,10 @@ export function botChatAgent(
      */
     const enqueue = (entry: Waiting): void => {
       const at = waiting.findIndex((held) => held.id === entry.id);
+      // The steering message set last is the one the chat shows, as the
+      // protocol's reducer holds the latest.
+      if (entry.steering === true) for (const held of waiting) delete held.shown;
       if (at >= 0) waiting[at] = entry;
-      else if (entry.steering === true) waiting.unshift(entry);
       else waiting.push(entry);
       start.emit('chat', {
         type: 'chat/pendingMessageSet',
@@ -980,7 +984,13 @@ export function botChatAgent(
      */
     const startNext = (): void => {
       if (open !== undefined) return;
-      const next = waiting.shift();
+      /*
+       * The first steering message waiting, in the order they came, and then
+       * the head: the reference host's drain runs steering that came too late
+       * to steer a turn ahead of queued messages.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+       */
+      const [next] = waiting.splice(Math.max(0, waiting.findIndex((held) => held.steering === true)), 1);
       if (next === undefined) return;
       start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: next.steering === true ? 'steering' : 'queued', id: next.id });
       beginMessage(next.turnId, next.text, next.from, next.id, next.model, next.attachments);
@@ -1038,9 +1048,10 @@ export function botChatAgent(
         // What is waiting for the open turn to end, in the order it will start.
         // Read here rather than left to the client's own queue, so a client
         // that opens this chat while a message waits is told about it.
-        // A steering message no turn was running to take waits at the head,
-        // and is still a steering message while it waits.
-        ...(waiting.filter((held) => held.steering === true).slice(0, 1)
+        // A steering message no turn was running to take waits ahead of the
+        // queue, and is still a steering message while it waits: the one set
+        // last, as the protocol's reducer holds the latest.
+        ...(waiting.filter((held) => held.shown === true)
           .map((held) => ({ steeringMessage: { id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) } }))[0] ?? {}),
         queuedMessages: waiting.filter((held) => held.steering !== true)
           .map((held) => ({ id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) })),
@@ -1088,7 +1099,7 @@ export function botChatAgent(
        * starts, so that the turn it becomes is the same one either way.
        */
       queue: (id, text, model, from, attachments, _options, kind) => {
-        enqueue({ turnId: crypto.randomUUID(), id, text, from, model, attachments, ...(kind === 'steering' ? { steering: true } : {}) });
+        enqueue({ turnId: crypto.randomUUID(), id, text, from, model, attachments, ...(kind === 'steering' ? { steering: true, shown: true } : {}) });
         startNext();
       },
 
