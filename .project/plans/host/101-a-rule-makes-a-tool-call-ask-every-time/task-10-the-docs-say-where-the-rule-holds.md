@@ -1,10 +1,10 @@
 ---
 title: The docs say where the rule holds
-status: todo
+status: implemented
 depends: [task-07-cofold-asks-in-every-mode.md, task-08-the-mcp-door-refuses-a-matched-tool.md, task-09-claude-names-the-server-and-subagent.md]
 layer: docs
 refs:
-  - "[code://docs/sdk/AHP.md#L195-L205](../../../../docs/sdk/AHP.md#L195-L205) - the rule's paragraph, which says it asks in every backend and that the host cannot revoke cofold's memory"
+  - "[code://docs/sdk/AHP.md#L196-L209](../../../../docs/sdk/AHP.md#L196-L209) - the rule's paragraph, which says where the rule holds and where it does not"
 ---
 
 ## Objective
@@ -34,7 +34,9 @@ refs:
 
 ## Resume
 
-- **Done so far:** nothing. Stopped on 2026-11-03 before the first edit: its dependency on task 08 is unmet. Step 3 says in the docs that `/mcp` refuses a matched tool, which task 08 would implement. Task 08 stopped on the open question in the plan's Resume state. The other steps wait too, so the paragraph is written once rather than twice.
-- **Next action:** once task 08 is answered and built, write every step and check the paragraph against the code by hand.
-- **Open questions:** none of its own; it waits on task 08's.
+- **Done so far:** 2026-11-03. `docs/sdk/AHP.md:196-209` now says where the rule holds. It is one value for the whole host and needs `config:change`. The host keeps it in memory only, so a restart holds no rule until a window pushes it again. A key is the backend's own tool name, matched with its case. A matched call asks in every backend and every mode. `dontAsk` refuses it, and the question offers no "always". cofold asks and deletes the remembered approval for that tool first. `/mcp` refuses a matched host tool, because that door has no session to ask in. A session inside a machine reads no rule yet, and the paragraph links [deferred.md](deferred.md) for it. The ACP limit stays. The plan's refs point at the current lines, and task 01 Step 2 says the host-wide key rather than `PER_CONNECTION`. `deferred.md` now says `nested.ts` line 1204.
+- **Read against the code:** `packages/sdk/src/host/root.ts:302` creates the config empty, so nothing survives a restart. `gate.ts:297-306` requires `config:change`. `spawn.ts:143-151` matches an exact key and reads its case. `tooling.ts:2109-2110` throws for a matched tool at `/mcp`. `packages/agent-cofold/src/turnagent.ts:389-406` asks, deletes the remembered approval, and denies in `dontAsk`. `packages/sdk/src/sessions/nested.ts:1204` pushes only `workspaceTrust` inside a machine. The prose linter on the plan folder reports nothing.
+- **Next action:** run the by-hand checks in the plan's *Final verification checklist* on a test daemon.
+- **Open questions:** none.
+- **Watch out for:** the paragraph is one sentence per line, hard-wrapped with the file; keep that when editing it.
 

@@ -194,15 +194,19 @@ The schema a client draws its controls from holds three kinds of key: the ones V
 Two entries resolve a constant from `src/vs/platform/chat/common/chatSettings.ts` and write the literal it holds, naming the file by URL.
 This host acts on `defaultShell`, which a client's terminal opens, on `workspaceTrust`, on `globalAutoApproveEnabled`, on `eligibleForAutoApproval`, on `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, and on three of its own: `changeWords`, which says where a commit message and a pull request's words come from, `clientQueueBytes` and `replayBytes`, which bound what the host holds for a client that is not reading ([A client that stops reading](#a-client-that-stops-reading)); nothing else it declares changes what it does.
 `eligibleForAutoApproval` is VS Code's map of tool name to boolean, where `false` means the tool asks every time.
-It is one value for every connection, and setting it needs `config:change`.
+It is one value for the whole host, and setting it needs `config:change`.
+The host keeps it in memory only, as VS Code's host keeps its root config.
+A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
+A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
 A tool this host offers is `ahp/<name>` in every backend.
-A backend's own tool keeps its own name, such as Claude's `Bash` or pi's `bash`.
 A matched call asks in every backend and every permission mode, `bypassPermissions` included.
 A `dontAsk` session refuses the call instead of asking.
 The question offers no "always" option, so an answer applies to that call alone.
-cofold may still hold an approval it remembered before the rule was set, and the host cannot revoke that memory.
+cofold puts the question for a matched call and deletes the approval it remembered for that tool first; in `dontAsk` it denies the call instead.
+A call to a matched host tool through `/mcp` is refused, because that door has no session to ask in.
 An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
+A session inside a machine does not read the rule yet, so a matched call runs there with no question; [deferred.md](../../.project/plans/host/101-a-rule-makes-a-tool-call-ask-every-time/deferred.md) says why.
 The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
 On a host with people, they answer only the turns the session's owner sends, as `workspaceTrust` does.
 A shell command runs without a question when the rules allow every sub-command and deny none.

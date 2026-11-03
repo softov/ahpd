@@ -13,17 +13,17 @@ creates: []
 decisions:
   - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
 refs:
-  - "[code://packages/sdk/src/types/policies.ts#L1-L20](../../../../packages/sdk/src/types/policies.ts#L1-L20) - the policy kinds `model`, `agent` and `computer`, which enforce nothing"
-  - "[code://packages/sdk/src/vscoderootconfig.ts#L112-L117](../../../../packages/sdk/src/vscoderootconfig.ts#L112-L117) - `globalAutoApproveEnabled`, a host key the operator sets"
-  - "[code://packages/sdk/src/host/gate.ts#L274-L298](../../../../packages/sdk/src/host/gate.ts#L274-L298) - a host key needs `config:change`"
-  - "[code://packages/sdk/src/types/agent.ts#L183](../../../../packages/sdk/src/types/agent.ts#L183) - `trusted` on `Start`, beside the check of host/100"
-  - "[code://packages/agent-claude/src/session/asking.ts#L115](../../../../packages/agent-claude/src/session/asking.ts#L115) - the `canUseTool` signature"
-  - "[code://packages/agent-claude/src/session/asking.ts#L174-L180](../../../../packages/agent-claude/src/session/asking.ts#L174-L180) - `settled` answers from the allow and deny lists"
-  - "[code://packages/agent-claude/src/session/query.ts#L377-L379](../../../../packages/agent-claude/src/session/query.ts#L377-L379) - the `PreToolUse` hooks"
-  - "[code://packages/agent-claude/src/session/config.ts#L95-L122](../../../../packages/agent-claude/src/session/config.ts#L95-L122) - `autoApprove` maps to `bypassPermissions`"
-  - "[code://packages/agent-acp/src/session/handlers.ts#L285-L340](../../../../packages/agent-acp/src/session/handlers.ts#L285-L340) - `askPermission` offers the agent's options"
-  - "[code://packages/agent-pi/src/session.ts#L396-L449](../../../../packages/agent-pi/src/session.ts#L396-L449) - `decide` by permission mode"
-  - "[code://packages/agent-cofold/src/pauses.ts#L139-L180](../../../../packages/agent-cofold/src/pauses.ts#L139-L180) - `confirm` sends `alwaysApprove` for `allow-session`"
+  - "[code://packages/sdk/src/types/policies.ts#L15-L20](../../../../packages/sdk/src/types/policies.ts#L15-L20) - the policy kinds `model`, `agent` and `computer`, which enforce nothing"
+  - "[code://packages/sdk/src/vscoderootconfig.ts#L119-L127](../../../../packages/sdk/src/vscoderootconfig.ts#L119-L127) - `globalAutoApproveEnabled`, a host key the operator sets"
+  - "[code://packages/sdk/src/host/gate.ts#L279-L306](../../../../packages/sdk/src/host/gate.ts#L279-L306) - a host key needs `config:change`"
+  - "[code://packages/sdk/src/types/agent.ts#L216](../../../../packages/sdk/src/types/agent.ts#L216) - `trusted` on `Start`, beside the check of host/100"
+  - "[code://packages/agent-claude/src/session/asking.ts#L163](../../../../packages/agent-claude/src/session/asking.ts#L163) - the `canUseTool` signature"
+  - "[code://packages/agent-claude/src/session/asking.ts#L230-L234](../../../../packages/agent-claude/src/session/asking.ts#L230-L234) - `settled` answers from the allow and deny lists"
+  - "[code://packages/agent-claude/src/session/query.ts#L522-L532](../../../../packages/agent-claude/src/session/query.ts#L522-L532) - the `PreToolUse` hooks"
+  - "[code://packages/agent-claude/src/claude.ts#L268-L307](../../../../packages/agent-claude/src/claude.ts#L268-L307) - the config schema collapses `autoApprove` onto one `permissionMode`, whose six values include `bypassPermissions`"
+  - "[code://packages/agent-acp/src/session/handlers.ts#L502-L539](../../../../packages/agent-acp/src/session/handlers.ts#L502-L539) - `askPermission` offers the agent's options"
+  - "[code://packages/agent-pi/src/session.ts#L486-L537](../../../../packages/agent-pi/src/session.ts#L486-L537) - `decide` by permission mode"
+  - "[code://packages/agent-cofold/src/pauses.ts#L187-L239](../../../../packages/agent-cofold/src/pauses.ts#L187-L239) - `confirm` sends `alwaysApprove` for `allow-session`"
   - "[code://.project/decisions/each-backend-offers-its-options-unless-a-rule-asks.md](../../../../.project/decisions/each-backend-offers-its-options-unless-a-rule-asks.md) - each backend offers its own options; the host remembers no approval"
   - "[code://.project/decisions/claude-approvals-keeps-dont-ask.md](../../../../.project/decisions/claude-approvals-keeps-dont-ask.md) - the six Claude modes, `dontAsk` included"
   - npm://@anthropic-ai/claude-agent-sdk@0.3.278 - `HookCallback`, `HookCallbackMatcher.timeout` and `PreToolUseHookSpecificOutput` with `permissionDecision`
@@ -113,7 +113,7 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 | [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | implemented | 05 |
 | [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | implemented | 01 |
 | [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | implemented | 02 |
-| [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | todo | 07, 08, 09 |
+| [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | implemented | 07, 08, 09 |
 
 ## Risks and tradeoffs
 
@@ -125,8 +125,8 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first. Task 09 implemented 2026-11-03: the Claude hook names a server by `mcp_server.name` and asks a subagent's call on its chat by `agent_id`. Task 08 implemented 2026-11-03: a sessionless tool's `run` refuses a call the rule names, so `/mcp` refuses it too.
-- **Next action:** build task 10, then run the by-hand checks in *Final verification checklist* on a test daemon.
+- **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first. Task 09 implemented 2026-11-03: the Claude hook names a server by `mcp_server.name` and asks a subagent's call on its chat by `agent_id`. Task 08 implemented 2026-11-03: a sessionless tool's `run` refuses a call the rule names, so `/mcp` refuses it too. Task 10 implemented 2026-11-03: `docs/sdk/AHP.md` says where the rule holds, and the plan's refs point at the current lines. Task 01 Step 2 names the host-wide key.
+- **Next action:** run the by-hand checks in *Final verification checklist* on a test daemon.
 - **Open questions:** none.
 - **Watch out for:** in VS Code a terminal deny rule also means "ask". It is not this rule: it is a match on the command line and it still offers "always".
 

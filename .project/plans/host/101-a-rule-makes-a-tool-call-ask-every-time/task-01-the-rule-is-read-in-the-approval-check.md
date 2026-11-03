@@ -26,7 +26,7 @@ This task needs host/100 p2 task 01.
 ## Steps
 
 1. Confirm that host/100 p2 task 01 is `implemented`.
-2. Declare `eligibleForAutoApproval` as a host key, outside `PER_CONNECTION`, so a push needs `config:change`.
+2. Declare `eligibleForAutoApproval` as a host key, which every window's push sets for the whole host, so a push needs `config:change`.
 3. Match `<server>/<tool>` keys exactly, and `<server>/*` keys for every tool of that server.
 4. Return "ask, with no always option" for a matched tool, before the terminal rules run.
 5. Write the tests.
