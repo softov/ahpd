@@ -11,7 +11,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { BANG, HOSTS_OWN, HOSTS_TAKEN } from './common.js';
+import { BANG, HOSTS_OWN } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -1021,9 +1021,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     log(`restarted ${chatUri}`);
   };
 
-  /** What the backend is given: everything except what this host answered or takes. */
+  /**
+   * What the backend is given: everything except what this host answered, as
+   * the reference host hands its agents every key but its own.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1831-L1836
+   */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key) && !Object.hasOwn(HOSTS_TAKEN, key)));
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
 
   /**
    * The backend that serves one chat.

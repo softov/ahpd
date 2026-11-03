@@ -1150,6 +1150,19 @@ export function chatAction(
               .filter((chat) => chat !== session);
           for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
         }
+        /*
+         * A key this host takes goes to every chat's backend once the action
+         * is taken, as the reference host's agents are handed every key but
+         * its own and read one as it stands: what a backend answers decides
+         * nothing, since this host took the key. A nested session's host
+         * inside judges that session's commands by the locations it is handed.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L205-L217
+         */
+        for (const [key, value] of Object.entries(config)) {
+          if (!Object.hasOwn(HOSTS_TAKEN, key)) continue;
+          for (const chat of owning === undefined ? [session] : owning.chats.values()) void Promise.resolve(chat.setConfig?.(key, value));
+        }
         return taken;
       };
       /*

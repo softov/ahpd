@@ -961,11 +961,19 @@ export function createSpawn(ctx: HostContext): Spawn {
         ? pushed as TerminalAutoApproveRules
         : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
       const patterns = ctx.rootConfig['editAutoApprovePatterns'];
-      // The session's sensitive edit locations, each entry of the shape its
-      // property declares: a write into one asks.
+      /*
+       * The session's sensitive edit locations, and a write into one asks.
+       * Read whole, as the reference host reads a key: the value is the
+       * locations where every entry has the string `path` and the boolean
+       * `isDirectory` its property requires, and any other value is skipped
+       * for the root's config, which declares no such key here, so it is none.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L544-L566
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSchema.ts#L194-L230
+       */
       const held: unknown = sessions.get(uri)?.config['sensitiveEditLocations'];
-      const sensitive = Array.isArray(held)
-        ? held.filter((one): one is SensitiveEditLocation => typeof one?.path === 'string' && typeof one?.isDirectory === 'boolean')
+      const sensitive = Array.isArray(held) && held.every((one: unknown) => typeof one === 'object' && one !== null && !Array.isArray(one)
+        && typeof (one as Bag).path === 'string' && typeof (one as Bag).isDirectory === 'boolean')
+        ? held as SensitiveEditLocation[]
         : [];
       const result = approver.evaluate(line, {
         rules,
