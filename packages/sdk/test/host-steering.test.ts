@@ -90,8 +90,31 @@ async function running() {
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 's1', message: { text, origin: { kind: 'user' } } } },
   });
-  return { p, chatUri, steers, steer, queue };
+  // A client taking `steer`'s message back.
+  const unsteer = (clientSeq: number) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' } },
+  });
+  return { p, chatUri, steers, steer, queue, unsteer };
 }
+
+/*
+ * "Steering handed to the provider cannot be edited, and can be removed only if
+ * the provider can withdraw it": the reference host asks the provider's
+ * capability before the provider hears of the removal (agentService.ts
+ * L13517-L13524 at a4e689ae). A backend with no withdrawal keeps what it was
+ * handed.
+ */
+it('refuses taking back the running turn\'s steering message from a backend that cannot withdraw it', async () => {
+  const { p, chatUri, steers, steer, unsteer } = await running();
+  await steer(2, 'stop that');
+  await settle();
+  await unsteer(3);
+  await settle();
+  const answer = envelopes(p, chatUri).find((e) => e.origin?.clientSeq === 3);
+  expect(answer?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(steers.map((one) => one.id)).toEqual(['s1']);
+});
 
 /*
  * "Repeated identical upserts MUST NOT cause duplicate provider delivery": the
