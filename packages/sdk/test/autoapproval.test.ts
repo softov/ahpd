@@ -288,3 +288,77 @@ it('takes the sensitive edit locations, and asks for a write into one', async ()
   expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBeUndefined();
   expect(approval(start(), 'echo hi > out.txt')).toBe('not-needed');
 });
+
+/*
+ * The locations reach the backend as VS Code's host hands its agents every key
+ * but its own: at its start, and as they move, whatever the backend answers,
+ * since this host takes the key.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1831-L1836
+ */
+it('hands the sensitive edit locations to the backend at its start and as they move', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  /** The settings each start was handed, and every key the backend was handed after. */
+  const started: Record<string, unknown>[] = [];
+  const handed: [string, unknown][] = [];
+  const agent: Agent = {
+    ...base,
+    provider: 'echo',
+    create: (given: Start) => {
+      started.push(given.settings);
+      return {
+        ...base.create(given),
+        setConfig: (key: string, value: unknown) => {
+          handed.push([key, value]);
+          return `${key} is not a config key this backend takes`;
+        },
+      };
+    },
+  };
+  const host = createHost({ path: DIR, agents: [agent] });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'] } });
+  const channel = 'ahp-session:/handed';
+  const first = [{ path: '.github/hooks', isDirectory: true }];
+  await client.handle({ method: 'createSession', params: { channel, provider: 'echo', config: { sensitiveEditLocations: first } } });
+  await client.handle({ method: 'subscribe', params: { channel } });
+  await settle();
+  expect(started.at(-1)?.['sensitiveEditLocations']).toEqual(first);
+
+  const next = [{ path: '.vscode', isDirectory: true }];
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel, clientSeq: 1, action: { type: 'session/configChanged', config: { sensitiveEditLocations: next } } },
+  });
+  await settle();
+  expect(handed).toEqual([['sensitiveEditLocations', next]]);
+  // Taken by this host, whatever the backend answered.
+  const answered = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: { type: string }; origin?: { clientSeq: number }; rejectionReason?: string })
+    .find((one) => one.origin?.clientSeq === 1);
+  expect(answered?.action.type).toBe('session/configChanged');
+  expect(answered?.rejectionReason).toBeUndefined();
+});
+
+/*
+ * The locations are read whole, as VS Code's host reads a key: a value with an
+ * entry that does not fit the property's shape is skipped for the root's
+ * config, which declares no such key here, so no location asks.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L544-L566
+ */
+it('reads no locations from a value one entry of which does not fit', async () => {
+  const { signedIn, pushing, opening, start } = serving();
+  const ana = await signedIn('admin', 'ana');
+  await pushing(ana, { editAutoApprovePatterns: { '**/*': true } });
+  await opening(ana, 'ana-malformed');
+  const channel = 'ahp-session:/ana-malformed';
+  const locations = [{ path: '.github/hooks', isDirectory: true }, { path: '.vscode' }];
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel, action: { type: 'session/configChanged', config: { sensitiveEditLocations: locations } } },
+  });
+  await settle();
+  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBe('not-needed');
+});

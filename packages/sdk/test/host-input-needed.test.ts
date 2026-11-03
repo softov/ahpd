@@ -129,8 +129,30 @@ it('refuses an acceptance that leaves a required question with no answer', async
   asked(start);
   await settle();
   expect(await sent(1, { type: 'chat/inputCompleted', requestId: 'q1', response: 'accept' }))
-    .toBe('name is required and has no answer');
+    .toBe('name is required and has no submitted answer');
   expect(await sent(2, {
+    type: 'chat/inputCompleted', requestId: 'q1', response: 'accept',
+    answers: { name: { state: 'submitted', value: { kind: 'text', value: 'Ana' } } },
+  })).toBeUndefined();
+});
+
+/*
+ * A draft is not a submitted answer, synced to the request or carried by the
+ * completion: the reducer records the request's answers with the completion's
+ * laid over them, and the row asks each required question for a submitted one.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L874
+ */
+it('refuses an acceptance whose required question holds only a draft', async () => {
+  const { start, sent } = await opened();
+  asked(start);
+  await settle();
+  const draft = { state: 'draft', value: { kind: 'text', value: 'An' } };
+  expect(await sent(1, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: draft })).toBeUndefined();
+  expect(await sent(2, { type: 'chat/inputCompleted', requestId: 'q1', response: 'accept' }))
+    .toBe('name is required and has no submitted answer');
+  expect(await sent(3, { type: 'chat/inputCompleted', requestId: 'q1', response: 'accept', answers: { name: draft } }))
+    .toBe('name is required and has no submitted answer');
+  expect(await sent(4, {
     type: 'chat/inputCompleted', requestId: 'q1', response: 'accept',
     answers: { name: { state: 'submitted', value: { kind: 'text', value: 'Ana' } } },
   })).toBeUndefined();
@@ -142,8 +164,26 @@ it('refuses a draft answer that carries no value of the kind it names', async ()
   await settle();
   expect(await sent(1, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'draft', value: { kind: 'text' } } }))
     .toBe('The answer to name has no text value');
-  expect(await sent(2, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'skipped' } }))
+  expect(await sent(2, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'draft' } }))
+    .toBe('The answer to name has no value');
+  expect(await sent(3, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'skipped' } }))
     .toBeUndefined();
+});
+
+/*
+ * The answer kinds are `@nonexhaustive`, and the row names a kind missing its
+ * payload: a value of a kind the protocol does not list names none, and is
+ * taken.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L583-L595
+ */
+it('takes an answer of a kind the protocol does not list', async () => {
+  const { start, sent } = await opened();
+  asked(start);
+  await settle();
+  expect(await sent(1, {
+    type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name',
+    answer: { state: 'draft', value: { kind: 'colour', value: '#00f' } },
+  })).toBeUndefined();
 });
 
 it('takes a chat\'s entries down with its turn', async () => {
@@ -173,6 +213,32 @@ it('takes a question\'s entry down once the question has its response', async ()
   expect((await entries()).map((one) => one.id)).toEqual(['own-q']);
 
   start.emit('chat', { type: 'chat/inputCompleted', requestId: 'q1', response: 'cancel' });
+  await settle();
+  expect(await entries()).toEqual([]);
+});
+
+/*
+ * An entry names a call in the state its kind is raised for: the reference
+ * host raises a confirmation at a pending confirmation, a client execution
+ * while the call runs with a client contributor, and an authentication at
+ * auth-required. A call still being announced is in none of them.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+ */
+it('takes down an entry whose call is still being announced', async () => {
+  const { start, entries } = await opened();
+  start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
+  for (const [id, kind] of [['own', 'toolConfirmation'], ['client', 'toolClientExecution'], ['auth', 'toolAuthentication']] as const) {
+    start.emit('session', {
+      type: 'session/inputNeededSet',
+      request: { id, kind, chat: start.chatUri, turnId: 't1', toolCall: { toolCallId: 'c1', status: 'streaming' } },
+    });
+  }
+  await settle();
+  expect((await entries()).map((one) => one.id)).toEqual(['own', 'client', 'auth']);
+
+  // The next action about the chat reads each entry against its call, which is
+  // still streaming.
+  start.emit('chat', { type: 'chat/responsePart', turnId: 't1', part: { id: 'p1', kind: 'markdown', content: 'thinking' } });
   await settle();
   expect(await entries()).toEqual([]);
 });

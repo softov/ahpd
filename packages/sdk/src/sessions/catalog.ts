@@ -1,12 +1,14 @@
 /**
- * How a session is named, what its status bits are worth, and what it is doing.
+ * How a session is named, what its status bits are worth, what it is doing, and
+ * whether its queue waits.
  *
- * URIs, numbers and the one activity line, and nothing that knows what a
- * session *is*: the listing itself belongs to whichever backend wrote the
- * sessions down, because only that one can say which exist. See `catalogue` in
- * `@ahpd/agent-claude`.
+ * URIs, numbers, the one activity line and the queue's one rule, and nothing
+ * that knows what a session *is*: the listing itself belongs to whichever
+ * backend wrote the sessions down, because only that one can say which exist.
+ * See `catalogue` in `@ahpd/agent-claude`.
  */
 
+import type { Bag } from '../types/common.js';
 import type { Emit } from '../types/session.js';
 
 /**
@@ -121,6 +123,21 @@ export const idOf = (uri: string): string => {
 export const titleFrom = (text: string, fallback: string, max = 80): string => {
   const line = text.split('\n').map((one) => one.trim()).find((one) => one !== '') ?? '';
   return line === '' ? fallback : line.slice(0, max);
+};
+
+/**
+ * Whether a chat's latest turn holds its queue: a turn that ended in an error
+ * whose last part says a client may resume it.
+ *
+ * One rule for every backend's queue: the reference host's drain starts nothing
+ * behind such a turn, a message queued after it included, and the turn's last
+ * part is the error part it reads.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L121-L127
+ */
+export const holdsTheQueue = (turn: Bag | undefined): boolean => {
+  const last = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : []).at(-1);
+  return turn?.state === 'error' && last?.kind === 'error' && last.resumable === true;
 };
 
 /** The scheme a channel URI names, or nothing where it names none. */

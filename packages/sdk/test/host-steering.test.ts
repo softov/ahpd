@@ -84,7 +84,12 @@ async function running() {
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text, origin: { kind: 'user' } } } },
   });
-  return { p, chatUri, steers, steer };
+  // A queued message under the same id as `steer`'s.
+  const queue = (clientSeq: number, text: string) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 's1', message: { text, origin: { kind: 'user' } } } },
+  });
+  return { p, chatUri, steers, steer, queue };
 }
 
 /*
@@ -123,14 +128,32 @@ it('refuses an edit of the steering message the running turn holds', async () =>
 });
 
 /*
- * Steering that came too late to steer a turn runs next, ahead of queued
- * messages, whatever the backend: the example here has no `steer` and keeps
- * its queue when a turn is stopped (queueDrainContribution.ts L260-L262 at
- * a4e689ae).
+ * A queued message under the held steering message's id changes its kind, which
+ * the reference host refuses while a turn runs (agentService.ts L13517-L13524 at
+ * a4e689ae): `existing` is found by id whatever the action's kind.
  */
-it('runs an idle steering message ahead of what a stopped turn left queued, on a backend that cannot steer', async () => {
+it('refuses a queued message under the id of the steering message the running turn holds', async () => {
+  const { p, chatUri, steers, steer, queue } = await running();
+  void steer(2, 'not that one');
+  await settle();
+  void queue(3, 'not that one');
+  await settle();
+
+  expect(steers).toEqual([{ id: 's1', text: 'not that one' }]);
+  const queued = envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3);
+  expect(queued?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(envelopes(p, chatUri).some((one) => one.rejectionReason === undefined
+    && one.action.type === 'chat/pendingMessageSet' && one.action.kind === 'queued')).toBe(false);
+});
+
+/*
+ * A backend that takes no steering refuses it with nothing running too, as the
+ * reference host refuses steering to a provider that cannot take it, idle or
+ * not (agentService.ts L13513-L13516 at a4e689ae). The example has no `steer`.
+ */
+it('refuses a steering message to a backend that takes none, with nothing running', async () => {
   const p = peer();
-  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 10_000 })] });
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
   const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   const uri = 'ahp-session:/plain';
@@ -138,16 +161,12 @@ it('runs an idle steering message ahead of what a stopped turn left queued, on a
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
   const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  const dispatch = (clientSeq: number, action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq, action } });
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words here' } });
-  await settle();
-  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } });
-  await dispatch(3, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
-  await settle();
-  await dispatch(4, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now', origin: { kind: 'user' } } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now', origin: { kind: 'user' } } } },
+  });
   await settle();
 
-  expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 4)?.rejectionReason).toBeUndefined();
-  const started = envelopes(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted');
-  expect(started.map((one) => one.action.queuedMessageId)).toEqual([undefined, 's1']);
+  expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 1)?.rejectionReason).toBe('This backend cannot take a message mid-turn');
+  expect(envelopes(p, chatUri).some((one) => one.action.type === 'chat/turnStarted')).toBe(false);
 });

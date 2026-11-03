@@ -202,18 +202,30 @@ it('gives a stop its origin when the backend says it once the turn has let go', 
   await host.close();
 });
 
-it('gives a stop that names no turn its origin, under the turn it stopped', async () => {
-  const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 50 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+/*
+ * A stop names the turn it stops: the reference host matches the turn before
+ * it stops anything and says a stop of any other turn as sent, and the
+ * protocol's reducer ends only the turn a stop names.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
+ */
+it.each([
+  ['an empty turn id', { turnId: '' }],
+  ['no turn id', {}],
+])('says a stop naming %s as sent, with its origin, and stops nothing', async (_, named) => {
+  const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 20 })));
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
-  await dispatch(4, { type: 'chat/turnCancelled', turnId: '' });
+  await dispatch(4, { type: 'chat/turnCancelled', ...named, duration: 0 });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn\'s end');
 
-  const stopped = p.heard.find((one) => one.action.type === 'chat/turnCancelled');
-  expect(stopped?.action.turnId).toBe('t1');
-  expect(stopped?.origin).toEqual({ clientId: 'window', clientSeq: 4 });
+  const stops = p.heard.filter((one) => one.action.type === 'chat/turnCancelled')
+    .map((one) => ({ channel: one.channel, action: one.action, origin: one.origin }));
+  expect(stops).toEqual([{ channel: CHAT, action: { type: 'chat/turnCancelled', ...named, duration: 0 }, origin: { clientId: 'window', clientSeq: 4 } }]);
+  expect(p.heard.find((one) => one.action.type === 'chat/turnComplete')?.action.turnId).toBe('t1');
   await host.close();
 });
 
@@ -471,5 +483,28 @@ it('answers a config change naming only a fixed key that did not move', async ()
   await settle();
   const answered = p.heard.filter((one) => one.origin?.clientSeq === 7) as (Heard & { rejectionReason?: string })[];
   expect(answered.map((one) => [one.action, one.rejectionReason])).toEqual([[{ type: 'session/configChanged', config: { room: 'a' } }, undefined]]);
+  await host.close();
+});
+
+/*
+ * The echo example's queue as VS Code's host drains it: a stop leaves it
+ * waiting, and a client taking a message back while nothing runs starts the
+ * head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the echo example\'s head once a client takes a message back from a stopped turn\'s queue', async () => {
+  const { host, p, dispatch } = await serving(echo({ path: dir, pace: 20 }));
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second' } });
+  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third' } });
+  await dispatch(4, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  const startedFrom = (): unknown[] => p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);
+  expect(startedFrom()).toEqual([undefined]);
+
+  await dispatch(5, { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' });
+  await until(() => startedFrom().length === 2, 'the head');
+  expect(startedFrom()).toEqual([undefined, 'later']);
   await host.close();
 });

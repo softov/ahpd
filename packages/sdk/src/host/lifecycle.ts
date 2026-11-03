@@ -11,7 +11,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { BANG, HOSTS_OWN, HOSTS_TAKEN } from './common.js';
+import { BANG, HOSTS_OWN } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -1021,9 +1021,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     log(`restarted ${chatUri}`);
   };
 
-  /** What the backend is given: everything except what this host answered or takes. */
+  /**
+   * What the backend is given: everything except what this host answered, as
+   * the reference host hands its agents every key but its own.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1831-L1836
+   */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key) && !Object.hasOwn(HOSTS_TAKEN, key)));
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
 
   /**
    * The backend that serves one chat.
@@ -1294,7 +1299,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * `queuedAs` is the queued message's id when the text came through
    * `chat/pendingMessageSet`: a question is queued under it, and a command
    * is handed to `ran` under it, so it waits its turn as a command. `kind` is
-   * that message's, and a steering one is queued ahead of what waits.
+   * that message's, handed to both, and a steering one waits ahead of what is
+   * queued.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -1413,7 +1419,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         chat: session.chatUri,
         turnId,
         toolCallId,
-      }, opened), queuedAs);
+      }, opened), queuedAs, kind);
       return undefined;
     };
     /*

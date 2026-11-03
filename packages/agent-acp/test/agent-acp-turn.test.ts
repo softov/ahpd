@@ -204,7 +204,7 @@ async function providing(
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
+    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { clientId: id, name: id, tools } } },
   });
 }
 
@@ -750,18 +750,36 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 });
 
 /*
- * Steering that came too late to steer a turn runs next, ahead of what the
- * stopped turn left queued, though this backend cannot steer a running turn
- * (queueDrainContribution.ts L260-L262 at a4e689ae).
+ * A steering message to this backend is refused, a turn running or not: it
+ * advertises no `steer`, and the reference host refuses steering to a provider
+ * that cannot take it (agentService.ts L13513-L13516 at a4e689ae).
  */
-it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
+it('refuses a steering message with nothing running, as it cannot steer', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+  });
+  await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 8));
+
+  const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 8);
+  expect(answers.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
+    .toEqual(['This backend cannot take a message mid-turn']);
+  expect(types(p, chatUri)).not.toContain('chat/turnStarted');
+});
+
+it('stops nothing on a cancel that names no turn', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'please wait');
   await until(() => types(p, chatUri).includes('chat/delta'));
-  await client.handle({
+
+  // A stop stops the turn it names: one naming none is said as sent, and the
+  // running turn is still there for the stop that names it.
+  client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
   });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
   const before = types(p, chatUri).length;
   client.handle({
     method: 'dispatchAction',
@@ -769,32 +787,8 @@ it('runs an idle steering message ahead of what a stopped turn left queued', asy
   });
   await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
 
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
-  });
-  await until(() => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').length >= 2);
-  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
-  expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'now' } });
-});
-
-it('ends the running turn on a cancel that names no turn, with the cancel reaching the server', async () => {
-  const { client, peer: p, chatUri } = await talking();
-  begin(client, chatUri, 't1', 'please wait');
-  await until(() => types(p, chatUri).includes('chat/delta'));
-
-  // A client with no id to give means the running turn: the stop is said
-  // under that turn's own id, and the backend is handed the same.
-  const before = types(p, chatUri).length;
-  client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
-  });
-  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
-
   const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
-  expect(said.map((e) => e.action.turnId)).toEqual(['t1']);
+  expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
 });
 
 it("runs a !command in the host's shell rather than asking the server", async () => {
@@ -860,6 +854,72 @@ it('refuses a !command sent as a turn during a turn, and runs one queued behind 
   // Once: the turn the command runs as is the queued message's.
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 't2')).toBe(true);
   expect(answers()).toHaveLength(1);
+});
+
+/** A client's queued message, as `chat/pendingMessageSet` names it. */
+const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+  });
+
+/** The queued message each turn started from, in the order the turns started. */
+const startedFrom = (p: ReturnType<typeof peer>, chatUri: string): unknown[] => actions(p, chatUri)
+  .filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
+
+/*
+ * A failed turn starts nothing behind it, as the reference host drains its
+ * queue after a success alone, and a client taking a message back while nothing
+ * runs starts the head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
+ */
+it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hold it stop=refusal');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+  await queue(client, chatUri, 'waiting', 'second');
+  await queue(client, chatUri, 'later', 'third');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-hold', approved: true } },
+  });
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' } },
+  });
+  await until(() => startedFrom(p, chatUri).length === 2);
+  expect(startedFrom(p, chatUri)).toEqual([undefined, 'later']);
+  await until(() => finished(p, chatUri, 1));
+});
+
+/*
+ * A client's reorder while nothing runs runs the reference host's drain, which
+ * starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the head once a client reorders a stopped turn\'s queue', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'please wait');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  await queue(client, chatUri, 'waiting', 'second');
+  await queue(client, chatUri, 'later', 'third');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/queuedMessagesReordered', order: ['later', 'waiting'] } },
+  });
+  await until(() => startedFrom(p, chatUri).length === 2);
+  expect(startedFrom(p, chatUri)).toEqual([undefined, 'later']);
+  await until(() => finished(p, chatUri, 2));
 });
 
 /**

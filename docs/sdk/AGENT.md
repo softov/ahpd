@@ -212,17 +212,16 @@ A backend without `setConfig` takes none of them - and a client draws its
 controls from that schema, so a key that reaches nothing is a control somebody
 moves that changes the session not at all.
 
-`setConfig` answers one of three things:
+`setConfig` answers one of two things:
 
 | answer | means | what every client is told |
 | --- | --- | --- |
 | `true` | taken as it was sent | the key and the value sent |
 | a sentence | refused, in your words | nothing; the sender gets the sentence |
-| an object | taken under keys of your own | the object, which the host also keeps for a restart |
 
-The object is for a client's own name for a setting your schema declares under
-another: Claude takes a client's `mode` as the `permissionMode` it moves, and
-answers `{ permissionMode }`, so the state holds the setting the session runs on.
+What every client is told is in the client's own keys, as VS Code's host says a
+client's config action
+([protocolServerHandler.ts L4220-L4222](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222)).
 
 ```ts
 setConfig: (key, value) => {
@@ -262,9 +261,10 @@ person pressing Approve and nothing at all happening.
 a question standing is a session reporting `InputNeeded` for the rest of its
 life over a promise nothing will ever settle.
 
-The host calls `cancel` while the chat runs a turn, with that turn's id, a
-client's stop that names no turn included. A stop on a chat with no turn running
-is refused before it reaches a backend, as the protocol has a server refuse it.
+The host calls `cancel` when a client's stop names the turn the chat runs, with
+that turn's id. A stop that names another turn or none, and a stop on a chat with
+no turn running, goes to every client of the chat as the client's own action and
+reaches no backend.
 
 ### Answering later
 

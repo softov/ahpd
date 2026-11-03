@@ -996,7 +996,7 @@ describe('the MCP servers a session is offered', () => {
           channel: uri,
           action: {
             type: 'session/activeClientSet',
-            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...extra }], tools: [] },
+            activeClient: { clientId: 'holder', customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...extra }], tools: [] },
           },
         },
       }),
@@ -1231,7 +1231,7 @@ describe('tools a client contributes', () => {
       method: 'dispatchAction',
       params: {
         channel: held.uri,
-        action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools } },
+        action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe', name: 'VS Code', tools } },
       },
     });
     await settle();
@@ -1623,6 +1623,26 @@ describe('tools a client contributes', () => {
     const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 9);
     expect(answered.map((e) => [e.action.type, e.action.toolCallId, e.rejectionReason]))
       .toEqual([['chat/toolCallComplete', 'call-1', undefined]]);
+  });
+
+  /*
+   * The client's action as it sent it: the reference host says it so, and the
+   * protocol's reducer completes a call only in the turn the action names.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
+   */
+  it('says a client\'s result that names no turn as it was sent', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    const action = { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } };
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 9, action } });
+    await answering;
+    await settle();
+
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 9);
+    expect(answered.map((e) => e.action)).toEqual([action]);
   });
 
   it('answers the first of two results for one call with its completion, and refuses the second', async () => {
@@ -2124,10 +2144,10 @@ describe('a client\'s call, held by the backend', () => {
       await client.handle({ method: 'subscribe', params: { channel: uri } });
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     }
-    for (const client of clients) {
+    for (const [at, client] of clients.entries()) {
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: 'Editor', tools: [OPEN_FILE] } } },
+        params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { clientId: ids[at], name: 'Editor', tools: [OPEN_FILE] } } },
       });
     }
     await settle();
@@ -2505,7 +2525,7 @@ describe('a customization switched for every session or a folder', () => {
           channel: uri,
           action: {
             type: 'session/activeClientSet',
-            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce }], tools: [] },
+            activeClient: { clientId, customizations: [{ type: 'plugin', uri: PLUGIN, nonce }], tools: [] },
           },
         } }),
         /** Whether the plugin has been reported on this session, and settled. */
@@ -2513,6 +2533,10 @@ describe('a customization switched for every session or a folder', () => {
           .filter((one) => one.action.type === 'session/customizationsChanged')
           .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
             .some((custom) => custom.uri === PLUGIN && (custom.load as { kind: string }).kind === 'loaded')),
+        /** The enablement each switch said on this session carried. */
+        switched: (): unknown[] => actions(watching, uri)
+          .filter((one) => one.action.type === 'session/customizationToggled')
+          .map((one) => one.action.enablement),
         /** The decision the client makes, scopes and all, as the protocol carries it. */
         decide: (enablement: Record<string, unknown>[]) => holder.handle({ method: 'dispatchAction', params: {
           channel: uri,
@@ -2588,6 +2612,10 @@ describe('a customization switched for every session or a folder', () => {
     await first.decide([{ kind: 'global', enabled: false }]);
     await settle();
     expect(decisions.global(PLUGIN)).toBeUndefined();
+    // Said as she sent it, as VS Code's host emits a switch and records the
+    // client's own enablement; the session's decision is this host's.
+    // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L414-L428
+    expect(first.switched()).toEqual([[{ kind: 'global', enabled: false }]]);
 
     await first.turn('t1');
     await second.turn('t1');

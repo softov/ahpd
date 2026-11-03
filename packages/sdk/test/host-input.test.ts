@@ -210,6 +210,15 @@ describe('driving a turn', () => {
     }).snapshot.state;
     expect(open.inputNeeded?.[0]?.request?.answers).toEqual({ q1: answer });
 
+    // Submitted the same way, which is what answers a required question.
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer: { ...answer, state: 'submitted' } },
+      },
+    });
+    await settle();
     client.handle({
       method: 'dispatchAction',
       params: {
@@ -573,7 +582,7 @@ describe('a message typed while a turn is running', () => {
    *
    * The reference host runs steering that arrived too late to steer a turn
    * next, ahead of queued messages, under its id, so the turn naming it takes
-   * it out of every client's state (queueDrainContribution.ts L260-L262,
+   * it out of every client's state (queueDrainContribution.ts L266-L267,
    * L283-L292 at a4e689ae).
    */
   it('runs one sent at a chat with nothing running as a turn of its own, under its id', async () => {

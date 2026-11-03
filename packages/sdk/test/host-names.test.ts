@@ -146,12 +146,15 @@ describe('a session a client names', () => {
   });
 
   /*
-   * Whatever scheme the client named, the session is held under that URI and
-   * answered under it alone, as the reference host holds a client's session
-   * under the channel it named.
+   * Whatever scheme the client named, the session's row carries that URI, as
+   * the reference host holds a client's session under the channel it named,
+   * and every spelling of the id names the same session, as that host answers
+   * a session under each identity it has: the client is answered under the
+   * name it used, and the state is the session's own.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
    */
-  it('holds a session created on another provider\'s scheme under that URI, and answers no other', async () => {
+  it('holds a session created on another provider\'s scheme under that URI, and answers every spelling of its id', async () => {
     const id = '4e8d2f6a-1b3c-4d5e-8f7a-9b0c1d2e3f4a';
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -166,9 +169,21 @@ describe('a session a client names', () => {
     };
     expect(opened.snapshot.resource).toBe(`pi:/${id}`);
     expect(opened.snapshot.state.defaultChat).toBe(`ahp-chat://default/${Buffer.from(`pi:/${id}`, 'utf8').toString('base64url')}`);
-    // Another spelling of the same id is no session here.
-    await expect(client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }))
-      .rejects.toMatchObject({ code: -32001 });
+
+    // Another spelling of the same id is the same session, answered under the
+    // spelling the client used, with the session's own state.
+    const other = await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }) as {
+      snapshot: { resource: string; state: { defaultChat: string } };
+    };
+    expect(other.snapshot.resource).toBe(`ahp-session:/${id}`);
+    expect(other.snapshot.state.defaultChat).toBe(opened.snapshot.state.defaultChat);
+    // And so is the chat derived from it.
+    const chat = await client.handle({
+      method: 'subscribe',
+      params: { channel: `ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}` },
+    }) as { snapshot: { resource: string; state: { turns: unknown[] } } };
+    expect(chat.snapshot.resource).toBe(`ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
+    expect(chat.snapshot.state.turns).toEqual([]);
   });
 
   it('keeps the name each new session is held under in its row', async () => {
@@ -308,62 +323,83 @@ describe('a session asked for by the name a client computed', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/row');
   });
 
-  it('answers the provider\'s scheme of its id as no session, nor that session\'s chat or marks', async () => {
+  /*
+   * Every spelling of the id names the row: the reference host answers a
+   * session under each identity it has and derives that session's chat from
+   * each of them, a chat's owner coming from the records that hold it.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898
+   */
+  it('answers the provider\'s scheme of its id as the row, with its chat and its marks', async () => {
     const client = await browsing();
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    for (const channel of ['claude:/row', derived('claude:/row'), 'claude:/row/annotations']) {
-      await expect(client.handle({ method: 'subscribe', params: { channel } })).rejects.toMatchObject({ code: -32001 });
-    }
-    const opened = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
-      snapshot: { resource: string; state: { title: string } };
+    const other = 'claude:/row';
+    const opened = await client.handle({ method: 'subscribe', params: { channel: other } }) as {
+      snapshot: { resource: string; state: { title: string; defaultChat: string } };
     };
-    expect(opened.snapshot.resource).toBe(ROW);
+    // Answered under the spelling the client used, with the row's own state.
+    expect(opened.snapshot.resource).toBe(other);
     expect(opened.snapshot.state.title).toBe('A real title');
+    expect(opened.snapshot.state.defaultChat).toBe(derived(ROW));
+    const chat = await client.handle({ method: 'subscribe', params: { channel: derived(other) } }) as {
+      snapshot: { resource: string; state: { turns: { message?: { text?: string } }[] } };
+    };
+    expect(chat.snapshot.resource).toBe(derived(other));
+    expect(chat.snapshot.state.turns[0]?.message?.text).toBe('earlier');
+    const marks = await client.handle({ method: 'subscribe', params: { channel: `${other}/annotations` } }) as {
+      snapshot: { resource: string; state: { annotations: unknown[] } };
+    };
+    expect(marks.snapshot.resource).toBe(`${other}/annotations`);
+    expect(marks.snapshot.state.annotations).toEqual([]);
   });
 
-  it('applies nothing sent under the provider\'s scheme of its id to the session', async () => {
+  it('applies what is sent under the provider\'s scheme of its id to the session', async () => {
     const p = peer();
     const client = await browsing(p);
     const other = 'claude:/row';
+    // Watched under the spelling the client used, which is where its echoes go.
+    for (const channel of [other, `${other}/annotations`, derived(other)]) {
+      await client.handle({ method: 'subscribe', params: { channel } });
+    }
     for (const [channel, action] of [
       [other, { type: 'session/isReadChanged', isRead: true }],
-      [other, { type: 'session/configChanged', config: { permissionMode: 'plan' } }],
       [`${other}/annotations`, {
         type: 'annotations/set',
         annotation: { id: 'a1', origin: { session: other }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'mark' }] },
       }],
       [derived(other), { type: 'chat/draftChanged', draft: { text: 'typed' } }],
-      [derived(other), { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } }],
     ] as [string, Record<string, unknown>][]) {
       client.handle({ method: 'dispatchAction', params: { channel, action } });
       await settle(6);
     }
 
-    // Each is dropped with nothing said, as the protocol has a server ignore
-    // an action naming a session or a chat that does not exist, and no VS Code
-    // window sends one: the flag, the config change, the mark, the draft and
-    // the turn. Nothing is said on the session under its own name, its chat
-    // or its marks either.
-    expect(actions(p).filter((e) => e.channel !== 'ahp-root://')).toEqual([]);
-    // And the session keeps its flags, its config, its marks and its chat's
-    // draft, and is not woken.
+    // Each is applied to the session, and said on the channel the client named.
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    const said = actions(p).filter((e) => e.channel !== 'ahp-root://').map((e) => [e.channel, e.action.type]);
+    expect(said).toEqual([
+      [other, 'session/isReadChanged'],
+      // The session's sole counted chat follows its read bit, and its row with it.
+      [derived(other), 'chat/isReadChanged'],
+      [other, 'session/chatUpdated'],
+      [`${other}/annotations`, 'annotations/set'],
+      [derived(other), 'chat/draftChanged'],
+    ]);
+    // Nothing is woken for a flag, a mark or a draft.
     expect(sessionQueries()).toHaveLength(0);
+    // The session's own name holds them: the read bit on its row, the mark on
+    // its marks, the draft on its chat.
     const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string; status: number }[];
     };
-    expect(rows.items.find((one) => one.resource === ROW)?.status).toBe(1);
-    const session = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
-      snapshot: { state: { config?: { values?: Record<string, unknown> } } };
-    };
-    expect(session.snapshot.state.config?.values?.permissionMode).not.toBe('plan');
+    expect(rows.items.find((one) => one.resource === ROW)?.status).toBe(1 | 32);
     const marks = await client.handle({ method: 'subscribe', params: { channel: `${ROW}/annotations` } }) as {
-      snapshot: { state: { annotations: unknown[] } };
+      snapshot: { state: { annotations: { id: string }[] } };
     };
-    expect(marks.snapshot.state.annotations).toEqual([]);
+    expect(marks.snapshot.state.annotations.map((one) => one.id)).toEqual(['a1']);
     const chat = await client.handle({ method: 'subscribe', params: { channel: derived(ROW) } }) as {
-      snapshot: { state: { draft?: unknown } };
+      snapshot: { state: { draft?: { text?: string } } };
     };
-    expect(chat.snapshot.state.draft).toBeUndefined();
+    expect(chat.snapshot.state.draft?.text).toBe('typed');
   });
 
   it('says a person started the chat', async () => {
@@ -813,7 +849,13 @@ describe('an older VS Code window', () => {
     await other.handle(hello(['1.0.0'], { clientId: 'other' }));
     expect(await listed(window)).toEqual([made]);
     expect(await listed(other)).toEqual([made]);
-    await expect(other.handle({ method: 'subscribe', params: { channel: `ahp-session:/${made.slice('claude:/'.length)}` } }))
-      .rejects.toMatchObject({ code: -32001 });
+    // A newer client may also name the session's id in the protocol's scheme,
+    // and is answered under that name with the session's own state.
+    const standard = `ahp-session:/${made.slice('claude:/'.length)}`;
+    const opened = await other.handle({ method: 'subscribe', params: { channel: standard } }) as {
+      snapshot: { resource: string; state: { defaultChat: string } };
+    };
+    expect(opened.snapshot.resource).toBe(standard);
+    expect(opened.snapshot.state.defaultChat).toBe(derived(made));
   });
 });

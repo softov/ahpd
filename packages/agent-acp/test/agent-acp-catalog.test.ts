@@ -1482,7 +1482,7 @@ it('says when a call started and ended, and reads back with the same numbers', a
 });
 
 it('starts a call at the first update about it, and ends it at the one that finished it', () => {
-  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map() };
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   mapUpdate(turn, toolCall('c1', 'pending'), 1_000);
   mapUpdate(turn, toolCallUpdate('c1', 'in_progress'), 2_000);
   mapUpdate(turn, toolCallUpdate('c1', 'completed'), 5_000);
@@ -1496,7 +1496,7 @@ it('starts a call at the first update about it, and ends it at the one that fini
 });
 
 it('stamps a call whose row a permission question opened at its first update', () => {
-  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map() };
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   // The row a `session/request_permission` opened, left the way the session
   // leaves it for the mapping to find: a call nobody has heard anything about.
   turn.calls.set('c1', { toolCallId: 'c1', toolName: 'rm', displayName: 'Remove', readied: true, asked: true });
@@ -1517,7 +1517,7 @@ it('stamps a call whose row a permission question opened at its first update', (
 });
 
 it('times a call that arrives already finished as one moment', () => {
-  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map() };
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   const sent = mapUpdate(turn, toolCall('c1', 'completed'), 7_000);
   const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
   const held = metaOf(turn.parts[0]?.toolCall as Bag);
@@ -1528,7 +1528,7 @@ it('times a call that arrives already finished as one moment', () => {
 });
 
 it('stamps nothing for an update a session load replayed', () => {
-  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map() };
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   // No `at`: the update carries no receive time of its own, and the replay's
   // own clock would time a call by when this process read about it.
   const sent = mapUpdate(turn, toolCall('c1', 'pending'));

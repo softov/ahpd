@@ -151,9 +151,13 @@ export function createTurn(ctx: SessionContext): Turn {
       });
     }
     touch();
-    // Somebody stopping a turn is stopping this conversation; a queued message
-    // behind it is the opposite of what they asked for.
-    if (ending !== 'cancelled') ctx.startNext();
+    /*
+     * Only a turn that completed starts the queue, as the reference host drains
+     * it after a success: somebody stopping a turn is stopping this
+     * conversation, and a failed turn leaves what waits for a client to start.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+     */
+    if (ending === 'complete') ctx.startNext();
   };
 
   /**
@@ -339,6 +343,7 @@ export function createTurn(ctx: SessionContext): Turn {
         turnId,
         parts: turn.responseParts as Bag[],
         calls: new Map(),
+        opening: [],
         ...(start.plan === true ? { hostPlan: true } : {}),
         reach: {
           within: inside,
@@ -354,7 +359,6 @@ export function createTurn(ctx: SessionContext): Turn {
         // offer: a call the agent reports for one is held for the client that
         // owns it, and asks that client to run it.
         ownerOf: ctx.ownerOf,
-        onRunning: (call) => ctx.openCall(call, turnId),
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
       await ctx.chooseModel(held, chosen);

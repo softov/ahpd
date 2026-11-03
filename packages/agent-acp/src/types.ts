@@ -488,13 +488,15 @@ export interface AcpTurn {
    */
   ownerOf?(name: string | undefined, title: string): string | undefined;
   /**
-   * A call this turn has started, which somebody is to run.
+   * The calls this turn has started that somebody is to run, waiting for the
+   * ready that says each is running to go out.
    *
-   * Called where the ready says the call is running, and before that ready goes
-   * out, so the entry that asks a client for the call exists before the chat
-   * says the call has started.
+   * The entry that asks a client to run a call names a call the chat holds
+   * running, as the reference host raises one for a call in that state, so it
+   * is raised after the ready rather than before it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L132-L144
    */
-  onRunning?(call: AcpCall): void;
+  opening: AcpCall[];
 }
 
 /**

@@ -310,7 +310,7 @@ async function joining(
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
+    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { clientId: id, name: id, tools } } },
   });
   return { client, peer: p };
 }
@@ -325,11 +325,14 @@ const begin = (client: Client, chatUri: string, turnId: string, text: string): v
   });
 };
 
-/** A client's own word on the call it ran, dispatched the way the protocol says. */
+/**
+ * A client's own word on the call it ran, dispatched the way the protocol says:
+ * in the turn the call is in, `t1`, the turn every case here begins.
+ */
 const complete = (client: Client, chatUri: string, toolCallId: string, result: Bag): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId, result } },
+    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId, result } },
   });
 
 /** The text of each MCP result the agent was told, which is what a client said. */
@@ -463,6 +466,18 @@ it("answers the agent's request with what the owning client said", async () => {
   ]);
   expect(types(p, chatUri).filter((type) => type.startsWith('chat/toolCall')))
     .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+  /*
+   * The entry asking the client went up once the chat held the call running,
+   * which is the ready: an entry names a call in the state its kind is raised
+   * for, as the reference host raises a client execution while the call runs.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L132-L144
+   */
+  const ready = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === chatUri && (n.params as Note).action.type === 'chat/toolCallReady');
+  const raised = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === uri && (n.params as Note).action.type === 'session/inputNeededSet');
+  expect(ready).toBeGreaterThan(-1);
+  expect(raised).toBeGreaterThan(ready);
   // And the entry the client was asked through is gone, not left open.
   expect(asked(p, uri)).toEqual([]);
 });

@@ -1067,9 +1067,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
         const activeClient: Bag | undefined = claimed;
-        let here: Map<string, Bag> | undefined;
+        let here: Map<unknown, Bag> | undefined;
         if (activeClient !== undefined) {
-          here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
+          here = presence.get(idOf(uri)) ?? new Map<unknown, Bag>();
           presence.set(idOf(uri), here);
           here.set(clientId, activeClient);
         }
@@ -1500,10 +1500,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // Last, and once: the row's chat list and its default chat both just
       // moved, and one notification carries both rather than one per change.
       summaryMoved(found.uri);
-      // A chat closed while its turn ran leaves the root's count of sessions
-      // running a turn, as the reference host drops it there.
-      // https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1881-L1887
-      activeSessionsMoved();
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.
       movableMoved(chatUri);

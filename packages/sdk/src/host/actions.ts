@@ -364,13 +364,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * the daemon holds.
        */
       const said: Record<string, unknown> = {};
-      /*
-       * The restart mark is the host's, so a push that names it moves nothing
-       * and its echo says the host's value. VS Code's settings editor writes
-       * every root config property back on a save, this one included.
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
-       */
-      if (Object.hasOwn(config, RESTART_KEY)) said[RESTART_KEY] = ctx.restartNeeded;
       /**
        * The host's own half, applied and echoed.
        *
@@ -393,6 +386,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * the port, so a copy kept here would be a second opinion - and
          * `rootState` shows this map to every connection, which would hand a
          * member a credential it has no schema for.
+         *
+         * The restart mark is the daemon's answer, which `markRestart` keeps,
+         * so a client's value for it is not kept here either. It goes out as
+         * the client sent it, as the reference host takes a root push as
+         * given, and VS Code's settings editor writes every root config
+         * property back on a save, this one included.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2899
+         * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
          */
         const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key) && key !== RESTART_KEY));
         const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
@@ -828,25 +829,26 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(over);
         return;
       }
-      const clientId = connection.clientId || 'anonymous';
-      const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
+      const activeClient = (typeof action.activeClient === 'object' && action.activeClient !== null
         ? action.activeClient
         : {}) as Bag;
       /*
-       * The entry as the client sent it, `tools` included or left out, under
-       * the `clientId` it carries, the sender's where it carries none: the
-       * reference host takes a set as sent, an entry naming another client
-       * among them, and its window reads `tools` of every client in the
-       * session. A client that names no tools provides none (`clientTools`).
-       * A client's leaving takes out the entry under its own id, as the
-       * reference host removes a leaving client's entry.
+       * The entry as the client sent it, `tools` included or left out, held
+       * under the `clientId` it carries, another client's or none: the
+       * reference host takes a set as sent, and its reducer keys the entry by
+       * the `clientId` the entry carries. Its window reads `tools` of every
+       * client in the session; an entry that names no tools, or no client,
+       * provides none (`clientTools`). A client's leaving takes out the entry
+       * under its own id, as the reference host removes a leaving client's
+       * entry, so an entry that names no client stays until a set replaces
+       * it.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts#L264-L273
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1659-L1677
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostCustomizationService.ts#L1083-L1101
        */
-      const named = typeof carried.clientId === 'string' ? carried.clientId : clientId;
-      const activeClient: Bag = { ...carried, clientId: named };
-      const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
+      const named: unknown = activeClient.clientId;
+      const held = presence.get(idOf(channel)) ?? new Map<unknown, Bag>();
       presence.set(idOf(channel), held);
       /*
        * Saying again what this host already held leaves the entry and the

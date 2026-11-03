@@ -106,9 +106,9 @@ const OPENED = {
  * A running cofold session with one client that says it can run `openFile`.
  *
  * Announced the way the protocol says a client does: dispatching a
- * `session/activeClientSet` whose `tools` are the definitions it provides.
- * The host forces the `clientId` to this connection's, which is what makes
- * the tool `probe__openFile` on the model's list.
+ * `session/activeClientSet` whose `tools` are the definitions it provides,
+ * under its own `clientId`, which is what makes the tool `probe__openFile`
+ * on the model's list.
  */
 async function offering(
   model: ModelAdapter,
@@ -141,7 +141,7 @@ async function offering(
     method: 'dispatchAction',
     params: {
       channel: uri,
-      action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools: [OPEN_FILE] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: given.clientId ?? 'probe', name: 'VS Code', tools: [OPEN_FILE] } },
     },
   });
   await settle();
@@ -193,11 +193,14 @@ const needed = (p: ReturnType<typeof peer>, uri: string): Record<string, unknown
 
 type Client = Awaited<ReturnType<typeof offering>>['client'];
 
-/** A client's own word on the call it ran, dispatched the way the protocol says. */
+/**
+ * A client's own word on the call it ran, dispatched the way the protocol says:
+ * in the turn the call is in, `t1`, the turn every case here begins.
+ */
 const complete = (client: Client, chatUri: string, result: Record<string, unknown>): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result } },
+    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result } },
   });
 
 /** The call has been opened and filled in, which is when the client may run it. */
@@ -293,6 +296,7 @@ it('settles the call from the owning client and gives the model the result', asy
       channel: chatUri,
       action: {
         type: 'chat/toolCallComplete',
+        turnId: 't1',
         toolCallId: 'call-1',
         result: { success: true, pastTenseMessage: 'Opened it', content: [{ type: 'text', text: 'opened /a.txt' }] },
       },
@@ -302,8 +306,7 @@ it('settles the call from the owning client and gives the model the result', asy
 
   // The model's next step carries the client's text as the tool result.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('opened /a.txt');
-  // The row is closed from what actually happened, not from the client's
-  // action relayed a second time: one completion, and the turn is over.
+  // One completion, the client's own, and the turn is over.
   const done = completion(p, chatUri);
   expect(done).toMatchObject({ success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
   expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(1);
@@ -326,6 +329,7 @@ it('refuses a result from a client that does not own the call', async () => {
       channel: chatUri,
       action: {
         type: 'chat/toolCallComplete',
+        turnId: 't1',
         toolCallId: 'call-1',
         result: { success: true, pastTenseMessage: 'Opened it', content: [{ type: 'text', text: 'not mine' }] },
       },
@@ -349,6 +353,7 @@ it('refuses a result from a client that does not own the call', async () => {
       channel: chatUri,
       action: {
         type: 'chat/toolCallComplete',
+        turnId: 't1',
         toolCallId: 'call-1',
         result: { success: true, pastTenseMessage: 'Opened it', content: [{ type: 'text', text: 'opened /a.txt' }] },
       },
@@ -417,7 +422,7 @@ it('asks a call of the one client whose tool it is, and refuses the other', asyn
     method: 'dispatchAction',
     params: {
       channel: uri,
-      action: { type: 'session/activeClientSet', activeClient: { name: 'Other editor', tools: [OPEN_FILE] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'b', name: 'Other editor', tools: [OPEN_FILE] } },
     },
   });
   await settle();

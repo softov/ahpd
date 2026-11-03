@@ -515,10 +515,10 @@ it('a question the inner agent asks is answered from outside', async () => {
   await until(() => seen.some(({ action }) => action.type === 'chat/inputRequested'));
   expect(seen.find(({ action }) => action.type === 'chat/inputRequested')?.action.request.id).toBe('req-1');
   // A draft answer is taken while the request is open, and refused for one that is not.
-  expect(session.setAnswer?.('req-1', 'q1', { kind: 'text', value: 'lulu' })).toBe(true);
-  expect(session.setAnswer?.('req-9', 'q1', { kind: 'text', value: 'lulu' })).toBe(false);
+  expect(session.setAnswer?.('req-1', 'q1', { state: 'draft', value: { kind: 'text', value: 'lulu' } })).toBe(true);
+  expect(session.setAnswer?.('req-9', 'q1', { state: 'draft', value: { kind: 'text', value: 'lulu' } })).toBe(false);
   expect(session.answer('req-9', true, {})).toBe(false);
-  expect(session.answer('req-1', true, { q1: { kind: 'text', value: 'lulu' } })).toBe(true);
+  expect(session.answer('req-1', true, { q1: { state: 'submitted', value: { kind: 'text', value: 'lulu' } } })).toBe(true);
   await until(() => told.answered.length > 0);
   expect(told.answered).toHaveLength(1);
   expect(told.answered[0]?.id).toBe('req-1');

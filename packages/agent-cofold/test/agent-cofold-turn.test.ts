@@ -413,22 +413,26 @@ function heldModel(): ModelAdapter {
   return held;
 }
 
-it('ends the running turn on a cancel that names no turn', async () => {
+it('stops nothing on a cancel that names no turn', async () => {
   const { client, peer: p, chatUri } = await talking(heldModel());
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
-  // A client with no id to give means the running turn, and the host hands
-  // this backend that turn's own id.
+  // A stop stops the turn it names: one naming none is said as sent, and the
+  // running turn is still there for the stop that names it.
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnCancelled').length === 2);
 
-  const said = types(p, chatUri);
-  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
-  expect(said.at(-1)).toBe('chat/turnCancelled');
+  const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
+  expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
 });
 
 it('ends a cancelled turn as turnCancelled, once', async () => {
@@ -503,7 +507,7 @@ it('runs a message queued after a stop once the stopped run has let its turn go'
 
 /*
  * Steering that came too late to steer a turn runs next, ahead of what the
- * stopped turn left queued (queueDrainContribution.ts L260-L262 at a4e689ae).
+ * stopped turn left queued (queueDrainContribution.ts L266-L267 at a4e689ae).
  */
 it('runs an idle steering message ahead of what a stopped turn left queued', async () => {
   const { model, release } = gatedModel();
@@ -1001,6 +1005,92 @@ it('marks a failed run resumable, on the stream and on the turn', async () => {
   expect(turn?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
 });
 
+/** A model whose first call streams a word, waits for `fail`, and throws; later calls answer. */
+function failingOnCue(): { model: ModelAdapter; fail: () => void } {
+  const answers = createFakeModel({ script: [{ text: 'answered' }], stream: true });
+  let cue: () => void = () => {};
+  const failed = new Promise<void>((resolve) => { cue = resolve; });
+  let first = true;
+  const model: ModelAdapter = {
+    ...answers,
+    id: 'on-cue',
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      if (!first) { yield* answers.stream!(request); return; }
+      first = false;
+      yield { type: 'text.delta', text: 'working' };
+      await failed;
+      throw new Error('the model gave up');
+    },
+  };
+  return { model, fail: () => { cue(); } };
+}
+
+/** A client's queued message, as `chat/pendingMessageSet` names it. */
+const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+  });
+
+/** The queued message each turn started from, in the order the turns started. */
+const startedFrom = (p: ReturnType<typeof peer>, chatUri: string): unknown[] => actions(p, chatUri)
+  .filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
+
+/*
+ * Nothing starts behind a failure a client can resume, a message queued after it
+ * included, as the reference host drains its queue after a success alone and
+ * holds it behind such a failure.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
+ */
+it('starts nothing behind a failure a client can resume, a message queued after it included', async () => {
+  const { model, fail } = failingOnCue();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  await queue(client, chatUri, 'waiting', 'second');
+  fail();
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part).toMatchObject({ resumable: true });
+
+  await queue(client, chatUri, 'later', 'third');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'later' } },
+  });
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { queuedMessages?: { id: string }[] } };
+  };
+  expect(opened.snapshot.state.queuedMessages?.map((one) => one.id)).toEqual(['waiting']);
+});
+
+/*
+ * A client taking a message back while nothing runs runs the reference host's
+ * drain, which starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the head once a client takes a message back from a stopped turn\'s queue', async () => {
+  const { client, peer: p, chatUri } = await talking(heldModel());
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  await queue(client, chatUri, 'waiting', 'second');
+  await queue(client, chatUri, 'later', 'third');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  expect(startedFrom(p, chatUri)).toEqual([undefined]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' } },
+  });
+  await until(() => startedFrom(p, chatUri).length === 2);
+  expect(startedFrom(p, chatUri)).toEqual([undefined, 'later']);
+});
+
 /** Ask for the turn that failed to run again, the way a client's control does. */
 const resume = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string): void => {
   client.handle({
@@ -1097,8 +1187,15 @@ it('leaves a resumed turn that fails again with one more error part, resumable a
   expect(turn?.responseParts.at(-1)?.resumable).toBe(true);
 });
 
-it('starts a message queued during a resume once the resume has failed', async () => {
-  const model = failingModel(2);
+/*
+ * A failed resume ends its turn as any failure does, and a failure a client can
+ * resume holds the queue until the turn is resumed and completes, as the
+ * reference host's drain holds it.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
+ */
+it('holds a message queued during a resume that fails, and starts it once a resume completes', async () => {
+  const gaveUp = { error: { code: 'server' as const, message: 'the model gave up' } };
+  const model = createFakeModel({ script: [gaveUp, gaveUp, { text: 'recovered' }, { text: 'answered' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
@@ -1111,18 +1208,20 @@ it('starts a message queued during a resume once the resume has failed', async (
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
   });
-  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/error').length === 2);
+  const started = (): unknown[] => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
+  expect(started()).toEqual([undefined]);
 
-  // The failed resume ends its turn as any failure does, and the queue moves
-  // on from there rather than waiting on a turn nobody will finish.
-  const said = types(p, chatUri);
-  const failedAgain = said.lastIndexOf('chat/error');
-  expect(said.filter((type) => type === 'chat/error')).toHaveLength(2);
-  expect(said.lastIndexOf('chat/turnStarted')).toBeGreaterThan(failedAgain);
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+  expect(started()).toEqual([undefined, 'q2']);
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { state: string; message: { text?: string } }[] } };
   };
-  expect(opened.snapshot.state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hi', 'error'], ['two', 'complete']]);
+  expect(opened.snapshot.state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hi', 'complete'], ['two', 'complete']]);
 });
 
 it('answers no for a resume the session cannot make', async () => {

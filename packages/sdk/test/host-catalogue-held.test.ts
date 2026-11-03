@@ -192,7 +192,7 @@ describe('a refresh says what it found', () => {
     // finished and is handed the catalogue by its own `listSessions` below, so
     // the first rows are that answer rather than one addition each - which is
     // what a client with a hundred stored sessions would be sent.
-    expect(notes).toEqual([]);
+    expect(said(notes, 'root/sessionAdded')).toEqual([]);
 
     here.rows.push(row('two', 'Two'));
     await listed(client);
@@ -492,14 +492,18 @@ describe('a listed session is named from its row', () => {
     expect(kept.sessions()).toEqual([]);
   });
 
-  it('opens a session listed as the protocol\'s URI under that URI, and under no provider\'s scheme', async () => {
+  it('opens a session listed as the protocol\'s URI under that URI, under its provider\'s scheme, and under no other scheme', async () => {
     const kept = memorySessions();
     const { here, client } = await started(backend, kept);
     await filled(here);
     const one = await opened(client, 'ahp-session:/one');
     expect(one.snapshot.resource).toBe('ahp-session:/one');
     expect(one.snapshot.state.title).toBe('One');
-    await expect(opened(client, 'slow:/one')).rejects.toMatchObject({ code: -32001 });
+    // The scheme of a provider this host serves is a spelling of the same id.
+    const again = await opened(client, 'slow:/one');
+    expect(again.snapshot.resource).toBe('slow:/one');
+    expect(again.snapshot.state.title).toBe('One');
+    await expect(opened(client, 'nobody:/one')).rejects.toMatchObject({ code: -32001 });
   });
 
   it('keeps the protocol\'s URI for a listed session once a client marks it, across a restart', async () => {

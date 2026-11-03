@@ -426,11 +426,10 @@ export interface TurnOptions {
 }
 
 /**
- * A backend's answer to one config value: `true` for taken as asked, the
- * values it was taken as under the backend's own keys, or the refusal in the
- * backend's words.
+ * A backend's answer to one config value: `true` for taken as asked, or the
+ * refusal in the backend's words.
  */
-export type ConfigTaken = true | string | Record<string, unknown>;
+export type ConfigTaken = true | string;
 
 /** A live session. */
 export interface Session {
@@ -578,8 +577,13 @@ export interface Session {
    * running turn and anything already queued, the same id twice edits what
    * is waiting, and the turn that runs it names it as `queuedMessageId` so a
    * client takes it out of its queue - whether that turn starts now or later.
+   *
+   * `kind` is that message's, as `queue` takes it: a `steering` command waits
+   * as a steering message does, ahead of everything queued, and runs as a
+   * command, as the reference host runs a `!` command its drain admits.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L30-L44
    */
-  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string): void;
+  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering'): void;
 
   /**
    * Put a message into the turn that is already running.
@@ -637,11 +641,11 @@ export interface Session {
    * Stop the running turn, named by its id, and answer anything it was
    * blocked on.
    *
-   * The host calls this while the chat runs a turn, with that turn's id, once
-   * it has said the client's stop to every client of the chat: the turn has
-   * ended in their state, and what the backend says of it afterwards is not
-   * said again. The host refuses a stop on a chat with no turn running, as
-   * the protocol has a server do.
+   * The host calls this when a client's stop names the turn the chat runs,
+   * with that turn's id, once it has said the client's stop to every client
+   * of the chat: the turn has ended in their state, and what the backend says
+   * of it afterwards is not said again. A stop naming any other turn, or none,
+   * reaches no backend.
    */
   cancel(turnId: string): void;
 
@@ -670,10 +674,14 @@ export interface Session {
    * are the ones true then rather than the ones true now.
    *
    * `kind` is the pending message's, `queued` when absent. A `steering` one is
-   * a steering message no turn was running to take: it is the next turn, ahead
-   * of everything waiting, as the reference host runs steering that came too
-   * late to steer a turn.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+   * a steering message no turn was running to take, handed only to a backend
+   * with `steer`: it runs ahead of every queued message, behind the steering
+   * messages already waiting, as the reference host runs steering that came
+   * too late to steer a turn, in the order its queue holds them. The chat
+   * shows the steering message set last, as the protocol's reducer holds one.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L899-L903
    */
   queue(
     id: string,
@@ -822,12 +830,10 @@ export interface Session {
    * both with one sentence would be telling a client its control does not
    * exist when the truth is that the value was wrong.
    *
-   * The values it was taken as, when the backend took it under keys of its
-   * own: a client's conventional name for a setting the backend's schema
-   * declares under another. Those are what the host says back to every client
-   * and keeps for a restart, so the state holds the setting the backend runs
-   * on, as the reference host takes a client's vocabulary into its own keys.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L585-L597
+   * What every client is told is the key and value the client sent, as the
+   * reference host says a client's config action in the client's own keys.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L587-L599
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
    */
   setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */

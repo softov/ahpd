@@ -711,6 +711,30 @@ it('sends no usage for a !command turn, which is not pi running', async () => {
 });
 
 /*
+ * Steering that came too late to steer a turn runs next, ahead of queued
+ * messages, in the order it came, and the chat shows the steering message set
+ * last, as the protocol's reducer holds one (queueDrainContribution.ts
+ * L266-L267, agentSessionMessage.ts L17-L22 at a4e689ae).
+ */
+it('runs two waiting steering messages in the order they were sent, ahead of what is queued', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.queue('waiting', 'second');
+  session.queue('s1', 'first steer', undefined, undefined, undefined, undefined, 'steering');
+  session.queue('s2', 'second steer', undefined, undefined, undefined, undefined, 'steering');
+  await settled();
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+
+  const started = sent.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);
+  expect(started).toEqual([undefined, 's1']);
+  expect((session.chatState().steeringMessage as Bag | undefined)?.id).toBe('s2');
+  expect((session.chatState().queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
+});
+
+/*
  * A queued message with nothing running starts at once, as a turn naming it:
  * "the server SHOULD immediately consume it", and the reference host starts
  * an accepted queued message while its chat is idle, as `chat/turnStarted`
@@ -750,6 +774,79 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   session.queue('later', 'third');
   await settled();
   expect(started().at(-1)?.queuedMessageId).toBe('waiting');
+});
+
+/*
+ * A client's reorder while nothing runs runs the reference host's drain, which
+ * starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the head once a client reorders a stopped turn\'s queue', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.queue('waiting', 'second');
+  session.queue('later', 'third');
+  await settled();
+  session.cancel('t1');
+  await settled();
+  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
+    .filter((one) => one.type === 'chat/turnStarted');
+  expect(started()).toHaveLength(1);
+  session.reorder(['later', 'waiting']);
+  await settled();
+  expect(started().at(-1)?.queuedMessageId).toBe('later');
+});
+
+/*
+ * A failed turn starts nothing behind it, as the reference host drains its
+ * queue after a success alone, and a client taking a message back while nothing
+ * runs starts the head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
+ */
+it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  // A model pi does not list fails the turn before anything is prompted.
+  session.begin('t1', 'hello', { id: 'nowhere/none' });
+  session.queue('waiting', 'second');
+  session.queue('later', 'third');
+  await settled();
+  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
+    .filter((one) => one.type === 'chat/turnStarted');
+  expect(sent.some((one) => one.action.type === 'chat/error')).toBe(true);
+  expect(started().map((one) => one.turnId)).toEqual(['t1']);
+  session.unqueue('waiting');
+  await settled();
+  expect(started().at(-1)?.queuedMessageId).toBe('later');
+});
+
+/*
+ * Nothing starts behind a failure a client can resume, a message queued after it
+ * included, as the reference host's drain holds the queue there.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
+ */
+it('starts nothing behind a failure a client can resume, a message queued after it included', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.queue('waiting', 'second');
+  await settled();
+  pi.raise({
+    type: 'message_end',
+    message: { role: 'assistant', stopReason: 'error', errorMessage: '429 rate limited' },
+  } as never);
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+  session.queue('later', 'third');
+  await settled();
+  session.unqueue('later');
+  await settled();
+  const started = sent.filter((one) => one.action.type === 'chat/turnStarted');
+  expect(started.map((one) => one.action.turnId)).toEqual(['t1']);
+  expect((session.chatState().queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
 });
 
 it('starts a queued !command as a turn naming it, with nothing said before it', async () => {

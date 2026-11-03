@@ -15,20 +15,16 @@ import type { ConnectionContext, HostContext } from './context.js';
  *
  * A session's `IsRead` and `IsArchived` are this host's rather than a
  * backend's: a harness asked would have no idea whether a person had read a
- * transcript. Three actions reach this - `session/isReadChanged` and
- * `session/isArchivedChanged` on a session channel, and `chat/isArchivedChanged`
- * on the session's default chat, which archives the session because that chat
- * is what the session's row is.
+ * transcript. `session/isReadChanged` and `session/isArchivedChanged` reach
+ * this, a client's on a session channel and this host's own.
  *
  * A read bit moved here is the session's. The chats it moves with, and when,
  * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
  * moves a sole chat where `session/isReadChanged` is applied.
  *
- * An archived bit that moved moves the default chat's with it. The protocol
- * makes archiving the default chat the same act as archiving the session, and
- * the chat and the session each carry the bit, so a client of either channel
- * holds it as the other does. A session that is not running names its default
- * chat as its catalogue row does.
+ * An archived bit is the session's alone, and each chat keeps its own, as the
+ * reference host keeps a session's flags apart from its chats'.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3369-L3374
  *
  * Answers whether anything moved. A bit handed the value it already had is not
  * a change, and a client told about one is a client woken for a message that
@@ -51,14 +47,6 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
-  if (bit === Status.IsArchived) {
-    const id = idOf(uri);
-    const recorded = ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
-    const lead = ctx.sessions.get(uri)?.defaultChat
-      ?? recorded.find((one) => one.default === true)?.uri
-      ?? chatUriFor(ctx.nameOf(id));
-    chatFlag(ctx, uri, lead, Status.IsArchived, on);
-  }
   if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
   // Unarchived: the tree back before anything wakes the session into it, and
   // the session is no longer one the host archived.
@@ -262,29 +250,33 @@ export function chatAction(
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
     : undefined;
   const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
-  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
-    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
-    /*
-     * Archiving the chat that is the session's row archives the session.
-     *
-     * A session is a row in a list and its first chat is what that row is, so
-     * the protocol makes the two the same act: "Archiving the session's default
-     * chat is equivalent to archiving the session"
-     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts).
-     * The chat's archived bit is kept
-     * and said as any chat's is, the client's own action going out to every
-     * client of the chat, and the session's follows on the session channel as
-     * this host's action; a session archived by its own action moves the two
-     * bits alike, in `sessionFlag`.
-     */
-    if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
-      const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
-      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
-      // A chat already archived or not as asked is the client's action all
-      // the same, said to every client of the chat as any accepted action is.
-      if (!moved) dispatch(channel, action, origin);
+  /*
+   * A session's default chat is not archived on its own.
+   *
+   * The reference host refuses an archive of a default chat, in a session it
+   * runs and in one it has not loaded, and its window sends one on the chat's
+   * channel. A session is archived by its own `session/isArchivedChanged`.
+   * The default chat is the running session's, or the one a session not
+   * running records, or the one its catalogue row names. Refused before
+   * anything wakes the session, as the reference host refuses one without
+   * restoring it.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13453-L13464
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12120-L12122
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L7838-L7856
+   */
+  if (bitOf === Status.IsArchived && flagSession !== undefined) {
+    const id = idOf(flagSession);
+    const recorded = sessions.has(flagSession) || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = sessions.get(flagSession)?.defaultChat
+      ?? recorded.find((one) => one.default === true)?.uri
+      ?? chatUriFor(ctx.nameOf(id));
+    if (lead === channel) {
+      refuse(connection.peer, channel, action, origin, 'Only a known independently manageable non-default chat can be archived.');
       return;
     }
+  }
+  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
+    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
     /*
      * Said again, a bit that did not move keeps the catalogue as it is. The
      * action is still accepted, and goes to every client of the chat. A read
@@ -445,13 +437,6 @@ export function chatAction(
       dispatch(uri, action, origin);
     };
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
-    /*
-     * Another spelling of a session published here names a session that does
-     * not exist, and the change is ignored with no echo, as the protocol has a
-     * server ignore it: no VS Code window sends one.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
-     */
-    if (ctx.heldElsewhere(sessionFor(channel))) return;
     // Before `past`, which answers nothing for a session waiting for its
     // agent and would have this one say it is not a session at all.
     const waiting = waitingFor(idOf(sessionFor(channel)));
@@ -468,7 +453,7 @@ export function chatAction(
     return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
       if (!connections.has(connection)) return;
       if (known()) keep();
-      else if (!ctx.heldElsewhere(sessionFor(channel))) no(`${channel} is not a session here`);
+      else no(`${channel} is not a session here`);
     });
   }
   /*
@@ -500,15 +485,7 @@ export function chatAction(
         }
         return conn.applyNow(params, origin);
       },
-      /*
-       * A turn under another spelling of a session published here, which
-       * the wake has read the catalogue for, names a chat that does not
-       * exist and is ignored with no echo, as the protocol has a server
-       * ignore it: no VS Code window sends one.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
-       */
       (error: unknown) => {
-        if (ctx.heldElsewhere(uri)) return;
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
       },
     ).finally(release);
@@ -529,23 +506,15 @@ export function chatAction(
   if (!session && type === 'chat/draftChanged') {
     const uri = sessionFor(channel);
     const id = idOf(uri);
-    /*
-     * A draft under another spelling of a session published here names a
-     * chat that does not exist, and is ignored with no echo, as the protocol
-     * has a server ignore it: no VS Code window sends one.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
-     */
-    if (ctx.heldElsewhere(uri)) return;
     void (async () => {
       const missing = waitingFor(id);
       if (missing !== undefined) {
         refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
         return;
       }
-      // The session the chat belongs to, under the one name it is published
-      // by, which the catalogue's read names.
+      // The session the chat belongs to, under the name it is published by,
+      // which the catalogue's read names.
       const found = await past(id);
-      if (ctx.heldElsewhere(uri)) return;
       if (!found || ctx.nameOf(id) !== uri) {
         refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
         return;
@@ -639,8 +608,8 @@ export function chatAction(
   const chatHeld = (ctx.stateOf(worker ? channel : session.chatUri) ?? {}) as Bag;
   const activeHeld = chatHeld.activeTurn as Bag | undefined;
   /**
-   * A stop of `turn`, the held running turn of the chat it was sent on, said
-   * when it is taken: the client's own stop under the turn it ends and with
+   * A stop of `turn`, the held running turn of the chat it was sent on and
+   * the turn the stop names, said when it is taken: the client's own stop with
    * the time that turn ran, so the turn ends in every client's state at once.
    * The backend is told to stop after, and what it says of that turn then
    * reduces to nothing. The reference host takes a client's cancel into its
@@ -650,7 +619,7 @@ export function chatAction(
    */
   const stopped = (turn: Bag, duration?: unknown): void => {
     const ran = typeof duration === 'number' ? duration : Date.now() - Date.parse(String(turn.startedAt ?? ''));
-    dispatch(channel, { ...action, turnId: String(turn.id ?? ''), duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
+    dispatch(channel, { ...action, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
   };
   /**
    * Whether the held running turn has an input request by this id that has
@@ -1074,7 +1043,7 @@ export function chatAction(
        * value the session actually has where a start changed it - a source is
        * made into a machine on the way in, so a client told the source back
        * would hold a value the session is not running with - and each key the
-       * backend took under keys of its own as those keys.
+       * backend took as the client sent it.
        */
       const said = (taken: Record<string, unknown>): void => {
         for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
@@ -1100,10 +1069,9 @@ export function chatAction(
        * a backend may answer a value only as it is closed, by the start a
        * later dispatch of the same connection asks for.
        *
-       * Taken under the backend's own keys: those are what the session runs
-       * on, so they are what is kept and what every client is told, as the
-       * server's echo wins.
-       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+       * A key taken is said in the client's own words, as the reference host
+       * says a client's config action in the client's own keys.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
        *
        * Every chat, or only this one, as the property says. A permission
        * mode and an output style are the session's: the chats are peers on
@@ -1116,39 +1084,36 @@ export function chatAction(
       const taking = async (): Promise<Record<string, unknown> | string> => {
         const taken: Record<string, unknown> = {};
         const done: string[] = [];
-        const wrote: [string, unknown][] = [];
         for (const [key, value] of Object.entries(config)) {
           if (!asked.some(([one]) => one === key)) {
             taken[key] = owning?.config[key] ?? value;
             continue;
           }
           const answer = await Promise.resolve(session.setConfig?.(key, value));
-          if (typeof answer !== 'object' && answer !== true) {
+          if (answer !== true) {
             for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
-            for (const [own, was] of wrote) {
-              if (owning === undefined) continue;
-              if (was === undefined) delete owning.config[own];
-              else owning.config[own] = was;
-            }
-            return answer ?? `${key} is not a config key this backend takes`;
+            return typeof answer === 'string' ? answer : `${key} is not a config key this backend takes`;
           }
           done.push(key);
-          if (answer === true) taken[key] = value;
-          else {
-            undo(key);
-            for (const [own, held] of Object.entries(answer)) {
-              if (owning !== undefined) {
-                wrote.push([own, owning.config[own]]);
-                owning.config[own] = held;
-              }
-              taken[own] = held;
-            }
-          }
+          taken[key] = value;
           const everywhere = propertyOf(owning?.agent, key)?.scope === 'chat'
             ? []
             : (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
               .filter((chat) => chat !== session);
           for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
+        }
+        /*
+         * A key this host takes goes to every chat's backend once the action
+         * is taken, as the reference host's agents are handed every key but
+         * its own and read one as it stands: what a backend answers decides
+         * nothing, since this host took the key. A nested session's host
+         * inside judges that session's commands by the locations it is handed.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L205-L217
+         */
+        for (const [key, value] of Object.entries(config)) {
+          if (!Object.hasOwn(HOSTS_TAKEN, key)) continue;
+          for (const chat of owning === undefined ? [session] : owning.chats.values()) void Promise.resolve(chat.setConfig?.(key, value));
         }
         return taken;
       };
@@ -1387,27 +1352,27 @@ export function chatAction(
      * The running turn is the one the chat's held state has, the one every
      * client of the chat was told of: a worker's chat holds the worker's turn,
      * which this host opened and reduces itself, and every other chat the turn
-     * its backend said. A stop that names no turn means the running one, the
-     * one turn a client with no id to give can mean.
+     * its backend said. A stop stops the turn its `turnId` names, which the
+     * protocol requires it to carry.
      *
-     * A stop of no running turn stops nothing: a chat with no turn running, or
-     * a turn other than the running one, one the client saw end. It goes to
-     * every client of the chat as the client's own action, as the reference
-     * host takes it, and the protocol's reducer ends a turn only when the id it
-     * names is the active turn's, so every client's chat stays as it was.
-     * Nothing is asked of a backend for it.
+     * A stop of no running turn stops nothing: a chat with no turn running, a
+     * turn other than the running one, one the client saw end, or no turn at
+     * all. It goes to every client of the chat as the client's own action, as
+     * the reference host takes it, matching the turn before anything is
+     * stopped, and the protocol's reducer ends a turn only when the id it names
+     * is the active turn's, so every client's chat stays as it was. Nothing is
+     * asked of a backend for it.
      * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
      * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
      */
     case 'chat/turnCancelled': {
-      const named = String(action.turnId ?? '');
-      if (activeHeld === undefined || (named !== '' && named !== String(activeHeld.id ?? ''))) {
+      if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
         dispatch(channel, action, origin);
         break;
       }
       if (!worker) {
-        // The stop is said under the running turn's id when it is taken, and
-        // the backend running that turn is told after.
+        // The stop is said when it is taken, and the backend running the turn
+        // it names is told after.
         const turn = String(activeHeld.id ?? '');
         stopped(activeHeld, action.duration);
         if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
@@ -1449,27 +1414,32 @@ export function chatAction(
         no(`${kind} is neither a steering message nor a queued one`);
         break;
       }
-      // A turn running in a backend that cannot steer one. With nothing
-      // running, the message is the next turn, whatever the backend.
-      if (kind === 'steering' && !session.steer && activeHeld !== undefined) {
+      /*
+       * A backend that takes no steering refuses it, a turn running or not, as
+       * the reference host refuses steering to a provider that cannot take it.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13513-L13516
+       */
+      if (kind === 'steering' && !session.steer) {
         no('This backend cannot take a message mid-turn');
         break;
       }
       /*
-       * The steering message the running turn was handed, sent again.
+       * A pending message under the id of the steering message the running
+       * turn was handed.
        *
-       * The backend holds it already, so the same message is answered and not
-       * handed over a second time, and a different one is refused, in the
-       * reference host's words: "Repeated identical upserts MUST NOT cause
-       * duplicate provider delivery", and "Hosts MUST reject edits ... that
-       * they can no longer honor after handoff".
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13516-L13523
+       * The backend holds it already, so the same steering message is answered
+       * and not handed over a second time, and a different one, or a queued
+       * message under its id, is refused, in the reference host's words:
+       * "Repeated identical upserts MUST NOT cause duplicate provider
+       * delivery", and "Hosts MUST reject edits ... that they can no longer
+       * honor after handoff".
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L190-L196
        */
       const holding = chatHeld.steeringMessage as Bag | undefined;
-      if (kind === 'steering' && activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
+      if (activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
         // By value: the held copy went through a reducer, which writes its keys in its own order.
-        if (isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
+        if (kind === 'steering' && isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
         else no('Cannot change a steering message while it is being processed.');
         break;
       }
@@ -1495,7 +1465,7 @@ export function chatAction(
        * The second runs as a turn of its own, under its id and ahead of what
        * waits, as the reference host runs steering that came too late to steer
        * a turn, and the turn naming it takes it out of every client's state.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
        */
       const model = (typeof message.model === 'object' && message.model !== null
@@ -1636,12 +1606,14 @@ export function chatAction(
        */
       const applied = store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }];
       /*
-       * The client's switch, said back to every client of the session with
-       * its origin once it is made, which answers the client that turned it.
-       * It carries the enablement this host applied, which is the session's
-       * own decision for a sender who may not keep one for every session.
+       * The client's switch is said back to every client of the session as it
+       * was sent, with its origin, once it is made, which answers the client
+       * that turned it. The reference host emits a client's action as sent
+       * and records the client's own enablement; what this host applies for a
+       * sender who may not keep a decision for every session is its own.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L414-L428
        */
-      const said = { ...action, enablement: applied };
       const toggled = ctx.toggleClientPlugin(session.uri, id, applied);
       if (toggled !== undefined) {
         /*
@@ -1654,7 +1626,7 @@ export function chatAction(
          */
         if (toggled.server !== undefined)
           void session.setCustomizationEnabled(id, onFor(session.uri, asked));
-        dispatch(session.uri, said, origin);
+        dispatch(session.uri, action, origin);
         break;
       }
       const on = onFor(session.uri, asked);
@@ -1669,7 +1641,7 @@ export function chatAction(
          */
         if (took) {
           ctx.keepDecision(session.uri, id, on);
-          dispatch(session.uri, said, origin);
+          dispatch(session.uri, action, origin);
         }
         else
           no(`${id} has no runtime switch`);
@@ -1850,14 +1822,17 @@ export function chatAction(
         break;
       }
       /*
-       * An acceptance that leaves a required question unanswered SHOULD be
-       * rejected. The completion uses the request's synced answers and what
-       * it carries, so a question answered in either way is answered, and one
-       * skipped or absent from both is not. No VS Code client can tell: its
-       * host hands an answer on unchecked, and its clients send what their
-       * forms hold.
+       * An acceptance whose required questions "do not have submitted
+       * answers" SHOULD be rejected. The completion's answers are the
+       * request's synced ones with what it carries laid over them, as the
+       * reducer records them, so a required question stands answered only
+       * where that answer's state is `submitted`: a draft, a skip and no
+       * answer are not. No VS Code client can tell: its host hands an answer
+       * on unchecked, and its clients send each answer as submitted.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L358
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L874
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1913-L1919
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L642-L692
        */
       if (response === 'accept') {
         const request = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
@@ -1865,12 +1840,10 @@ export function chatAction(
           .find((one) => one?.id === requestId);
         const given = { ...(request?.answers ?? {}) as Bag, ...(typeof action.answers === 'object' && action.answers !== null ? action.answers : {}) as Bag };
         const missing = (Array.isArray(request?.questions) ? request.questions as Bag[] : [])
-          .find((question) => {
-            const one = given[String(question.id ?? '')] as Bag | undefined;
-            return question.required === true && (one === undefined || one.state === 'skipped');
-          });
+          .find((question) => question.required === true
+            && (given[String(question.id ?? '')] as Bag | undefined)?.state !== 'submitted');
         if (missing !== undefined) {
-          no(`${String(missing.id ?? '')} is required and has no answer`);
+          no(`${String(missing.id ?? '')} is required and has no submitted answer`);
           break;
         }
       }
@@ -2084,22 +2057,25 @@ export function chatAction(
         break;
       }
       /*
-       * A draft or submitted answer carries its value, of the kind it names:
-       * one missing either SHOULD be rejected. No VS Code client can tell:
-       * its host hands an answer on unchecked, and its clients send what
-       * their forms hold.
+       * A draft or submitted answer whose value is absent, or whose value's
+       * kind is missing the payload that kind names, SHOULD be rejected. The
+       * kinds are `@nonexhaustive`, so a value of a kind the protocol does
+       * not list names no payload to check, and is taken. No VS Code client
+       * can tell: its host hands an answer on unchecked, and its clients send
+       * what their forms hold.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L356
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L589-L650
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L583-L650
        */
       if (answer !== undefined && answer.state !== 'skipped') {
-        const value = (typeof answer.value === 'object' && answer.value !== null ? answer.value : {}) as Bag;
-        const fits = value.kind === 'text' || value.kind === 'selected' ? typeof value.value === 'string'
-          : value.kind === 'number' ? typeof value.value === 'number'
-            : value.kind === 'boolean' ? typeof value.value === 'boolean'
-              : value.kind === 'selected-many' ? Array.isArray(value.value) && value.value.every((one) => typeof one === 'string')
-                : false;
+        const value = typeof answer.value === 'object' && answer.value !== null ? answer.value as Bag : undefined;
+        const fits = value === undefined ? false
+          : value.kind === 'text' || value.kind === 'selected' ? typeof value.value === 'string'
+            : value.kind === 'number' ? typeof value.value === 'number'
+              : value.kind === 'boolean' ? typeof value.value === 'boolean'
+                : value.kind === 'selected-many' ? Array.isArray(value.value) && value.value.every((one) => typeof one === 'string')
+                  : true;
         if (!fits) {
-          no(`The answer to ${questionId} has no ${typeof value.kind === 'string' ? `${value.kind} ` : ''}value`);
+          no(`The answer to ${questionId} has no ${typeof value?.kind === 'string' ? `${value.kind} ` : ''}value`);
           break;
         }
       }
@@ -2129,12 +2105,11 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * The result goes back to the harness, the harness writes the tool
-     * result, and the session reports the completion to every client from
-     * that - the same path every other tool call takes, so the row is drawn
-     * finished once, from what actually happened. That completion is the
-     * answer to the client that gave the result: owed to it under the call,
-     * it goes out with that client's origin.
+     * The result goes back to the harness, which runs on with it. What every
+     * client is told is the client's own action, said once the backend has
+     * taken it, and the call is completed once: the completion the harness
+     * reports after it is not said, as `dispatch` drops a backend's result
+     * for a call the chat holds completed.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
@@ -2178,16 +2153,15 @@ export function chatAction(
       }
       /*
        * Said once the backend has taken it, as the client sent it: the call is
-       * complete in every client's state with the result its client gave, and
-       * what the harness says of the call after reduces to nothing. The
-       * reference host says a client's action when it takes it and runs the
-       * side effect after. A turn the client left out is the running turn the
-       * call is in.
+       * complete in every client's state with the result its client gave, in
+       * the turn the action names, and what the harness says of the call after
+       * reduces to nothing. The reference host says a client's action when it
+       * takes it and runs the side effect after, and the protocol's reducer
+       * completes a call only in the turn the action names.
        * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
        */
-      if (ctx.unanswered()) {
-        dispatch(channel, { ...action, turnId: typeof action.turnId === 'string' ? action.turnId : String(activeHeld?.id ?? '') }, origin);
-      }
+      if (ctx.unanswered()) dispatch(channel, action, origin);
       break;
     }
     /*
