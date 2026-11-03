@@ -200,6 +200,8 @@ export interface TurnHandle {
   onAnswer?: (requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel') => boolean;
   /** Who hears about each turn that begins and each message steered into one. */
   onMessage?: (message: ChatMessage) => void;
+  /** Who hears that a client stopped the open turn, to stop the work behind it. */
+  onStop?: (session: string, turnId: string) => void;
 }
 
 /** The provider id a chat is registered and named under. */
@@ -460,9 +462,14 @@ export function turns(session: string): TurnHandle {
  * has is refused there rather than opening a session nothing can answer.
  *
  * `heard` is set as the `onMessage` of every chat's handle, a new chat and a
- * resumed one alike.
+ * resumed one alike, and `stopped` as its `onStop`.
  */
-export function botChatAgent(configDir: string, store: BotStore, heard?: (message: ChatMessage, handle: TurnHandle) => void): Agent {
+export function botChatAgent(
+  configDir: string,
+  store: BotStore,
+  heard?: (message: ChatMessage, handle: TurnHandle) => void,
+  stopped?: (session: string, turnId: string) => void,
+): Agent {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
    *
@@ -794,6 +801,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       },
     };
     if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
+    if (stopped !== undefined) handle.onStop = stopped;
     handles.set(start.uri, handle);
 
     /**
@@ -1069,13 +1077,17 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       /*
        * A stop ends the turn and starts nothing behind it: the reference host
        * leaves queued messages queued, for a message sent after the stop to
-       * start.
+       * start. The work behind the turn stops too: the reference host cancels
+       * the running turns of a stopped chat's subagent sessions.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1942
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
        */
       cancel: (turnId) => {
         const held = open;
         if (held === undefined || held.id !== turnId) return;
         finish(held, 'cancelled', [], false);
+        handle.onStop?.(start.uri, turnId);
       },
 
       // Held by the session, so two people on one chat see each other's - which

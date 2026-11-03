@@ -380,6 +380,28 @@ it('ends a turn as failed, in the words of what failed', async () => {
   expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: 't1', state: 'error' });
 });
 
+/*
+ * A stop is told to whoever holds the chat, so the work behind the turn stops
+ * too, as the reference host cancels a stopped chat's subagent sessions
+ * (agentSideEffects.ts L1942, L1470-L1483 at a4e689ae).
+ */
+it('tells the chat\'s holder which turn a client stopped', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+  const stops: [string, string][] = [];
+  chat.onStop = (session, turnId) => { stops.push([session, turnId]); };
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  expect(stops).toEqual([[HELD, 't1']]);
+});
+
 it('ends a turn with a notice, and with a cancellation', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];

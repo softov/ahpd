@@ -518,7 +518,13 @@ export const apply: Plugin['apply'] = (host, options) => {
         throw new Error(`${session} names no chat to say a message in`);
       }
       const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
-      return { chat, working: (status & Status.InProgress) !== 0 };
+      const working = (status & Status.InProgress) !== 0;
+      if (!working) return { chat, working };
+      // And the turn running there, off the chat's own state, which a stop
+      // of the main turn cancels by its id.
+      const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: Bag } };
+      const active = opened.snapshot?.state?.['activeTurn'] as Bag | undefined;
+      return { chat, working, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
     },
     send,
     mayUse,
@@ -610,11 +616,16 @@ export const apply: Plugin['apply'] = (host, options) => {
   /*
    * A chat with a bot: a session of its own that runs no model, one JSON line
    * per turn under the daemon's configuration folder. Every message in one,
-   * new or resumed, goes to the wake. See `chat.ts`.
+   * new or resumed, goes to the wake, and so does a stop of one of its turns.
+   * See `chat.ts`.
    */
   host.registerAgent(botChatAgent(host.configDir, store, (message, handle) => {
     wake.woken(message, handle).catch((error: unknown) => {
       host.problem(`${name}: a message in ${message.session} was not woken: ${reason(error)}`);
+    });
+  }, (session, turnId) => {
+    wake.stopped(session, turnId).catch((error: unknown) => {
+      host.problem(`${name}: the work behind ${turnId} in ${session} was not stopped: ${reason(error)}`);
     });
   }));
 };
