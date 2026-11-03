@@ -1,7 +1,7 @@
 ---
 title: A session is answered under every spelling
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -70,7 +70,7 @@ an action on the session -> dispatch -> the connection watching the alias is tol
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every spelling of an id is the session](task-01-every-spelling-of-an-id-is-the-session.md) | todo | - |
+| [01 - Every spelling of an id is the session](task-01-every-spelling-of-an-id-is-the-session.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -78,13 +78,13 @@ an action on the session -> dispatch -> the connection watching the alias is tol
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a scheme no agent here serves names no session, whatever id it carries.
 
 ## Final verification checklist
 
-- [ ] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The names, gate, chats, snapshot and catalogue test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The names, gate, chats, snapshot and catalogue test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

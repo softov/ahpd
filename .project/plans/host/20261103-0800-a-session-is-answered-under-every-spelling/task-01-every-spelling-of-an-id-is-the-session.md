@@ -1,6 +1,6 @@
 ---
 title: Every spelling of an id is the session
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -41,4 +41,4 @@ A client is answered under the name it used, and a scheme no agent here serves n
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
