@@ -1,6 +1,6 @@
 ---
 title: A load removes only the data of a deleted bot
-status: todo
+status: implemented
 depends: [task-05-a-bots-data-is-one-folder.md]
 layer: "packages/bot"
 refs:
@@ -42,4 +42,13 @@ A bot file that comes back after its tombstone is refused, and a problem line sa
 - Run `pnpm --filter @ahpd/bot test` alone. Expect a pass.
 
 ## Resume
+
+- **Done so far:** all steps. A load reads each tombstone name in `bots-gone/` through `isSlug` and reports a name that is no bot's. It removes only what a slug tombstone names. A folder that still holds `bot.md` is kept and reported as a spent name. Its record is left out of the store at the load.
+- **Built as:** `moveData` builds `dead` from the tombstone files one at a time. A non-slug name is reported and skipped rather than becoming a folder to remove. The removal loop checks `bots/<slug>/bot.md` before the folder, and reports the kept folder and the spent name. It removes the bare `<slug>.md` whether the folder stays or goes.
+- **Built as:** both roads into the store check `dead`. `take` refuses an `added` or `updated` change whose id has a tombstone before it reads the record. `load` reads the tombstones before the bots, and leaves out each one that is spent. Both report `bots/<slug> has a tombstone; the name is spent and it was left out`.
+- **Tests:** `bot-provider.test.ts` gains four cases. `..md`, `...md`, `Foo.md` and a kept `templates/kept.md` survive with a problem line each. A tombstoned folder with `bot.md` stays, with the folder and the spent name reported. The older collections of a deleted bot are removed, and a file the move cannot place stays. `bot-store.test.ts` gains the hand-delete, put-back and new-load case.
+- **Fixtures:** a tombstone in a test is written with frontmatter, through the `tombstone` helper. A bare `gone` file is a tombstone the record store cannot read, so the store never learns the slug.
+- **Changed files:** `packages/bot/src/plugin.ts`, `packages/bot/src/store.ts`, `packages/bot/test/bot-provider.test.ts`, `packages/bot/test/bot-store.test.ts`.
+- **Gates:** `pnpm -s schema`, `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit` and `pnpm -s boundary` pass; `pnpm --filter @ahpd/bot test` ran 15 files and 206 tests, all passed.
+- **Left dirty by the suite:** `packages/sdk/test/fixtures/wire.jsonl`. It is not part of the commit.
 

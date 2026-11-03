@@ -68,16 +68,19 @@ const templates = (held: Record<string, string>) => ({
 });
 
 /** A daemon's plugin host, with the bot plugin applied over one configuration folder. */
-function loaded(config: string): void {
-  const root = temp();
+function loaded(config: string, root = join(temp(), 'bots')): string[] {
+  const reported: string[] = [];
+  const path = temp();
   const context: LoaderContext = {
-    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: config, log: () => {}, say: () => {},
+    path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: config, log: () => {}, say: () => {},
   };
   const { host } = pluginHost('bot', context, {
     sessions: () => memorySessions(),
     records: () => memoryRecords(),
+    alert: (alert) => { reported.push(alert.text); },
   });
-  apply(host, { root: join(root, 'bots') });
+  apply(host, { root });
+  return reported;
 }
 
 it('writes a bot with no template the default AGENTS.md, filled with its words', async () => {
@@ -119,6 +122,16 @@ it('writes the default template at load, and keeps a file somebody edited', () =
   writeFileSync(agentsTemplatePath(config), '# Our bots\n\nAsk before pushing.\n');
   loaded(config);
   expect(readFileSync(agentsTemplatePath(config), 'utf8')).toBe('# Our bots\n\nAsk before pushing.\n');
+});
+
+it('refuses a root inside the configuration folder, and uses the default', () => {
+  const config = configDir();
+
+  // A work folder there is one bad delete away from the records: the option is
+  // not used, and the problem names both folders and the root that takes its
+  // place.
+  const problems = loaded(config, join(config, 'bots'));
+  expect(problems.join('\n')).toMatch(/root .* is inside the configuration folder .*; using .*\.bots/);
 });
 
 it('leaves an AGENTS.md in the bot folder alone', () => {

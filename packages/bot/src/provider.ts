@@ -2,8 +2,9 @@ import { rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { RpcError } from '@ahpd/sdk';
 import { covers, ownerFilter, ownerOfPrincipal } from '@ahpd/sdk';
+import { instructionsProblem } from './agents.js';
 import { CHAT_PROVIDER } from './chat.js';
-import { fromAgents, makeFolder, partsOf, writeAgentsFile } from './folder.js';
+import { AGENTS_FILE, fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
 import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
@@ -824,6 +825,13 @@ export function botProvider(options: BotOptions): BotProvider {
         updatedAt: now,
       };
       /*
+       * The section ends at the next `##` line, so instructions with one of
+       * their own would be cut at it: refused here, before anything is written,
+       * rather than written and read back short.
+       */
+      const wrong = instructionsProblem(record.instructions ?? '');
+      if (wrong !== undefined) throw new RpcError(-32602, wrong);
+      /*
        * The file is written before the record, because the file is the one copy
        * of the persona: a record written over a file that never got the parts
        * would be the only copy of them, which is the thing this removes.
@@ -831,15 +839,26 @@ export function botProvider(options: BotOptions): BotProvider {
        * A make leaves a folder behind with its `AGENTS.md` in it, from the
        * template filled with the bot's words, so the file a bot has from its
        * first moment is the one a first wake would have made. An edit writes the
-       * parts into the file that is there and keeps everything else it says.
+       * parts into the file that is there and keeps everything else it says; so
+       * does a make that finds a file already there.
        *
        * A bot on a computer has no folder on this host, so it is the one bot
        * whose record keeps the parts: its file is on a machine this write does
        * not reach.
        */
       if (record.computer === undefined) {
-        if (existing === undefined) makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
-        else writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+        // A file this host cannot read would be written over as if it were
+        // empty, and its text is the bot's: the write is refused instead.
+        const file = readAgentsFile(record.workspace, options.yaml);
+        if (file.kind === 'unreadable') {
+          throw new RpcError(-32603, `${join(record.workspace, AGENTS_FILE)} cannot be read, so it was not written: ${String(file.error)}`);
+        }
+        if (existing === undefined && file.kind === 'missing') {
+          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
+        }
+        else {
+          writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+        }
       }
       await store.put(record);
       told(existing === undefined ? 'added' : 'updated', record);

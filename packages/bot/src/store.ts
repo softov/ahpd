@@ -1,6 +1,6 @@
-import { makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
+import { AGENTS_FILE, makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
 import { BOT_BODIES, DEFAULT_SESSION, isBotColor, isSlug, withoutParts } from './record.js';
-import type { Yaml } from './agents.js';
+import type { AgentsParts, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
 
@@ -116,6 +116,20 @@ const same = (one: BotRecord, other: BotRecord): boolean => {
 };
 
 /**
+ * Whether a file read back holds the parts a write asked it to.
+ *
+ * The instructions are asked for as a prefix rather than as the whole section:
+ * a file with no section gets one above the text the bot already had, and that
+ * text then reads as the rest of the section. The version is the parts' own
+ * where they name one, and the file's otherwise.
+ */
+const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
+  got.name.trim() === wanted.name.trim()
+  && got.description.trim() === wanted.description.trim()
+  && got.instructions.trim().startsWith(wanted.instructions.trim())
+  && (wanted.version === undefined || got.version === wanted.version);
+
+/**
  * What the store reads a bot's folder with.
  *
  * Both are the plugin's own seams rather than anything this file does for
@@ -173,6 +187,8 @@ export function botStore(
    * A record a person edited by hand can say anything, so it is read as any
    * other record is, through `kept`. The two fields a hand edit may not change
    * are refused here, because nothing before this point has seen the record.
+   * So is a bot whose slug has a tombstone: its file came back after the
+   * delete, and the name it would answer to is spent.
    */
   const take = async (change: RecordChange): Promise<void> => {
     if (change.type === 'deleted') {
@@ -188,6 +204,12 @@ export function botStore(
       await bury(change.id);
       dead.add(change.id);
       heard?.({ type: 'deleted', bot: before, before: undefined });
+      return;
+    }
+    // A file that came back after its tombstone is the older copy of a bot
+    // whose name is spent, and nothing of it is a bot this host answers.
+    if (dead.has(change.id)) {
+      onProblem(`bots/${change.id} has a tombstone; the name is spent and it was left out`);
       return;
     }
     const said = await bots.get(change.id);
@@ -231,15 +253,21 @@ export function botStore(
    * folder with no file is made with the bot's template, filled with its words,
    * which is the file a bot made today would have had from its first moment.
    *
-   * The record is put back only once the file has the parts: a write that
-   * failed leaves the record as the copy, and the next load tries again rather
-   * than dropping the persona between the two.
+   * The record is put back only once the file reads back with the parts, and a
+   * file this host cannot read is written over by nothing: either one leaves
+   * the record as the copy, and the next load tries again rather than dropping
+   * the persona between the two.
    */
   const move = async (one: KeptBot, yaml: Yaml): Promise<BotRecord> => {
     const bot = withAgents(yaml, one);
+    const parts = partsOf(bot);
     try {
-      const parts = partsOf(bot);
-      if (readAgentsFile(bot.workspace, yaml) !== undefined) {
+      const file = readAgentsFile(bot.workspace, yaml);
+      if (file.kind === 'unreadable') {
+        onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} cannot be read: ${String(file.error)}`);
+        return bot;
+      }
+      if (file.kind === 'parts') {
         writeAgentsFile(bot.workspace, yaml, parts);
       }
       else if (seams.agents !== undefined) {
@@ -247,6 +275,15 @@ export function botStore(
       }
       else {
         writeAgentsFile(bot.workspace, yaml, parts);
+      }
+      /*
+       * Read back before the record gives the parts up: a write that reached no
+       * file has nothing to answer them, and the record is the only copy left.
+       */
+      const back = readAgentsFile(bot.workspace, yaml);
+      if (back.kind !== 'parts' || !holds(parts, back.parts)) {
+        onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} does not read back with those parts`);
+        return bot;
       }
       // This store's own put, dropped from the watch the way every other put
       // is: the record says what the cache already does.
@@ -284,10 +321,20 @@ export function botStore(
       });
     });
     const yaml = seams.yaml;
+    /*
+     * The tombstones first, so a bot file that came back after its delete is
+     * known to be one before it is read: a tombstone is a record too, and only
+     * its id is read - it says which slug was a bot, never what that bot was.
+     */
+    for (const said of await graves.list()) dead.add(said.id);
     for (const said of await bots.list()) {
       const one = kept(said);
       if (one === undefined) {
         onProblem(`bots/${said.id} is not a bot record; it was left out`);
+        continue;
+      }
+      if (dead.has(one.id)) {
+        onProblem(`bots/${one.id} has a tombstone; the name is spent and it was left out`);
         continue;
       }
       // A record made before the file was the one copy is moved into its file
@@ -295,9 +342,6 @@ export function botStore(
       // a record with no parts.
       held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one));
     }
-    // A tombstone is a record too, and only its id is read: it says which slug
-    // was a bot, never what that bot was.
-    for (const said of await graves.list()) dead.add(said.id);
   };
 
   const ready = (): Promise<void> => {

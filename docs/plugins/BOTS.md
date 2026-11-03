@@ -27,13 +27,13 @@ A bot is not a backend of its own. It names whichever harness the host already h
 | `chat` | The reader's own chat with this bot. Answered by a read and never obeyed: it is a different conversation for each reader, so what a body carries is not kept - [The chat and its back sessions](#the-chat-and-its-back-sessions) |
 | `createdAt`, `updatedAt` | The times. Read but never obeyed: what they hold is the host's |
 
-Three of the fields in that table are the `AGENTS.md`'s rather than `bot.md`'s: `name`, `description` and `instructions`. The file is their one copy, a read answers them from it, and a make or an edit writes them there - [The persona](#the-persona). Everything else that is the bot's is in the record file; `chat` belongs to the reader, and is not kept in the record.
+Three of the fields in that table are the `AGENTS.md`'s rather than `bot.md`'s: `name`, `description` and `instructions`. The file is their one copy, a read answers them from it, and a make or an edit writes them there - [The persona](#the-persona). A bot on a computer keeps the three in its record, because its file is not on this host, and so does every bot of a store the host gives no YAML parser, which writes no file. Everything else that is the bot's is in the record file; `chat` belongs to the reader, and is not kept in the record.
 
 A body that names a key a bot does not have is refused `-32602`, and so is a `body` that is not a word or a `color` that is neither a name below nor `#rrggbb`. So is a `connectors` map that is not an object, an alias that is not a lowercase slug, or a value that is not `connectors://<adapter>/<id>`: those are the two checks the host makes when it reads a session's bindings, and a bot is written once and read on every message.
 
 ## The record file
 
-Each bot has a folder of its own in the daemon's configuration, `<configDir>/bots/<slug>/`. Its record is `bot.md`, the fields as YAML frontmatter between two `---` lines; the host writes nothing below them. The folder name is the `id`, and a record whose frontmatter names another one is reported and left out. The bot's rows and logs are in that folder too - [Options](#options) says where.
+Each bot has a folder of its own in the daemon's configuration, `<configDir>/bots/<slug>/`. Its record is `bot.md`, the fields as YAML frontmatter between two `---` lines; the host writes nothing below them. A bot on a computer, and every bot of a store with no YAML, also keeps `name` and `description` in that frontmatter and its `instructions` below it, because there is no file of this host's to read them from - [The persona](#the-persona). The folder name is the `id`, and a record whose frontmatter names another one is reported and left out. The bot's rows and logs are in that folder too - [Options](#options) says where.
 
 ```md
 ---
@@ -53,9 +53,9 @@ updatedAt: 2026-10-11T09:00:00.000Z
 ---
 ```
 
-A daemon that starts after an upgrade moves what an older one left: `bots/<slug>.md` becomes `bots/<slug>/bot.md`, and the rows and logs in `bot-chats/` and `bot-sessions/` move into the folder of their bot. A file the move cannot place is reported and left where it is, and what is left of a deleted bot is removed.
+A daemon that starts after an upgrade moves what an older one left: `bots/<slug>.md` becomes `bots/<slug>/bot.md`, and the rows and logs in `bot-chats/` and `bot-sessions/` move into the folder of their bot. A file the move cannot place is reported and left where it is. What is left of a deleted bot is removed, except a folder that still holds its `bot.md`: a delete that died between its steps and a file put back after one look the same, so the folder is kept and reported.
 
-A record made before `AGENTS.md` was the one copy of a bot's persona still carries its parts. A load moves them into the file and puts the record back without them - [The persona](#the-persona).
+A record made before `AGENTS.md` was the one copy of a bot's persona still carries its parts. A load moves them into the file and puts the record back without them, once a read of the file gives them back. A file that already has an Instructions section keeps it, and the record's copy is dropped. A file the load cannot read is left alone: the persona stays in the record, and the load reports it - [The persona](#the-persona).
 
 A `bot.md` a person edits is read while the daemon runs, and the change reaches watchers and the catalogue as any other edit does. Two fields an edit by hand may not change:
 
@@ -98,23 +98,23 @@ If the Instructions section does not say what you are for, ask the person who ta
 
 `version` names the layout of the file, so a reader can tell an older one from a newer one. A write that names no version keeps the one the file names, and writes 1 where it names none.
 
-The UI changes only the parts in that table. A make or an edit replaces those frontmatter keys and the text of that section, and keeps every other byte of the file: a key a person or the bot put there, another section, a comment. The rest of the file is the bot's, and the bot may rewrite any of it.
+The UI changes only the parts in that table. A make or an edit replaces those frontmatter keys and the text of that section, and keeps every other byte of the file: a key a person or the bot put there, another section, a comment. The rest of the file is the bot's, and the bot may rewrite any of it. An edit or a make whose instructions hold a line that starts with `## ` is refused `-32602`, and the refusal names the line: the section would end there, and the rest of the instructions would read as another section.
 
 A part the file does not have reads empty. A bot that removed its Instructions section is a bot with no instructions, and the next edit writes the section again. A read takes the parts from the file each time, so an edit the bot makes to its own file is what the next read answers. A watch and the catalogue hear a change to `bot.md`; a change to `AGENTS.md` alone is answered by the next read of the bot.
 
 `CLAUDE.md` sits beside it with the one line `@AGENTS.md`, because Claude reads that name and not `AGENTS.md`; the import makes the two names one document.
 
-A make fills the bot's template into the file: the `templates` record it names, or the default `AGENTS.md` template at `<configDir>/templates/bots/AGENTS.md`, which the daemon writes at load where it is absent and a person may edit. The filled text is copied into the bot's folder, once; an edit to the template reaches the next bot made and no bot that exists. A folder that already has an `AGENTS.md` keeps it, because the file is the bot's from its first moment.
+A make fills the bot's template into the file: the `templates` record it names, or the default `AGENTS.md` template at `<configDir>/templates/bots/AGENTS.md`, which the daemon writes at load where it is absent and a person may edit. The filled text is copied into the bot's folder, once; an edit to the template reaches the next bot made and no bot that exists. A folder that already has an `AGENTS.md` keeps the file, because it is the bot's from its first moment: the make writes the bot's parts into it as an edit does, and the rest of what it says stays.
 
 A folder with no `AGENTS.md` - one whose make failed to write it, or one a person emptied - gets the same text at the first wake of a back session. The file is the bot's rules: every harness reads it, and a wake never writes over a file that is there.
 
-A bot on a computer keeps its `AGENTS.md` on that computer. The host reads and writes it through the computer while the computer is online, and keeps the last parts it read in the record, which are what a read answers while the computer is offline. An edit made while the computer is offline waits in the record; the next start of a back session writes it to the file, and the record keeps it as the last parts read.
+A bot on a computer keeps its persona in its record. Its `AGENTS.md` is on that computer, and the host neither reads nor writes it yet: a read answers the parts the record holds. An edit while the computer is offline does not wait yet either - it changes the record, and nothing writes it to the file when the computer is back. That wait is [A bot runs in a machine, task 04](../../.project/plans/bots/20261028-0545-a-bot-runs-in-a-machine/task-04-an-edit-to-a-bot-on-a-machine-waits.md).
 
 ## The slug
 
 A bot's address is `bot://<slug>`, and the slug is the URI path, the record's `id` and the name of its folder - one thing written once. It is lowercase letters, digits and dashes, one to forty of them, starting with a letter; anything else is refused `-32602`, because the slug is a folder name and a URI path at once.
 
-A slug is fixed when the bot is made and an edit cannot move it. A deleted slug is never made again: the host keeps a tombstone, and a make on one is refused `-32010`. A client held that address, and a different bot answering to it would be a lie about what that client has.
+A slug is fixed when the bot is made and an edit cannot move it. A deleted slug is never made again: the host keeps a tombstone, and a make on one is refused `-32010`. A client held that address, and a different bot answering to it would be a lie about what that client has. A record that comes back after its delete is refused too: a load leaves it out and reports the spent name, and keeps its folder rather than removing what may be the person's own copy - [The record file](#the-record-file).
 
 ## The folder
 
@@ -194,7 +194,7 @@ A value outside those four is reported and `post` is used.
 
 ### The bot's rules
 
-A back session's system prompt says only what no file can: that a person is waiting in the main chat for its reply, that `post_message` is what answers them, that a question is asked with the harness's question tool, and that `send_message` starts a turn somewhere else and is not a reply. The bot's own rules are its `AGENTS.md`, which the harness reads: the template the bot names, or the shipped default `<configDir>/templates/bots/AGENTS.md`, filled with the bot's `name`, `description` and `instructions`. The file is written when the bot is made, and the first wake writes it where the folder has none; a file that is there is never written over - [The persona](#the-persona).
+A back session's system prompt says only what no file can: that a person is waiting in the main chat for its reply, that `post_message` is what answers them, that a question is asked with the harness's question tool, and that `send_message` starts a turn somewhere else and is not a reply. The bot's own rules are its `AGENTS.md`, which the harness reads: the template the bot names, or the shipped default `<configDir>/templates/bots/AGENTS.md`, filled with the bot's `name`, `description` and `instructions`. The file is written when the bot is made, and the first wake writes it where the folder has none; a wake never writes over a file that is there - [The persona](#the-persona).
 
 ## The template
 
@@ -318,7 +318,7 @@ An edit that asks for a harness, leaving everything else as it was:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
+| `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>`. A root that is the configuration folder or under it is refused at load, with a problem line, and the default is used |
 | `lastChats` | `10` | How many chats `{{chats}}` lists |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -442,6 +442,65 @@ it('writes a bot\'s persona into its AGENTS.md, and keeps none of it in the reco
   expect(await record(soft, 'bot://motion')).toMatchObject({
     name: 'Moved', description: 'Moves things', instructions: 'Be louder',
   });
+});
+
+it('writes the UI\'s parts into an AGENTS.md a make finds, and keeps the bot\'s own text', async () => {
+  const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
+  const folder = join(bots, 'motion');
+  mkdirSync(folder, { recursive: true });
+  // A file left by a crash between the two writes, or by a hand: the make may
+  // not leave the UI's parts nowhere.
+  writeFileSync(join(folder, 'AGENTS.md'), '# Our rules\n\n## Instructions\n\nThe old words.\n');
+  const soft = await as(host, 'soft');
+
+  await write(soft, 'bot://motion', {
+    name: 'Motion', description: 'Moves things', instructions: 'Be calm',
+  }, { createOnly: true });
+
+  // The parts the UI owns are written into the file, and the bot's own text
+  // around them stays as an edit leaves it.
+  const file = readFileSync(join(folder, 'AGENTS.md'), 'utf8');
+  expect(file).toContain('name: Motion');
+  expect(file).toContain('description: Moves things');
+  expect(file).toContain('Be calm');
+  expect(file).not.toContain('The old words.');
+  expect(file).toContain('# Our rules');
+  expect(await record(soft, 'bot://motion')).toMatchObject({
+    name: 'Motion', description: 'Moves things', instructions: 'Be calm',
+  });
+});
+
+it('refuses instructions with a line that starts with ## ', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'] });
+  const soft = await as(host, 'soft');
+
+  // The section ends at the next `##` line, so the write that took one would
+  // read back short: it is refused, and the line is named.
+  expect(await write(soft, 'bot://motion', {
+    name: 'Motion', instructions: 'Be calm.\n## Notes\nBe kind.',
+  }, { createOnly: true })).toMatchObject({ code: -32602, message: expect.stringContaining('## Notes') });
+});
+
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('refuses a write over an AGENTS.md it cannot read, and leaves the file', async () => {
+  const { host, bots } = made({ soft: ['bot:*', 'session:create'] });
+  const folder = join(bots, 'motion');
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, 'AGENTS.md');
+  writeFileSync(path, '# Our rules\n');
+  // Write-only: a read fails and a write would not, so only the check keeps
+  // the file's text.
+  chmodSync(path, 0o200);
+  const soft = await as(host, 'soft');
+
+  try {
+    expect(await write(soft, 'bot://motion', {
+      name: 'Motion', instructions: 'Be calm',
+    }, { createOnly: true })).toMatchObject({ code: -32603, message: expect.stringContaining('cannot be read') });
+  }
+  finally {
+    chmodSync(path, 0o600);
+  }
+  expect(readFileSync(path, 'utf8')).toBe('# Our rules\n');
 });
 
 it('answers a read from the bot\'s own file, so its own edit shows on the next read', async () => {
@@ -1362,6 +1421,124 @@ it('moves an older layout into each bot\'s folder at load, and keeps the instruc
   expect(read['instructions']).toBe('Be brief.');
   expect(readFileSync(recordFile, 'utf8')).not.toContain('Be brief.');
   expect(readFileSync(join(bots, 'motion', 'AGENTS.md'), 'utf8')).toContain('Be brief.');
+});
+
+/** A tombstone as the `bots-gone` collection holds it. */
+const tombstone = (id: string): string => `---\n${stringifyYaml({ id, deletedAt: '2026-10-11T00:00:00.000Z' })}---\n`;
+
+/** A record as `bots/<slug>/bot.md` holds it, with no persona. */
+const recordFile = (id: string, workspace: string): string => `---\n${stringifyYaml({
+  id,
+  labels: [],
+  body: 'robot',
+  color: 'red',
+  session: 'work',
+  workspace,
+  owner: 'user:soft',
+  createdAt: '2026-10-11T00:00:00.000Z',
+  updatedAt: '2026-10-11T00:00:00.000Z',
+})}---\n`;
+
+it('removes nothing for a tombstone whose name is not a bot\'s', async () => {
+  const { configDir, reported } = made(
+    { soft: ['bot:*', 'session:create'] },
+    {},
+    {},
+    true,
+    [],
+    true,
+    (configDir) => {
+      mkdirSync(join(configDir, 'bots-gone'), { recursive: true });
+      for (const name of ['..md', '...md', 'Foo.md']) writeFileSync(join(configDir, 'bots-gone', name), 'gone\n');
+      // What a `..` or a `...` read as a slug would remove: the configuration
+      // folder itself, and a folder an editor left in it.
+      mkdirSync(join(configDir, 'templates'), { recursive: true });
+      writeFileSync(join(configDir, 'templates', 'kept.md'), 'kept\n');
+    },
+  );
+
+  for (const name of ['..md', '...md', 'Foo.md']) {
+    expect(existsSync(join(configDir, 'bots-gone', name))).toBe(true);
+  }
+  expect(existsSync(join(configDir, 'templates', 'kept.md'))).toBe(true);
+  expect(reported.join('\n')).toMatch(/bots-gone[\\/]\.\.md was left where it is: \. is not a bot's name/);
+  expect(reported.join('\n')).toMatch(/bots-gone[\\/]Foo\.md was left where it is: Foo is not a bot's name/);
+});
+
+it('keeps a tombstoned folder that still holds its record, and reports the spent name', async () => {
+  const { host, configDir, reported } = made(
+    { soft: ['bot:*', 'session:create'] },
+    {},
+    {},
+    true,
+    [],
+    true,
+    (configDir, bots) => {
+      mkdirSync(join(configDir, 'bots-gone'), { recursive: true });
+      writeFileSync(join(configDir, 'bots-gone', 'motion.md'), tombstone('motion'));
+      mkdirSync(join(configDir, 'bots', 'motion'), { recursive: true });
+      writeFileSync(join(configDir, 'bots', 'motion', 'bot.md'), recordFile('motion', join(bots, 'motion')));
+    },
+  );
+  const soft = await as(host, 'soft');
+
+  // The folder is all that is left of a bot that was deleted, and a record
+  // that came back inside it is not a bot the host answers.
+  expect(existsSync(join(configDir, 'bots', 'motion', 'bot.md'))).toBe(true);
+  expect(await listing(soft, 'bot://')).toEqual([]);
+  expect(await call(soft, 'resourceRead', { uri: 'bot://motion' })).toMatchObject({ code: -32008 });
+  expect(reported.join('\n')).toMatch(/bots[\\/]motion was kept: motion has a tombstone, so the name is spent/);
+  expect(reported.join('\n')).toMatch(/bots[\\/]motion has a tombstone; the name is spent and it was left out/);
+});
+
+it('removes the rows and logs a deleted bot left in the older collections', async () => {
+  const { configDir, reported } = made(
+    { soft: ['bot:*', 'session:create'] },
+    {},
+    {},
+    true,
+    [],
+    true,
+    (configDir) => {
+      mkdirSync(join(configDir, 'bots-gone'), { recursive: true });
+      writeFileSync(join(configDir, 'bots-gone', 'motion.md'), tombstone('motion'));
+      mkdirSync(join(configDir, 'bot-chats'), { recursive: true });
+      writeFileSync(join(configDir, 'bot-chats', 'row.md'), '---\nid: row\nbot: motion\n---\n');
+      writeFileSync(join(configDir, 'bot-chats', 'log.jsonl'), `${JSON.stringify({ _meta: { bot: 'motion' } })}\n`);
+      mkdirSync(join(configDir, 'bot-sessions'), { recursive: true });
+      writeFileSync(join(configDir, 'bot-sessions', 'back.md'), '---\nid: back\nbot: motion\n---\n');
+    },
+  );
+
+  expect(existsSync(join(configDir, 'bot-chats', 'row.md'))).toBe(false);
+  expect(existsSync(join(configDir, 'bot-chats', 'log.jsonl'))).toBe(false);
+  expect(existsSync(join(configDir, 'bot-sessions', 'back.md'))).toBe(false);
+  expect(reported.join('\n')).not.toMatch(/was left where it is/);
+});
+
+it('leaves a file the move cannot place, and reports it', async () => {
+  const { configDir, reported } = made(
+    { soft: ['bot:*', 'session:create'] },
+    {},
+    {},
+    true,
+    [],
+    true,
+    (configDir) => {
+      mkdirSync(join(configDir, 'bot-chats'), { recursive: true });
+      writeFileSync(join(configDir, 'bot-chats', 'anon.md'), '---\nid: anon\n---\n');
+      writeFileSync(join(configDir, 'bot-chats', 'notes.txt'), 'not a row\n');
+      mkdirSync(join(configDir, 'bot-sessions'), { recursive: true });
+      writeFileSync(join(configDir, 'bot-sessions', 'anon.md'), '---\nid: anon\n---\n');
+    },
+  );
+
+  expect(existsSync(join(configDir, 'bot-chats', 'anon.md'))).toBe(true);
+  expect(existsSync(join(configDir, 'bot-chats', 'notes.txt'))).toBe(true);
+  expect(existsSync(join(configDir, 'bot-sessions', 'anon.md'))).toBe(true);
+  expect(reported.join('\n')).toMatch(/bot-chats[\\/]anon\.md was left where it is: it names no bot/);
+  expect(reported.join('\n')).toMatch(/bot-chats[\\/]notes\.txt was left where it is: it is not a chat row or a log/);
+  expect(reported.join('\n')).toMatch(/bot-sessions[\\/]anon\.md was left where it is: it names no bot/);
 });
 
 it('deletes a bot by removing bots/<slug>/, and keeps its work folder', async () => {

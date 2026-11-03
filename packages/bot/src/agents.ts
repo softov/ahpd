@@ -40,9 +40,6 @@ const INSTRUCTIONS = /^##[ \t]+Instructions[ \t]*(?:\r?\n|$)/m;
 /** A level-2 heading, which is where the Instructions section ends. */
 const HEADING = /^##(?:[ \t]|$)/m;
 
-/** A top-level frontmatter key: an unindented name, its colon and nothing of its value. */
-const KEY = /^([A-Za-z0-9_.-]+)[ \t]*:/gm;
-
 /** The frontmatter keys the owner owns, in the order the writer adds the ones a file lacks. */
 const OWNED = ['version', 'name', 'description'] as const;
 
@@ -168,22 +165,97 @@ export function readAgents(yaml: Yaml, text: string): AgentsParts {
 /** One frontmatter entry, quoted or written as a block exactly as the parser reads it back. */
 const entry = (yaml: Yaml, key: string, value: unknown): string => yaml.stringifyYaml({ [key]: value });
 
+/** A frontmatter key and the text its entry takes, from its line to the last line of its value. */
+interface Span {
+  /** The key's name. */
+  key: string;
+  /** Where the key's line starts. */
+  start: number;
+  /** Where the line after the value's last line starts. */
+  end: number;
+}
+
+/** The index just after the line that holds `at`. */
+const afterLine = (text: string, at: number): number => {
+  const newline = text.indexOf('\n', at);
+  return newline === -1 ? text.length : newline + 1;
+};
+
+/** The index of the quote that closes the one at `at`, skipping escapes and `''`, or `-1`. */
+const closingQuote = (text: string, at: number): number => {
+  const quote = text[at];
+  for (let pos = at + 1; pos < text.length; pos += 1) {
+    const char = text[pos];
+    if (quote === '"' && char === '\\') { pos += 1; continue; }
+    if (char === quote) {
+      if (quote === "'" && text[pos + 1] === "'") { pos += 1; continue; }
+      return pos;
+    }
+  }
+  return -1;
+};
+
+/**
+ * The keys in a frontmatter, each with the text its entry takes.
+ *
+ * A key's entry runs to the end of the line that holds the last of its value:
+ * a quoted value may go on over several lines, and a block scalar's indented
+ * lines are its value too. What follows - a comment, a blank line - is not the
+ * entry's, so replacing a key leaves it where it was. A column-0 line inside a
+ * quoted value is part of that value, not a key of its own.
+ */
+function spansIn(front: string): Span[] {
+  const spans: Span[] = [];
+  let at = 0;
+  while (at < front.length) {
+    const lineEnd = afterLine(front, at);
+    const line = front.slice(at, lineEnd).replace(/\r?\n$/, '');
+    const key = /^([A-Za-z0-9_.-]+)[ \t]*:/.exec(line);
+    if (key === null) {
+      at = lineEnd;
+      continue;
+    }
+    const colon = key[0].length - 1;
+    const rest = line.slice(colon + 1).trimStart();
+    let end = lineEnd;
+    if (rest[0] === '"' || rest[0] === "'") {
+      const close = closingQuote(front, at + line.length - rest.length);
+      end = close === -1 ? front.length : afterLine(front, close);
+    }
+    else if (rest === '' || /^[|>][0-9+-]*[ \t]*(?:#.*)?$/.test(rest)) {
+      // A block scalar, or a key with its value below it: the value runs while
+      // the lines are indented or blank, and ends at the first column-0 line
+      // after its last content.
+      let last = lineEnd;
+      let pos = lineEnd;
+      while (pos < front.length) {
+        const next = afterLine(front, pos);
+        const content = front.slice(pos, next).replace(/\r?\n$/, '');
+        if (content.trim() === '') { pos = next; continue; }
+        if (!/^[ \t]/.test(content)) break;
+        last = next;
+        pos = next;
+      }
+      end = last;
+    }
+    spans.push({ key: key[1] ?? '', start: at, end });
+    at = end;
+  }
+  return spans;
+}
+
 /**
  * The frontmatter with the owner's keys set and every other byte as it was.
  *
- * A key that is there has its own line, and any continuation lines a block or
- * folded scalar took, replaced by the new entry. Keys the frontmatter lacks are
- * added at the top, so a file a person wrote by hand keeps its shape below
- * them. A key a bot wrote twice is written twice with the new value, which is
- * still the value the parser reads last.
+ * A key that is there has its own line and whatever lines its value took - a
+ * quoted scalar's or a block's - replaced by the new entry, and a comment or a
+ * blank line after it stays. Keys the frontmatter lacks are added at the top,
+ * so a file a person wrote by hand keeps its shape below them. A key a bot
+ * wrote twice is written twice with the new value, which is still the value the
+ * parser reads last.
  */
 function setFields(yaml: Yaml, front: string, values: Record<string, unknown>): string {
-  const matches = [...front.matchAll(KEY)];
-  const spans = matches.map((match, at) => ({
-    key: match[1] ?? '',
-    start: match.index ?? 0,
-    end: at + 1 < matches.length ? (matches[at + 1]?.index ?? front.length) : front.length,
-  }));
+  const spans = spansIn(front);
   const seen = new Set(spans.map((span) => span.key));
   let out = front;
   for (let at = spans.length - 1; at >= 0; at -= 1) {
@@ -192,6 +264,18 @@ function setFields(yaml: Yaml, front: string, values: Record<string, unknown>): 
     out = out.slice(0, span.start) + entry(yaml, span.key, values[span.key]) + out.slice(span.end);
   }
   return OWNED.filter((key) => !seen.has(key)).map((key) => entry(yaml, key, values[key])).join('') + out;
+}
+
+/**
+ * What is wrong with instructions as the format can hold them, or nothing.
+ *
+ * The Instructions section ends at the next `##` line, so a line of the
+ * instructions that starts with one would read back as the end of the section:
+ * the write is refused rather than cutting the text in silence.
+ */
+export function instructionsProblem(instructions: string): string | undefined {
+  const line = instructions.split(/\r?\n/).find((one) => /^##(?:[ \t]|$)/.test(one));
+  return line === undefined ? undefined : `the instructions have a line that starts with "## ": ${line}`;
 }
 
 /** A line ending before text that does not already begin one. */

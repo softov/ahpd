@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -179,6 +179,66 @@ it('reads the collections back, as a daemon that started again does', async () =
   expect(problems).toEqual([]);
 });
 
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('keeps the persona in the record when its AGENTS.md cannot be read', async () => {
+  const { bots, store, problems } = await made();
+  const folder = join(root, 'bots', 'motion');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'AGENTS.md'), '---\nname: Motion\n---\n\n## Instructions\n\nBe brief.\n', { mode: 0o000 });
+  await bots.put(bot('motion', { instructions: 'Be brief.' }));
+
+  await store.ready();
+
+  // The file is the one copy, but a file this host cannot read is not one it
+  // may put the record back without: the persona stays in the record, and the
+  // next load tries again.
+  expect(store.get('motion')).toMatchObject({ instructions: 'Be brief.' });
+  expect((await held(bots, 'motion'))['instructions']).toBe('Be brief.');
+  expect(problems.join('\n')).toMatch(/bots\/motion was left in its record: its AGENTS\.md cannot be read/);
+});
+
+it('keeps the persona when a folder stands where its AGENTS.md should be', async () => {
+  const { bots, store, problems } = await made();
+  mkdirSync(join(root, 'bots', 'motion', 'AGENTS.md'), { recursive: true });
+  await bots.put(bot('motion', { name: 'Motion', instructions: 'Be brief.' }));
+
+  await store.ready();
+
+  expect(store.get('motion')).toMatchObject({ name: 'Motion', instructions: 'Be brief.' });
+  expect((await held(bots, 'motion'))['instructions']).toBe('Be brief.');
+  expect(problems.join('\n')).toMatch(/bots\/motion was left in its record: its AGENTS\.md cannot be read/);
+});
+
+it('keeps the indentation of an older record\'s instructions through the move', async () => {
+  const { bots, store, problems } = await made();
+  await bots.put(bot('motion', { instructions: '    Be brief.' }));
+
+  await store.ready();
+
+  // The four spaces are the bot's own first line, and the file it is moved into
+  // says them back the same.
+  expect(store.get('motion')).toMatchObject({ instructions: '    Be brief.' });
+  expect(readFileSync(join(root, 'bots', 'motion', 'AGENTS.md'), 'utf8')).toContain('    Be brief.');
+  expect(problems).toEqual([]);
+});
+
+it('keeps the file\'s Instructions section when a move finds one', async () => {
+  const { bots, store, problems } = await made();
+  const folder = join(root, 'bots', 'motion');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'AGENTS.md'), '---\nversion: 1\nname: Motion\n---\n\n## Instructions\n\nThe bot\'s own words.\n');
+  await bots.put(bot('motion', { instructions: 'The older copy.' }));
+
+  await store.ready();
+
+  // The file is the one copy: its section is the bot's writing, and the older
+  // record's copy is dropped rather than written over it.
+  expect(store.get('motion')).toMatchObject({ instructions: 'The bot\'s own words.' });
+  expect(readFileSync(join(folder, 'AGENTS.md'), 'utf8')).toContain('The bot\'s own words.');
+  expect(readFileSync(join(folder, 'AGENTS.md'), 'utf8')).not.toContain('The older copy.');
+  expect((await held(bots, 'motion'))['instructions']).toBeUndefined();
+  expect(problems).toEqual([]);
+});
+
 it('reports a record that is not a bot, and keeps every other one', async () => {
   const { bots, store, problems } = await made();
   await bots.put(bot('motion'));
@@ -253,6 +313,38 @@ it('buries a bot deleted in the collection, and refuses to make it again', async
   expect(store.gone('motion')).toBe(true);
   expect(await graves.get('motion')).toMatchObject({ id: 'motion' });
   await expect(provider.write('bot://motion', said({ name: 'Another' }))).rejects.toMatchObject({ code: -32010 });
+});
+
+it('refuses a bot file that comes back after its delete', async () => {
+  const { records, bots, store, problems } = await made();
+  await store.ready();
+  await bots.put(bot('motion'));
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  await bots.remove('motion');
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+
+  // The file put back, as an editor's restore or a copy left behind by a
+  // delete that died: the name is spent, so it is no bot this store answers.
+  await bots.put(bot('motion'));
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+
+  expect(store.get('motion')).toBeUndefined();
+  expect(problems.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent/);
+
+  // And a daemon that starts again finds it in the collection, and leaves it
+  // out for the same reason: its folder is kept, and the bot is not.
+  const again: string[] = [];
+  const next = botStore(
+    await records.collection('bots'),
+    await records.collection('bots-gone'),
+    (line) => again.push(line),
+    { yaml, agents },
+  );
+  await next.ready();
+
+  expect(next.get('motion')).toBeUndefined();
+  expect(next.gone('motion')).toBe(true);
+  expect(again.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent/);
 });
 
 it('leaves a bot alone when a hand edit changes its owner', async () => {
