@@ -1,7 +1,7 @@
 ---
 title: Plugins register their grants
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -83,9 +83,9 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | implemented | - |
-| [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | implemented | 01 |
-| [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | implemented | 02 |
+| [01 - A plugin registers its grants](task-01-a-plugin-registers-its-grants.md) | done | - |
+| [02 - The host lists every grant it uses](task-02-the-host-lists-every-grant-it-uses.md) | done | 01 |
+| [03 - An unregistered grant is reported](task-03-an-unregistered-grant-is-reported.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -94,17 +94,17 @@ plugin activate -> host.registerGrants(subject, entry) -> foldHostOptions -> Hos
 
 ## Resume state
 
-- **Done so far:** task 01 - a plugin registers its grants through `registerGrants`, the fold merges them into `HostOptions.grants`, and `ahpd.grants` lists them with groups from `operationsOf`. Task 02 - the `plugin` row holds `apply` and `reload` in `write`, the daemon registers `client` with `drop` and `tunnel` with `put` and `delete`, and the bot plugin registers `bot` with `chat`. Task 03 - the fold reports a grant no entry lists, naming the plugin and the grant, and the plugin loads; the daemon's own `operation:invoke` is registered too. The build, typecheck, boundary and the sdk, server and bot gates pass.
-- **Next action:** the final report; all three tasks are implemented and the plan is ready for its checklist.
+- **Done so far:** tasks 01 to 03 are done, and [implemented.md](implemented.md) records them.
+- **Next action:** none. The plan is built.
 - **Open questions:** none.
-- **Watch out for:** a registration must not change what `holds` answers. Take the groups from `operationsOf`, never from the plugin.
+- **Watch out for:** a registration must not change what `holds` answers. The groups come from `operationsOf`, never from the plugin.
 
 ## Final verification checklist
 
-- [ ] `ahpd.grants` holds `client` with `drop`, `tunnel` with `put` and `delete`, `bot` with `chat`, and `plugin` with `apply` and `reload`.
-- [ ] A role may hold `plugin:apply` and `plugin:reload`, and `plugin:write` holds both.
-- [ ] A test plugin that registers `notes` with `pin` shows `notes:pin` in `ahpd.grants`, and a role may hold it.
-- [ ] Two plugins that register one subject show one entry with the operations of both.
-- [ ] A plugin whose channel requires a grant that nothing registered loads, and the fold's `problems` name the plugin and the grant.
-- [ ] ahpw's role editor shows the new subjects with no change to ahpw.
-- [ ] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test`, `pnpm --filter @ahpd/server test` and `pnpm --filter @ahpd/bot test` pass.
+- [x] `ahpd.grants` holds `client` with `drop`, `tunnel` with `put` and `delete`, `bot` with `chat`, and `plugin` with `apply` and `reload`.
+- [x] A role may hold `plugin:apply` and `plugin:reload`, and `plugin:write` holds both.
+- [x] A test plugin that registers `notes` with `pin` shows `notes:pin` in `ahpd.grants`, and a role may hold it.
+- [x] Two plugins that register one subject show one entry with the operations of both.
+- [x] A plugin whose channel requires a grant that nothing registered loads, and the fold's `problems` name the plugin and the grant.
+- [x] ahpw's role editor shows the new subjects with no change to ahpw.
+- [x] `pnpm typecheck`, `pnpm --filter @ahpd/sdk test`, `pnpm --filter @ahpd/server test` and `pnpm --filter @ahpd/bot test` pass.

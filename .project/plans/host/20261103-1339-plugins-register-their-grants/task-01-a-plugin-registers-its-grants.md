@@ -1,6 +1,6 @@
 ---
 title: A plugin registers its grants
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

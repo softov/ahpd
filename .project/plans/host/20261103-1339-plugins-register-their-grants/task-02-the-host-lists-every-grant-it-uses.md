@@ -1,6 +1,6 @@
 ---
 title: The host lists every grant it uses
-status: implemented
+status: done
 depends: [task-01-a-plugin-registers-its-grants.md]
 layer: "sdk, server, bot"
 refs:
