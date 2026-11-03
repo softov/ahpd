@@ -600,7 +600,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     })();
     read.then((text) => {
       if (!still()) return;
-      wake.finished(event.session, text);
+      wake.finished(event.session, text, event.status === 'error' ? event.error ?? 'The turn failed' : undefined);
     }, (error: unknown) => {
       host.problem(`${name}: the end of turn ${event.turn} in ${event.chat} was not read: ${reason(error)}`);
       if (!still()) return;

@@ -360,27 +360,22 @@ export function piSession(
   /**
    * Cancel every question still waiting, so pi does not wait for ever.
    *
-   * Each one is said back as an answer nobody gave and taken off the input
-   * list, and its row is moved to `cancelled`, which is what a client watching
-   * the actions sees too.
+   * Nobody answered them, so nothing is said in anybody's name: the turn's
+   * end forces each call to cancelled, `skipped`, in every client's state, as
+   * it does here, and the reference host's chat draws a call its turn left
+   * behind as skipped rather than as one a person turned down.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
    */
   const releasePending = (why: string): void => {
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
       const part = mapping === undefined ? undefined : callPartOf(mapping, id);
       if (part !== undefined) {
-        bag(part.toolCall).status = 'cancelled';
+        Object.assign(bag(part.toolCall), { status: 'cancelled', reason: 'skipped' });
         // The question was cancelled, so the call never ran: the start
         // `tool_execution_start` stamped is taken off with it.
         untime(bag(part.toolCall));
       }
-      emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
-        toolCallId: id,
-        approved: false,
-        reason: 'denied' as const,
-      });
       emit('session', { type: 'session/inputNeededRemoved', id });
       held.settle({ block: true, reason: why });
     }
@@ -957,12 +952,13 @@ export function piSession(
       if (start.rewindAt !== undefined) {
         /*
          * pi can refuse the move - an extension's `session_before_tree`
-         * handler cancels it - and the session would then run on the leaf it
-         * was resumed at. Failing the turn says that rather than answering
-         * from a conversation the person asked to be rid of.
+         * handler cancels it - and the session then runs on the leaf it was
+         * resumed at. Said in the log, as the reference host logs an agent's
+         * cut that failed and goes on: the clients already hold the cut.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1982-L1986
          */
         const moved = await backend.rewind(start.rewindAt);
-        if (!moved) throw new Error('pi refused to move the leaf back to the truncation point');
+        if (!moved) console.warn(`@ahpd/agent-pi: pi refused to move the leaf back to ${start.rewindAt}`);
       }
       // The host learns this agent's models from here; a rebuild lists the
       // same ones, so only the first open says so.
@@ -982,8 +978,7 @@ export function piSession(
     catch (error: unknown) {
       /*
        * A first open that failed leaves nothing live, so the next turn opens
-       * pi again rather than reusing the rejection. A refused rewind is this
-       * case: the truncation the client asked for is tried again.
+       * pi again rather than reusing the rejection.
        */
       if (opening === started) opening = undefined;
       const abandoned: unknown = live;
@@ -1157,18 +1152,26 @@ export function piSession(
     })();
   };
 
-  /** Whatever was waiting, once the turn in front of it is done. */
+  /**
+   * Whatever was waiting, once the turn in front of it is done.
+   *
+   * The turn names the message as its `queuedMessageId`, which takes it out of
+   * every client's queue, and nothing is said before it: the reference host
+   * starts a queued message that way, and its chat finds the message a turn
+   * consumed in the queue it held when the turn started.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L283-L292
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2992-L2999
+   */
   const startNext = (): void => {
     if (closed || active !== undefined) return;
     const next = queued.shift();
     if (next === undefined) return;
     const id = String(next.id);
-    emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
     const command = bag(next.command);
     if (typeof command.text === 'string') {
       // A `!command` that waited. What waited is the command, not its text, so
       // it is run rather than asked about.
-      runCommand(id, String(command.text), command.run as RunCommand);
+      runCommand(id, String(command.text), command.run as RunCommand, id);
       return;
     }
     begin(
@@ -1187,7 +1190,7 @@ export function piSession(
    * pi has a shell of its own, but this turn is not pi's: the person asked the
    * host to run something, and the host owns the terminal a client watches.
    */
-  const runCommand = (turnId: string, command: string, run: RunCommand): void => {
+  const runCommand = (turnId: string, command: string, run: RunCommand, queuedMessageId?: string): void => {
     const startedAt = new Date().toISOString();
     const toolCallId = `${turnId}:shell`;
     const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
@@ -1204,7 +1207,7 @@ export function piSession(
     };
     active = { id: turnId, startedAt, message, responseParts: [part] };
     mapping = undefined;
-    emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
+    emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message, ...(queuedMessageId !== undefined ? { queuedMessageId } : {}) });
     emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
     const held = bag(part.toolCall);
     held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
@@ -1353,7 +1356,7 @@ export function piSession(
     },
 
     ran: (turnId, command, run, queuedAs) => {
-      if (active !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+      if (active !== undefined || queuedAs !== undefined) {
         const id = queuedAs ?? turnId;
         const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
         const entry: Bag = { id, command: { text: command, run }, message };
@@ -1361,10 +1364,10 @@ export function piSession(
         if (at >= 0) queued[at] = entry; else queued.push(entry);
         emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
+        // At once when nothing runs, as a queued message is.
+        startNext();
         return;
       }
-      // Taken out of the client's queue the way `startNext` takes one out.
-      if (queuedAs !== undefined) emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: queuedAs });
       runCommand(turnId, command, run);
     },
 
@@ -1510,6 +1513,13 @@ export function piSession(
       if (at >= 0) queued[at] = entry; else queued.push(entry);
       emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
       touch();
+      /*
+       * At once when nothing runs: "the server SHOULD immediately consume it",
+       * and the reference host starts an accepted queued message while its chat
+       * is idle.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
+       */
+      startNext();
     },
 
     unqueue: (id) => {

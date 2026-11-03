@@ -764,7 +764,13 @@ describe('a shell on this machine', () => {
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone, to every client of the terminal', async () => {
+  /*
+   * Input after the shell has gone goes out, and reaches no process: VS Code's
+   * host says a client's terminal action before its terminal manager reads
+   * it, and that manager writes input only to a running process.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
+   */
+  it('says what it is sent once the shell has gone to every client of the terminal', async () => {
     const uri = 'ahp-terminal:/gone';
     const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
@@ -772,15 +778,17 @@ describe('a shell on this machine', () => {
       await new Promise((r) => { setTimeout(r, 50); });
       if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
     }
+    const before = actions(p, uri).length;
     await send(5, { type: 'terminal/input', data: 'echo too-late\n' });
     await settle();
 
-    const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
-    expect(late?.rejectionReason).toBeDefined();
-    // The refusal reaches who the taken input reaches, the same envelope.
-    const there = actions(other, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
-    expect(there?.rejectionReason).toBe(late?.rejectionReason);
-    expect(there?.serverSeq).toBe(late?.serverSeq);
+    expect(actions(p, uri).slice(before).map((e) => [e.action.type, e.origin?.clientSeq, e.rejectionReason]))
+      .toEqual([['terminal/input', 5, undefined]]);
+    // It reaches who any input reaches, the same envelope.
+    const late = (q: typeof p) => actions(q, uri)
+      .filter((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5)
+      .map((e) => [e.serverSeq, e.rejectionReason]);
+    expect(late(other)).toEqual(late(p));
   });
 
   it('says a new title and a title it already has to every client of the terminal', async () => {

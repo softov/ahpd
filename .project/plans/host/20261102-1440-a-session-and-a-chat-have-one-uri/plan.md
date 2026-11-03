@@ -97,6 +97,8 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 | The root and the automations catalogue keep the spellings they answer to; they are host channels, not sessions | [code://packages/sdk/src/host/routing.ts#L194-L207](../../../../packages/sdk/src/host/routing.ts#L194-L207) | 01 |
 | A chat title the store holds under a default or worker chat's `ahp-session:` spelling is still read for a session held as `<provider>:/<id>` | [code://packages/sdk/src/host/spawn.ts#L492-L522](../../../../packages/sdk/src/host/spawn.ts#L492-L522) | 01 |
 | The docs say one URI per session and per chat, and what an older window is shown | [code://docs/sdk/AHP.md#L615-L668](../../../../docs/sdk/AHP.md#L615-L668) | 02 |
+| A config change, a draft or a turn under another spelling of a session held here is ignored with no echo, as a flag and a mark there are: the protocol has a server ignore it, and no VS Code window sends one, since a window dispatches on the URIs this host gave it | [session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166); [chat-channel.md#L351](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351) | 03 |
+| Under a URI whose id no session here carries, a config change, a draft or a turn is answered as one for a session nobody has. A VS Code window can send one there, racing the session's removal, so VS Code's host's answers hold: a session's action is refused once its restore fails, and a chat's is said back, which plan `20261102-1236-an-action-on-a-chat-or-session-nobody-has` builds | [agentService.ts#L12494-L12503](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12494-L12503); [agentService.ts#L12564-L12575](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12564-L12575); [agentService.ts#L12626-L12629](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12626-L12629) | - |
 
 ## Proposed architecture
 
@@ -113,6 +115,7 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 | --- | --- | --- |
 | [01 - The host answers one URI, and an older window what it can address](task-01-the-host-answers-one-uri.md) | done | - |
 | [02 - The docs say so](task-02-the-docs-say-so.md) | done | 01 |
+| [03 - Another spelling's config change, draft and turn are ignored](task-03-another-spellings-config-draft-and-turn-are-ignored.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -124,7 +127,7 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Done so far:** tasks 01, 02 and 03, 2026-11-02.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `sessionOfChat` also says whether a URI is a chat, so each caller is read again for an opaque chat.

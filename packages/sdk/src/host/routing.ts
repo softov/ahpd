@@ -15,6 +15,7 @@ import type { HostContext } from './context.js';
 export interface Routing {
   spaceHere(uri: string): Space | undefined;
   nameOf(id: string): string;
+  heldElsewhere(uri: string): boolean;
   keepName(id: string): void;
   sessionOfChat(uri: string): string | undefined;
   sessionFor(channel: string): string;
@@ -53,6 +54,19 @@ export function createRouting(ctx: HostContext): Routing {
    * URI a client names.
    */
   const nameOf = (id: string): string => names.get(id) ?? ctx.kept.uri?.(id) ?? uriFor(id);
+
+  /**
+   * Whether the session a URI's id names is published here under another name.
+   *
+   * A listing or a start named the session, or the store kept its name, and
+   * the URI is some other spelling of the id. Such a URI names no session
+   * here, and no VS Code window sends one: a window dispatches on the URIs
+   * this host gave it.
+   */
+  const heldElsewhere = (uri: string): boolean => {
+    const published = names.get(idOf(uri)) ?? ctx.kept.uri?.(idOf(uri));
+    return published !== undefined && published !== uri;
+  };
 
   /**
    * Keep the name a session is published under in its row.
@@ -323,7 +337,7 @@ export function createRouting(ctx: HostContext): Routing {
   };
 
   return {
-    spaceHere, nameOf, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
+    spaceHere, nameOf, heldElsewhere, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
     answeredAs, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
   };
 }

@@ -539,9 +539,14 @@ it('refuses a request that two open calls could be for', async () => {
     { isError: true, content: [{ type: 'text', text: ambiguous }] },
     { isError: true, content: [{ type: 'text', text: ambiguous }] },
   ]);
-  // Both rows are left open, waiting for the client that can really run them.
-  expect(asked(p, uri).map((request) => String((request.toolCall as Bag).toolCallId)))
-    .toEqual(['call-1', 'call-2']);
+  // Both rows were raised for the client that can really run them, and went with
+  // the turn that ended: a chat's entries go with its turn, as the reference host
+  // keeps them (sessionInputNeededContribution.ts L56-L60 at a4e689ae).
+  const raised = actions(p, uri)
+    .filter((one) => one.action.type === 'session/inputNeededSet')
+    .map((one) => String(((one.action.request as Bag).toolCall as Bag).toolCallId));
+  expect(raised).toEqual(['call-1', 'call-2']);
+  expect(asked(p, uri)).toEqual([]);
 });
 
 it('pairs by the id the request carries, over the oldest open call', async () => {

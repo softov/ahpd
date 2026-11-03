@@ -166,8 +166,8 @@ export const chatIdFor = (session: string, chatUri: string): string | undefined 
 export const subagentChatUri = (session: string, toolCallId: string): string =>
   `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
-/** The client actions a worker's chat takes: answers to what it asked, and a stop. */
-export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputCompleted', 'chat/turnCancelled']);
+/** The client actions a worker's chat takes: answers to what it asked, drafts of them, and a stop. */
+export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled']);
 
 /** The tool call a worker chat was opened for, or nothing when it is not one. */
 export const toolCallOfSubagentChat = (uri: string): string | undefined => {

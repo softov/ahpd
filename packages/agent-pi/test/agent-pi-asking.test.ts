@@ -102,14 +102,16 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   await two;
   expect(second).toEqual({ block: true, reason: 'The turn was stopped' });
 
-  // Each question the cancel left is answered as cancelled and taken off the list.
+  // Each question the cancel left is taken off the list and answered in no
+  // one's name: the turn's end makes its call cancelled, `skipped`, as the
+  // reducer does (channels-chat/reducer.ts L172-L211 at v1.0.0).
   expect(sent.filter((one) => one.action.type === 'chat/toolCallConfirmed'
-    && one.action.approved === false)).toHaveLength(1);
+    && one.action.approved === false)).toHaveLength(0);
   expect(sent.filter((one) => one.action.type === 'session/inputNeededRemoved')).toHaveLength(2);
   expect(session.status()).not.toBe(Status.InputNeeded);
   const turns = session.chatState().turns as Bag[];
   const parts = turns[turns.length - 1]?.responseParts as Bag[];
-  expect(callIn(parts, 'c2')?.status).toBe('cancelled');
+  expect(callIn(parts, 'c2')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
 });
 
 it.each([

@@ -335,9 +335,9 @@ export function createTerminals(ctx: HostContext): Terminals {
             : { status: 'running' as const },
           ...(exitCode === undefined ? {} : { exitCode }),
         }),
-        // Input has no process to reach, and says so. A size is kept, since
-        // the state reports one and a client draws to it.
-        write: () => `${uri} shows what a command wrote, and has no process to send input to`,
+        // Input has no process to reach, and goes nowhere. A size is kept,
+        // since the state reports one and a client draws to it.
+        write: () => {},
         resize: (nextCols, nextRows) => {
           cols = nextCols;
           rows = nextRows;

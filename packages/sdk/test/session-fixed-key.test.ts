@@ -65,6 +65,14 @@ const wire = (): Bag => ({
       enum: ['a', 'b'],
       sessionMutable: true,
     },
+    // A key that says nothing of `sessionMutable`, which the protocol reads as
+    // a key that does not move once the session is created.
+    unsaid: {
+      type: 'string',
+      title: 'Unsaid',
+      description: 'Says nothing of whether it moves.',
+      enum: ['x', 'y'],
+    },
   },
 });
 
@@ -198,6 +206,42 @@ it('refuses a fixed key after the first turn, and keeps the value it had', async
   expect(refused?.rejectionReason).toBe('fixed is fixed once the session has started');
   expect(spawns).toHaveLength(1);
   expect(spawns[0]?.settings.fixed).toBe('one');
+});
+
+/*
+ * A key whose schema says nothing of `sessionMutable`.
+ *
+ * "Only properties with `sessionMutable: true` in the config schema may be
+ * changed", so such a key is fixed the way `sessionMutable: false` is. No VS
+ * Code client sends one on a running session: it writes a key there only when
+ * the schema says `sessionMutable` (sessionConfigProperties.ts L131-L133 at
+ * a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+ */
+it('refuses a key that says nothing of moving after the first turn, and never asks the backend', async () => {
+  const { client, p, uri, chatUri, spawns, set } = await opened();
+  await turn(client, chatUri);
+  await settle();
+
+  await change(client, uri, { unsaid: 'y' });
+  await settle();
+
+  const refused = actions(p, uri).find((one) => one.rejectionReason !== undefined);
+  expect(refused?.rejectionReason).toBe('unsaid is fixed once the session has started');
+  expect(set.map((one) => one.key)).not.toContain('unsaid');
+  expect(spawns).toHaveLength(1);
+});
+
+it('starts the session again for a key that says nothing of moving, before the first turn', async () => {
+  const { client, chatUri, uri, spawns, set, began } = await opened();
+  void change(client, uri, { unsaid: 'y' });
+  void turn(client, chatUri);
+  await settle();
+
+  expect(spawns).toHaveLength(2);
+  expect(spawns[1]?.settings.unsaid).toBe('y');
+  expect(set.map((one) => one.key)).not.toContain('unsaid');
+  expect(began).toEqual([{ spawn: 1, text: 'go' }]);
 });
 
 it('does not keep a refused value for the next chat in the session', async () => {

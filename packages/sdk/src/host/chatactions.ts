@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
@@ -444,6 +445,13 @@ export function chatAction(
       dispatch(uri, action, origin);
     };
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
+    /*
+     * Another spelling of a session published here names a session that does
+     * not exist, and the change is ignored with no echo, as the protocol has a
+     * server ignore it: no VS Code window sends one.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
+     */
+    if (ctx.heldElsewhere(sessionFor(channel))) return;
     // Before `past`, which answers nothing for a session waiting for its
     // agent and would have this one say it is not a session at all.
     const waiting = waitingFor(idOf(sessionFor(channel)));
@@ -460,7 +468,7 @@ export function chatAction(
     return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
       if (!connections.has(connection)) return;
       if (known()) keep();
-      else no(`${channel} is not a session here`);
+      else if (!ctx.heldElsewhere(sessionFor(channel))) no(`${channel} is not a session here`);
     });
   }
   /*
@@ -492,7 +500,15 @@ export function chatAction(
         }
         return conn.applyNow(params, origin);
       },
+      /*
+       * A turn under another spelling of a session published here, which
+       * the wake has read the catalogue for, names a chat that does not
+       * exist and is ignored with no echo, as the protocol has a server
+       * ignore it: no VS Code window sends one.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
+       */
       (error: unknown) => {
+        if (ctx.heldElsewhere(uri)) return;
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
       },
     ).finally(release);
@@ -513,14 +529,24 @@ export function chatAction(
   if (!session && type === 'chat/draftChanged') {
     const uri = sessionFor(channel);
     const id = idOf(uri);
+    /*
+     * A draft under another spelling of a session published here names a
+     * chat that does not exist, and is ignored with no echo, as the protocol
+     * has a server ignore it: no VS Code window sends one.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
+     */
+    if (ctx.heldElsewhere(uri)) return;
     void (async () => {
       const missing = waitingFor(id);
       if (missing !== undefined) {
         refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
         return;
       }
-      // The session the chat belongs to, under the one name it is published by.
-      if (!(await past(id)) || ctx.nameOf(id) !== uri) {
+      // The session the chat belongs to, under the one name it is published
+      // by, which the catalogue's read names.
+      const found = await past(id);
+      if (ctx.heldElsewhere(uri)) return;
+      if (!found || ctx.nameOf(id) !== uri) {
         refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
         return;
       }
@@ -965,15 +991,21 @@ export function chatAction(
       /*
        * The fixed keys a backend or a plugin declared.
        *
-       * `sessionMutable: false` is the schema saying this value is read
-       * when the backend starts - the computer a session runs in, and
-       * Claude's thinking - so a new value before the first turn is the
-       * session being created differently, exactly as `isolation` is.
-       * Only a key that moved, for the same reason `ours` is filtered.
+       * A declared key is mutable only where its schema says
+       * `sessionMutable: true`: "Only properties with `sessionMutable: true`
+       * in the config schema may be changed." Any other is read when the
+       * backend starts - the computer a session runs in, and Claude's
+       * thinking - so a new value before the first turn is the session being
+       * created differently, exactly as `isolation` is. Only a key that
+       * moved, for the same reason `ours` is filtered.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
        */
       const fixed = owning === undefined ? [] : Object.entries(config)
         .filter(([key]) => !HOSTS_OWN.includes(key))
-        .filter(([key]) => propertyOf(owning.agent, key)?.sessionMutable === false)
+        .filter(([key]) => {
+          const property = propertyOf(owning.agent, key);
+          return property !== undefined && property.sessionMutable !== true;
+        })
         .filter(([key, value]) => value !== before.get(key));
       /*
        * One restart for both kinds of fixed key, because two keys in
@@ -1022,13 +1054,15 @@ export function chatAction(
        * the key can move on a running session, and whether it belongs to the
        * session or to one chat in it.
        *
-       * Absent is not a refusal. `autoApprove` and `mode` are conventional
-       * names a client sends whatever a host advertises, and this backend
-       * takes both without declaring either - so the schema decides how a key
-       * behaves and the backend decides whether it is taken at all.
+       * A key the schema does not declare goes to the backend too, which
+       * takes it or says why it will not.
        */
       const asked = Object.entries(config)
-        .filter(([key]) => !HOSTS_OWN.includes(key) && propertyOf(owning?.agent, key)?.sessionMutable !== false);
+        .filter(([key]) => {
+          if (HOSTS_OWN.includes(key)) return false;
+          const property = propertyOf(owning?.agent, key);
+          return property === undefined || property.sessionMutable === true;
+        });
       if (asked.length > 0 && session.setConfig === undefined) {
         refused(`${asked[0]?.[0] ?? ''} is not a config key this backend takes`);
         break;
@@ -1402,51 +1436,67 @@ export function chatAction(
      */
     case 'chat/pendingMessageSet': {
       const kind = String(action.kind ?? 'queued');
+      const id = String(action.id ?? '');
       const message = (typeof action.message === 'object' && action.message !== null
         ? action.message
         : {}) as Record<string, unknown>;
-      /*
-       * Into the running turn, rather than behind it.
-       *
-       * Somebody correcting an agent halfway is the most ordinary thing
-       * there is, and queueing it delivered the correction after the
-       * thing it was trying to stop. The two refusals left are real: a
-       * backend that cannot take a message mid-turn, and a chat with
-       * nothing running to steer.
-       */
-      if (kind === 'steering') {
-        if (!session.steer) {
-          no('This backend cannot take a message mid-turn');
-          break;
-        }
-        const steered = messageAttachments(message, connection);
-        if (steered.refusal !== undefined) {
-          refuse(connection.peer, channel, action, origin, steered.refusal);
-          break;
-        }
-        if (!session.steer(String(action.id ?? ''), String(message.text ?? ''), steered.attachments, messageFrom(message))) {
-          no('Nothing is running in this chat to steer');
-        }
-        break;
-      }
-      if (kind !== 'queued') {
+      if (kind !== 'steering' && kind !== 'queued') {
         no(`${kind} is neither a steering message nor a queued one`);
         break;
       }
+      if (kind === 'steering' && !session.steer) {
+        no('This backend cannot take a message mid-turn');
+        break;
+      }
+      /*
+       * The steering message the running turn was handed, sent again.
+       *
+       * The backend holds it already, so the same message is answered and not
+       * handed over a second time, and a different one is refused, in the
+       * reference host's words: "Repeated identical upserts MUST NOT cause
+       * duplicate provider delivery", and "Hosts MUST reject edits ... that
+       * they can no longer honor after handoff".
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13516-L13523
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L190-L196
+       */
+      const holding = chatHeld.steeringMessage as Bag | undefined;
+      if (kind === 'steering' && activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
+        // By value: the held copy went through a reducer, which writes its keys in its own order.
+        if (isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
+        else no('Cannot change a steering message while it is being processed.');
+        break;
+      }
+      // Read now rather than when the turn comes round: a message waiting
+      // behind another is still a message this host has to be able to answer
+      // for, and the chat it points at may be gone by the time it runs.
+      const read = messageAttachments(message, connection);
+      if (read.refusal !== undefined) {
+        refuse(connection.peer, channel, action, origin, read.refusal);
+        break;
+      }
+      /*
+       * Into the running turn, rather than behind it.
+       *
+       * Somebody correcting an agent halfway is the most ordinary thing there
+       * is, and queueing it delivered the correction after the thing it was
+       * trying to stop.
+       */
+      if (kind === 'steering' && session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
+      /*
+       * A queued message, or a steering message with no turn running to steer.
+       *
+       * The second runs as a turn of its own, under its id, as the reference
+       * host runs steering that came too late to steer a turn, and the turn
+       * naming it takes it out of every client's state.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
+       */
       const model = (typeof message.model === 'object' && message.model !== null
         ? message.model
         : {}) as Record<string, unknown>;
       const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-      // Read now rather than when the turn comes round: a message waiting
-      // behind another is still a message this host has to be able to answer
-      // for, and the chat it points at may be gone by the time it runs.
-      const queued = messageAttachments(message, connection);
-      if (queued.refusal !== undefined) {
-        refuse(connection.peer, channel, action, origin, queued.refusal);
-        break;
-      }
       // Said back by the backend, now or once the turn's check has answered.
-      ctx.owe('chat/pendingMessageSet', String(action.id ?? ''));
+      ctx.owe('chat/pendingMessageSet', id);
       beginTurn(
         beginOrRun(
           session,
@@ -1456,8 +1506,8 @@ export function chatAction(
           modelIn(model),
           messageFrom(message),
           connection,
-          String(action.id ?? ''),
-          queued.attachments,
+          id,
+          read.attachments,
         ),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );
@@ -1791,6 +1841,31 @@ export function chatAction(
         no(`${requestId} is not a question this chat is waiting on`);
         break;
       }
+      /*
+       * An acceptance that leaves a required question unanswered SHOULD be
+       * rejected. The completion uses the request's synced answers and what
+       * it carries, so a question answered in either way is answered, and one
+       * skipped or absent from both is not. No VS Code client can tell: its
+       * host hands an answer on unchecked, and its clients send what their
+       * forms hold.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L358
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1913-L1919
+       */
+      if (response === 'accept') {
+        const request = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+          .map((part) => (part.kind === 'inputRequest' ? part.request as Bag : undefined))
+          .find((one) => one?.id === requestId);
+        const given = { ...(request?.answers ?? {}) as Bag, ...(typeof action.answers === 'object' && action.answers !== null ? action.answers : {}) as Bag };
+        const missing = (Array.isArray(request?.questions) ? request.questions as Bag[] : [])
+          .find((question) => {
+            const one = given[String(question.id ?? '')] as Bag | undefined;
+            return question.required === true && (one === undefined || one.state === 'skipped');
+          });
+        if (missing !== undefined) {
+          no(`${String(missing.id ?? '')} is required and has no answer`);
+          break;
+        }
+      }
       session.answer(requestId, accepted, (typeof action.answers === 'object' && action.answers !== null
         ? action.answers
         : {}) as Record<string, unknown>, kind);
@@ -1980,13 +2055,13 @@ export function chatAction(
      * request this host is already holding open - the protocol calls
      * the result the request's synced answer state, and says a
      * `chat/inputCompleted` may carry no answers because this is where
-     * they are.
+     * they are. Taken on any chat holding the question, a worker's
+     * included, whether or not its backend keeps drafts: the reducer
+     * keeps the draft on the request, and the reference host takes it
+     * for every agent.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L355-L356
      */
     case 'chat/inputAnswerChanged': {
-      if (!session.setAnswer) {
-        no('This backend keeps no draft answers');
-        break;
-      }
       const requestId = String(action.requestId ?? '');
       const questionId = String(action.questionId ?? '');
       // Absent clears that question's draft, which is what the action
@@ -2000,9 +2075,29 @@ export function chatAction(
         no(`${requestId} is not a question this chat is waiting on`);
         break;
       }
-      session.setAnswer(requestId, questionId, answer);
-      // A backend holding no such question says nothing, and the host says
-      // the draft every client is to hold.
+      /*
+       * A draft or submitted answer carries its value, of the kind it names:
+       * one missing either SHOULD be rejected. No VS Code client can tell:
+       * its host hands an answer on unchecked, and its clients send what
+       * their forms hold.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L356
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L589-L650
+       */
+      if (answer !== undefined && answer.state !== 'skipped') {
+        const value = (typeof answer.value === 'object' && answer.value !== null ? answer.value : {}) as Bag;
+        const fits = value.kind === 'text' || value.kind === 'selected' ? typeof value.value === 'string'
+          : value.kind === 'number' ? typeof value.value === 'number'
+            : value.kind === 'boolean' ? typeof value.value === 'boolean'
+              : value.kind === 'selected-many' ? Array.isArray(value.value) && value.value.every((one) => typeof one === 'string')
+                : false;
+        if (!fits) {
+          no(`The answer to ${questionId} has no ${typeof value.kind === 'string' ? `${value.kind} ` : ''}value`);
+          break;
+        }
+      }
+      session.setAnswer?.(requestId, questionId, answer);
+      // A backend that keeps no draft, or holds no such question, says
+      // nothing, and the host says the draft every client is to hold.
       if (ctx.unanswered()) dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }

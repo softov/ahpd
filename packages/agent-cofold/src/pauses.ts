@@ -222,12 +222,17 @@ export const createPauses = (
           if (picked !== undefined) call.selectedOption = picked;
           part.toolCall = call;
         }
+        /*
+         * A refusal is `denied`, the protocol's word for a person who turned a
+         * call down; the sentence is the model's, and goes to cofold.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
+         */
         start.emit('chat', {
           type: 'chat/toolCallConfirmed',
           turnId: ctx.active?.id,
           toolCallId,
           approved,
-          ...(approved ? { confirmed: 'user-action' } : { reason: DECLINED }),
+          ...(approved ? { confirmed: 'user-action' } : { reason: 'denied' }),
           ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
         });
         route(approved

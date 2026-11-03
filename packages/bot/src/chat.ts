@@ -31,8 +31,8 @@ import type { BotStore } from './store.js';
  * What this backend is for is the *log*: one JSON line per moment under
  * `<configDir>/bots/<slug>/logs/`, in the folder of the bot the chat is with -
  * a line when a turn begins, and a line when it ends with its response. A
- * message steered into a running turn is a turn of its own, written down the
- * same two ways. Nothing about a chat is kept in memory past the process that
+ * message steered into a running turn is a line of its own against that turn.
+ * Nothing about a chat is kept in memory past the process that
  * made it, so `list`, `find` and `transcript` read the folders and there is no
  * index that could fall out of step with them.
  */
@@ -164,6 +164,8 @@ export interface TurnHandle {
   notice(text: string): void;
   /** End the open turn with no response at all. */
   end(): void;
+  /** End the open turn as failed, in the words of what failed. */
+  fail?(message: string): void;
   /**
    * Say the open turn is waiting on a chat of another session, and link it.
    *
@@ -351,14 +353,12 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     if (typeof said !== 'object' || said === null || Array.isArray(said)) continue;
     const held = said as Bag;
     /*
-     * A message somebody said into a turn that was already running, in a log
-     * written before a steer became a turn of its own.
+     * A message somebody said into a turn that was already running.
      *
-     * It is read as what it now would be written as: a turn of its own,
-     * finished, with the steered message and no reply. The line's id is the id
-     * of the turn it went into, so a turn of its own takes one derived from it:
-     * folding the two together would lose the steer the person watched happen.
-     * A log written since has no such line - a steer writes a turn instead.
+     * It is read as a turn of its own, finished, with the steered message and
+     * no reply. The line's id is the id of the turn it went into, so a turn of
+     * its own takes one derived from it: folding the two together would lose
+     * the steer the person watched happen.
      */
     if (held['steering'] === true) {
       mark ??= markIn(held);
@@ -639,38 +639,17 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
     };
 
     /**
-     * Take a request's copy out of the open turn.
+     * Stop handing on answers to a request the back session no longer asks.
      *
-     * The protocol has no action that removes a response part, so the copy is
-     * spliced out of the state a client subscribes to and a live client is told
-     * the part is resolved: a question is cancelled and a call is skipped. The
-     * back session asked and no longer asks, and a person left drawing it would
-     * be answering a question that is over.
+     * The copy stays in the open turn, and the chat is told nothing: no client
+     * answered it, and the reference host says no completion in nobody's name,
+     * so the request ends with its turn. An answer a person gives it meanwhile
+     * goes nowhere.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L239
      */
     const withdrawAsked = (held: OpenTurn, id: string): void => {
       const at = held.asked.findIndex((one) => one.id === id);
-      if (at < 0) return;
-      const [copy] = held.asked.splice(at, 1);
-      const part = copy?.part;
-      if (part === undefined) return;
-      const inTurn = held.responseParts.indexOf(part);
-      if (inTurn >= 0) held.responseParts.splice(inTurn, 1);
-      if (part['kind'] === 'inputRequest') {
-        const request = part['request'] as Bag;
-        start.emit('chat', {
-          type: 'chat/inputCompleted',
-          requestId: String(request['id'] ?? id),
-          response: 'cancel',
-        });
-        return;
-      }
-      const toolCall = part['toolCall'] as Bag;
-      start.emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        toolCallId: String(toolCall['toolCallId'] ?? id),
-        approved: false,
-        reason: 'skipped',
-      });
+      if (at >= 0) held.asked.splice(at, 1);
     };
 
     /**
@@ -690,12 +669,26 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
      * `next` says whether what was waiting starts now. A steer ends a turn
      * without it: the steered message is a turn in front of the queue, and the
      * message behind it starts when that turn ends.
+     *
+     * `answered` says the back session answered, which is the one ending its
+     * calls finish by. Any other ending leaves them unfinished, and the turn's
+     * end forces each to cancelled, `skipped`, in every reducer, this chat's
+     * own record included, as the reference host's chat draws a call its turn
+     * left behind.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
      */
-    const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true): void => {
+    const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true, answered = false): void => {
       open = undefined;
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
         const toolCall = call.part.toolCall as Bag;
+        if (!answered) {
+          // What the reducer keeps of a call it forces to cancelled.
+          const kept = ['toolCallId', 'toolName', 'displayName', 'intention', 'contributor', '_meta', 'invocationMessage', 'toolInput']
+            .filter((key) => toolCall[key] !== undefined);
+          call.part.toolCall = { ...Object.fromEntries(kept.map((key) => [key, toolCall[key]])), status: 'cancelled', reason: 'skipped' };
+          continue;
+        }
         const result = {
           success: true,
           pastTenseMessage: 'Worked',
@@ -729,10 +722,14 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       // Whatever it answered with, before the turn is said to be over: a part
       // that arrived after the end is a part of a turn nobody is holding. The
       // calls are not here: their starts already appended them.
-      for (const part of parts) start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
-      start.emit('chat', state === 'cancelled'
-        ? { type: 'chat/turnCancelled', turnId: held.id, duration }
-        : { type: 'chat/turnComplete', turnId: held.id, duration });
+      // A failed turn's one part is its error, which `chat/error` carries.
+      if (state === 'error') start.emit('chat', { type: 'chat/error', turnId: held.id, duration, part: parts[0] });
+      else {
+        for (const part of parts) start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
+        start.emit('chat', state === 'cancelled'
+          ? { type: 'chat/turnCancelled', turnId: held.id, duration }
+          : { type: 'chat/turnComplete', turnId: held.id, duration });
+      }
       // Whatever was waiting behind it, now that there is nothing in front of
       // it. After the turn is said to be over, so a client reads one ending and
       // then the next beginning rather than the other way round.
@@ -755,7 +752,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
          * there are no `chat/delta`s after it - and the id is the turn's, which
          * is what a delta would have appended to.
          */
-        finish(held, 'complete', [{ id: `${held.id}:reply`, kind: 'markdown', content: text }]);
+        finish(held, 'complete', [{ id: `${held.id}:reply`, kind: 'markdown', content: text }], true, true);
       },
       notice: (text) => {
         const held = open;
@@ -768,6 +765,16 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         const held = open;
         if (held === undefined) return;
         finish(held, 'complete', []);
+      },
+      /*
+       * A turn whose work failed ends as failed, with an error part, as the
+       * reference host ends a failed send with `chat/error`.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1860
+       */
+      fail: (message) => {
+        const held = open;
+        if (held === undefined) return;
+        finish(held, 'error', [{ kind: 'error', error: { errorType: 'turnFailed', message } }]);
       },
       working: (chat, title) => {
         const held = open;
@@ -1006,38 +1013,41 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       },
 
       /**
-       * A message said while a turn is running.
+       * A message into the turn that is running.
        *
-       * Nothing here can take one: a correction halfway is read by a model, and
-       * this chat runs none. The message is a turn of its own instead - the open
-       * turn ends complete with what it holds so far, and the steered text
-       * begins the next one, which is what a person watching the chat sees.
-       *
-       * It wakes whoever answers the chat again, and the wake steers the back
-       * session rather than starting it, so the answer after the steer lands in
-       * the steered turn rather than under the turn it interrupted.
+       * The turn goes on: the message is handed to whoever answers the chat as
+       * a message into the open turn, and the wake steers the back session,
+       * whose answer lands in that turn. The reference host hands steering into
+       * a running turn through its provider, and the turn goes on.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
        *
        * The id the host names is the client's steering message. It is said
        * back first, as the chat's steering message, so the client that sent it
-       * is answered inside its dispatch, and the new turn names it as its
-       * `queuedMessageId`, which takes it out of every client's state; the turn
-       * takes an id of its own. A message that was already waiting stays
-       * waiting: a steer is in front of it, and it starts when the steered turn
-       * ends.
+       * is answered inside its dispatch, and taken out once it is handed on,
+       * since the back session holds it from then. The message carries who sent
+       * it, so a correction an agent sent shows as that agent's.
        *
-       * The new turn carries who sent the steered message, so a correction an
-       * agent sent shows as that agent's turn rather than as the person's.
+       * Kept, as everything said in a chat is, on a line of its own against the
+       * turn it went into, so a chat read back after a restart still shows it.
        *
-       * False where there is no open turn to steer, which is a message the host
-       * refuses rather than one it quietly turns into a turn of its own.
+       * False where there is no open turn to steer: the host runs such a
+       * message as a turn of its own.
        */
       steer: (pendingId, text, attachments, from) => {
         const held = open;
         if (held === undefined) return false;
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message: messageOf(text, from, undefined, attachments) });
-        // Ended without the queue: the steered turn is in front of it.
-        finish(held, 'complete', [], false);
-        beginTurn(crypto.randomUUID(), text, from, pendingId, undefined, attachments);
+        const message = messageOf(text, from, undefined, attachments);
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message });
+        append(dir, id, { id: held.id, steering: true, message, _meta: mark });
+        handle.onMessage?.({
+          session: start.uri,
+          turnId: held.id,
+          text,
+          ...(from?.agent === undefined ? {} : { agent: from.agent }),
+          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+        });
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
+        touch();
         return true;
       },
 

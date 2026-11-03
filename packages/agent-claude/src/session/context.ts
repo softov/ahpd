@@ -379,6 +379,14 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   allowed: { allow: string[]; deny: string[] };
   /** What the client picked. Absent means whatever the CLI defaults to. */
   chosen: string | undefined;
+  /**
+   * The effort level a turn's model set over the session's `effortLevel`.
+   *
+   * The CLI holds one effort for the whole query, so a turn that names a
+   * level moves it, and the next turn that names none puts the session's
+   * back. Absent while the CLI runs at the session's level.
+   */
+  turnEffort: string | undefined;
   /*
    * The tools on offer, which is not a fixed list.
    *

@@ -250,9 +250,9 @@ const BROKEN = {
     by: '8, root state is global',
   },
   idleSteering: {
-    breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
+    breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."; this host runs one as a turn of its own under its id',
     row: 'A10',
-    by: '10',
+    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L260-L262 at a4e689ae)',
   },
   otherClientRefused: {
     breaks: 'types/channels-session/actions.ts: session/activeClientSet is @clientDispatchable and upserts the entry its clientId names; this host refuses an entry naming another client than the connection',
@@ -357,10 +357,10 @@ const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROK
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '001-root-agentschanged': rootPerConnection,
   '002-root-activesessionschanged': rootPerConnection,
-  '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
+  '039-set-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],

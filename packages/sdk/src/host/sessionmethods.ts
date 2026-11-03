@@ -956,6 +956,20 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         hasDirectory: options.users !== undefined,
       }))
         throw new RpcError(-32002, `No provider called ${provider}`);
+      /*
+       * The creator's entry names the creator. The protocol says its
+       * `clientId` MUST match the one this connection gave at `initialize`,
+       * and VS Code's host refuses a request whose entry names another client,
+       * before anything is made for it.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
+       */
+      const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
+        ? params.activeClient as Bag
+        : undefined;
+      const clientId = connection.clientId || 'anonymous';
+      if (typeof claimed?.clientId === 'string' && claimed.clientId !== clientId)
+        throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
       unheld(uri);
       /*
        * The name, claimed before anything is made for the session, so a second
@@ -1048,18 +1062,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * The announcement is dispatched after, because a session nobody can
          * subscribe to yet has nobody to tell.
          *
-         * The `clientId` is this connection's, not the one in the payload.
-         * The protocol says the two MUST match, and forcing it is what the
-         * dispatch path does for the same reason: a client naming somebody
-         * else is announcing a presence that is not theirs. The rest is the
-         * entry as the client sent it, `tools` included or left out, as the
-         * reference host holds a creator's entry.
+         * The entry is the one the creator sent, `tools` included or left
+         * out, as the reference host holds a creator's entry. A `clientId` it
+         * left out is this connection's, as a set's is.
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
-        const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
-          ? params.activeClient as Bag
-          : undefined;
-        const clientId = connection.clientId || 'anonymous';
         const activeClient: Bag | undefined = claimed === undefined ? undefined : { ...claimed, clientId };
         let here: Map<string, Bag> | undefined;
         if (activeClient !== undefined) {
