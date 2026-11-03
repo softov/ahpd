@@ -1,6 +1,6 @@
 ---
 title: The default chat's archive is refused
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -40,4 +40,7 @@ A session's `session/isArchivedChanged` moves the session's bit alone.
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the snapshot case fails, the archive taken, and the new sleep case fails, the session woken.
+- A store holding a default chat's archived bit keeps it, as the plan's *Risks and tradeoffs* says.

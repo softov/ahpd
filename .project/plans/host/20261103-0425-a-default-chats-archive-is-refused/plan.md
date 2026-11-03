@@ -1,7 +1,7 @@
 ---
 title: A default chat's archive is refused
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -65,7 +65,7 @@ session/isArchivedChanged -> actions.ts flag() -> sessionFlag -> the session's b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The default chat's archive is refused](task-01-the-default-chats-archive-is-refused.md) | todo | - |
+| [01 - The default chat's archive is refused](task-01-the-default-chats-archive-is-refused.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -73,13 +73,13 @@ session/isArchivedChanged -> actions.ts flag() -> sessionFlag -> the session's b
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a session not running names its default chat from its record, or from its catalogue row.
 
 ## Final verification checklist
 
-- [ ] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The snapshot, sleep, catalogue, sessions, merged and worktree test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The snapshot, sleep, catalogue, sessions, merged and worktree test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
