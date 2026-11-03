@@ -150,6 +150,25 @@ export interface Wake {
    */
   woken(message: ChatMessage, handle: TurnHandle): Promise<void>;
   /**
+   * Hold a main turn open on a turn somebody began in a back session.
+   *
+   * `woken` is this for a message of the person's, and this is its other half:
+   * a turn the person began in the back session itself is shown in the main
+   * chat as a turn of its own, waiting on the same session. The turn is already
+   * open - `begin` on its handle is what opened it - and what this adds is the
+   * wait: `posted`, `asking` and `finished` answer through it as they answer a
+   * turn this wake began, and `stopped` stops the back session's turn.
+   *
+   * `session` is the main chat's session and `turnId` the turn just opened in
+   * it; `chat` is the back session's chat, which that turn shows as the call it
+   * waits on, and `backTurn` is the turn running in the back session, which is
+   * the clock a stop is measured by.
+   *
+   * Nothing where this wake already holds the back session: a message of the
+   * person's woke it, and that turn is the one the main chat is waiting on.
+   */
+  began(backSession: string, session: string, handle: TurnHandle, turnId: string, chat: string, backTurn: string): void;
+  /**
    * The main turn one back session is answering, or nothing where none is.
    *
    * By session and never by a name a caller sent: what a back session posts,
@@ -634,6 +653,22 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         answering.delete(session);
         handle.notice(`${bot.name} was not woken: ${refused}`);
       }
+    },
+
+    began: (backSession, session, handle, turnId, chat, backTurn) => {
+      if (answering.has(backSession)) return;
+      /*
+       * The bot's name, which the notice is said in: the rows are the record
+       * of which bot a back session is, and `filled` has read them by the time
+       * a turn can arrive here. A session no row names is not one a bot here
+       * started, and the empty name is the one `finished` says nothing in.
+       */
+      const slug = started.get(backSession);
+      const bot = slug === undefined ? undefined : seams.store.get(slug);
+      const name = bot?.name ?? '';
+      answering.set(backSession, { session, turnId, handle, bot: name });
+      begun.set(backSession, { turn: backTurn, at: Date.now() });
+      handle.working?.(chat, name);
     },
   };
 }

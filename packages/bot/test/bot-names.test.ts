@@ -275,6 +275,12 @@ it('answers a back session by its name, and lists the names', async () => {
   expect(JSON.parse(String(got(await call(ana, 'resourceRead', { uri: 'bot://motion/ana/work' }))['data'])))
     .toEqual({ session: 'ahp-session:/woken' });
   expect(await listing(ana, 'bot://motion/ana/')).toEqual(['reviews', 'work']);
+  // The row a session is on, which is the other direction of `get` and what a
+  // turn begun in a back session is answered from: the bot and the person.
+  expect(await backs.of('motion', 'ahp-session:/woken'))
+    .toMatchObject({ bot: 'motion', user: 'ana', name: 'work' });
+  // Another bot's session is not this bot's, though its row exists elsewhere.
+  expect(await backs.of('motion', 'ahp-session:/elsewhere')).toBeUndefined();
 
   // A name no row has is a back session that is not there.
   expect(await call(ana, 'resourceRead', { uri: 'bot://motion/ana/nope' })).toMatchObject({ code: -32008 });

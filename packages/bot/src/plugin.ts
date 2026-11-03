@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/sdk';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
-import { botChatAgent } from './chat.js';
+import { botChatAgent, turns } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
-import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
+import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, rowId, sessionsOf, whose } from './names.js';
 import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
@@ -15,7 +15,8 @@ import { botWake, isMainTurnAbsence } from './wake.js';
 import type { Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
 import type { MainTurnAbsence } from './wake.js';
-import type { Bag, Owner, Plugin, PluginPeer, RecordCollection } from '@ahpd/sdk';
+import type { Bag, MessageFrom, Owner, Plugin, PluginPeer, RecordCollection } from '@ahpd/sdk';
+import type { TurnHandle } from './chat.js';
 import type { BotSessions } from './provider.js';
 
 /**
@@ -301,6 +302,26 @@ const textOf = (state: unknown, turn: string): string => {
   return parts.filter((part) => part.kind === 'markdown').map((part) => String(part.content ?? '')).join('');
 };
 
+/**
+ * The message one turn began with, read off a chat's state.
+ *
+ * The turn is the chat's `activeTurn` while it runs and one of its `turns` once
+ * it has ended, and a turn that began and ended between the event and this read
+ * is in both. Nothing where the state holds neither.
+ */
+const messageOfTurn = (state: unknown, turn: string): Bag | undefined => {
+  const held = state as { activeTurn?: unknown; turns?: unknown } | undefined;
+  const seen = [held?.activeTurn, ...(Array.isArray(held?.turns) ? held.turns as unknown[] : [])];
+  for (const one of seen) {
+    if (typeof one !== 'object' || one === null) continue;
+    const line = one as Bag;
+    if (line['id'] !== turn) continue;
+    const message = line['message'];
+    return typeof message === 'object' && message !== null ? message as Bag : undefined;
+  }
+  return undefined;
+};
+
 export const apply: Plugin['apply'] = (host, options) => {
   const asked = options.root as string | undefined;
   const root = expandHome(asked === undefined || asked.trim() === '' ? defaults.root : asked);
@@ -575,6 +596,59 @@ export const apply: Plugin['apply'] = (host, options) => {
    * name somebody else's.
    */
   host.registerTool(postMessage(wake));
+  /*
+   * The start of a turn somebody began in a back session.
+   *
+   * A person who types in the back session itself, or whatever else drives that
+   * chat, begins a turn no main chat is waiting on. The main chat shows it as a
+   * turn of its own, so the person watching there sees the work and its answer;
+   * the wake holds it from then on, as it holds a turn a message woke.
+   *
+   * A turn this wake woke is left alone: `woken` holds the main turn it is
+   * answering already. The back session is found from its row, which names the
+   * bot and the person, and the main chat from that bot's row for the person -
+   * the one chat a person has with a bot. A chat this host is not running opens
+   * nothing, and so does one that has a turn open.
+   */
+  host.on('turn_start', (event) => {
+    void (async (): Promise<void> => {
+      if (wake.main(event.session) !== undefined) return;
+      await store.ready();
+      for (const bot of store.all()) {
+        const row = await backs.of(bot.id, event.session);
+        if (row === undefined) continue;
+        const owner = whose(row.user, host.hostName);
+        const chatRow = await chats(bot.id).get(rowId([bot.id, owner]));
+        const main = chatRow?.['chat'];
+        if (typeof main !== 'string' || main === '') return;
+        let handle: TurnHandle;
+        try {
+          handle = turns(main);
+        }
+        catch {
+          return;
+        }
+        const { conn } = await connection();
+        const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
+        const message = messageOfTurn(answered.snapshot?.state, event.turn);
+        if (message === undefined) return;
+        const text = typeof message['text'] === 'string' ? message['text'] : '';
+        /*
+         * Whose message it is: a person began this turn, as every turn a person
+         * types in a chat is theirs. Nothing where the event names nobody - a
+         * turn the back session's own backend began - and the message keeps the
+         * origin a person's has.
+         */
+        const from: MessageFrom | undefined = event.sender === undefined ? undefined : { origin: { kind: 'user' } };
+        const turnId = handle.begin(text, from);
+        if (turnId === undefined) return;
+        wake.began(event.session, main, handle, turnId, event.chat, event.turn);
+        return;
+      }
+    })().catch((error: unknown) => {
+      host.problem(`${name}: the turn ${event.turn} in ${event.session} was not shown: ${reason(error)}`);
+    });
+  });
   /*
    * The end of a turn: the words it ended with, read off the session's chat.
    *

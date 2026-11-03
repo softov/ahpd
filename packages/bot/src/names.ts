@@ -146,6 +146,14 @@ export const named = (leaf: string): Named | undefined => {
 export interface BackSessions {
   /** The session this name is on, or nothing when no row has it. */
   get(bot: string, user: string, name: string): Promise<string | undefined>;
+  /**
+   * The row one session is named by, or nothing when no row names it.
+   *
+   * The other direction of `get`: a turn that arrives naming a session says
+   * which session it is in and nothing of who started it, and the row says
+   * which bot and person that is.
+   */
+  of(bot: string, session: string): Promise<BackSession | undefined>;
   /** Keep that this name is on this session. */
   put(bot: string, user: string, name: string, session: string): Promise<void>;
   /** The names this person has with this bot, in order. */
@@ -172,6 +180,14 @@ export const backSessions = (rows: (bot: string) => RecordCollection): BackSessi
     const row = await rows(bot).get(rowId([bot, user, name]));
     const held = row?.['session'];
     return typeof held === 'string' && held !== '' ? held : undefined;
+  },
+
+  of: async (bot, session) => {
+    const found = (await rows(bot).find({ bot, session }))[0];
+    const user = found?.['user'];
+    const name = found?.['name'];
+    if (typeof user !== 'string' || typeof name !== 'string') return undefined;
+    return { id: rowId([bot, user, name]), bot, user, name, session };
   },
 
   put: async (bot, user, name, session) => {

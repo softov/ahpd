@@ -86,6 +86,8 @@ const turn = (): Recorded => {
   const endings: string[] = [];
   const failures: string[] = [];
   const handle: TurnHandle = {
+    // The turn this handle is over is the open one: nothing begins a second.
+    begin: () => undefined,
     reply: (text) => { replies.push(text); },
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },

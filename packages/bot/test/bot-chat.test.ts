@@ -837,6 +837,97 @@ it('leaves the back session\'s call unfinished when its turn ends with a notice'
   expect(call).toMatchObject({ kind: 'toolCall', toolCall: { status: 'cancelled', reason: 'skipped' } });
 });
 
+/*
+ * A call the back session stopped waiting on leaves the open turn at once.
+ *
+ * The back session raised the confirmation and took it back, and the copy here
+ * is told skipped under the open turn's own id - a call action for another turn
+ * is one the reducer drops - so a client that watched it cancels the call. The
+ * host's own state has no action to remove a part, so the copy is spliced out
+ * of what a late client reads instead.
+ */
+it('takes a withdrawn call out of the open turn, which the reducer cancels', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+
+  await said(client, 't1', 'hello');
+  chat.asking?.({
+    id: 'toolu_run',
+    kind: 'toolConfirmation',
+    toolCall: {
+      toolCallId: 'toolu_run',
+      toolName: 'Bash',
+      displayName: 'Bash',
+      confirmationTitle: 'Run in terminal',
+      invocationMessage: 'Run `ls` in the bot folder',
+    },
+  });
+  chat.withdrawn?.('toolu_run');
+
+  expect((await stateOf(client))['activeTurn']).toMatchObject({
+    id: 't1',
+    responseParts: [{ kind: 'toolCall', toolCall: { status: 'cancelled', reason: 'skipped' } }],
+  });
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/toolCallConfirmed')).toEqual([{
+    type: 'chat/toolCallConfirmed',
+    turnId: 't1',
+    toolCallId: 'toolu_run',
+    approved: false,
+    reason: 'skipped',
+  }]);
+  const watched = replayed(opened, notes, CHAT)['activeTurn'] as Bag;
+  expect(watched['responseParts']).toMatchObject([{
+    kind: 'toolCall',
+    toolCall: { toolCallId: 'toolu_run', status: 'cancelled', reason: 'skipped' },
+  }]);
+  chat.reply('done');
+});
+
+/*
+ * A question the back session stopped asking leaves the open turn at once.
+ *
+ * `chat/inputCompleted` names only the request, and the reducer writes the
+ * response into the part the turn still holds, so a client that watched it
+ * stops drawing a question nobody is asking.
+ */
+it('takes a withdrawn question out of the open turn, which the reducer cancels', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+
+  await said(client, 't1', 'hello');
+  chat.asking?.({
+    id: 'ask-1',
+    kind: 'chatInput',
+    request: { id: 'ask-1', message: 'Which folder?', questions: [] },
+  });
+  chat.withdrawn?.('ask-1');
+
+  expect((await stateOf(client))['activeTurn']).toMatchObject({
+    id: 't1',
+    responseParts: [{ kind: 'inputRequest', request: { id: 'ask-1' }, response: 'cancel' }],
+  });
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/inputCompleted')).toEqual([
+    { type: 'chat/inputCompleted', requestId: 'ask-1', response: 'cancel' },
+  ]);
+  const watched = replayed(opened, notes, CHAT)['activeTurn'] as Bag;
+  expect((watched['responseParts'] as Bag[])[0]).toMatchObject({
+    kind: 'inputRequest',
+    request: { id: 'ask-1' },
+    response: 'cancel',
+  });
+  chat.reply('done');
+});
+
 it('shows the back session as one subagent call in a turn a steer goes into', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
@@ -912,6 +1003,38 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   // them: a key whose value is undefined is left out of a line and of a frame.
   expect(lines(configDir, 'one').at(-1))
     .toMatchObject({ id: turn['id'], state: 'complete', responseParts: JSON.parse(JSON.stringify(parts)) as Bag[] });
+});
+
+/*
+ * A turn somebody began in a back session is a turn of this chat's own.
+ *
+ * Nothing here said it and nothing here woke a session: the work the turn waits
+ * on is already running elsewhere, so the handle opens the turn and leaves it
+ * for that work's answer. A chat runs one turn at a time, so a second begin
+ * while one is open is nothing.
+ */
+it('begins a turn nobody here said, and tells no listener', async () => {
+  const { host } = made();
+  const client = await anyone(host);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  const id = chat.begin('typed on the back session');
+
+  expect(typeof id).toBe('string');
+  const running = await stateOf(client);
+  expect(running['activeTurn']).toMatchObject({ id, message: { text: 'typed on the back session' } });
+  // The turn is open and left open: nothing wakes a session over it.
+  expect(running['status']).toBe(Status.InProgress);
+  expect(heard).toEqual([]);
+  // The turn already open is the one this chat runs.
+  expect(chat.begin('and again')).toBeUndefined();
+
+  chat.reply('done');
+  expect((await stateOf(client))['activeTurn']).toBeUndefined();
+  expect(heard).toEqual([]);
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
