@@ -1,6 +1,6 @@
 import { accepts } from '../utils/configvalues.js';
 import { frozenCopy } from '../utils/frozen.js';
-import { HOSTS_OWN } from './common.js';
+import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from '../types/completions.js';
 import type { Agent } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
@@ -300,7 +300,8 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
           // A session created before this host could ask - an automation on a
           // directory that is not a repository - has no offer to repeat, and
           // says what it settled on instead.
-          properties[key] ?? declared[key] ?? { type: 'string', title: key, readOnly: true, sessionMutable: false },
+          properties[key] ?? declared[key] ?? HOSTS_TAKEN[key]
+            ?? { type: 'string', title: key, readOnly: true, sessionMutable: false },
         ]),
     );
   };
@@ -402,12 +403,17 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
-   * The session schema with what a plugin contributed, on the way out.
+   * The session schema with what a plugin contributed and the keys this host
+   * takes, on the way out.
    *
    * A contributed key is a control a client draws beside the backend's own,
-   * and it exists only while its plugin is loaded. The backend's own property
-   * wins where both declare one, because the fold already reported that as a
-   * collision and a plugin may not quietly move a setting a backend owns.
+   * and it exists only while its plugin is loaded. A key this host takes is on
+   * every session, as the reference host declares it on its sessions, so a
+   * client that sends one only where the schema declares it sends it here. The
+   * backend's own property wins where it declares one, because the fold
+   * already reported that as a collision and a plugin may not quietly move a
+   * setting a backend owns.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190
    */
   const sessionSchema = (agent: Agent): Bag => {
     const schema = published(agent.schema());
@@ -415,11 +421,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       ? schema.properties
       : {}) as Bag;
     const theirs = answeredKeys(agent, properties);
-    const extra = options.sessionConfig;
-    if (extra === undefined || Object.keys(extra).length === 0) {
-      return theirs === properties ? schema : { ...schema, type: 'object', properties: theirs };
-    }
-    return { ...schema, type: 'object', properties: { ...extra, ...theirs } };
+    return { ...schema, type: 'object', properties: { ...HOSTS_TAKEN, ...options.sessionConfig, ...theirs } };
   };
 
   /**
@@ -584,11 +586,12 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
     Object.entries(config)
       // A string, a list of strings for the two pattern keys, or the alias map
-      // `connectors` holds - each said back in the shape it was given.
-      .filter(([key, value]) => HOSTS_OWN.includes(key)
+      // `connectors` holds - each said back in the shape it was given - and a
+      // key this host takes, as it was sent.
+      .filter(([key, value]) => Object.hasOwn(HOSTS_TAKEN, key) || (HOSTS_OWN.includes(key)
         && (typeof value === 'string'
           || (Array.isArray(value) && value.every((one) => typeof one === 'string'))
-          || (key === 'connectors' && isAliasMap(value))))
+          || (key === 'connectors' && isAliasMap(value)))))
       .map(([key, value]) => [key, value]),
   );
 

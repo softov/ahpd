@@ -3,7 +3,7 @@ import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { HOSTS_OWN } from './common.js';
+import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
@@ -1047,7 +1047,8 @@ export function chatAction(
       }
       /*
        * The keys the session's backend is asked about: every key but this
-       * host's own and the ones the schema fixes, which a start takes.
+       * host's own, the ones it takes, and the ones the schema fixes, which a
+       * start takes.
        *
        * What the schema says about a key: `host.ts` imports no backend, and
        * the two things this layer needs to know are declared there - whether
@@ -1059,7 +1060,7 @@ export function chatAction(
        */
       const asked = Object.entries(config)
         .filter(([key]) => {
-          if (HOSTS_OWN.includes(key)) return false;
+          if (HOSTS_OWN.includes(key) || Object.hasOwn(HOSTS_TAKEN, key)) return false;
           const property = propertyOf(owning?.agent, key);
           return property === undefined || property.sessionMutable === true;
         });
@@ -1077,6 +1078,10 @@ export function chatAction(
        */
       const said = (taken: Record<string, unknown>): void => {
         for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
+        // A key this host took is one of its answers, which every snapshot of
+        // the session says back over the backend's config.
+        const answered = Object.entries(taken).filter(([key]) => Object.hasOwn(HOSTS_TAKEN, key));
+        if (answered.length > 0) decided.set(uri, { ...decided.get(uri), ...Object.fromEntries(answered) });
         // Said on the session's channel, and answered on the channel it came
         // on, a chat's for a key the schema scopes to one chat.
         if (channel === uri) dispatch(uri, { ...action, config: taken }, origin);

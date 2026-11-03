@@ -486,6 +486,26 @@ describe('a write redirect', () => {
     expect(bash('echo id > out-$(date).txt', here)).toBe('noMatch');
   });
 
+  /*
+   * A sensitive edit location keeps a write under it asking, whatever the
+   * patterns allow, as the reference host judges a redirect.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
+   */
+  it('asks when the target is in a sensitive location', () => {
+    mkdirSync(join(folder, '.github', 'hooks'), { recursive: true });
+    symlinkSync(join(folder, '.github', 'hooks'), join(folder, 'hooks'), posix ? 'dir' : 'junction');
+    const sensitive = [{ path: '.github/hooks', isDirectory: true }, { path: 'AGENTS.md', isDirectory: false }];
+    expect(bash('echo hi > .github/hooks/a.json', here)).toBe('approved');
+    expect(bash('echo hi > .github/hooks/a.json', { ...here, sensitive })).toBe('noMatch');
+    expect(bash('echo hi > .github/hooks/deep/a.json', { ...here, sensitive })).toBe('noMatch');
+    expect(bash('echo hi > AGENTS.md', { ...here, sensitive })).toBe('noMatch');
+    // A link in the folder that leads into a location is that location.
+    expect(bash('echo hi > hooks/a.json', { ...here, sensitive })).toBe('noMatch');
+    // A file location holds that file alone, and a folder what is under it.
+    expect(bash('echo hi > AGENTS.md.bak', { ...here, sensitive })).toBe('approved');
+    expect(bash('echo hi > .github/hooks-two/a.json', { ...here, sensitive })).toBe('approved');
+  });
+
   it('asks when it has no folder or no patterns to check a target against', () => {
     expect(bash('echo hi > out.txt')).toBe('noMatch');
     expect(bash('echo hi > out.txt', { editPatterns: patterns })).toBe('noMatch');
