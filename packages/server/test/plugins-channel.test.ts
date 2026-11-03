@@ -1279,7 +1279,7 @@ it('moves the root config with a plugin switched through the channel, and the re
   await close();
 });
 
-it('says a plugin removed through the channel as null to a reader of the daemon settings, and nothing to anybody else', async () => {
+it('takes a plugin removed through the channel back from a reader of the daemon settings, and says nothing of it to anybody else', async () => {
   const { runner } = fakeNpm({});
   const { host, users, close } = await live({ run: runner });
   const fa = await as(host, users, 'fa');
@@ -1288,10 +1288,13 @@ it('says a plugin removed through the channel as null to a reader of the daemon 
   expect((await fa.root()).config.values['plugins.secret']).toMatchObject({ enabled: true });
 
   expect(await jo.call('x-ahpd/plugins/remove', { id: 'secret' })).toEqual({ result: { id: 'secret', restart: false } });
-  expect(fa.actions(ROOT).filter((one) => one.type === 'root/configChanged')).toEqual([
-    { type: 'root/configChanged', config: { 'plugins.secret': null } },
-  ]);
-  expect((await fa.root()).config.values['plugins.secret']).toBeNull();
+  // The key goes out as a replacement of the root's values without it, the
+  // protocol's one way to take a key back.
+  const changes = fa.actions(ROOT).filter((one) => one.type === 'root/configChanged');
+  expect(changes).toHaveLength(1);
+  expect(changes[0]).toMatchObject({ type: 'root/configChanged', replace: true });
+  expect(Object.keys(changes[0]?.config as Bag)).not.toContain('plugins.secret');
+  expect(Object.hasOwn((await fa.root()).config.values, 'plugins.secret')).toBe(false);
   // Ana may not read the daemon's settings, so the key was never hers to see,
   // in the change or in the root's schema and values after it.
   expect(ana.actions(ROOT).flatMap((one) => one.type === 'root/configChanged' ? Object.keys(one.config as Bag) : [])).toEqual([]);
