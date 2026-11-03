@@ -121,7 +121,7 @@ export interface Options {
   deltaWindowMs?: number;
   /** Minutes of quiet before a session's agent is let go, absent when the deployment said nothing. */
   sleepAfterMinutes?: number;
-  /** How many sessions are loaded at most, absent when the deployment said nothing. */
+  /** How many sessions are resident at most, absent when the deployment said nothing. */
   sessionResidencyLimit?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
@@ -670,7 +670,7 @@ export const serverFields = {
   sessionResidencyLimit: {
     type: 'integer',
     minimum: 0,
-    description: 'How many sessions are loaded at most. Over it, the least recently used quiet session is let go. Default 10; 0 sets no limit.',
+    description: 'How many sessions are resident at most, running or with their state held. Over it, the least recently used one that nothing holds is let go, with its state. Default 10; 0 sets no limit.',
     cli: { value: 'COUNT' },
   },
   automations: {

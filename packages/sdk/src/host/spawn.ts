@@ -15,7 +15,7 @@ import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
-import { CLOSING } from './common.js';
+import { CLOSING, ENDINGS } from './common.js';
 import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
@@ -121,9 +121,6 @@ const clearsRead = (type: unknown): boolean =>
  * rather than the client never hearing the turn is over.
  */
 const PLAN_HOLD_MS = 2000;
-
-/** The actions that end a turn, which hold a plan update in flight behind them. */
-const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);
 
 /**
  * Whether the operator's rule makes a tool ask every time.
@@ -1740,19 +1737,25 @@ export function createSpawn(ctx: HostContext): Spawn {
       // session's own, because `sessions.get` answered above.
       createdAt: births.get(uri) ?? new Date().toISOString(),
       quietSince: 0,
-      turnedAt: 0,
     };
     // Loaded now, which is activity: a session resumed a moment ago is not one
     // that has been quiet since before it slept.
-    const loadedAt = (options.now?.() ?? new Date()).getTime();
-    held.quietSince = loadedAt;
-    if (held.turnedAt === 0) held.turnedAt = loadedAt;
+    held.quietSince = (options.now?.() ?? new Date()).getTime();
     // Said back to the catalogue, so a row listed after this agrees with the
     // session channel about when it began.
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
     ctx.asleep.delete(uri);
+    /*
+     * Started, or brought back, which is recent in the residency; one more
+     * resident may put another past the limit, which is read once the start is
+     * done.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L6489-L6490
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13950-L13951
+     */
+    ctx.touch(uri);
+    queueMicrotask(() => { ctx.reconcile(); });
     /*
      * A chat on a backend of its own, which the session's own agent does not
      * serve.

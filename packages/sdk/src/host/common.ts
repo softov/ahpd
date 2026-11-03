@@ -22,6 +22,9 @@ export const CLOSING = 'This host is closing, so nothing new starts on it';
 /** What a session start without a provider hears on a host that serves no agent yet. */
 export const NO_AGENT = 'This host serves no agent yet, so no session can start. Install or enable an agent plugin';
 
+/** The actions that end a chat's active turn. */
+export const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);
+
 /**
  * The character that turns a message into a command.
  *

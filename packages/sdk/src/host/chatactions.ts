@@ -47,7 +47,15 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
-  if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
+  // Archived: asleep, or its tree given back where it is asleep already, and
+  // let go by the residency where nothing holds it.
+  // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1457-L1464
+  if (bit === Status.IsArchived && on) {
+    queueMicrotask(() => {
+      void ctx.sleep(uri).catch(() => undefined);
+      ctx.reconcile();
+    });
+  }
   // Unarchived: the tree back before anything wakes the session into it, and
   // the session is no longer one the host archived.
   if (bit === Status.IsArchived && !on) {

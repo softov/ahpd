@@ -367,9 +367,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           snapshots.push(snapshot);
           connection.watching.add(channel);
           openedBy(meant, connection.clientId);
+          // Recent in the residency, as a subscribe makes it.
+          // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
+          ctx.touch(meant);
         }
         catch { /* not subscribed, and the client will be told if it asks */ }
       }
+      // Once every channel it asked for is watched, so none of them is let go
+      // between two of its subscribes.
+      ctx.reconcile();
       log(`${connection.clientId} connected, speaking ${agreed}`);
       return {
         protocolVersion: agreed,
@@ -604,6 +610,9 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           if (meant !== channel) connection.aliases.set(meant, channel);
           connection.watching.add(channel);
           openedBy(meant, connection.clientId);
+          // Recent in the residency, as a subscribe makes it.
+          // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
+          ctx.touch(meant);
           resumed.set(meant, channel);
         }
         catch {
@@ -613,6 +622,9 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           missing.push(channel);
         }
       }
+      // Once every channel it came back for is watched, so none of them is
+      // let go between two of its subscribes.
+      ctx.reconcile();
 
       // Whatever it did not ask back for, it has left.
       for (const channel of before) {
