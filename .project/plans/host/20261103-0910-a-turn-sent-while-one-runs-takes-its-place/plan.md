@@ -1,7 +1,7 @@
 ---
 title: A turn sent while one runs takes its place
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -32,11 +32,11 @@ refs:
   - "[code://packages/agent-acp/src/session/queue.ts#L169-L195](../../../../packages/agent-acp/src/session/queue.ts#L169-L195) - ACP's `begin`, which drops a turn sent while one runs"
   - "[code://packages/bot/src/chat.ts#L1046-L1052](../../../../packages/bot/src/chat.ts#L1046-L1052) - the bot's `begin`, which queues a turn sent while one is open"
   - "[code://examples/echo/agent.ts#L149-L211](../../../../examples/echo/agent.ts#L149-L211) - the echo example's turn, whose run ends whatever turn is active then"
-  - ".project/problems/a-backend-keeps-a-steer-the-client-took-back.md - the problem filed for a steer a backend keeps after a client took it back"
+  - "git://feb72387 - .project/problems/a-backend-keeps-a-steer-the-client-took-back.md, the problem filed for a steer a backend keeps after a client took it back, deleted with task 02"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65 - a turn that ends cancelled takes every pending steering message out, and starts nothing queued"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617 - \"Cancellation clears every pending steering entry, including prompts handed off but not yet consumed by the SDK\""
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873 - a resume whose agent fails ends in an error marked resumable"
-  - ".project/problems/a-pi-resume-after-a-failed-continue-is-refused.md - the problem filed for a pi resume refused after its continue threw"
+  - "git://feb72387 - .project/problems/a-pi-resume-after-a-failed-continue-is-refused.md, the problem filed for a pi resume refused after its continue threw, deleted with task 02"
 ---
 
 ## Goal
@@ -121,7 +121,7 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A turn sent while one runs is taken](task-01-a-turn-sent-while-one-runs-is-taken.md) | done | - |
-| [02 - A stop takes the steering with it](task-02-a-stop-takes-the-steering-with-it.md) | todo | 01 |
+| [02 - A stop takes the steering with it](task-02-a-stop-takes-the-steering-with-it.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -133,8 +133,8 @@ chat/turnCancelled of that turn -> Session.cancel -> the work in flight stops, t
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-03.
-- **Next action:** task 02.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a turn still switching its model, whose start is said once the switch answers.
 

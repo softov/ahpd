@@ -3,6 +3,7 @@ title: A turn sent while one runs takes its place - implemented
 date: 2026-11-03
 refs:
   - git://0fc56e27 - the change
+  - git://0fc35a29 - task 02's change
   - "[code://packages/sdk/src/host/lifecycle.ts](../../../../packages/sdk/src/host/lifecycle.ts)"
   - "[code://packages/agent-claude/src/session/turns.ts](../../../../packages/agent-claude/src/session/turns.ts)"
 ---
@@ -35,8 +36,28 @@ The host applies a chat's action sent after a stop at once.
 - So does every sdk test file that names a turn start, a stop or a pending message, the nested-process and wire files aside.
 - `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
 
+## Task 02
+
+A stop takes the chat's steering message with it.
+Once the backend has had the stop, it is asked to let go of the steering message.
+The host takes out one the backend says nothing of.
+pi empties its own steering queue at a stop, so a steer it was handed reaches no later run.
+A pi resume whose continue threw before pi wrote anything continues again from the same failed reply, with no second context edit.
+
+- [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts) - the steering message taken out at a stop.
+- [`code://packages/agent-pi/src/session.ts`](../../../../packages/agent-pi/src/session.ts), [`code://packages/agent-pi/src/backend.ts`](../../../../packages/agent-pi/src/backend.ts) - `clearSteering` at a stop, and `failedReply`, which `resume` reads.
+- [`code://docs/sdk/AHP.md`](../../../../docs/sdk/AHP.md) - the `chat/turnCancelled` row.
+- The two problems the task closes are deleted: a-backend-keeps-a-steer-the-client-took-back and a-pi-resume-after-a-failed-continue-is-refused.
+
+Verified:
+
+- On `feb72387`'s sources the four new and changed cases fail, one each in the host steering, pi steering, pi disk and cofold turn files.
+- With the change every test file a stop or a steer reaches passes, one file at a time: seventy-two of them.
+- `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+
 ## Departures from the plan
 
+- The cofold case that took back a steering message a stopped run handed back now reads it taken out with the stop.
 - A cofold plugin case that woke a sleeping session with a turn wakes it with a queued message.
   A turn sent there takes the place of the run the resume reopens, so that run's approval is in no client's state.
 - Claude takes up a message queued after a stop when its CLI has answered the stopped prompt, as the plan's *Risks and tradeoffs* says.

@@ -1,14 +1,14 @@
 ---
 title: A stop takes the steering with it, and a failed resume resumes again
-status: todo
+status: done
 depends: [01]
 layer: host
 refs:
   - "[code://packages/sdk/src/host.ts](../../../../packages/sdk/src/host.ts) - the steering a stopped turn leaves, taken out"
   - "[code://packages/agent-pi/src/session.ts](../../../../packages/agent-pi/src/session.ts) - pi's `cancel`"
   - "[code://packages/agent-pi/src/backend.ts](../../../../packages/agent-pi/src/backend.ts) - `resume` and `clearSteering`"
-  - ".project/problems/a-backend-keeps-a-steer-the-client-took-back.md - the filed problem the stop closes for pi"
-  - ".project/problems/a-pi-resume-after-a-failed-continue-is-refused.md - the filed problem the resume closes"
+  - "git://feb72387 - .project/problems/a-backend-keeps-a-steer-the-client-took-back.md, the filed problem the stop closes for pi, deleted with this task"
+  - "git://feb72387 - .project/problems/a-pi-resume-after-a-failed-continue-is-refused.md, the filed problem the resume closes, deleted with this task"
 ---
 
 ## Objective
