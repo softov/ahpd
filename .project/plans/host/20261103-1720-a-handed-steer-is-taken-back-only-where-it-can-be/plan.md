@@ -1,7 +1,7 @@
 ---
 title: A handed steer is taken back only where it can be
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -72,7 +72,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host asks for withdraw before it asks the backend](task-01-the-host-asks-for-withdraw-before-it-asks-the-backend.md) | todo | - |
+| [01 - The host asks for withdraw before it asks the backend](task-01-the-host-asks-for-withdraw-before-it-asks-the-backend.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing yet.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the nested proxy, whose removal the host inside answers.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `3945964a`'s sources and passes after the change.
-- [ ] The test files that hold the cases pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `3945964a`'s sources and passes after the change.
+- [x] The test files that hold the cases pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
