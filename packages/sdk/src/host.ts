@@ -1109,19 +1109,25 @@ export function createHost(options: HostOptions): Host {
       ctx.chatMoved(channel);
     }
     /*
-     * A stop takes the chat's steering with it, once the backend has had the
-     * stop: the backend lets go of the steering message it holds, and one it
-     * says nothing of is taken out here, so nothing sent to steer the stopped
-     * turn runs after it.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+     * A turn that ends cancelled takes every steering message the chat holds
+     * with it, and starts nothing, once the backend has had the stop: the
+     * reference host takes each pending steering entry out with its own action
+     * at a cancel, those handed to the agent and not yet consumed included,
+     * without draining what is queued. The backend lets go of what it holds
+     * through `clearSteering`; for one that has none, the host takes the
+     * steering message the chat shows out itself.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
      */
     if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
       queueMicrotask(() => {
+        const chat = byChat.get(channel)?.chat;
+        if (chat?.clearSteering !== undefined) {
+          chat.clearSteering();
+          return;
+        }
         const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
-        if (typeof steering !== 'string') return;
-        byChat.get(channel)?.chat.unqueue(steering);
-        if ((states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id !== steering) return;
-        dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+        if (typeof steering === 'string') dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
       });
     }
     /*

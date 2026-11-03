@@ -641,6 +641,23 @@ export interface Session {
    * and this host refuses steering for that backend with that as the reason.
    */
   steer?(id: string, text: string, attachments?: MessageAttachment[], from?: MessageFrom): boolean;
+  /**
+   * Let go of every steering message the chat holds that its agent has not
+   * taken in, handed to it or waiting, saying each one gone with
+   * `chat/pendingMessageRemoved`, and start nothing.
+   *
+   * What a turn that ends cancelled leaves: the host calls this once the
+   * backend has had the stop. The reference host takes every pending steering
+   * entry out at a cancel, those handed off and not yet consumed included,
+   * without draining what is queued. A backend that runs its chat on another
+   * host leaves it to that host, which lets go at its own stop.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
+   *
+   * Optional. For a backend without it, the host takes the steering message
+   * the chat shows out itself.
+   */
+  clearSteering?(): void;
 
   /**
    * Start a turn with what was said, optionally naming a model.

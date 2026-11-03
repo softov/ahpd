@@ -8,7 +8,9 @@ import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
+import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
@@ -717,6 +719,46 @@ it('refuses to take back a steering message the run holds, and the run still rea
   waiting[0]?.();
   await until(() => ended(p, chatUri));
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+});
+
+/*
+ * At a stop every steering message the run has not read goes: the one the run
+ * holds, dropped when it gives it back, and one waiting to be a turn of its
+ * own; nothing starts behind the stopped turn, as the reference host clears
+ * every pending steering entry at a cancel without draining the queue.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+ */
+it('lets go of every steering message the run has not read at a stop, and starts nothing', async () => {
+  const { model, release } = gatedModel();
+  const notes: Bag[] = [];
+  const session = cofoldAgent({ adapter: model, memory: true }).create({
+    uri: 'ahp-session:/stop-steer',
+    chatUri: 'ahp-chat:/stop-steer',
+    settings: {},
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: (_channel, action) => { notes.push(action); },
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  });
+  session.begin('t1', 'first');
+  await until(() => notes.some((one) => one.type === 'chat/delta'));
+  expect(session.steer?.('s1', 'look elsewhere')).toBe(true);
+  session.queue('i1', 'one more thing', undefined, undefined, undefined, undefined, 'steering');
+  session.queue('q1', 'later');
+  session.cancel('t1');
+  session.clearSteering?.();
+  release();
+  try {
+    // The run over, with the steer it held given back or read.
+    await until(() => (session.chatState() as Bag).activeTurn === undefined);
+    expect(notes.filter((one) => one.type === 'chat/pendingMessageRemoved').map((one) => one.id).sort()).toEqual(['i1', 's1']);
+    expect(notes.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
+    const held = session.chatState() as Bag;
+    expect(held.steeringMessage).toBeUndefined();
+    expect((held.queuedMessages as Bag[]).map((one) => one.id)).toEqual(['q1']);
+  }
+  finally {
+    await session.close();
+  }
 });
 
 it('names the cofold session id from the AHP URI in one place', () => {

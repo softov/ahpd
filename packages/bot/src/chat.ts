@@ -1149,6 +1149,21 @@ export function botChatAgent(
         startNext();
       },
 
+      /*
+       * Every steering message waiting to be a turn of its own, let go of once
+       * a turn ends cancelled, and nothing started. One steered into a turn was
+       * handed on and taken out as it went.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+       */
+      clearSteering: () => {
+        const gone = waiting.filter((held) => held.steering === true);
+        for (const held of gone) {
+          waiting.splice(waiting.indexOf(held), 1);
+          start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: held.id });
+        }
+        if (gone.length > 0) touch();
+      },
+
       /** Reorder what is waiting. Anything the order does not name keeps its place behind what it does. */
       reorder: (order) => {
         const byId = new Map(waiting.map((held) => [held.id, held]));

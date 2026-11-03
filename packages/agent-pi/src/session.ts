@@ -1654,12 +1654,6 @@ export function piSession(
       if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');
-      /*
-       * The steering pi was handed and has not read goes with the stop, so
-       * none of it reaches a later run; pi says each one let go.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
-       */
-      live?.clearSteering();
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
       calls.release('The turn was stopped');
@@ -1668,6 +1662,22 @@ export function piSession(
       // The turn is closed on pi's settle rather than here, so what it had
       // already said stays in the transcript.
       void live?.abort().catch(() => { finish('cancelled'); });
+    },
+
+    /*
+     * Every steering message pi has not read, let go of once a turn ends
+     * cancelled, and nothing started: those pi was handed, which pi says let go
+     * of, and those waiting in the queue to be turns of their own.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
+     */
+    clearSteering: () => {
+      live?.clearSteering();
+      const gone = queued.filter((held) => held.steering === true);
+      for (const held of gone) {
+        queued.splice(queued.indexOf(held), 1);
+        emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(held.id) });
+      }
+      if (gone.length > 0) touch();
     },
 
     queue: (id, text, model, from, attachments, _options, kind = 'queued') => {
