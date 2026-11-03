@@ -1,6 +1,6 @@
 ---
 title: The count is the catalogue's rows
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -44,4 +44,7 @@ A turn's start and end move nothing, and a listing that finds or loses rows move
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the catalogue case fails: the listed sessions count 0.
+- The wakeup case reads the stored session as counted, and none awake.

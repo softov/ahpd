@@ -1,7 +1,7 @@
 ---
 title: The root counts the sessions it lists
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -62,7 +62,7 @@ a listing lands -> history.ts refresh -> activeSessionsMoved
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The count is the catalogue's rows](task-01-the-count-is-the-catalogues-rows.md) | todo | - |
+| [01 - The count is the catalogue's rows](task-01-the-count-is-the-catalogues-rows.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -70,13 +70,13 @@ a listing lands -> history.ts refresh -> activeSessionsMoved
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a session still being made is not in any client's list until `root/sessionAdded` says it.
 
 ## Final verification checklist
 
-- [ ] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The catalogue, presence, sleep and wakeup test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The changed cases fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The catalogue, presence, sleep and wakeup test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
