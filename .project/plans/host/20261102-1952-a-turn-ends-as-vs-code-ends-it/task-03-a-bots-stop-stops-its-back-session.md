@@ -1,6 +1,6 @@
 ---
 title: A bot's stop stops its back session
-status: todo
+status: done
 depends: []
 layer: bot
 refs:
@@ -39,3 +39,10 @@ The back session answers the stopped turn no more.
 - The two cases fail on `98c13ce0` and pass after.
 - The bot's test files pass.
 - `pnpm run typecheck` is clean.
+
+## Resume
+
+Built 2026-11-02.
+
+- On `98c13ce0`'s sources the wake has no `stopped`, and the handle's holder is never told of the stop.
+- The bot-wake harness says the turn running in a back session where a case names one.

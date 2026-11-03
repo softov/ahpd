@@ -1,7 +1,7 @@
 ---
 title: A turn ends as VS Code ends it
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -71,7 +71,7 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 | --- | --- | --- |
 | [01 - A nested turn says how long it ran](task-01-a-nested-turn-says-how-long-it-ran.md) | done | - |
 | [02 - A bot's failed turn ends as failed](task-02-a-bots-failed-turn-ends-as-failed.md) | done | - |
-| [03 - A bot's stop stops its back session](task-03-a-bots-stop-stops-its-back-session.md) | todo | - |
+| [03 - A bot's stop stops its back session](task-03-a-bots-stop-stops-its-back-session.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -79,8 +79,8 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-02.
-- **Next action:** task 03.
+- **Done so far:** tasks 01 to 03, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a halt ends the outer turn too, so both endings take the turn's start.
 
