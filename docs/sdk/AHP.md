@@ -639,21 +639,29 @@ client, as VS Code's host keys a session by the URI a client sends
   `<provider>:/<uuid>`, so that window can address it
   ([agentService.ts#L10074-L10108](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108)).
 
-The id inside a session's URI keys what the store holds of the session, and is
-read only from the URI the session is held under. A URI no session is held under
-is no session here, whatever id it carries: a subscribe to it answers `-32001`
-([agentService.ts#L14083](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083)).
+The id inside a session's URI is what the store holds the session under, and
+every spelling of that id names the session: the name its row carries, another
+scheme this host serves, and `ahp-session:/<id>`. A client that names one of
+the others is answered under the name it used, which the host keeps as an alias
+for the connection, as VS Code's host answers a session under each identity it
+has and derives that session's chat from each of them
+([agentHostChatOwnershipService.ts#L264-L287](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287)),
+a chat's owner coming from the records that hold it rather than from its URI
+([sessionState.ts#L894-L898](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898)).
+A derived default chat URI of any of those spellings is the session's default
+chat, while the session's record agrees that its default chat is a derived one;
+a session that moved its default to a chat of its own owns no derived chat
+([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
+
+A URI whose id no session here carries is no session: a subscribe to it answers
+`-32001`, as VS Code's host answers a URI no agent of its own serves
+([agentService.ts#L14091-L14096](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14091-L14096)).
 A read or archive flag or a mark dispatched on it is dropped with nothing said,
 as the protocol has a server ignore an action naming a session that does not
 exist
-([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)).
-So is a config change, a draft or a turn under another spelling of a session
-held here, or of a chat of one
-([chat-channel.md#L351](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351)):
-a VS Code window dispatches only on the URIs this host gave it, so none sends
-one. Under a URI whose id no session here carries, a config change, a draft or
-a turn is refused as one for a session nobody has is. Nothing of any session
-changes.
+([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)),
+and a config change, a draft or a turn there is refused as one for a session
+nobody has is.
 
 A session a client creates is stored under the id the client chose, by naming
 it to the backend, so the backend writes its transcript under that id and the

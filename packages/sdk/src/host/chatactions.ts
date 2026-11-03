@@ -437,13 +437,6 @@ export function chatAction(
       dispatch(uri, action, origin);
     };
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
-    /*
-     * Another spelling of a session published here names a session that does
-     * not exist, and the change is ignored with no echo, as the protocol has a
-     * server ignore it: no VS Code window sends one.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
-     */
-    if (ctx.heldElsewhere(sessionFor(channel))) return;
     // Before `past`, which answers nothing for a session waiting for its
     // agent and would have this one say it is not a session at all.
     const waiting = waitingFor(idOf(sessionFor(channel)));
@@ -460,7 +453,7 @@ export function chatAction(
     return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
       if (!connections.has(connection)) return;
       if (known()) keep();
-      else if (!ctx.heldElsewhere(sessionFor(channel))) no(`${channel} is not a session here`);
+      else no(`${channel} is not a session here`);
     });
   }
   /*
@@ -492,15 +485,7 @@ export function chatAction(
         }
         return conn.applyNow(params, origin);
       },
-      /*
-       * A turn under another spelling of a session published here, which
-       * the wake has read the catalogue for, names a chat that does not
-       * exist and is ignored with no echo, as the protocol has a server
-       * ignore it: no VS Code window sends one.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
-       */
       (error: unknown) => {
-        if (ctx.heldElsewhere(uri)) return;
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
       },
     ).finally(release);
@@ -521,23 +506,15 @@ export function chatAction(
   if (!session && type === 'chat/draftChanged') {
     const uri = sessionFor(channel);
     const id = idOf(uri);
-    /*
-     * A draft under another spelling of a session published here names a
-     * chat that does not exist, and is ignored with no echo, as the protocol
-     * has a server ignore it: no VS Code window sends one.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351
-     */
-    if (ctx.heldElsewhere(uri)) return;
     void (async () => {
       const missing = waitingFor(id);
       if (missing !== undefined) {
         refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
         return;
       }
-      // The session the chat belongs to, under the one name it is published
-      // by, which the catalogue's read names.
+      // The session the chat belongs to, under the name it is published by,
+      // which the catalogue's read names.
       const found = await past(id);
-      if (ctx.heldElsewhere(uri)) return;
       if (!found || ctx.nameOf(id) !== uri) {
         refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
         return;

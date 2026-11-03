@@ -564,21 +564,25 @@ it('refuses a second confirmation of a call the first one answered, without aski
 });
 
 /*
- * A session and its worker chats have one URI each, the one they are held by:
- * the session's id in another scheme is no session, and a worker chat built
- * from it no chat, as the reference host keys a subscription by the URI sent.
- * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
+ * A session answers to every spelling of its id, and so does a worker chat
+ * built from one: the reference host answers a session under each identity it
+ * has and derives that session's chats from each of them. The session's own
+ * name is what its rows and its actions carry.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
  */
-it('refuses the session and its worker chat spelt from another scheme of its id', async () => {
+it('answers the session and its worker chat spelt from another scheme of its id', async () => {
   const { ask, worker, send, refusals } = await waiting();
   const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
-  await expect(ask('subscribe', { channel: 'fake:/ask' })).rejects.toMatchObject({ code: -32001 });
-  await expect(ask('subscribe', { channel: elsewhere })).rejects.toMatchObject({ code: -32001 });
+  const session = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { resource: string; state: Bag } };
+  expect(session.snapshot.resource).toBe('fake:/ask');
+  const chat = await ask('subscribe', { channel: elsewhere }) as { snapshot: { resource: string; state: Bag } };
+  expect(chat.snapshot.resource).toBe(elsewhere);
   // The worker chat the session names is the one built from the URI it is held by.
   const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
   expect(needed.map((one) => one.chat)).toEqual([worker, worker]);
-  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
+  // And an answer sent on that spelling reaches the worker's call.
+  await send(elsewhere, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: false }]);
 });
