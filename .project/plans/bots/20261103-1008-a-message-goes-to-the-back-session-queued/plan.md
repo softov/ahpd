@@ -1,7 +1,7 @@
 ---
 title: A message goes to the back session queued
 domain: bots
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -71,7 +71,7 @@ a message in the main chat -> wake.woken -> chat/pendingMessageSet queued on the
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The message is queued as an agent's](task-01-the-message-is-queued-as-an-agents.md) | todo | - |
+| [01 - The message is queued as an agent's](task-01-the-message-is-queued-as-an-agents.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -81,13 +81,13 @@ a message in the main chat -> wake.woken -> chat/pendingMessageSet queued on the
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a back turn that begins with no message of the wake's, which `turn_start` shows as a main turn of its own.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `feb72387`'s sources and passes after the change.
-- [ ] Every bot test file and the plugin events file pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `feb72387`'s sources and passes after the change.
+- [x] Every bot test file and the plugin events file pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
