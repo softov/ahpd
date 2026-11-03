@@ -273,7 +273,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return conn.bounded(past(id), 'reading the catalogue').then(() => {
+      return past(id).then(() => {
         if (ctx.connections.has(connection) && ctx.nameOf(id) === owning) mark();
       });
     }
@@ -460,6 +460,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * and a client whose change never happened is told so rather than
        * echoed. `behind` turns the refusal into this one client's
        * `rejectionReason`, and the echo goes out only once it has answered.
+       * The port's file is where the daemon's keys are held, so its write is
+       * the change applied, which comes before it is said, as the reference
+       * host applies a client's action to its state and then emits it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
        */
       const theirs = Object.fromEntries(Object.entries(config).filter(([key]) => daemonKey(key)));
       if (Object.keys(theirs).length === 0 || options.rootConfig === undefined) {
@@ -802,7 +806,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
-      return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+      return past(idOf(sessionFor(channel))).then(() => {
         if (!connections.has(connection)) return;
         if (knownChat()) return conn.applyNow(params, origin);
         const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
@@ -902,7 +906,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       if (!knownSession(sessionFor(channel))) {
-        return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+        return past(idOf(sessionFor(channel))).then(() => {
           if (connections.has(connection) && knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
         });
       }
@@ -950,7 +954,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return conn.bounded(past(idOf(uri)), 'reading the catalogue').then(() => {
+      return past(idOf(uri)).then(() => {
         if (ctx.connections.has(connection) && ctx.nameOf(idOf(uri)) === uri) flag();
       });
     }

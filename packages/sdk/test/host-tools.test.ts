@@ -2998,8 +2998,12 @@ describe('a customization switched for one session', () => {
 describe('a harness list handed to the host', () => {
   const ana: Principal = { id: 'ana', roles: [], can: () => true };
 
-  /** The example backend, with the start it was handed kept so a test can speak through it. */
-  const speaking = (untitled = false) => {
+  /**
+   * The example backend, with the start it was handed kept so a test can speak
+   * through it, and a plugin that hears each list, holding it for ever when
+   * `holds` is set.
+   */
+  const speaking = (untitled = false, holds = false) => {
     const base = echo({ path: '/home/softov', pace: 60 });
     const heard: HostEvent[] = [];
     let update: Start['planUpdate'];
@@ -3021,7 +3025,10 @@ describe('a harness list handed to the host', () => {
       configDir: '/home/softov', log: () => {}, say: () => {},
     });
     const { host: plugin, contribution } = pluginHost('probe', context());
-    plugin.on('plan_update', (event) => { heard.push(event); });
+    plugin.on('plan_update', (event) => {
+      heard.push(event);
+      return holds ? new Promise<void>(() => {}) : undefined;
+    });
     const { options } = foldHostOptions({
       path: '/home/softov',
       agents: [agent],
@@ -3059,6 +3066,32 @@ describe('a harness list handed to the host', () => {
     await settle();
     return { heard, say, chat: backendChat() };
   };
+
+  /*
+   * A turn's end is said as its backend says it, whatever plugin is still
+   * hearing the list behind it, as VS Code's host says an agent's end of a
+   * turn when the agent says it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
+   */
+  it('says a turn\'s end as the backend says it, while a plugin still holds the list behind it', async () => {
+    const { host, say } = speaking(false, true);
+    const p = peer();
+    const client = host.accept(p, ana);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
+    const chat = chatUriFor('ahp-session:/list');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'plan it' } } },
+    });
+    await settle();
+    say({ turn: 't1', tool: 'TodoWrite', entries: [{ text: 'Read the plan', status: 'in_progress' }] });
+    const ended = (): boolean => p.notes.some((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'chat/turnComplete');
+    for (let i = 0; i < 150 && !ended(); i++) await new Promise((done) => { setTimeout(done, 10); });
+    expect(ended()).toBe(true);
+  });
 
   it('hands a whole list with the session and the sender of the turn', async () => {
     const { heard, say, chat } = await opened();

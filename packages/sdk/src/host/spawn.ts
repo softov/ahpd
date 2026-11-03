@@ -15,7 +15,7 @@ import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
-import { CLOSING, ENDINGS } from './common.js';
+import { CLOSING } from './common.js';
 import { chatFlag, commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
@@ -110,16 +110,6 @@ export interface Spawn {
  */
 const clearsRead = (type: unknown): boolean =>
   type === 'chat/turnStarted' || type === 'chat/turnResume' || type === 'chat/inputRequested';
-
-/**
- * How long a turn end waits for the plan updates behind it to be drawn.
- *
- * The wait is for the row to reach the session, which is normally a read and a
- * handful of dispatches. The cap is what keeps a plugin that never settles from
- * holding a turn open: after it the turn ends anyway, and the row is lost
- * rather than the client never hearing the turn is over.
- */
-const PLAN_HOLD_MS = 2000;
 
 /**
  * Whether the operator's rule makes a tool ask every time.
@@ -628,7 +618,9 @@ export function createSpawn(ctx: HostContext): Spawn {
    * bridge draws from its own entries, so a client that knows one knows the
    * other. The line is kept from the change it was drawn for, because the
    * completion carries what the call last showed, and a turn that ended while
-   * a read was running draws nothing at all.
+   * a read was running draws nothing at all: the turn's end is said as its
+   * backend says it, as the reference host says an agent's end of a turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
    */
   const planCallId = (turn: string): string => `${turn}:plan`;
   /** What each chat's open turn last showed, by chat. */
@@ -653,16 +645,6 @@ export function createSpawn(ctx: HostContext): Spawn {
       },
     });
   };
-
-  /*
-   * The plan reads still running.
-   *
-   * Kept so a turn end is not sent while a row for that turn is still being
-   * read and drawn: a tool call action for a turn the protocol has seen end is
-   * dropped, and the row would never reach a client. A read that settles is let
-   * go of here whichever way it settled.
-   */
-  const planDraws = new Set<Promise<void>>();
 
   const drawPlan = async (session: string): Promise<void> => {
     const plan = options.plan;
@@ -715,12 +697,7 @@ export function createSpawn(ctx: HostContext): Spawn {
    */
   const wirePlan = (): void => {
     if (options.plan === undefined) return;
-    options.plan.changed = (uri) => {
-      const drawn = drawPlan(uri);
-      planDraws.add(drawn);
-      void drawn.then(() => { planDraws.delete(drawn); }, () => { planDraws.delete(drawn); });
-      return drawn;
-    };
+    options.plan.changed = (uri) => drawPlan(uri);
   };
   wirePlan();
 
@@ -1007,22 +984,6 @@ export function createSpawn(ctx: HostContext): Spawn {
      * once the backend answers.
      */
     let titled: Session | undefined;
-    /*
-     * The plan updates this backend has sent that have not finished being
-     * drawn.
-     *
-     * What "in flight" means here is a promise from the `plan_update` event,
-     * which is settled when every listener has had it - the tasks plugin's
-     * listener waits for `planChanged`, and so for the row. A turn end that
-     * arrives while one of these stands is held back until it settles, or until
-     * `PLAN_HOLD_MS` passes, so a plugin that never answers costs the turn two
-     * seconds rather than the turn itself.
-     */
-    const planUpdates = new Set<Promise<void>>();
-    const planSettled = (settled: Promise<void>): void => {
-      planUpdates.add(settled);
-      void settled.then(() => { planUpdates.delete(settled); }, () => { planUpdates.delete(settled); });
-    };
     const terminalOutputs = ctx.outputsFor(uri, chatUri);
     const wired: Start = {
       uri,
@@ -1156,7 +1117,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       planUpdate: (update) => {
         const sender = senderOf(update.turn);
         const title = titled?.title().trim() ?? '';
-        planSettled(fire({
+        void fire({
           type: 'plan_update',
           session: uri,
           chat: chatUri,
@@ -1164,7 +1125,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           ...(title === '' ? {} : { title }),
           ...update,
           ...(sender === undefined ? {} : { sender }),
-        }));
+        });
       },
       /*
        * Whether the host draws the turn's Plan call. A backend told so keeps
@@ -1626,52 +1587,6 @@ export function createSpawn(ctx: HostContext): Spawn {
        * rather than two paths that could disagree about who is signed in.
        */
       onAccount: (account) => { learnAccount(agent.provider, account); },
-    };
-    /*
-     * The turn end, held back while a plan update behind it is still drawn.
-     *
-     * The protocol's reducer drops a tool call action for a turn it has seen
-     * end, so a row drawn after the ending is one no client ever sees. The
-     * ending waits for the reads in flight, at most `PLAN_HOLD_MS`, and then
-     * goes out behind the row's own completion - which `completePlan` sends
-     * from the ending's dispatch, and so first.
-     *
-     * What the backend says after the ending waits with it, in the order it said
-     * it: an action that overtook its own turn's end would be as lost as the
-     * row. A backend that ends a second turn while the first is held is held by
-     * the same queue, which keeps the endings in the order they were said.
-     */
-    const backendEmit = wired.emit;
-    let holding: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[] | undefined;
-    const wait = (ms: number): Promise<void> => new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      timer.unref?.();
-    });
-    const release = async (queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[]): Promise<void> => {
-      const deadline = Date.now() + PLAN_HOLD_MS;
-      while ((planUpdates.size > 0 || planDraws.size > 0) && Date.now() < deadline) {
-        await Promise.race([
-          Promise.allSettled([...planUpdates, ...planDraws]),
-          wait(Math.max(0, deadline - Date.now())),
-        ]);
-      }
-      holding = undefined;
-      for (const one of queued) backendEmit(one.channel, one.action);
-    };
-    wired.emit = (channel, action) => {
-      if (holding !== undefined) {
-        holding.push({ channel, action });
-        return;
-      }
-      if (channel === 'chat' && ENDINGS.has(String(action.type)) && planUpdates.size > 0) {
-        const queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[] = [{ channel, action }];
-        holding = queued;
-        void release(queued).catch((error: unknown) => {
-          log(`the held turn end of ${uri} was not sent: ${reason(error)}`);
-        });
-        return;
-      }
-      backendEmit(channel, action);
     };
     /*
      * Whether this chat is one the session's own backend does not serve.

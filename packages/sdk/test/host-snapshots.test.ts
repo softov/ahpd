@@ -482,6 +482,32 @@ describe('the fields a client reads by name', () => {
     expect(state.draft?.text).toBe('/');
   });
 
+  /*
+   * A draft for a session nothing is running waits in its client's queue while
+   * the catalogue is read, and the client's next dispatch is said after it, as
+   * VS Code's host queues an action on a chat whose session it has not
+   * restored.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
+   */
+  it('says a client\'s dispatch after the draft it sent first for a session nothing is running for', async () => {
+    sdk.sessions.push({ sessionId: 'queued', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chat = chatUriFor('ahp-session:/queued');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+
+    client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 1, action: { type: 'chat/draftChanged', draft: { text: 'half', origin: { kind: 'user' } } } } });
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', clientSeq: 2, action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
+    await settle();
+
+    const answers = actions(p).filter((one) => one.origin?.clientSeq === 1 || one.origin?.clientSeq === 2)
+      .sort((a, b) => a.serverSeq - b.serverSeq).map((one) => [one.action.type, one.rejectionReason]);
+    expect(answers).toEqual([['chat/draftChanged', undefined], ['root/configChanged', undefined]]);
+  });
+
   it('says a draft it already holds for a session nothing is running for to every client of the chat, starting nothing', async () => {
     sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov');

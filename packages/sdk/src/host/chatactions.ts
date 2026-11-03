@@ -343,8 +343,8 @@ export function chatAction(
    * for it reads a transcript and a turn started by it runs a model, and
    * neither should be reached with bytes the host means to write.
    *
-   * Writing them is a file's worth of work, so the action waits and this
-   * connection's later dispatches wait behind it: a client that sends a
+   * Writing them is a file's worth of work, so the action waits and its
+   * client's later dispatches wait behind it: a client that sends a
    * message and then a stop means that order. The settled action goes back
    * through `conn.applyNow`, which applies it as this client's own dispatch -
    * so its echo carries the `clientSeq` the client sent, exactly as if the
@@ -389,11 +389,11 @@ export function chatAction(
    * running, and before anything that reads "nothing is running" as a
    * session to browse: while it restarts, the session is out of
    * `sessions` and its chats out of `byChat`. The wait is returned, so
-   * this connection's later dispatches go behind it in `waiting`.
+   * its client's later dispatches go behind it.
    */
   const running = restarting.get(sessionFor(channel));
   if (running !== undefined) {
-    return conn.bounded(running, `${channel} starting again`).then(
+    return running.then(
       () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
       (error: unknown) => {
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
@@ -441,7 +441,7 @@ export function chatAction(
     }
     // `past` reads the catalogue first, which is what lists it, under the one
     // name the session is published by.
-    return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+    return past(idOf(sessionFor(channel))).then(() => {
       if (!connections.has(connection)) return;
       if (known()) keep();
       else no(`${channel} is not a session here`);
@@ -459,15 +459,15 @@ export function chatAction(
    * the session that is live, the way any other action on a sleeping
    * session is: the turn is begun on its chat by the road every turn takes,
    * and its echo carries the `clientSeq` the client sent. Held awake from
-   * the wake until the turn has been applied. The wait is returned, so this
-   * connection's later dispatches go behind it.
+   * the wake until the turn has been applied. The wait is returned, so its
+   * client's later dispatches go behind it.
    */
   if (!held && type === 'chat/turnStarted') {
     // The session the chat belongs to, which is not the chat's own name:
     // a chat URI carries its session rather than being derived from it.
     const uri = sessionFor(channel);
     const release = hold(uri);
-    return conn.bounded(wake(uri, channel, connection), `${channel} waking`).then(
+    return wake(uri, channel, connection).then(
       () => {
         if (!connections.has(connection)) return;
         if (!byChat.has(channel) && !sessions.has(channel)) {
@@ -492,12 +492,16 @@ export function chatAction(
    *
    * Checked against the catalogue rather than taken on trust, the way
    * `chat/turnStarted` is - a chat URI is a client's to spell, and a
-   * draft held for a session nobody has is a map that only grows.
+   * draft held for a session nobody has is a map that only grows. The read
+   * is returned, so its client's later dispatches go behind it, as the
+   * reference host queues an action on a chat whose session it has not
+   * restored.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
    */
   if (!session && type === 'chat/draftChanged') {
     const uri = sessionFor(channel);
     const id = idOf(uri);
-    void (async () => {
+    return (async () => {
       const missing = waitingFor(id);
       if (missing !== undefined) {
         refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
@@ -525,7 +529,6 @@ export function chatAction(
       // that the other clients watching this chat see it.
       dispatch(channel, action, origin);
     })();
-    return;
   }
   // With its keys, because the useful half of this line is what was in the
   // action nobody read - a type alone says only that a client wanted
@@ -554,12 +557,12 @@ export function chatAction(
    * Woken for it, and the action applied again to the session that is live,
    * the same way an action waits for a session being started again. A config
    * change and a draft are kept above without a wake. The wait is returned, so
-   * this connection's later dispatches go behind it.
+   * its client's later dispatches go behind it.
    */
   if (asleep) {
     const uri = sessionFor(channel);
     const release = hold(uri);
-    return conn.bounded(wake(uri, channel, connection), `${channel} waking`).then(
+    return wake(uri, channel, connection).then(
       () => {
         if (!connections.has(connection)) return;
         if (!byChat.has(channel) && !sessions.has(channel)) {
@@ -673,7 +676,7 @@ export function chatAction(
       /*
        * The client's start, said as it sent it once the turn's checks have
        * passed and before the backend is handed it. A check that has to wait
-       * holds this connection's later dispatches until it answers.
+       * holds its client's later dispatches until it answers.
        */
       return beginTurn(
         beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments,
@@ -1480,7 +1483,7 @@ export function chatAction(
        * waits, as the reference host runs steering that came too late to steer
        * a turn, and the turn naming it takes it out of every client's state.
        * The client's message is said once the turn's checks have passed, as a
-       * start is, and a check that has to wait holds this connection's later
+       * start is, and a check that has to wait holds its client's later
        * dispatches until it answers.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384

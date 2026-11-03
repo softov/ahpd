@@ -130,13 +130,6 @@ export const HOST_CLOSE_WAIT_MS = 5_000;
 const CLIENT_DISCONNECT_GRACE_MS = 30_000;
 
 /**
- * How long a dispatch waits on a session being started again or on a read
- * of the catalogue, in milliseconds, before it is refused and the
- * connection's later dispatches go on without it.
- */
-const WAIT_LIMIT = 60_000;
-
-/**
  * The action types the protocol knows, which are the ones a version decides.
  *
  * A plugin action type is on its plugin's own scheme and no protocol version
@@ -576,6 +569,21 @@ export function createHost(options: HostOptions): Host {
    * backend that is on its way out.
    */
   const restarting = new Map<string, Promise<void>>();
+  /**
+   * Each client's dispatches that wait, by its id, in the order it sent them,
+   * across every connection it has, as the reference host queues a client's.
+   *
+   * A dispatch waits only on what this host must have before it can apply it:
+   * a session woken or read from the catalogue, one being started again, a
+   * message's attachments written, a turn or a queued message whose check has
+   * not answered. Every dispatch the client sends meanwhile goes behind it: a
+   * client that changes the config and then starts a turn means that order.
+   * A wait has no time limit. Absent while nothing waits, which is when a
+   * dispatch is applied at once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12639-L12649
+   */
+  const dispatchQueues = new Map<string, Promise<void>>();
   /**
    * One token per session, by session URI: made the first time a
    * `session/configChanged` for it is applied, and dropped when the session
@@ -2020,31 +2028,8 @@ export function createHost(options: HostOptions): Host {
         ...automationMethods,
         ...vscode,
       };
-      /**
-       * This connection's dispatches that wait, in the order it sent them.
-       *
-       * Two kinds of dispatch cannot be applied at once: one into a session
-       * being started again, which waits for the start, and a config change
-       * for a session nothing is running, which reads its transcript to learn
-       * whether it is one. Each is applied once what it waits on answers, and
-       * every dispatch this connection sends meanwhile goes behind it: a
-       * client that changes the config and then starts a turn means that
-       * order. A turn or a queued message whose check has not answered holds
-       * the next one the same way. Undefined when nothing waits, which is when
-       * a dispatch is applied at once.
-       */
-      let waiting: Promise<void> | undefined;
-      /**
-       * `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has
-       * passed without it.
-       */
-      const bounded = <T>(wait: Promise<T>, what: string): Promise<T> => new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => { reject(new Error(`${what} took longer than ${WAIT_LIMIT / 1000}s`)); }, WAIT_LIMIT);
-        wait.then(
-          (value) => { clearTimeout(timer); resolve(value); },
-          (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
-        );
-      });
+      /** The id this connection's dispatches wait under, with every other connection of its client. */
+      const queuedAs = (): string => connection.clientId || 'anonymous';
       /**
        * A dispatch whose apply failed, logged and refused to the client that
        * sent it.
@@ -2063,20 +2048,20 @@ export function createHost(options: HostOptions): Host {
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };
       /**
-       * `waiting`, extended by one step for the dispatch in `params`.
+       * The client's queue, extended by one step for the dispatch in `params`.
        *
        * A step whose connection left while it waited is dropped: there is
        * nobody to answer or echo it to. A step that fails is refused to the
        * client, as any other action this host will not apply.
        */
-      conn.bounded = bounded;
       conn.applyNow = applyDispatch;
       const behind = (params: Record<string, unknown>, origin: Origin, step: () => Promise<void> | undefined): void => {
-        const next = (waiting ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
+        const client = queuedAs();
+        const next = (dispatchQueues.get(client) ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
           refuseFailed(params, origin, error);
         });
-        waiting = next;
-        void next.then(() => { if (waiting === next) waiting = undefined; });
+        dispatchQueues.set(client, next);
+        void next.then(() => { if (dispatchQueues.get(client) === next) dispatchQueues.delete(client); });
       };
       /** Notifications: no id, no answer, and that is the whole difference. */
       const notifications: Record<string, (params: Record<string, unknown>) => void> = {
@@ -2110,10 +2095,10 @@ export function createHost(options: HostOptions): Host {
          *
          * Applied under the origin the client sent it with: the action's echo
          * carries that `clientSeq`, and nothing else the dispatch causes does.
-         * A dispatch that has to wait returns what it waits on, and this
-         * connection's later dispatches go behind it in `waiting`.
+         * A dispatch that has to wait returns what it waits on, and its
+         * client's later dispatches go behind it in `dispatchQueues`.
          *
-         * One whose apply throws is refused here, as a step of `waiting` that
+         * One whose apply throws is refused here, as a step of the queue that
          * fails is: a notification gets no reply, so a throw that left this
          * handler would reach no client at all.
          */
@@ -2122,7 +2107,7 @@ export function createHost(options: HostOptions): Host {
             clientId: connection.clientId || 'anonymous',
             clientSeq: typeof params.clientSeq === 'number' ? params.clientSeq : 0,
           };
-          if (waiting !== undefined) {
+          if (dispatchQueues.has(queuedAs())) {
             behind(params, origin, () => applyDispatch(params, origin));
             return;
           }

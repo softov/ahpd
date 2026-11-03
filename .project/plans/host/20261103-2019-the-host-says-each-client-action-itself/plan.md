@@ -134,7 +134,8 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | `restarting`: a config change that restarts the backend | None: the config is said at once and acted on in the turn's send (A-0051, H1-0013) | Gone; the restart runs as a side effect | 03 |
 | A turn's policy check before its echo | Admission after the echo (row 8) | Gone; the check is admission | 03 |
 | A machine's catch-up before the echo | The turn's preparation after the echo, with cancel checks (rows 9, 10) | Gone; the catch-up is preparation | 03 |
-| The root config port write | None: a root config change is said and persisted after (agentService.ts L13661-L13662) | Gone | 02 |
+| The root config port write | The state's apply before the echo (agentHostStateManager.ts L2745-L2752): the port's file is where the daemon's keys are held | Kept | 02 |
+| The plan-read hold on a turn's end (C-0099) | None: an agent's end of a turn is said as it comes (agentSideEffects.ts L901-L917) | Gone | 02 |
 | The relay sequencer | Per relay client id (row 7) | The nested proxy's carry, per client id | 09 |
 | Claude's `deferred` drain behind an owed answer (E-0006, H1-0029) | None: the abort leaves nothing owed (row 23) | Gone | 05, 07 |
 
@@ -180,7 +181,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The host says the client's action](task-01-the-host-says-the-clients-action.md) | done | - |
-| [02 - The queue waits for prerequisites only](task-02-the-queue-waits-for-prerequisites.md) | todo | 01 |
+| [02 - The queue waits for prerequisites only](task-02-the-queue-waits-for-prerequisites.md) | done | 01 |
 | [03 - A turn is admitted after its echo](task-03-a-turn-is-admitted-after-its-echo.md) | todo | 01 |
 | [04 - The Session contract follows IAgent](task-04-the-session-contract-follows-iagent.md) | todo | 01 |
 | [05 - The host owns the queue and steering](task-05-the-host-owns-the-queue.md) | todo | 04 |
@@ -204,7 +205,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 ## Resume state
 
 - **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`.
-- **Next action:** [task-02-the-queue-waits-for-prerequisites.md](task-02-the-queue-waits-for-prerequisites.md).
+- **Next action:** [task-03-a-turn-is-admitted-after-its-echo.md](task-03-a-turn-is-admitted-after-its-echo.md).
 - **Answered:**
   1. The afternoon's turn branches this plan replaces are dropped, not merged.
   2. What of them the plan does not touch is rebuilt on top of it.

@@ -485,8 +485,6 @@ export interface ConnectionContext {
    * was building must not leave a relay running behind it.
    */
   alive: boolean;
-  /** `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has passed. */
-  bounded: <T>(wait: Promise<T>, what: string) => Promise<T>;
   /** A dispatch applied now, under the origin its client sent it with, and what it waits on when it waits. */
   applyNow: (params: Record<string, unknown>, origin: Origin) => Promise<void> | undefined;
   /**
