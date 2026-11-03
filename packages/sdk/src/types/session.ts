@@ -426,11 +426,10 @@ export interface TurnOptions {
 }
 
 /**
- * A backend's answer to one config value: `true` for taken as asked, the
- * values it was taken as under the backend's own keys, or the refusal in the
- * backend's words.
+ * A backend's answer to one config value: `true` for taken as asked, or the
+ * refusal in the backend's words.
  */
-export type ConfigTaken = true | string | Record<string, unknown>;
+export type ConfigTaken = true | string;
 
 /** A live session. */
 export interface Session {
@@ -831,12 +830,10 @@ export interface Session {
    * both with one sentence would be telling a client its control does not
    * exist when the truth is that the value was wrong.
    *
-   * The values it was taken as, when the backend took it under keys of its
-   * own: a client's conventional name for a setting the backend's schema
-   * declares under another. Those are what the host says back to every client
-   * and keeps for a restart, so the state holds the setting the backend runs
-   * on, as the reference host takes a client's vocabulary into its own keys.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L585-L597
+   * What every client is told is the key and value the client sent, as the
+   * reference host says a client's config action in the client's own keys.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L587-L599
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
    */
   setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */

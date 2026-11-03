@@ -2533,6 +2533,10 @@ describe('a customization switched for every session or a folder', () => {
           .filter((one) => one.action.type === 'session/customizationsChanged')
           .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
             .some((custom) => custom.uri === PLUGIN && (custom.load as { kind: string }).kind === 'loaded')),
+        /** The enablement each switch said on this session carried. */
+        switched: (): unknown[] => actions(watching, uri)
+          .filter((one) => one.action.type === 'session/customizationToggled')
+          .map((one) => one.action.enablement),
         /** The decision the client makes, scopes and all, as the protocol carries it. */
         decide: (enablement: Record<string, unknown>[]) => holder.handle({ method: 'dispatchAction', params: {
           channel: uri,
@@ -2608,6 +2612,10 @@ describe('a customization switched for every session or a folder', () => {
     await first.decide([{ kind: 'global', enabled: false }]);
     await settle();
     expect(decisions.global(PLUGIN)).toBeUndefined();
+    // Said as she sent it, as VS Code's host emits a switch and records the
+    // client's own enablement; the session's decision is this host's.
+    // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L414-L428
+    expect(first.switched()).toEqual([[{ kind: 'global', enabled: false }]]);
 
     await first.turn('t1');
     await second.turn('t1');

@@ -276,16 +276,20 @@ it('hands a mutable key to the backend before the first turn, without restarting
   expect(set).toEqual([{ key: 'mutable', value: 'b' }]);
 });
 
-it('shows a running session its fixed key read-only, and a new one still pickable', async () => {
+/*
+ * A running session publishes each key as its backend declared it, as VS Code's
+ * host publishes an agent's schema, so a VS Code window draws what it would
+ * draw there: no chip for a key that may not move.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2475-L2492
+ */
+it('shows a running session its fixed key as declared, and a new one still pickable', async () => {
   const { client, uri } = await opened();
 
   const running = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, Bag> }; values: Record<string, unknown> } } };
   };
-  expect(running.snapshot.state.config.schema.properties.fixed).toMatchObject({
-    sessionMutable: true,
-    readOnly: true,
-  });
+  expect(running.snapshot.state.config.schema.properties.fixed).toMatchObject({ sessionMutable: false });
+  expect(running.snapshot.state.config.schema.properties.fixed?.readOnly).toBeUndefined();
   expect(running.snapshot.state.config.schema.properties.mutable?.readOnly).toBeUndefined();
   expect(running.snapshot.state.config.values.fixed).toBe('one');
 
@@ -327,15 +331,13 @@ it('treats a key a plugin contributed the same way', async () => {
     params: { channel: uri, provider: 'fixed', config: { fixed: 'one', computer: 'computer://a' } },
   });
 
-  // It reaches the session's schema, and a running session draws it read-only
-  // even though no backend ever declared it.
+  // It reaches the session's schema as the plugin declared it, though no
+  // backend ever declared it.
   const running = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, Bag> } } } };
   };
-  expect(running.snapshot.state.config.schema.properties.computer).toMatchObject({
-    sessionMutable: true,
-    readOnly: true,
-  });
+  expect(running.snapshot.state.config.schema.properties.computer).toMatchObject({ sessionMutable: false });
+  expect(running.snapshot.state.config.schema.properties.computer?.readOnly).toBeUndefined();
 
   await turn(client, chatUri);
   await settle();

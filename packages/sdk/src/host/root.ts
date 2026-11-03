@@ -360,7 +360,7 @@ export function createRoot(ctx: HostContext): Root {
       /*
        * Whether the daemon has to start again for a write it took to apply.
        * The host's own fact and not a setting, so `readOnly`: a client shows
-       * it and its push never moves it (`RESTART_KEY`).
+       * it and draws no control to set it (`RESTART_KEY`).
        */
       [RESTART_KEY]: {
         type: 'boolean',

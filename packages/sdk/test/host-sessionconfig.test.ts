@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, claude, createHost, hello, machine, open, peer,
+  actions, resetSdk, claude, createHost, hello, machine, open, peer,
  sdk, sessionQueries, serving, settle, running,
 } from './support/host.js';
 
@@ -571,6 +571,37 @@ describe('a session\'s config across a restart', () => {
     answer(true);
     await settle();
     expect(store.config('gone')).toBeUndefined();
+  });
+
+  /*
+   * A change is said in the client's own keys, as VS Code's host says a
+   * client's config action: an answer that is neither `true` nor a sentence
+   * takes nothing, and no key of the backend's own goes out in its place.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+   */
+  it('says a change in the client\'s own keys, and takes no answer under the backend\'s', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const base = echo({ path: '/tmp', pace: 0 });
+    const renaming: Agent = {
+      ...base,
+      create: (start) => ({ ...base.create(start), setConfig: () => ({ permissionMode: 'plan' }) as never }),
+    };
+    const p = peer();
+    const host = createHost({ path: '/tmp', agents: [renaming], ...machine(), sessions: memorySessions() });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/renamed';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 1, action: { type: 'session/configChanged', config: { mode: 'plan' } } },
+    });
+    await settle();
+    const answered = actions(p, uri).filter((e) => e.origin?.clientSeq === 1);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason]))
+      .toEqual([['session/configChanged', 'mode is not a config key this backend takes']]);
+    expect(actions(p, uri).some((e) => Object.hasOwn((e.action.config ?? {}) as Record<string, unknown>, 'permissionMode'))).toBe(false);
   });
 
   /** A host over a store already holding a config for the session `stale`, as a restart finds it. */
