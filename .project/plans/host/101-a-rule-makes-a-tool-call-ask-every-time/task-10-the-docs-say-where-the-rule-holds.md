@@ -34,3 +34,7 @@ refs:
 
 ## Resume
 
+- **Done so far:** nothing. Stopped on 2026-11-03 before the first edit: its dependency on task 08 is unmet. Step 3 says in the docs that `/mcp` refuses a matched tool, which task 08 would implement. Task 08 stopped on the open question in the plan's Resume state. The other steps wait too, so the paragraph is written once rather than twice.
+- **Next action:** once task 08 is answered and built, write every step and check the paragraph against the code by hand.
+- **Open questions:** none of its own; it waits on task 08's.
+
