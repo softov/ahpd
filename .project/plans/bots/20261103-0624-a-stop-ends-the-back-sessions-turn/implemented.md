@@ -2,8 +2,8 @@
 title: A stop ends the back session's turn - implemented
 date: 2026-11-03
 refs:
-  - git://cccdb02b - task 01, `020669b1` applied to upstream main
-  - git://5061dc9c - task 02
+  - git://020669b1 - task 01's change, which upstream merged
+  - git://a4fac2f4 - task 02
   - "[code://packages/bot/src/wake.ts](../../../../packages/bot/src/wake.ts)"
 ---
 
@@ -21,9 +21,8 @@ A message the stop finds on its way to a back session is not sent.
 
 ## Verified
 
-- `cccdb02b` changes the same 141 lines as `020669b1`.
-- On `a8eff676`'s sources all four cases fail, the wake having no stop at all.
-- On task 01's sources the two new cases fail for their own reasons: the link is deleted, and the message is sent.
+- Task 01's two cases pass on `cde4dd6c`, which carries its change through `#195`.
+- On `cde4dd6c`'s sources the two new cases fail: the stop deletes the link, and the message is sent.
 - Every bot test file passes alone at one worker.
 - `pnpm run typecheck` reports no errors.
 

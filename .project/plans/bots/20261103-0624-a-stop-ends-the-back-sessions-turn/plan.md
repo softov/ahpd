@@ -6,7 +6,7 @@ priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
-  - git://a8eff676 - the commit of ahpd this plan was checked at
+  - git://cde4dd6c - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1942 - a stopped chat's subagents are cancelled with their registrations kept"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1497 - each subagent's running turn is cancelled with its duration, the registrations stay, and the parent's pending subagent signals go"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035 - a client's cancel carries its own stopwatch's time, zero where it has none"
@@ -28,10 +28,10 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- `rg -n "cancel:" packages/bot/src/chat.ts` - a stop ends the bot's open turn and tells nobody.
+- `rg -n "cancel:" packages/bot/src/chat.ts` - a stop ends the bot's open turn and tells the handle's holder.
 - `rg -n "answering" packages/bot/src/wake.ts` - the link from each back session to the main turn it answers.
-- Round 2 built the cancel on a branch upstream had merged (`020669b1`).
-- Its stop deleted that link for every back session answering the stopped turn.
+- The cancel itself is in main, merged as part of `#195`, and its stop deletes that link.
+- `rg -n "delivering|woken" packages/bot/src/wake.ts` - nothing holds a message a stop finds on its way.
 
 ### What the sources say
 
@@ -125,6 +125,6 @@ client chat/turnCancelled -> the bot's cancel -> onStop -> wake.stopped
 
 ## Final verification checklist
 
-- [x] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] Each new case fails on `cde4dd6c` for the reason it names, and passes after the change.
 - [x] The touched test files pass.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

@@ -4,9 +4,9 @@ status: done
 depends: []
 layer: bot
 refs:
-  - "[code://packages/bot/src/chat.ts#L1053-L1066](../../../../packages/bot/src/chat.ts#L1053-L1066) - a bot's stop"
-  - "[code://packages/bot/src/plugin.ts#L506-L523](../../../../packages/bot/src/plugin.ts#L506-L523) - the plugin's `look`"
-  - git://020669b1 - the change, built for an earlier round
+  - "[code://packages/bot/src/chat.ts#L1098-L1105](../../../../packages/bot/src/chat.ts#L1098-L1105) - a bot's stop, which tells the handle's holder"
+  - "[code://packages/bot/src/plugin.ts#L506-L530](../../../../packages/bot/src/plugin.ts#L506-L530) - the plugin's `look`, which reads the running turn's id"
+  - git://020669b1 - the change, which upstream merged
 ---
 
 ## Objective
@@ -18,24 +18,23 @@ A client's stop of a bot's turn cancels the running turn of each back session an
 - `UPDATE: packages/bot/src/chat.ts` - `TurnHandle.onStop`, set by `botChatAgent` and called by `cancel`.
 - `UPDATE: packages/bot/src/wake.ts` - `Looked.turn`, a clock per back turn begun, and `stopped`.
 - `UPDATE: packages/bot/src/plugin.ts` - `look` reads the running turn's id, and a stop goes to the wake.
-- `UPDATE: packages/bot/test/bot-wake.test.ts` - a stopped main turn cancels the back session's turn.
-- `UPDATE: packages/bot/test/bot-chat.test.ts` - a stop reaches the handle's holder.
 
 ## Steps
 
-1. Apply `020669b1` to upstream main.
-2. Compare its changed lines with the original's.
-3. Run its two cases on main's sources, and with the change.
+1. Read the cancel in upstream main, which carries it.
+2. Check the two cases it brought pass there.
+3. Leave the code as it stands, and build task 02 on it.
 
 ## Validation
 
-- The two cases fail on `a8eff676` and pass after.
-- The changed lines are `020669b1`'s.
+- `packages/bot/test/bot-wake.test.ts` and `bot-chat.test.ts` pass.
+- A stopped main turn cancels the back session's turn, and the stop reaches the handle's holder.
 
 ## Resume
 
-Built 2026-11-03 in `cccdb02b`.
+Nothing to build: upstream merged this change as part of `#195`.
 
-- `020669b1` applied to upstream main with no conflict, and its 141 changed lines are the same.
-- The patch ids differ for the context alone, which the plans commit before it moved.
-- On `a8eff676`'s sources both cases fail: the wake has no `stopped`, and the handle's holder is never told.
+- It was built for an earlier round as `020669b1`, on a branch upstream had already merged.
+- Carried onto `a8eff676` as `cccdb02b`, whose 141 changed lines were the same.
+- Upstream then merged round 2's union, so main holds it and the carry is dropped.
+- Task 02 corrects what that change forgot.
