@@ -2,7 +2,8 @@
 title: Check a message sent while a bot works
 plans:
   - plans/host/20261102-1814-a-pending-message-runs-when-its-turn-comes/plan.md
-  - plans/plugin/56-a-steered-bot-message-is-its-own-turn/plan.md
+  - plans/plugin/20261103-1044-a-steer-keeps-the-back-turn/plan.md
+  - plans/host/20261104-0726-a-queued-message-sent-now-runs-once/plan.md
 ---
 
 # Check a message sent while a bot works

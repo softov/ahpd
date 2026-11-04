@@ -35,7 +35,7 @@ Softov ran the Debian sections on 2026-10-20. The log is in `/home/softov/projec
 3. Open `~/Library/LaunchAgents/dev.ahpd.daemon.plist`.
 4. Check that it names the full path of `node`, the full path of `main.js`, the configuration file and the log.
 5. Check that it has `RunAtLoad`, a `KeepAlive` on a crash, and a `PATH`.
-6. Run `ahpd status`, and check that it ends with `under launchd`.
+6. Run `ahpd status`, and check that its first line ends with `under launchd`.
 7. Run `launchctl print gui/$(id -u)/dev.ahpd.daemon`, and check that the service is running.
 8. Check that `~/.config/ahpd/daemon.log` holds the daemon's start lines.
 

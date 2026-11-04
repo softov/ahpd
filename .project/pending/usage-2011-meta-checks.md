@@ -10,7 +10,7 @@ usage/20261029-2011 is on main. A person's key carries `--meta` entries, a call 
 
 ## Set up
 
-Do the *Set up* of [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md), so `httpApi` is on. Then, in a second terminal, mint a key for a person in `~/.config/ahpd/users.json`, and keep the secret it prints:
+Do the *Set up* of [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md), so the daemon runs with `httpApi` on. Then, in a second terminal, mint a key for a person in `~/.config/ahpd/users.json`, and keep the secret it prints:
 
 ```bash
 cd /github/ahpd

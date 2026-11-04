@@ -6,7 +6,7 @@ plans:
 
 # Review the bot record store
 
-A bot is a `.md` file under `~/.config/ahpd/bots/`. Two checks by hand and one choice are left.
+A bot is the file `~/.config/ahpd/bots/<slug>/bot.md`. Two checks by hand and one choice are left.
 
 ## Set up
 
@@ -23,7 +23,7 @@ node --conditions development --import ./scripts/dev.mjs packages/server/src/mai
 2. Change its `description` in its file, with the bot's slug in place of `<slug>`:
 
 ```bash
-${EDITOR:-nano} ~/.config/ahpd/bots/<slug>.md
+${EDITOR:-nano} ~/.config/ahpd/bots/<slug>/bot.md
 ```
 
 3. Check that ahpw shows the new description without a restart.
