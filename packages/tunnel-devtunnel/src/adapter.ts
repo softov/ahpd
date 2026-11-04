@@ -104,10 +104,35 @@ export interface OpenTunnel {
  */
 export class OpenTunnels {
   readonly #held = new Map<string, OpenTunnel>();
+  /** The refresh each open connector is running now, by connector id. */
+  readonly #refreshing = new Map<string, Promise<void>>();
 
   /** The token of one open connector, or nothing when it is not open. */
   held(id: string): OpenTunnel | undefined {
     return this.#held.get(id);
+  }
+
+  /**
+   * The token of one open connector once the refresh it runs now has ended.
+   *
+   * A connector opens with the vault's token and refreshes it at once, and a
+   * daemon that was down longer than a token lasts opens with one that has
+   * expired. A tunnel enabled at boot starts in that same moment, so every
+   * call to the service and every check reads its token here.
+   */
+  async ready(id: string): Promise<OpenTunnel | undefined> {
+    await this.#refreshing.get(id);
+    return this.#held.get(id);
+  }
+
+  /** Note the refresh one connector runs now, which `ready` waits for. */
+  refreshing(id: string, run: Promise<void>): void {
+    this.#refreshing.set(id, run);
+  }
+
+  /** Stop waiting for one refresh, when it ends or its connector closes. */
+  settled(id: string, run: Promise<void>): void {
+    if (this.#refreshing.get(id) === run) this.#refreshing.delete(id);
   }
 
   /** The ids of every connector this load holds open. */
@@ -171,8 +196,6 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
    * sends only the handle on a poll, so the number has to be kept here.
    */
   const intervals = new Map<string, number>();
-  /** The refresh each open connector is running now, by connector id. */
-  const refreshing = new Map<string, Promise<void>>();
 
   /** Keep one handle's wait, dropping the oldest when nobody finished them. */
   const remember = (handle: string, wait: number): void => {
@@ -321,10 +344,10 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
      * have expired by then, so the check waits for that refresh first.
      */
     check: async (connector): Promise<CheckResult> => {
-      await refreshing.get(connector.id);
+      const open = await tunnels.ready(connector.id);
       return probe(
         TUNNELS_URL,
-        { accept: 'application/json', authorization: `github ${tunnels.held(connector.id)?.token ?? tokenOf(connector)}` },
+        { accept: 'application/json', authorization: `github ${open?.token ?? tokenOf(connector)}` },
         fetcher,
       );
     },
@@ -343,7 +366,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       const refresh = textOf(connector.config['refresh']);
       tunnels.hold(id, { owner: connector.owner, token, ...(refresh === undefined ? {} : { refresh }) });
       let stopped = false;
-      /** This open's refresh while it runs, which `refreshing` holds too. */
+      /** This open's refresh while it runs, which `tunnels` holds too. */
       let running: Promise<void> | undefined;
 
       /** Ask the host to check this connector, as a failed refresh does. */
@@ -366,10 +389,10 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
         if (now?.refresh === undefined) return Promise.resolve();
         const run = exchange(now.refresh).finally(() => {
           running = undefined;
-          if (refreshing.get(id) === run) refreshing.delete(id);
+          tunnels.settled(id, run);
         });
         running = run;
-        refreshing.set(id, run);
+        tunnels.refreshing(id, run);
         return run;
       };
 
@@ -400,8 +423,8 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       return () => {
         stopped = true;
         clearInterval(timer);
-        // A refresh that outlives this open must not hold back the next open's check.
-        if (running !== undefined && refreshing.get(id) === running) refreshing.delete(id);
+        // A refresh that outlives this open must not hold back the next open's calls.
+        if (running !== undefined) tunnels.settled(id, running);
         tunnels.release(id);
       };
     },

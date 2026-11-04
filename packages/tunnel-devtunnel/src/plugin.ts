@@ -179,7 +179,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   });
 
   const service = seams.service ?? sdkService({
-    token: (id) => tunnels.held(id),
+    token: (id) => tunnels.ready(id),
     name: wanted,
   });
 
