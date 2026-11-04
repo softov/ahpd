@@ -23,7 +23,7 @@ Restart the daemon on main first. Do them from the top down.
 - [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
 - [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client.
 - [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
-- [plugin-view-checks.md](plugin-view-checks.md) - 15 min. Claude runs steps 1 to 3 on port 37537, by Softov's OK of 2026-11-04. Softov does step 4.
+- [plugin-view-checks.md](plugin-view-checks.md) - 10 min, VS Code through the system tunnel, and the network off for a minute.
 - [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox.
 - [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
 - [vscode-checks.md](vscode-checks.md) - 40 min.
