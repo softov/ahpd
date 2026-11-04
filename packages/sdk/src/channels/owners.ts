@@ -155,6 +155,34 @@ export const secretFields = (schema: Record<string, unknown>): string[] => {
     .map(([field]) => field);
 };
 
+/**
+ * A config with each value a schema marks `writeOnly` stood in for by `HELD`, at any depth.
+ *
+ * A read never answers a `writeOnly` value. A vault field holds a reference,
+ * which is a name and stays as it is. A field that says `writeOnly` and
+ * `secret: false` stays in the record, and this is what keeps it from a
+ * client. An empty value stays empty, so a client can tell a field nobody
+ * filled in.
+ */
+export const writeOnlyHeld = (schema: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> => {
+  const hold = (node: unknown, value: unknown): unknown => {
+    if (!isRecord(node)) return value;
+    if (node['writeOnly'] === true) {
+      if (value === undefined || value === '' || secretRef(value) !== undefined || fromEnvRef(value) !== undefined) return value;
+      return HELD;
+    }
+    if (Array.isArray(value)) return value.map((one) => hold(node['items'], one));
+    if (!isRecord(value)) return value;
+    const properties = bag(node['properties']);
+    const out: Record<string, unknown> = {};
+    for (const [key, one] of Object.entries(value)) {
+      out[key] = hold(key in properties ? properties[key] : node['additionalProperties'], one);
+    }
+    return out;
+  };
+  return hold(schema, config) as Record<string, unknown>;
+};
+
 /** One path below another, with a dot only when there is a parent. */
 const under = (base: string, tail: string): string => (base === '' ? tail : `${base}.${tail}`);
 

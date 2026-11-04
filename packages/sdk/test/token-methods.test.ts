@@ -245,6 +245,13 @@ it('lets a manager mint, list and revoke a team key, and refuses a reader who ma
     expect(await methods[`x-ahpd/tokens/${name}`]!.authorize!({ team: 'backend' }, ana)).toBe(false);
   }
 
+  // A team key opens the proxy, so a reader who may not call it mints none,
+  // and still lists and revokes the team's keys.
+  const look = await person('look');
+  await expect(ask('mint', { team: 'backend', grants: ['proxy:call'] }, look))
+    .rejects.toMatchObject({ code: -32009, message: 'look may not proxy:call here' });
+  expect(await ask('list', { team: 'backend' }, look)).toHaveLength(1);
+
   // The root connection has no reader, and reaches a team as it reaches a person.
   const byRoot = await ask('mint', { team: 'backend', grants: ['proxy:models'] }, undefined) as MintedToken;
   expect(byRoot.team).toBe('backend');

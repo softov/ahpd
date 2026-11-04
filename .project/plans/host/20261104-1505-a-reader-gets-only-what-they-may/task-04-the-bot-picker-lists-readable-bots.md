@@ -1,6 +1,6 @@
 ---
 title: The bot picker lists readable bots
-status: todo
+status: implemented
 depends: []
 layer: bot
 refs:
@@ -40,3 +40,6 @@ The `bot` picker offers only the bots its reader may read, and a new Bot chat wi
 - `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/bot test` pass, run one at a time.
 
 ## Resume
+
+- **Done so far:** every step.
+- **Found:** `chat.ts` now imports `mayRead` from `provider.ts`, which imports `CHAT_PROVIDER` from `chat.ts`. Both are read inside functions only, so the cycle is safe.

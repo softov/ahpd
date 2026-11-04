@@ -420,8 +420,15 @@ describe('token, served', () => {
 
   it('lets a manager mint, list and revoke a team key, and refuses a member who names one', async () => {
     const { directory, ana, boss } = await people();
+    // A team key opens the proxy, so who mints one may call the proxy too.
+    await directory.add('lead', ['manager', 'writer']);
+    const lead = await directory.mint('lead');
 
-    const mine = await call('/token/mint', boss, directory, { team: 'backend', grants: ['proxy:call'], label: 'ci' });
+    const short = await call('/token/mint', boss, directory, { team: 'backend', grants: ['proxy:call'] });
+    expect(short.status).toBe(403);
+    expect(await message(short)).toBe('boss may not proxy:call here');
+
+    const mine = await call('/token/mint', lead, directory, { team: 'backend', grants: ['proxy:call'], label: 'ci' });
     expect(mine.status).toBe(200);
     const one = await mine.json() as Shown;
     expect(one).toMatchObject({ team: 'backend', grants: ['proxy:call'], scope: 'backend' });

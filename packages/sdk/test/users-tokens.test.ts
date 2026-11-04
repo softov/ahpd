@@ -506,6 +506,20 @@ it('answers nothing for a team key at verify, and its team at verifyTeamKey', as
   expect(scopeFor(held)).toEqual({ scope: { team: 'backend' } });
 });
 
+it('removes a team\'s keys with the team, so a team added back has none', async () => {
+  const users = open();
+  await users.addTeam('backend');
+  await users.addTeam('ops');
+  const gone = await users.mintToken!(undefined, { team: 'backend', grants: ['proxy:call'] });
+  const kept = await users.mintToken!(undefined, { team: 'ops', grants: ['proxy:call'] });
+
+  expect(await users.removeTeam('backend')).toBe(true);
+  await users.addTeam('backend');
+  expect(await users.verifyTeamKey!(gone.secret)).toBeUndefined();
+  expect((await users.tokens!()).map((one) => one.id)).toEqual([kept.id]);
+  expect((await users.verifyTeamKey!(kept.secret))?.team).toBe('ops');
+});
+
 it('gives a team key a project of its team as its scope', async () => {
   const users = open();
   await users.addTeam('backend');

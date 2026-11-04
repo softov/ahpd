@@ -95,6 +95,7 @@ import {
   resolved as resolvedRecord,
   secretFields,
   secretNameOf,
+  writeOnlyHeld,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
@@ -388,7 +389,13 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
    */
   const connectorRow = (record: StoredRecord): Record<string, unknown> => {
     const health = healths.get(record.id);
-    return { ...record, state: stateOf(record), ...(health === undefined ? {} : { health }) };
+    // A value its adapter marks `writeOnly` is never answered, a vault field's
+    // reference aside.
+    const adapter = options.adapters()[String(record.adapter)];
+    const shown = adapter === undefined || record.config === undefined
+      ? record
+      : { ...record, config: writeOnlyHeld(adapter.schema, configOf(record)) };
+    return { ...shown, state: stateOf(record), ...(health === undefined ? {} : { health }) };
   };
 
   /** The connector records the store holds, and the owner each names. */
