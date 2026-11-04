@@ -260,6 +260,15 @@ THEN a pi or ACP session is offered it, and a call puts the questions on the cha
 AND a cofold session is offered the host's `ask_user` in place of cofold's own tool of that name
 AND a Claude session is not offered it, because this backend keeps its own question tool for now
 The reason: a request the host holds is settled by the host, and only it can send `chat/inputRequested` for the chat the session runs in. Leaving Claude its own tool is a deferred change, in the plan `host/20261103-1620-an-agent-asks-the-person`.
+### A backend takes the host's shell, or keeps its own
+
+WHEN the root config sets `enableCustomTerminalTool`, the host is not Windows, and the host has a terminal store
+THEN `Start.tools` carries `bash`, `read_bash`, `write_bash`, `bash_shutdown`, `list_bash` and the other shell's primary, each marked `overridesBuiltInTool`
+AND a backend that offers one under its own name replaces its own: Claude disallows `Bash` and aliases it to `mcp__ahp__bash`, and pi drops its own `bash` and `powershell` for the host's
+AND a call of one shows the terminal it opened through `opened`, and keeps it in the content of `chat/toolCallComplete`.
+WHEN any of the three is not so
+THEN the tools are not offered, and a backend keeps its own shell.
+The reason: the reference host's terminal tool takes the place of the harness's own, and a backend that kept both would run the model's commands in a shell the person cannot watch.
 
 ### A terminal that a tool result names stays
 

@@ -10,6 +10,7 @@ import { BINDINGS_KEY } from '../connectors/bindings.js';
 import { actionTools } from '../connectors/actions.js';
 import { SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
+import { ENABLE_CUSTOM_TERMINAL_TOOL, SHELL_TOOL_NAMES } from '../tools/shell.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
@@ -480,6 +481,18 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const namedBy = (uri: string): string[] => kept.tools?.(idOf(uri)) ?? [];
   /**
+   * Whether this host offers the agent terminal tool.
+   *
+   * The reference's switch, `enableCustomTerminalTool`, which is off until the
+   * root config turns it on, and never on Windows: there the reference leaves
+   * the agent its own shell, and so does this host. A host with no terminal
+   * store has no shell to offer either, whatever the switch says.
+   */
+  const shellToolsFor = (): boolean =>
+    rootConfig[ENABLE_CUSTOM_TERMINAL_TOOL] === true
+    && process.platform !== 'win32'
+    && options.terminals !== undefined;
+  /**
    * The host's tools for one session, less those it did not ask for.
    *
    * Where `permitted` decides once and for every session, `optIn` is asked of
@@ -495,7 +508,8 @@ export function createTooling(ctx: HostContext): Tooling {
     const named = namedBy(uri);
     return ctx.contributing.filter((one) =>
       (one.optIn !== true || named.includes(one.definition.name))
-      && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name)));
+      && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name))
+      && (shellToolsFor() || !SHELL_TOOL_NAMES.includes(one.definition.name)));
   };
   /**
    * The title strategy every session runs under, which is the deferred one.
@@ -1915,6 +1929,7 @@ export function createTooling(ctx: HostContext): Tooling {
       cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
       running: held.exitCode() === undefined,
     })),
+    shells: () => ctx.shells.of(uri),
     read: async (asked) => {
       // The client that published it, if one did - that is the only thing
       // that can read it - and this host's own store otherwise.
@@ -2056,6 +2071,7 @@ export function createTooling(ctx: HostContext): Tooling {
       artifacts: needsSession,
       setArtifacts: needsSession,
       terminals: needsSession,
+      shells: needsSession,
       read: needsSession,
     };
   };
