@@ -206,6 +206,7 @@ The question offers no "always" option, so an answer applies to that call alone.
 cofold puts the question for a matched call and deletes the approval it remembered for that tool first; in `dontAsk` it denies the call instead.
 A call to a matched host tool through `/mcp` is refused, because that door has no session to ask in.
 An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
+The question about one of those goes on the call the agent reported for it, and a call it reported nothing for is refused.
 A session inside a machine does not read the rule yet, so a matched call runs there with no question; [deferred.md](../../.project/plans/host/101-a-rule-makes-a-tool-call-ask-every-time/deferred.md) says why.
 The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
 On a host with people, they answer only the turns the session's owner sends, as `workspaceTrust` does.

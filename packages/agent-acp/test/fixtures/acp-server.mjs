@@ -834,7 +834,9 @@ const promptScript = async (id, params) => {
       });
     }
     if (reports.length > 0 && requests.length > 0) {
-      await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` });
+      // Answered or refused, by a client that serves no files, it is the same
+      // round trip.
+      await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` }).catch(() => undefined);
     }
     for (const [, tool, args, meta] of requests) {
       /*

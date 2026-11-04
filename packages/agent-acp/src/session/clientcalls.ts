@@ -13,7 +13,7 @@ import type { SessionContext } from './context.js';
  * nothing else, so this is the only thing in one that says which of two
  * identical concurrent calls it was made for.
  */
-const TOOL_USE_ID = 'claudecode/toolUseId';
+export const TOOL_USE_ID = 'claudecode/toolUseId';
 
 /** What this area offers the rest of the session, and the `Session` members it brings. */
 export interface ClientCalls {

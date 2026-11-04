@@ -28,6 +28,7 @@ import { hostPathOf, str } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
 import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
+import { TOOL_USE_ID } from './clientcalls.js';
 import { bag } from './common.js';
 import { HOST_TOOLS, machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
@@ -43,7 +44,7 @@ export interface Handlers {
    * The agent calls that server directly, so this is the one place a question
    * about such a call can be put before the tool has already done its work.
    */
-  askTool(tool: BoundTool, input: Record<string, unknown>): Promise<boolean>;
+  askTool(tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean>;
   askElicitation(request: CreateElicitationRequest, signal?: AbortSignal): Promise<CreateElicitationResponse>;
   heardElicitationComplete(notification: CompleteElicitationNotification): void;
   answerElicitation(requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel'): boolean;
@@ -655,29 +656,46 @@ export function createHandlers(ctx: SessionContext): Handlers {
     return answered;
   };
 
-  /** How many questions this bridge has raised about a tool it serves. */
-  let questioned = 0;
-
   /**
    * Whether a tool the host serves may run, asked by the tools server first.
    *
    * The agent calls the host's tools over the MCP server this session handed
    * it, so the call never passes through this bridge and the server has to be
    * the one that asks. A tool the rule does not name answers at once, which is
-   * every call in a session with no rule. A tool it names is put to a person
-   * with one approval and one refusal and nothing to keep, named as the agent
-   * spells that server's tools, and the person's answer is the server's.
+   * every call in a session with no rule.
+   *
+   * A tool it names is asked about on the call the agent reported for it, as
+   * VS Code's host asks on the agent's own call, which then runs and
+   * completes: the call the request names in its `_meta`, and otherwise the
+   * latest call of the running turn that names this tool as the host offers
+   * it, with one approval and one refusal and nothing to keep, and the MCP
+   * call held on the person's answer. A call a person has answered for
+   * already, on the agent's own question, runs on that answer. A call the
+   * agent never reported is one no client draws a question on, and is
+   * refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1770-L1790
    */
-  const askTool = async (tool: BoundTool, input: Record<string, unknown>): Promise<boolean> => {
+  const askTool = async (tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean> => {
     const name = tool.definition.name;
     if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
-    questioned += 1;
+    const calls = [...(ctx.mapping?.calls.values() ?? [])];
+    const reported = calls.find((call) => call.toolCallId === meta?.[TOOL_USE_ID])
+      ?? calls.findLast((call) => (call.owner === undefined
+        ? [call.toolName, call.displayName].some((one) => referenceName(one) === `${HOST_TOOLS}/${name}`)
+        : `${call.owner}__${call.toolName}` === name));
+    if (reported === undefined || ctx.mapping === undefined) {
+      ctx.options.log?.(`${provider}: refusing ${HOST_TOOLS}/${name}: the agent reported no call for it to ask on`);
+      return false;
+    }
+    if (reported.asked) {
+      return bag(bag(callPartOf(ctx.mapping, reported.toolCallId)).toolCall).confirmed === 'user-action';
+    }
     const answered = await askPermission({
       sessionId: ctx.acpSessionId ?? '',
       toolCall: {
-        toolCallId: `mcp-question-${questioned}`,
-        title: tool.definition.title ?? name,
-        name: `mcp__${HOST_TOOLS}__${name}`,
+        toolCallId: reported.toolCallId,
+        title: reported.displayName,
+        name: reported.toolName,
         kind: 'other',
         status: 'pending',
         rawInput: input,

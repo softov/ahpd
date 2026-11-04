@@ -245,14 +245,16 @@ const OFFERED = [
 /** The call a question is about, in the shape the entry carries it. */
 const call = (entry: Bag | undefined): Bag => (entry?.toolCall ?? {}) as Bag;
 
-it('asks before a matched host tool runs, and runs it when a person approves', async () => {
+it('asks before a matched host tool runs, on the call the agent reported, and runs it when a person approves', async () => {
   const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
-  begin(client, chatUri, 'mreq=list_sessions={}=-');
+  begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
   const entry = question(p, uri) as Bag;
   expect(entry.kind).toBe('toolConfirmation');
+  // The question is on the agent's own call, as VS Code's host asks.
   expect(entry.toolCall).toMatchObject({
+    toolCallId: 'c1',
     toolName: 'mcp__ahp__list_sessions',
     status: 'pending-confirmation',
   });
@@ -264,23 +266,43 @@ it('asks before a matched host tool runs, and runs it when a person approves', a
   // It has not run while the question stands.
   expect(ran).toEqual([]);
 
-  answer(client, chatUri, String(call(entry).toolCallId), true);
+  answer(client, chatUri, 'c1', true);
   await endedTurn(p, chatUri, 1);
   expect(ran).toEqual(['list_sessions']);
   expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
+  // One row, the agent's, which the agent completed.
+  const calls = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart' || e.action.type === 'chat/toolCallComplete');
+  expect(calls.map((e) => [e.action.type, e.action.toolCallId])).toEqual([
+    ['chat/toolCallStart', 'c1'],
+    ['chat/toolCallComplete', 'c1'],
+  ]);
 });
 
 it('refuses a matched host tool when a person denies it', async () => {
   const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
-  begin(client, chatUri, 'mreq=list_sessions={}=-');
+  begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
-  answer(client, chatUri, String(call(question(p, uri)).toolCallId), false);
+  expect(call(question(p, uri)).toolCallId).toBe('c1');
+  answer(client, chatUri, 'c1', false);
   await endedTurn(p, chatUri, 1);
   expect(ran).toEqual([]);
   const [answer_] = results(p, chatUri);
   expect(answer_?.isError).toBe(true);
   expect(JSON.stringify(answer_?.content)).toContain('declined');
+});
+
+it('refuses a matched host tool the agent reported no call for, asking nobody', async () => {
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  begin(client, chatUri, 'mreq=list_sessions={}=-');
+  await endedTurn(p, chatUri, 1);
+
+  // No call to put the question on, so no client is asked and the tool does
+  // not run.
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  expect(ran).toEqual([]);
+  const [answer_] = results(p, chatUri);
+  expect(answer_?.isError).toBe(true);
 });
 
 it('runs a host tool the rule does not name without asking', async () => {
