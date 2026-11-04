@@ -75,7 +75,7 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | implemented | - |
-| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | todo | 01 |
+| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,8 +84,8 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented: `mode` on the shell tool, `Shells.start` on the per-chat manager, `ToolCall.background()` built on the chat's held tasks, the row with its terminal and stop, and `packages/sdk/test/shell-async.test.ts`.
-- **Next action:** [task-02-an-async-commands-end-wakes-the-session.md](task-02-an-async-commands-end-wakes-the-session.md).
+- **Done so far:** task 01 is implemented: `mode` on the shell tool, `Shells.start` on the per-chat manager, `ToolCall.background()` built on the chat's held tasks, the row with its terminal and stop, and `packages/sdk/test/shell-async.test.ts`. Task 02 is implemented: `ctx.beginWakeTurn` shared by a wake and a command's end, the end's prompt built from the command, the code and the output, the sender read when the command starts, and the docs in `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md`.
+- **Next action:** none. Both tasks are implemented; the plan's last gate, a live test daemon, is not run yet.
 - **Open questions:** none.
 - **Watch out for:** the end of a command must not call `setWake`.
 

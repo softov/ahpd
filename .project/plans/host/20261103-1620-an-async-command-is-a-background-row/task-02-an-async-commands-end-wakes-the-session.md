@@ -1,6 +1,6 @@
 ---
 title: An async command's end wakes the session
-status: todo
+status: implemented
 depends:
   - task-01-an-async-command-is-a-row.md
 layer: "@ahpd/sdk host"

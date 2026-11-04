@@ -55,6 +55,24 @@ const SPOKEN = new Set([
  */
 const shellDisplayName = (shellType: ShellType): string => (shellType === 'bash' ? 'Bash' : 'PowerShell');
 
+/**
+ * What an async command's end says to the model: the command, its exit code
+ * and the end of its output, which `executeShellCommand` already cut to the
+ * tool's 60 KB.
+ */
+const endPrompt = (command: string, result: ShellCommandResult): string => {
+  const code = result.exitCode === undefined ? 'unknown' : String(result.exitCode);
+  const output = result.output.trim();
+  return [
+    `The background shell command ended with exit code ${code}.`,
+    '',
+    'The command:',
+    command,
+    '',
+    output === '' ? 'It printed nothing.' : `The end of its output:\n${output}`,
+  ].join('\n');
+};
+
 /** What a session keeps of one shell before its entry exists. */
 interface Heard {
   /** Everything watching for this shell's actions. */
@@ -317,12 +335,25 @@ export function createShells(ctx: HostContext): HostShells {
      * Nothing else ends the command: not the alternate screen, not a client
      * narrowing the claim, and not a timeout, because no call waits for an
      * answer any more.
+     *
+     * `ended` runs when the command is over and before the chat is woken, so
+     * the caller takes its row down and lets the shell go first: a row shown
+     * while the end's turn runs would be work a client is told is still going.
      */
-    const start = async (shell: ManagedShell, command: string): Promise<ShellCommandResult> => {
+    const start = async (shell: ManagedShell, command: string, ended?: () => void): Promise<ShellCommandResult> => {
       const entry = entryOf(shell);
       if (entry === undefined) throw new Error(`There is no shell ${shell.id}`);
+      /*
+       * The person behind the command, kept while it runs.
+       *
+       * The turn it was started in is over long before the command ends, and
+       * a sender is let go of when a turn ends, so the owner the woken turn
+       * acts as is read here rather than at the end.
+       */
+      const active = (ctx.byChat.get(chat)?.chat.chatState() as { activeTurn?: { id?: unknown } } | undefined)?.activeTurn;
+      const sender = typeof active?.id === 'string' ? ctx.senderOf(active.id) : undefined;
       await spoken(entry);
-      return await executeShellCommand({
+      const result = await executeShellCommand({
         terminal: entry.terminal,
         shellType: shell.shellType,
         command,
@@ -330,6 +361,16 @@ export function createShells(ctx: HostContext): HostShells {
         listen: (onAction) => listen(entry, onAction),
         log,
       });
+      ended?.();
+      try {
+        await ctx.beginWakeTurn(session, chat, endPrompt(command, result), sender);
+      }
+      catch (error) {
+        // The command is over either way, and its row is already down; what
+        // did not happen is the turn that would have read the end.
+        log(`could not wake ${session} after the command in ${shell.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return result;
     };
 
     /**
