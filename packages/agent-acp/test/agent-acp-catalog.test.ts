@@ -235,6 +235,22 @@ it('sets the model a turn chose on the server before prompting', async () => {
   ]);
 });
 
+it('runs a turn naming a model the server does not offer on the model in force', async () => {
+  for (const flags of [[], ['--legacy']]) {
+    const { agent, log } = backend(flags);
+    const { session, watch } = start(agent, `unoffered${flags.join('')}`);
+    const before = watch.endings().length;
+    session.changeModel({ id: 'no-such-model' });
+    session.sendMessage('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    // The session keeps its model and the turn runs, as VS Code's host keeps a
+    // chat's model when its agent does not offer the turn's.
+    expect(watch.endings()).toEqual(['chat/turnComplete']);
+    expect(requests(log).some((one) => one.method === 'session/set_config_option' || one.method === 'session/set_model')).toBe(false);
+  }
+});
+
 it('reads the legacy models list, and sets a chosen model the old way', async () => {
   const { agent, log } = backend(['--legacy']);
   const { session, watch } = start(agent, 'legacy');

@@ -383,7 +383,17 @@ export function createTurn(ctx: SessionContext): Turn {
         ownerOf: ctx.ownerOf,
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
-      await ctx.chooseModel(held, chosen);
+      /*
+       * A model the server would not take ends the turn as a failed model
+       * selection, the stage VS Code's host names for it, and leaves the
+       * server running for the next turn.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2232-L2235
+       */
+      try { await ctx.chooseModel(held, chosen); }
+      catch (why: unknown) {
+        finish(turnId, 'error', { errorType: 'modelSelectionFailed', message: messageOf(why) });
+        return;
+      }
       const blocks = await blocksFor(text, attachments, instructions);
       if (ctx.active !== turn) return;
       if (ctx.cancelRequested) {

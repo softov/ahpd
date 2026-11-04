@@ -234,20 +234,24 @@ export function createConfig(ctx: SessionContext): Config {
     if (chosen === undefined) return;
     const option = modelOption();
     /*
+     * A model the server does not offer is one the turn runs without: the
+     * session keeps the model in force, and the choice is logged, as VS Code's
+     * host keeps a chat's model when its agent does not offer the turn's.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2231
+     */
+    const offered = option === undefined ? (listedModels ?? []).map((one) => one.id) : choicesOf(option).map((one) => one.value);
+    if (!offered.includes(chosen.id)) {
+      ctx.options.log?.(`${provider}: the session keeps its model: the server does not offer ${chosen.id}`);
+      return;
+    }
+    /*
      * A server from before config options has no option to set, and takes the
-     * model by the call it knew instead. The list it named is the only place
-     * a choice can be checked against, so an id it did not offer is the same
-     * failure as a server that offered none.
+     * model by the call it knew instead.
      */
     if (option === undefined) {
-      const listed = listedModels ?? [];
-      const served = listed.find((one) => one.id === chosen.id);
-      if (served === undefined) {
-        throw new Error(`${provider}: this ACP server names no model option, so "${chosen.id}" cannot be chosen`);
-      }
-      if (settings.model === served.id) return;
-      await held.connection.setModel({ sessionId: held.sessionId, modelId: served.id });
-      settings.model = served.id;
+      if (settings.model === chosen.id) return;
+      await held.connection.setModel({ sessionId: held.sessionId, modelId: chosen.id });
+      settings.model = chosen.id;
       return;
     }
     if (option.currentValue === chosen.id) return;
