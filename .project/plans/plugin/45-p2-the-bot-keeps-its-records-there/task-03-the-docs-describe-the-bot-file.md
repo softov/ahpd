@@ -1,6 +1,6 @@
 ---
 title: The docs describe the bot file
-status: implemented
+status: done
 depends: [task-02-a-hand-edit-reaches-the-provider.md]
 layer: "docs"
 refs:

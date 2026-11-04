@@ -1,6 +1,6 @@
 ---
 title: A bot edited by hand reaches the provider
-status: implemented
+status: done
 depends: [task-01-the-bot-store-is-a-collection.md]
 layer: "packages/bot"
 refs:
