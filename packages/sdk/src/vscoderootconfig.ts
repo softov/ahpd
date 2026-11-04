@@ -9,18 +9,21 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * see. These are the keys the checkpoint's client pushes and the checkpoint's
  * own root schemas declare, each copied with the property it carries there.
  *
- * Every line number below is VS Code `7516b04bc94`. A `localize(...)` call
+ * Every line number below is VS Code `7516b04bc94`, except where an entry
+ * names its own revision. A `localize(...)` call
  * contributes its English string and its id is dropped, and a constant
  * contributes the literal it resolves to. The two keys whose default comes
  * from `src/vs/platform/chat/common/chatSettings.ts` name that file as a URL.
  *
- * This host acts on six of them, each one setting for every connection:
+ * This host acts on seven of them, each one setting for every connection:
  * `globalAutoApproveEnabled` and `eligibleForAutoApproval`,
  * `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
- * `editAutoApprovePatterns`, which a session's commands are answered by, and
+ * `editAutoApprovePatterns`, which a session's commands are answered by,
  * `canvasesEnabled`, which the
  * plugin host's `openCanvas`, `updateCanvas` and `closeCanvas` ask before they
- * reach the store. The rest are declared so that a client
+ * reach the store, and `enableCustomTerminalTool`, which decides whether a
+ * session is offered the host's own shell tools. The rest are declared so that
+ * a client
  * can draw them and so that a push of one is kept and read back rather than
  * refused; what is acted on is in `docs/sdk/AHP.md`.
  */
@@ -29,12 +32,14 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * The properties VS Code's own agent host declares for the keys it pushes.
  *
  * Keyed by the config key, so `ROOT_CONFIG_SCHEMA` spreads the whole map into
- * its own `properties`. Six keys here this host reads: `globalAutoApproveEnabled`,
+ * its own `properties`. Seven keys here this host reads: `globalAutoApproveEnabled`,
  * which `trust.ts` asks before a tool call runs; `eligibleForAutoApproval`,
  * which `host/spawn.ts` asks before it; `terminalAutoApproveEnabled`,
  * `terminalAutoApproveRules` and `editAutoApprovePatterns`, which
- * `host/spawn.ts` answers a session's commands from; and `canvasesEnabled`,
- * which `host/canvases.ts` asks before it opens, updates or closes a canvas.
+ * `host/spawn.ts` answers a session's commands from; `canvasesEnabled`,
+ * which `host/canvases.ts` asks before it opens, updates or closes a canvas;
+ * and `enableCustomTerminalTool`, which `host/tooling.ts` asks when it lists a
+ * session's tools.
  *
  * `workspaceTrust` is not here: it is declared beside `defaultShell` in
  * `host/root.ts`.
@@ -210,6 +215,19 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
     type: 'boolean',
     title: 'Canvases',
     description: 'Whether Copilot sessions can use Canvas extensions to present interactive content.',
+    default: false,
+  },
+  /*
+   * `copilotCliConfigSchema`, `common/copilotCliConfig.ts:234` at VS Code
+   * `171e90619c723a84a3e1c7bcd58d226698f55c72`, where it switches Copilot SDK
+   * sessions to the agent host's terminal tool. This host reads it in
+   * `host/tooling.ts` for every session, whatever its backend, because the
+   * tool here is the host's own.
+   */
+  enableCustomTerminalTool: {
+    type: 'boolean',
+    title: 'Use Agent Host Terminal Tool',
+    description: 'When enabled, Copilot SDK sessions use Agent Host\'s terminal tool override instead of the SDK\'s default terminal behavior. Not supported on Windows, where sessions use the SDK\'s terminal and sandbox runtime.',
     default: false,
   },
   // `platformRootSchema`, `agentHostSchema.ts:943`.

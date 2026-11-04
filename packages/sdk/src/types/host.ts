@@ -8,6 +8,7 @@ import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
 import type { TerminalStore } from './terminals.js';
+import type { Shells } from './shells.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
@@ -1328,6 +1329,15 @@ export interface ToolCall {
   setArtifacts(list: Bag[]): void;
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
+  /**
+   * The calling session's shells, and what may be done with them.
+   *
+   * Nothing where this host runs no terminal store, which is the one thing a
+   * shell needs: a shell is a terminal on the root list, and a call that asks
+   * for one where none can be watched is refused rather than given a shell
+   * nobody sees.
+   */
+  shells(): Shells | undefined;
   /**
    * Read a resource this host serves, as text.
    *
