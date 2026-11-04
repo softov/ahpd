@@ -34,8 +34,9 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         pastTenseMessage: 'a.ts',
         // What the tool returned, as its completion carried it.
         content: [{ type: 'text', text: 'export {};' }],
-        // How long it ran between pi's own entries for it, off the file.
-        _meta: { 'vscode.toolCallDurationMs': expect.any(Number) },
+        // The kind pi's read is drawn as, and how long it ran between pi's
+        // own entries for it, off the file.
+        _meta: { toolKind: 'read', 'vscode.toolCallDurationMs': expect.any(Number) },
       },
     },
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },

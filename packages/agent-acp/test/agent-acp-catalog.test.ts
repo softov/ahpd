@@ -1564,6 +1564,21 @@ it('measures a call that arrives already finished as one moment', () => {
   expect(metaOf(complete)).toEqual(held);
 });
 
+it('says a call\'s kind from the kind ACP reports for it, for a client to draw it by', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const kindOf = (id: string, kind: string): unknown => {
+    const sent = mapUpdate(turn, { sessionUpdate: 'tool_call', toolCallId: id, title: id, kind, status: 'pending' } as unknown as SessionUpdate, 1_000);
+    return (sent.find((one) => one.type === 'chat/toolCallStart')?._meta as Bag | undefined)?.toolKind;
+  };
+  // A command is a terminal, a search a search and a read a read, as VS Code's
+  // agents stamp the kind of their harness's tools; anything else is generic.
+  expect([['c1', 'execute'], ['c2', 'search'], ['c3', 'read'], ['c4', 'edit'], ['c5', 'other']].map(([id, kind]) => kindOf(String(id), String(kind))))
+    .toEqual(['terminal', 'search', 'read', undefined, undefined]);
+  // And the kind stays on every action about the call after its start.
+  const done = mapUpdate(turn, toolCallUpdate('c1', 'completed'), 2_000);
+  expect(metaOf(done.find((one) => one.type === 'chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 1_000 });
+});
+
 it('stamps nothing for an update a session load replayed', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   // No `at`: the update carries no receive time of its own, and the replay's

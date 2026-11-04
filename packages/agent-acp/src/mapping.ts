@@ -14,7 +14,7 @@
  */
 
 import { normalize } from 'node:path';
-import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
+import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate, ToolKind } from '@agentclientprotocol/sdk';
 import { bag, hostPathOf, str, strings, toolCallDurationMs, uriOf, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
@@ -127,6 +127,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     ...(owner === undefined ? {} : { owner }),
   };
   turn.calls.set(update.toolCallId, call);
+  const toolKind = 'kind' in update && update.kind !== undefined && update.kind !== null ? KINDS[update.kind] : undefined;
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {
@@ -135,10 +136,21 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),
+      ...(toolKind === undefined ? {} : { _meta: { toolKind } }),
     },
   });
   return call;
 };
+
+/**
+ * The kind a client routes a call's row by, from the kind ACP reports for the
+ * call, as VS Code's agents stamp `_meta.toolKind` from their harness's kind of
+ * tool: a command is a terminal, a search a search, a read a read. Any other
+ * kind carries none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L652
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L689
+ */
+const KINDS: Partial<Record<ToolKind, string>> = { execute: 'terminal', search: 'search', read: 'read' };
 
 /**
  * The contributor an action about a call carries, when a client owns its tool.

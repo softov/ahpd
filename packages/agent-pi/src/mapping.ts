@@ -112,6 +112,7 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   const shown = owner !== undefined && toolName.startsWith(`${owner}__`) ? toolName.slice(owner.length + 2) : toolName;
   const call: PiCall = { toolCallId, toolName, displayName: shown };
   turn.calls.set(toolCallId, call);
+  const toolKind = owner === undefined ? KINDS[toolName] : undefined;
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {
@@ -120,10 +121,21 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
       displayName: shown,
       status: 'streaming',
       ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
+      ...(toolKind === undefined ? {} : { _meta: { toolKind } }),
     },
   });
   return call;
 }
+
+/**
+ * The kind a client routes a call of one of pi's tools by, as VS Code's agents
+ * stamp `_meta.toolKind` from their harness's own tools: pi's shell is a
+ * terminal, its read a read, and grep, find and ls search. A tool this table
+ * has not heard of carries no kind.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L662
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L652
+ */
+const KINDS: Readonly<Record<string, string>> = { bash: 'terminal', read: 'read', grep: 'search', find: 'search', ls: 'search' };
 
 /**
  * A call's row, opened and announced once, whichever event names it first.
@@ -136,7 +148,9 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
 function startCall(turn: PiTurn, toolCallId: string, toolName: string, at?: number): Bag[] {
   if (turn.calls.has(toolCallId)) return [];
   const call = openCall(turn, toolCallId, toolName);
-  const meta = at === undefined ? undefined : stampStart(rowOf(turn, toolCallId), at);
+  const row = rowOf(turn, toolCallId);
+  if (at !== undefined) stampStart(row, at);
+  const meta = row?._meta === undefined ? undefined : bag(row._meta);
   /*
    * A client-owned tool is that client's to run, so the call is reported
    * against it and not as the host's own. The host's own tools and pi's

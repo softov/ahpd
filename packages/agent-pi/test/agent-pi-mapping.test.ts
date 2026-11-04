@@ -153,6 +153,19 @@ it('opens a call\'s row when the model starts writing it, and starts it once', (
   expect((starts[0]![0] as Bag).assistantMessageEvent).toMatchObject({ type: 'toolcall_start' });
 });
 
+it('says the kind of a call of pi\'s own tools, for a client to draw it by', () => {
+  const one = turn();
+  const kindOf = (id: string, name: string): unknown => {
+    const start = mapEvent(one, { type: 'tool_execution_start', toolCallId: id, toolName: name, args: {} }, 1_000)
+      .find((action) => action.type === 'chat/toolCallStart');
+    return (start?._meta as Bag | undefined)?.toolKind;
+  };
+  // pi's shell is a terminal, its read a read, and grep, find and ls search,
+  // as VS Code's agents stamp the kind of their harness's tools.
+  expect(['bash', 'read', 'grep', 'find', 'ls', 'edit'].map((name, index) => kindOf(`c${index}`, name)))
+    .toEqual(['terminal', 'read', 'search', 'search', 'search', undefined]);
+});
+
 it('opens a tool call and leaves its ready to the hook', () => {
   const one = turn();
   const actions = mapEvent(one, {
@@ -221,10 +234,10 @@ it('says how long a live call ran at its completion, and nothing of its times be
   await driveCall(pi, 'c1', 'bash', { command: 'ls' });
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
   const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 'c1')?.action;
-  expect(for1('chat/toolCallReady')?._meta).toBeUndefined();
-  expect(metaOf(for1('chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
+  expect(for1('chat/toolCallReady')?._meta).toEqual({ toolKind: 'terminal' });
+  expect(metaOf(for1('chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(callIn(parts, 'c1')?._meta).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
+  expect(callIn(parts, 'c1')?._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
 it('measures a call from when pi began running it, on a row the model opened', async () => {
@@ -235,9 +248,9 @@ it('measures a call from when pi began running it, on a row the model opened', a
   // started.
   const opened_ = mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} }, 1_700_000_000_000);
   expect(opened_).toEqual([]);
-  expect((one.parts[0]?.toolCall as Bag)._meta).toBeUndefined();
+  expect((one.parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
   const ended_ = mapEvent(one, { type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false }, 1_700_000_002_500);
-  expect(metaOf(ended_.find((action) => action.type === 'chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': 2_500 });
+  expect(metaOf(ended_.find((action) => action.type === 'chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 2_500 });
 });
 
 it('measures an approved call from its approval, and a denied one not at all', async () => {
@@ -292,7 +305,7 @@ it('measures a replayed call between the entries that ran it', async () => {
   const { turns } = replayEntries(entries as never);
   const row = callIn(turns[0]!.parts, 'c1') as Bag;
   // pi's own times, not the moment this process read the file.
-  expect(row._meta).toEqual({ 'vscode.toolCallDurationMs': 4500 });
+  expect(row._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 4500 });
 });
 
 it('never writes a bare timing key on a pi tool call', async () => {
