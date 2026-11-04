@@ -162,6 +162,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
       if (ended && (ending === 'complete' || ctx.waiting.length > 0)) ctx.startNext();
     }
     hold();
+    if (mapped.doing !== undefined) ctx.activity.say(mapped.doing);
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
   };
 
@@ -288,7 +289,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
     }
     ctx.handle = live;
     read(live, mapping, turnId);
-    ctx.activity.say('Waiting on you');
     ctx.touch();
   };
 

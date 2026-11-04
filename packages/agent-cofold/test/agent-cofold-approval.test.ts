@@ -259,6 +259,15 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   const confirmed = said.find((e) => e.rejectionReason === undefined);
   expect(confirmed?.action).toMatchObject({ toolCallId: 'call-a', approved: true, confirmed: 'user-action' });
 
+  /*
+   * Named while it runs, once the person allowed it - and by the tool's own
+   * title, because a host tool declares no subject of its own.
+   */
+  const doing = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/activityChanged')
+    .map((e) => e.action.activity);
+  expect(doing).toContain('Write a note');
+
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string; confirmed: string };

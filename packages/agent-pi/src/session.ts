@@ -660,7 +660,6 @@ export function piSession(
             : { open: () => { openClientCall(id, event.toolName, turnId, describe(displayName, input), input); } }),
         });
         emit('session', { type: 'session/inputNeededSet', request: entry });
-        activity.say(`Waiting on you: ${displayName}`);
         touch();
       });
     }

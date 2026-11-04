@@ -437,6 +437,25 @@ it('offers every option the server listed, on the call and on the ask', async ()
   await endedTurn(p, chatUri, 1);
 });
 
+it('leaves the activity as it was while a confirmation waits', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  // The status says a person is needed; the activity keeps the line the turn
+  // began with rather than naming the wait a second time.
+  const said = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/activityChanged')
+    .map((e) => e.action.activity);
+  expect(said).toEqual(['Thinking']);
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm', approved: true, confirmed: 'user-action' } },
+  });
+  await endedTurn(p, chatUri, 1);
+});
+
 it('answers with the option the person picked, and says which', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'ask me first');
@@ -680,6 +699,33 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   // has already been answered.
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
     && e.action.id === 'call-elicit:elicitation')).toBe(true);
+});
+
+it('leaves the activity as it was while a question waits', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'elicitform please');
+  await until(() => types(p, chatUri).includes('chat/inputRequested'));
+
+  // The status says a person is needed; the activity keeps the line the turn
+  // began with rather than naming the wait a second time.
+  const said = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/activityChanged')
+    .map((e) => e.action.activity);
+  expect(said).toEqual(['Thinking']);
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/inputCompleted',
+        requestId: 'call-elicit:elicitation',
+        response: 'decline',
+        answers: { branch: { state: 'submitted', value: { kind: 'text', value: 'never mind' } } },
+      },
+    },
+  });
+  await endedTurn(p, chatUri, 1);
 });
 
 it('answers a declined form with a decline, and carries no content', async () => {
