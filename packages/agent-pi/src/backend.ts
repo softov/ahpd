@@ -84,8 +84,7 @@ export interface PiBackend {
    * Run the next turn on this model, and at this thinking level.
    *
    * Answers `false` for an id pi's runtime does not have, and the session stays
-   * on the model it was already on. What a caller does about that is its own:
-   * a turn fails the turn rather than run on another model.
+   * on the model it was already on, which the turn then runs on.
    */
   choose(id: string, config?: Record<string, unknown>): Promise<boolean>;
   /** Give the conversation a name pi will keep. */

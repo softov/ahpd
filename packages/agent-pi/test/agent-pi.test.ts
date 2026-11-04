@@ -418,16 +418,21 @@ it('passes the chosen model and its thinking level through to pi', async () => {
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
 });
 
-it('fails a turn that names a model pi does not have', async () => {
-  const { session, pi, last, types } = opened();
+it('runs a turn that names a model pi does not offer on the model pi is on, and logs it', async () => {
+  /*
+   * VS Code's host keeps a chat's model when its agent does not offer the one
+   * a turn names, logs that, and runs the turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
+   */
+  const lines: string[] = [];
+  const { session, pi, types } = opened({}, { log: (line) => { lines.push(line); } });
   session.changeModel({ id: 'openrouter/nobody' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(((last('chat/error')?.part as Bag).error as Bag).message)
-    .toBe('pi has no model openrouter/nobody');
-  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(false);
-  // The model is where it was, so the next turn runs on it rather than on the
-  // one this turn asked for.
+  expect(types('chat')).not.toContain('chat/error');
+  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
+  expect(lines.filter((line) => line.includes('ahp-chat:/s1') && line.includes('openrouter/nobody'))).toHaveLength(1);
+  // The model is where it was, so the next turn runs on it.
   session.sendMessage('t2', 'again');
   await settled();
   const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't2');

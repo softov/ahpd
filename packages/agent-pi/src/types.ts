@@ -128,6 +128,8 @@ export interface PiOptions {
    * turn lifecycle without a model provider.
    */
   open?: (options: BackendOptions) => Promise<PiBackend>;
+  /** Where a line for the daemon's log goes; the plugin hands the host's. */
+  log?: (line: string) => void;
 }
 
 /** One tool call inside a running turn, as far as the wire cares. */
