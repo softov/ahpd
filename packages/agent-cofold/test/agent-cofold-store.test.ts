@@ -938,12 +938,12 @@ it('appends a new run under the same session id when a finished session is resum
 });
 
 /*
- * A turn handed while another runs takes its place, said at once as the
- * reducer replaces the active turn, and runs once the run in front of it is
- * over: the reference host hands a client's start to its agent at once, and
- * its agents run each in turn.
+ * A turn handed while another runs takes its place, said at once by the host
+ * as the reducer replaces the active turn, and runs once the run in front of
+ * it is over: the reference host hands a client's start to its agent at once,
+ * and its agents run each in turn.
  */
-it('takes a second turn handed while a resumed session opens, said at once and run after the first', async () => {
+it('takes a second turn handed while a resumed session opens, and runs it after the first', async () => {
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'first' }], stream: true }), allowAll());
   const before = open(first, 'one', sweep);
@@ -963,12 +963,12 @@ it('takes a second turn handed while a resumed session opens, said at once and r
   const done = (turnId: string): boolean => after.view.notes.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === turnId);
   await until(() => done('t3'));
 
-  const started = after.view.notes.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.turnId);
-  expect(started).toEqual(['t2', 't3']);
-  // t3 is said before t2's run is over, and runs after it.
+  // The host says each start as the client's; the backend runs t3 once t2's
+  // run is over.
   const at = (type: string, turnId: string): number =>
     after.view.notes.findIndex((one) => one.action.type === type && one.action.turnId === turnId);
-  expect(at('chat/turnStarted', 't3')).toBeLessThan(at('chat/turnComplete', 't2'));
+  expect(at('chat/turnComplete', 't2')).toBeGreaterThanOrEqual(0);
+  expect(at('chat/turnComplete', 't2')).toBeLessThan(at('chat/turnComplete', 't3'));
   // The turn t3 took the place of is in no history.
   const kept = (after.session.chatState().turns as Bag[]).map((turn) => turn.id);
   expect(kept).toContain('t3');
