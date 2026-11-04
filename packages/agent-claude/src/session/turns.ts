@@ -635,7 +635,15 @@ export function createTurns(ctx: SessionContext): Turns {
       call.content = content;
       ctx.emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
     }).then((done) => {
-      if (ctx.active !== turn) return;
+      /*
+       * A command a later turn took the place of is in no history, and its end
+       * is where the turn handed behind it begins, as the end of any command's
+       * turn is; one a stop ended starts nothing.
+       */
+      if (ctx.active !== turn) {
+        if (handed.length > 0) ctx.startNext();
+        return;
+      }
       // The terminal again, with how the command ended, and then the text it
       // printed: `content` is replaced, not appended to.
       const watched = done.terminal === undefined ? [] : [{
