@@ -39,7 +39,6 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 
 - [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, one call through the proxy.
 - [proxy-06-endpoint-checks.md](proxy-06-endpoint-checks.md) - 20 min, curl only. It needs an `openai` and an `anthropic` connector, which do not exist yet.
-- [client-restart-checks.md](client-restart-checks.md) - 5 min. Softov watches ahpc reconnect.
 - [install-path-checks.md](install-path-checks.md) - 20 min. Steps 1, 2 and 4 to 6 use sudo and a test user. Step 3 is Softov at a GNOME login.
 
 ## Softov's decision, nothing to run
