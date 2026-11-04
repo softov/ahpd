@@ -22,6 +22,7 @@ import type { Start } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import type { Principal } from '../../sdk/src/types/users.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 
@@ -1354,6 +1355,37 @@ it('offers the bots as the answers to the chat setting', async () => {
     enum: ['backer', 'builder'],
     enumLabels: ['Backer', 'Builder'],
   });
+});
+
+/*
+ * Two people, each with a bot of their own: a picker offers each person only
+ * the bots they may read, and a chat with the other one's bot is refused as a
+ * bot that does not exist.
+ */
+it('offers a person only the bots they may read, and refuses a chat with another\'s', async () => {
+  const { configDir, records } = made();
+  const bots = await records.collection('bots');
+  for (const [id, owner] of [['anas', 'user:ana'], ['bobs', 'user:bob']] as const) {
+    await bots.put({
+      id, name: id, labels: [], body: 'robot', color: 'red', workspace: join(configDir, BOTS_DIR, id), owner,
+      createdAt: '2026-11-04T00:00:00.000Z', updatedAt: '2026-11-04T00:00:00.000Z',
+    });
+  }
+  const agent = await backend(configDir, records);
+  const person = (id: string): Principal => ({ id, roles: [], can: () => false });
+  const ana = person('ana');
+
+  const offered = await agent.completions!['bot']!({ property: 'bot', query: '', reader: ana });
+  expect(offered.map((one) => one.value)).toEqual(['anas']);
+  // No reader is the root connection, or a host with no users: every bot.
+  expect((await agent.completions!['bot']!({ property: 'bot', query: '' })).map((one) => one.value).sort()).toEqual(['anas', 'bobs']);
+
+  const start = (bot: string): Start => ({
+    uri: `bot-chat:/${bot}-chat`, chatUri: `ahp-chat:/${bot}-chat`, settings: { bot },
+    schema: () => ({}), emit: () => {}, clientToolTimeoutMs: 0, reader: ana,
+  } as Start);
+  expect(() => agent.create(start('bobs'))).toThrow('There is no bot bobs.');
+  expect(agent.create(start('anas'))).toBeDefined();
 });
 
 it('keeps the bots a query matches, by name or by slug', async () => {

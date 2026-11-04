@@ -152,11 +152,15 @@ export const tokenMethods = (directory: Users): Record<string, PluginMethod> => 
    * A team's key needs `user:write`, and no reader has a team of their own.
    *
    * The root connection is not held to it, as it is not for another person's
-   * key. A team has no grants to be bounded by, so this is the whole check.
+   * key. A team has no grants to be bounded by, and its key opens the proxy, so
+   * a reader who mints one must hold `proxy:call` too. Listing and revoking a
+   * team's keys give no new credential, and ask `user:write` alone.
    */
-  const boundTeam = async (reader: Principal | undefined): Promise<void> => {
+  const boundTeam = async (reader: Principal | undefined, minting = false): Promise<void> => {
     if (reader === undefined) return;
-    if (!reader.can('user:write')) throw new RpcError(-32009, refusalReason(reader.id, 'user:write'));
+    for (const grant of minting ? ['user:write', 'proxy:call'] as const : ['user:write'] as const) {
+      if (!reader.can(grant)) throw new RpcError(-32009, refusalReason(reader.id, grant));
+    }
   };
 
   /**
@@ -186,7 +190,7 @@ export const tokenMethods = (directory: Users): Record<string, PluginMethod> => 
         const { mintToken } = keeper();
         const { user, team } = whose(mint, params, reader);
         if (team === undefined && user !== undefined) await bound(reader, user, reader?.id);
-        if (team !== undefined) await boundTeam(reader);
+        if (team !== undefined) await boundTeam(reader, true);
         const label = option(mint, params, 'label');
         const grants = grantsParam(mint, params);
         const expires = expiresParam(mint, params);

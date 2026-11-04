@@ -9,6 +9,7 @@ import type { CommandTerminal, Emit, Handed, PlanUpdate, Session, SubagentChat, 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Account, Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
+import type { Principal } from './users.js';
 import type { StartTerminals, OutputTerminals, TerminalOutputs } from './terminals.js';
 import type { BackgroundTasks } from './background.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
@@ -291,6 +292,15 @@ export interface Start {
    * carries is a different question, answered by `trusted`.
    */
   userSettings?: boolean;
+  /**
+   * Who asked for this start: the principal of the connection that sent it.
+   *
+   * Absent for a start no person asked for: an automation, a host tool, a
+   * daemon restarting what it held, and any start on a host with no users. A
+   * backend that starts from a record with an owner checks this reader against
+   * it, and checks nothing when it is absent, as `trusted` reads no window.
+   */
+  reader?: Principal;
   /**
    * Tools the host contributes to this session, for the backend to offer.
    *

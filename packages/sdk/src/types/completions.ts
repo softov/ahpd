@@ -1,4 +1,5 @@
 import type { SessionConfigValueItem } from '@microsoft/agent-host-protocol';
+import type { Principal } from './users.js';
 
 /**
  * Who answers a session setting's picker, for a key a plugin contributed.
@@ -35,6 +36,14 @@ export interface SessionConfigAsk {
    * another may be a question about that one's value.
    */
   config?: Record<string, unknown>;
+  /**
+   * Who is asking: the principal of the connection that asked.
+   *
+   * Absent where no person is signed in, which is a host with no users or the
+   * root connection. An answerer that lists records with owners lists only the
+   * ones this reader may read.
+   */
+  reader?: Principal;
 }
 
 /**

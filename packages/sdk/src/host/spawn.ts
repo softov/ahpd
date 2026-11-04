@@ -1033,6 +1033,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       trusted: trustedBy,
       getAutoApproval,
       ...(userSettings === undefined ? {} : { userSettings }),
+      ...(sender?.principal === undefined ? {} : { reader: sender.principal }),
       /*
        * The tools bound to this session: this host's own, and whatever the
        * clients already in it provide.

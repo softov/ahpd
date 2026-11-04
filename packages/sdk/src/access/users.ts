@@ -1663,6 +1663,14 @@ export function fileUsers(options: FileUserOptions): Users {
       const who = holders(file, id, 'team');
       if (who.length > 0) throw new Error(`${id} is still a team of ${who.join(', ')}; take them out of it first`);
       write({ ...file, teams: list.filter((one) => one.id !== id) });
+      // Its keys go with it, so adding the id back does not bring the old keys
+      // with it. A broken tokens file is left for its owner to fix, as `remove`
+      // leaves it.
+      const tokens = readTokens();
+      if (!tokens.broken) {
+        const kept = tokens.tokens.filter((one) => one.team !== id);
+        if (kept.length !== tokens.tokens.length) writeTokens(kept);
+      }
       return true;
     },
 

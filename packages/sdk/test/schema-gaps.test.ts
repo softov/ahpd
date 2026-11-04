@@ -171,6 +171,28 @@ describe('a registration with a gap', () => {
     expect(lines).toEqual(['acme: adapter acme apiKey: writeOnly kept in the vault; mark it secret']);
   });
 
+  it('says a nested writeOnly field of an adapter stays in the record, masked', () => {
+    const lines: string[] = [];
+    const recorded = pluginHost('acme', context(), { alert: (alert) => { lines.push(alert.text); } });
+    recorded.host.registerAdapter({
+      name: 'acme', title: 'Acme', description: 'One adapter.',
+      schema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string', writeOnly: true },
+          auth: { type: 'object', properties: { token: { type: 'string', writeOnly: true } } },
+        },
+      },
+      capabilities: [],
+      open: () => undefined,
+    });
+
+    expect(lines).toEqual([
+      'acme: adapter acme apiKey: writeOnly kept in the vault; mark it secret',
+      'acme: adapter acme auth.token: writeOnly below the top stays in the record, masked; only a top-level field is kept in the vault',
+    ]);
+  });
+
   it('says nothing about a vault field that says secret, at the top or under env', () => {
     const lines: string[] = [];
     const recorded = pluginHost('acme', context(), { alert: (alert) => { lines.push(alert.text); } });
