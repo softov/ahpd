@@ -1056,16 +1056,37 @@ it('sets the mode through the option the server named, not the legacy call', asy
     .toMatchObject({ configId: 'mode', value: 'code' });
 });
 
-it('sets an option on a session that has not run a turn', async () => {
+it('keeps a value set on a session that has not run a turn, and sends it when the server opens', async () => {
   const { agent, log } = backend();
-  const { session } = start(agent, 'unopened');
+  const { session, watch } = start(agent, 'unopened');
 
-  // Nothing has asked the server yet, so the option this key names is not known
-  // either: the session is opened before the key is looked up, which is what
-  // makes setting one on a fresh session work rather than refuse it by name.
+  // A value is no reason to start a server: it is kept, and nothing has been
+  // asked of a server yet.
   expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
+  expect(requests(log)).toEqual([]);
+  expect(session.settings()['acp.thinking']).toBe('deep');
+
+  // The turn opens the server, which is sent the kept value once it has named
+  // the option, and the session runs with it.
+  await runTurn(session, watch, 't1', 'hi');
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'thinking', value: 'deep' });
+  expect(configOf(session).values['acp.thinking']).toBe('deep');
+});
+
+it('runs with the server value when a kept one is not offered, and says so', async () => {
+  const { agent, log } = backend();
+  const { session, watch } = start(agent, 'unopened-unoffered', {
+    settings: { permissionMode: 'ask', model: 'fast', 'acp.telemetry': false },
+  });
+
+  expect(await session.setConfig?.('acp.thinking', 'shallow')).toBe(true);
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The server serves the values, and one it does not name is a request it
+  // would refuse: nothing is sent, and the value in force is said.
+  expect(requests(log).some((one) => one.method === 'session/set_config_option')).toBe(false);
+  expect(changed(watch)).toEqual([{ 'acp.thinking': 'off' }]);
 });
 
 it('sets the model through the older call on a server with no options', async () => {
@@ -1191,18 +1212,6 @@ it('holds a load\'s replay out of the turn that asked for it', async () => {
   const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
   expect(held.map((part) => part.content)).toEqual(['hello there']);
   expect(JSON.stringify(watch.actions)).not.toContain('we chose the fast one');
-});
-
-it('holds a load\'s replay out of the turn after it, whoever asked for the load', async () => {
-  const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed-from-config');
-  // No turn has run, so the config is what opens the server and loads.
-  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
-  expect(session.allTurns()).toEqual([]);
-
-  await runTurn(session, watch, 't1', 'hi');
-  const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
-  expect(held.map((part) => part.content)).toEqual(['hello there']);
 });
 
 it('reads a loaded session back with its replayed turns ahead of the new one', async () => {

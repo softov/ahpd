@@ -105,34 +105,43 @@ it('will not take two backends that call themselves the same thing', () => {
   })).toThrow(/acp/);
 });
 
+/**
+ * A session whose server has spoken: one turn run to its end, which is what
+ * spawns the server and shakes hands with it.
+ */
+const spoken = async (agent: Agent, id: string): Promise<Session> => {
+  let ended = (): void => {};
+  const done = new Promise<void>((resolve) => { ended = resolve; });
+  const session = agent.create({
+    ...opening(id),
+    emit: (_channel, action) => { if (action.type === 'chat/turnComplete') ended(); },
+  });
+  started.push(session);
+  void session.sendMessage('t1', 'hi');
+  await done;
+  return session;
+};
+
 /*
  * Whether the server could be handed this conversation again, which the host
  * asks before it offers a chat as movable: a move starts the backend once more
  * with the id the conversation was kept under, so a server that would open a
  * new one instead is a chat that must stay where it is.
  *
- * A setting is set to make the handshake happen, because that answer only
- * exists once the server has spoken.
+ * A turn is run to make the handshake happen, because that answer only exists
+ * once the server has spoken.
  */
 it('says a conversation can be taken back when the server advertised loadSession', async () => {
-  const agent = backend([]);
-  const session = agent.create(opening('movable'));
-  started.push(session);
-
-  await session.setConfig?.('permissionMode', 'code');
+  const session = await spoken(backend([]), 'movable');
 
   expect(session.agentId()).toBeDefined();
   expect(session.resumable?.()).toBe(true);
 });
 
 it('says it cannot when the server advertised neither loadSession nor a resume', async () => {
-  // The id is still there - this bridge can name what it is running - so the
-  // answer comes from the handshake rather than from whether there is a name.
-  const agent = backend(['--no-load', '--no-resume']);
-  const session = agent.create(opening('fixed'));
-  started.push(session);
-
-  await session.setConfig?.('permissionMode', 'code');
+  // The id is still there, since this bridge can name what it is running, so
+  // the answer comes from the handshake and never from whether there is a name.
+  const session = await spoken(backend(['--no-load', '--no-resume']), 'fixed');
 
   expect(session.agentId()).toBeDefined();
   expect(session.resumable?.()).toBe(false);

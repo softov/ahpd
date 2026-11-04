@@ -375,16 +375,14 @@ export function createOpening(ctx: SessionContext): Opening {
   const open = (): Promise<{ connection: AcpConnection; sessionId: string }> => {
     if (ctx.opening !== undefined) return ctx.opening;
     ctx.loading = true;
-    // The config every client holds as the open begins.
+    /*
+     * The config every client holds as the open begins, read before the open
+     * learns the server's own: `learnModes`, `learnOffers` and `learnModels`
+     * write the server's values over `settings`, and the session's own are
+     * what the open sends.
+     */
     const values = { ...settings };
     const pending = (async () => {
-      /*
-       * The mode this session asked for, read before the open learns the
-       * server's own: `learnModes` and `learnOffers` write the server's
-       * current mode over `settings.permissionMode`, and the send needs the
-       * value the session was started with rather than the server's answer.
-       */
-      const asked = settings.permissionMode;
       /*
        * A folder the host did not vouch for, and an agent that loads the
        * folder's own hooks and settings unchecked.
@@ -539,7 +537,7 @@ export function createOpening(ctx: SessionContext): Opening {
         ctx.learnModes(copied.modes);
         ctx.learnOffers(copied.configOptions);
         ctx.learnModels(copied);
-        await ctx.sendAskedMode({ connection, sessionId: copied.sessionId }, asked);
+        await ctx.sendAsked({ connection, sessionId: copied.sessionId }, values);
       }
       else if (reopen !== undefined) {
         /*
@@ -575,7 +573,7 @@ export function createOpening(ctx: SessionContext): Opening {
         ctx.learnModes(taken.modes);
         ctx.learnOffers(taken.configOptions);
         ctx.learnModels(taken);
-        await ctx.sendAskedMode({ connection, sessionId: reopen }, asked);
+        await ctx.sendAsked({ connection, sessionId: reopen }, values);
       }
       else {
         const created = await connection.newSession({
@@ -587,7 +585,7 @@ export function createOpening(ctx: SessionContext): Opening {
         ctx.learnModes(created.modes);
         ctx.learnOffers(created.configOptions);
         ctx.learnModels(created);
-        await ctx.sendAskedMode({ connection, sessionId: created.sessionId }, asked);
+        await ctx.sendAsked({ connection, sessionId: created.sessionId }, values);
       }
       /*
        * The server has now said what it serves, so the host can read
@@ -629,7 +627,7 @@ export function createOpening(ctx: SessionContext): Opening {
      * server said on the way belongs to no turn after this point. What the
      * open learned is said then, where it differs from the config every client
      * held as it began: the mode, the options and the model the server runs
-     * with, once the mode the session asked for has been sent.
+     * with, once the values the session holds have been sent.
      */
     const opened = (): void => {
       ctx.loading = false;
