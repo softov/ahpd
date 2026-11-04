@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } 
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import { idOf } from '../sessions/catalog.js';
-import { steerQuote } from '../sessions/steer.js';
+import { steerPart } from '../sessions/steer.js';
 import { readJsonObject, writeJsonAtomic } from '../utils/jsonfile.js';
 import { bag, isRecord, reason, str } from '../utils/values.js';
 import type { Agent, SessionAt } from '../types/agent.js';
@@ -193,12 +193,12 @@ const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>, steered = false
     ...first,
     /*
      * A steer the backend wrote as a turn of its own keeps its words in the turn
-     * it steered, quoted before its answer, as the live turn showed it under the
-     * same id.
+     * it steered, as its steer part before its answer, the part the live turn
+     * showed for the same steering message.
      */
     responseParts: [
       ...first.responseParts,
-      ...(steered ? [steerQuote(String(then.id), String(then.message.text ?? '')) as WireTurn<Turn>['responseParts'][number]] : []),
+      ...(steered ? [steerPart(String(then.id), String(then.message.text ?? '')) as WireTurn<Turn>['responseParts'][number]] : []),
       ...then.responseParts,
     ],
     state: then.state,

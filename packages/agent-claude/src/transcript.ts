@@ -1,7 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
-import { bag, callTimes, startOf, steerQuote, str, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, startOf, steerPart, str, withCallTimes } from '@ahpd/sdk';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -420,7 +420,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       /*
        * A steering message the CLI took in at a tool call, which comes back
        * marked `isQueuedCommand` and is no turn of its own: its answer is the
-       * turn's it steered, as it was live, and the turn shows it quoted where
+       * turn's it steered, as it was live, and the turn shows its steer part where
        * it was taken in, under the id it was handed to the CLI with, as the
        * live turn does. One the CLI ran after the turn's last answer is a
        * prompt of its own here, and the host's record of the turns a chat
@@ -428,7 +428,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
        * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
        */
       if (open !== undefined && frame.isQueuedCommand === true) {
-        open.responseParts = [...(open.responseParts as Bag[]), steerQuote(str(frame.uuid) ?? `${String(open.id)}:${String((open.responseParts as Bag[]).length)}`, said)];
+        open.responseParts = [...(open.responseParts as Bag[]), steerPart(str(frame.uuid) ?? `${String(open.id)}:${String((open.responseParts as Bag[]).length)}`, said)];
         continue;
       }
 

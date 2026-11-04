@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -479,8 +479,8 @@ it('steers a message into the open turn, which goes on', async () => {
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steered: true },
   ]);
-  // The steer stays in the turn it went into, quoted.
-  const quote = { id: 'steer:s1', kind: 'markdown', content: '> stop that' };
+  // The steer stays in the turn it went into, as a harness notice that names it.
+  const quote = { kind: 'systemNotification', content: 'stop that', _meta: { 'ahpd.steer': 's1' } };
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/responsePart'))
     .toEqual([{ type: 'chat/responsePart', turnId: 't1', part: quote }]);
 
@@ -689,12 +689,34 @@ it('reads a steering line back in the turn it went into', async () => {
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
-  // A line written before steers were quoted names no steering id, and its
-  // quote goes after what the turn holds.
+  // A line written before steers were shown names no steering id, and its
+  // part goes after what the turn holds.
   expect(read?.[0]?.responseParts).toEqual([
     { id: 't1:reply', kind: 'markdown', content: 'done' },
-    { id: 'steer:t1:0', kind: 'markdown', content: '> stop that' },
+    { kind: 'systemNotification', content: 'stop that', _meta: { 'ahpd.steer': 't1:0' } },
   ]);
+});
+
+it('reads a turn that ended with a steer quoted as markdown back as it was', async () => {
+  const { host, configDir, records } = made();
+  const client = await anyone(host);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+  await said(client, 't1', 'hello');
+  chat.reply('done');
+
+  // The turn's last line holds the quote a steer was before it was a notice.
+  const log = join(configDir, BOTS_DIR, 'backer', 'logs', 'one.jsonl');
+  const lines = readFileSync(log, 'utf8').trimEnd().split('\n');
+  const ended = JSON.parse(lines.pop() ?? '{}') as Bag;
+  const quote = { id: 'steer:s1', kind: 'markdown', content: '> stop that' };
+  ended['responseParts'] = [quote, ...(ended['responseParts'] as Bag[])];
+  const steering = { id: 't1', steering: true, steeringId: 's1', message: { text: 'stop that', origin: { kind: 'user' } } };
+  writeFileSync(log, `${[...lines, JSON.stringify(steering), JSON.stringify(ended)].join('\n')}\n`);
+
+  const read = await (await backend(configDir, records)).transcript?.('one');
+  expect(read?.[0]?.responseParts).toEqual([quote, { id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
 it('waits a queued message out, and starts it when the turn in front ends', async () => {
@@ -1106,7 +1128,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
       _meta: { toolKind: 'subagent', subagentChatUri: back },
     },
-  }, { id: 'steer:s1', kind: 'markdown', content: '> and this' }]);
+  }, { kind: 'systemNotification', content: 'and this', _meta: { 'ahpd.steer': 's1' } }]);
   const started = actions(notes, CHAT).filter((one) => ['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallContentChanged'].includes(String(one['type'])));
   expect(started.map((one) => one['type'])).toEqual([
     'chat/toolCallStart',
@@ -1133,7 +1155,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
     },
   });
-  expect(parts[1]).toEqual({ id: 'steer:s1', kind: 'markdown', content: '> and this' });
+  expect(parts[1]).toEqual({ kind: 'systemNotification', content: 'and this', _meta: { 'ahpd.steer': 's1' } });
   expect(parts[2]).toMatchObject({ kind: 'markdown', content: 'done' });
   const kinds = actions(notes, CHAT).map((one) => one['type']);
   expect(kinds.slice(-3)).toEqual([

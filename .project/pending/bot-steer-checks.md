@@ -33,14 +33,14 @@ Open a bot chat in ahpw or VS Code.
 
 ## The steer in the turn (host/20261104-0726)
 
-1. Check that the bot chat shows your second message as a quote, `> Stop at 10 instead.`, after the numbers posted before it.
-2. Open the back session, and check that it shows the same words quoted, with the context block.
-3. Check that the quote sits between the two tool calls where Claude took it in.
+1. Check that the bot chat shows your second message, `Stop at 10 instead.`, as a notice after the numbers posted before it.
+2. Open the back session, and check that it shows the same words as a notice, with the context block.
+3. Check that the notice sits between the two tool calls where Claude took it in.
 
 ## After a reload
 
 1. Reload the window, and open the same bot chat and the back session.
-2. Check that each shows one turn, with the quote where it was live.
+2. Check that each shows one turn, with the notice where it was live.
 
 ## Reply
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { createLocalTurns } from '../src/host/localturns.js';
+import { steerOf } from '../src/sessions/steer.js';
 import type { HostContext } from '../src/host/context.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { Agent, Bag } from '@ahpd/sdk';
@@ -120,7 +121,8 @@ describe('the turns a chat began', () => {
   const read = async (turns: ReturnType<typeof createLocalTurns>, held: Bag[], chat = PEER): Promise<Bag[]> =>
     (await turns.transcriptOf(reading(held), 'live', undefined, LIVE, chat) ?? []) as unknown as Bag[];
   const ids = (turns: Bag[]): unknown[] => turns.map((turn) => turn.id);
-  const prose = (turn: Bag | undefined): unknown[] => ((turn?.responseParts ?? []) as Bag[]).map((part) => part.content);
+  const prose = (turn: Bag | undefined): unknown[] => ((turn?.responseParts ?? []) as Bag[])
+    .map((part) => (steerOf(part) === undefined ? part.content : `steer: ${String(part.content)}`));
 
   it('reads a turn the chat never began back inside the turn before it', async () => {
     const { turns } = area();
@@ -129,7 +131,7 @@ describe('the turns a chat began', () => {
     const back = await read(turns, [said('t1', 'asked'), said('s1', 'and also'), said('t2', 'next')]);
     expect(ids(back)).toEqual(['t1', 't2']);
     expect((back[0]?.message as Bag).text).toBe('asked');
-    expect(prose(back[0])).toEqual(['asked', '> and also', 'and also']);
+    expect(prose(back[0])).toEqual(['asked', 'steer: and also', 'and also']);
   });
 
   it('reads a turn written again under a new id back as the turn it began as', async () => {
@@ -146,7 +148,7 @@ describe('the turns a chat began', () => {
     turns.turnRecordedAs(LIVE, PEER, 't3', 't3');
     const back = await read(turns, [said('t1', 'old'), said('s1', 'old steer'), said('t3', 'new'), said('s2', 'new steer')]);
     expect(ids(back)).toEqual(['t1', 's1', 't3']);
-    expect(prose(back[2])).toEqual(['new', '> new steer', 'new steer']);
+    expect(prose(back[2])).toEqual(['new', 'steer: new steer', 'new steer']);
   });
 
   it('folds nothing for a chat with no record, nor on a store that keeps no folder', async () => {
