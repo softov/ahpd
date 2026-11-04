@@ -164,7 +164,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
       const turnId = entry.id;
       const parts: Bag[] = [];
       open = {
-        mapping: { turnId, messages: 0, blocks: new Map(), waiting: new Map(), parts, calls: new Map() },
+        mapping: { turnId, messages: 0, blocks: new Map(), parts, calls: new Map() },
         watched: {
           turnId,
           startedAt: entry.timestamp,

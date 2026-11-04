@@ -10,8 +10,6 @@
  * - A part exists before anything streams into it. Each thinking or text
  *   block pi writes is its own part, opened here when the block starts and
  *   announced exactly once, so a turn's parts are in the order pi wrote them.
- *   A text block opens at its first delta holding more than whitespace, so a
- *   block that is only whitespace opens nothing.
  * - The snapshot is built from the turn's own parts, so every action that adds
  *   text also appends it to the part. A client that re-subscribes mid-turn is
  *   served the state, not a replay of what the last one was sent.
@@ -334,30 +332,18 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
      *
      * pi streams all three as blocks of one assistant message, discriminated
      * by the inner event rather than by the outer one, so this is where they
-     * are told apart. Each block is opened where it starts, a text block at
-     * its first words, which is what keeps a turn's parts in the order pi
-     * wrote them.
+     * are told apart. Each block is opened where it starts, whatever it goes
+     * on to hold, as VS Code's Claude mapper opens a part at each content
+     * block's start; that keeps a turn's parts in the order pi wrote them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
      */
     case 'message_update': {
       const inner = event.assistantMessageEvent;
       if (inner.type === 'thinking_start') return blockOf(turn, inner.contentIndex, 'reasoning').opened;
+      if (inner.type === 'text_start') return blockOf(turn, inner.contentIndex, 'markdown').opened;
       if (inner.type === 'text_delta' || inner.type === 'thinking_delta') {
         const text = inner.type === 'text_delta';
-        let delta = inner.delta;
-        /*
-         * A text block's whitespace is held until it writes something else,
-         * and then leads the part it opens; a block that is only whitespace,
-         * as some models write before a call, opens nothing.
-         */
-        const key = keyOf(turn, inner.contentIndex);
-        if (text && !turn.blocks.has(key)) {
-          delta = `${turn.waiting.get(key) ?? ''}${delta}`;
-          if (delta.trim() === '') {
-            turn.waiting.set(key, delta);
-            return [];
-          }
-          turn.waiting.delete(key);
-        }
+        const delta = inner.delta;
         const { id, opened } = blockOf(turn, inner.contentIndex, text ? 'markdown' : 'reasoning');
         if (delta === '') return opened;
         append(turn, id, delta);

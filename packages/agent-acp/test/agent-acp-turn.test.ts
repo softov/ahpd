@@ -282,7 +282,7 @@ it('opens a part per run of one kind, in the order the server wrote them', async
   expect(said.filter((one) => one.partId === kept[2]?.id).map((one) => one.content).join('')).toBe('second thought');
 });
 
-it('opens no part for a message that is only whitespace, and keeps the whitespace an answer starts with', async () => {
+it('opens a part for a message that is only whitespace, and streams each chunk as it came', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'blank it');
   await until(() => ended(p, chatUri));
@@ -291,18 +291,23 @@ it('opens no part for a message that is only whitespace, and keeps the whitespac
   const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: Part[] }[] } };
   }).snapshot.state.turns[0]?.responseParts ?? [];
-  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  // Any text opens its part, as VS Code's agents open one for whatever their
+  // runtime sends.
+  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'markdown', 'toolCall', 'reasoning', 'markdown']);
   expect(kept.map((part) => part.content ?? part.toolCall?.toolCallId))
-    .toEqual(['first thought', 'call-2', 'second thought', ' \nthe answer']);
+    .toEqual(['first thought', ' ', 'call-2', 'second thought', ' \nthe answer']);
   // A prose part's own id; a tool call part has none, as the protocol declares it.
-  expect(kept.map((part) => part.id)).toEqual(['t1:0', undefined, 't1:2', 't1:3']);
+  expect(kept.map((part) => part.id)).toEqual(['t1:0', 't1:1', undefined, 't1:3', 't1:4']);
 
-  // The held whitespace goes out with the words it came before, in their part.
+  // What streamed into each part, however the host gathered the deltas.
   const said = actions(p, chatUri).map((e) => e.action);
-  expect(said.filter((one) => one.type === 'chat/delta').map((one) => [one.partId, one.content]))
-    .toEqual([['t1:3', ' \nthe answer']]);
+  const streamed = new Map<string, string>();
+  for (const one of said.filter((action) => action.type === 'chat/delta')) {
+    streamed.set(String(one.partId), `${streamed.get(String(one.partId)) ?? ''}${String(one.content)}`);
+  }
+  expect([...streamed]).toEqual([['t1:1', ' '], ['t1:4', ' \nthe answer']]);
   expect(said.filter((one) => one.type === 'chat/responsePart').map((one) => (one.part as Part).id))
-    .toEqual(['t1:0', 't1:2', 't1:3']);
+    .toEqual(['t1:0', 't1:1', 't1:3', 't1:4']);
 });
 
 it('holds the plan in one call, which each update rewrites and the turn closes', async () => {

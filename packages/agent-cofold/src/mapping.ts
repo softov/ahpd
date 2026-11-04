@@ -266,8 +266,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * step holds at most one of each here too.
    */
   const blocks = new Map<'reasoning' | 'text', Bag>();
-  /** The whitespace the current step's text has written before its part opened. */
-  let waiting = '';
   /**
    * Whether the current step streamed its text and its reasoning.
    *
@@ -347,20 +345,12 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * pairs each append action with the kind of part it may append to, and one
    * naming the other kind is dropped.
    *
-   * A step's text is held while it is only whitespace and leads the part it
-   * opens once it writes something else, so text that is only whitespace, as
-   * some models write before a call, opens nothing.
+   * Any text opens its part, whitespace included, as VS Code's agents open a
+   * part for whatever text their runtime sends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
    */
-  const write = (kind: 'reasoning' | 'text', written: string): Bag[] => {
-    let text = written;
-    if (kind === 'text' && !blocks.has('text')) {
-      text = `${waiting}${written}`;
-      if (text.trim() === '') {
-        waiting = text;
-        return [];
-      }
-      waiting = '';
-    }
+  const write = (kind: 'reasoning' | 'text', text: string): Bag[] => {
+    if (text === '') return [];
     const { part, opened } = blockOf(kind);
     part.content = `${String(part.content ?? '')}${text}`;
     return [...opened, {
@@ -412,7 +402,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'model.started':
           step += 1;
           blocks.clear();
-          waiting = '';
           textStreamed = false;
           reasoningStreamed = false;
           return only([]);

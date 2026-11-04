@@ -146,8 +146,6 @@ export interface PiTurn {
   messages: number;
   /** Each thinking or text block's part id, by `${message}:${contentIndex}`. */
   blocks: Map<string, string>;
-  /** The whitespace a text block has written before its part opened, by the same key. */
-  waiting: Map<string, string>;
   /** The parts, as the snapshot carries them. Mutated as the answer arrives. */
   parts: Bag[];
   /** The calls this turn opened, by pi's own id for each. */

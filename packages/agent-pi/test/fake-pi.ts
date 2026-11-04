@@ -42,7 +42,6 @@ export const turn = (turnId = 't1'): PiTurn => ({
   turnId,
   messages: 0,
   blocks: new Map(),
-  waiting: new Map(),
   parts: [],
   calls: new Map(),
 });

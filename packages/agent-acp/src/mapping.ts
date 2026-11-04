@@ -8,8 +8,7 @@
  *
  * The protocol requires a part to exist before text streams into it, so this
  * file opens a markdown or reasoning part at the first chunk of each run of
- * that kind, a markdown run at its first chunk holding more than whitespace,
- * and a turn's parts land in the order the server wrote them. An
+ * that kind, and a turn's parts land in the order the server wrote them. An
  * update this bridge does not understand returns nothing rather than
  * throwing, so a 1.5 server does not fail a 1.4 bridge.
  */
@@ -50,14 +49,13 @@ const planId = (turnId: string): string => `${turnId}:plan`;
  * when this chunk opens it.
  *
  * ACP chunks carry no block index, so a run is what the order says: the part
- * last opened in the turn takes the chunk when it is of the same kind and
- * `continues`, and a chunk of the other kind, one after a tool call, or one
- * after a run of held whitespace, opens a new part. Its id is the turn's and
- * its position in the turn, which no later part changes.
+ * last opened in the turn takes the chunk when it is of the same kind, and a
+ * chunk of the other kind or one after a tool call opens a new part. Its id is
+ * the turn's and its position in the turn, which no later part changes.
  */
-const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', continues: boolean): { part: Bag; opened?: Bag } => {
+const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; opened?: Bag } => {
   const last = turn.parts.at(-1);
-  if (continues && last !== undefined && last.kind === kind) return { part: last };
+  if (last !== undefined && last.kind === kind) return { part: last };
   const part: Bag = { id: `${turn.turnId}:${turn.parts.length}`, kind, content: '' };
   turn.parts.push(part);
   return { part, opened: { type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } } };
@@ -66,23 +64,13 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', continues: boolean
 /**
  * One chunk's actions: its part's announcement when it opens one, then the text.
  *
- * A run of message chunks is held while it is only whitespace and leads the
- * part it opens once a chunk writes something else, so a message that is only
- * whitespace, as some models write before a call, opens nothing and takes no
- * position in the turn.
+ * Any text opens its part, whitespace included, as VS Code's agents open a
+ * part for whatever text their runtime sends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
  */
-const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', written: string): Bag[] => {
-  const held = turn.waiting;
-  delete turn.waiting;
-  let text = written;
-  if (kind === 'markdown' && turn.parts.at(-1)?.kind !== 'markdown') {
-    text = `${held ?? ''}${written}`;
-    if (text.trim() === '') {
-      turn.waiting = text;
-      return [];
-    }
-  }
-  const { part, opened } = runOf(turn, kind, held === undefined);
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', text: string): Bag[] => {
+  if (text === '') return [];
+  const { part, opened } = runOf(turn, kind);
   part.content = `${String(part.content ?? '')}${text}`;
   const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
   const streamed: Bag = { type, turnId: turn.turnId, partId: part.id, content: text };
@@ -119,8 +107,6 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     ...(owner === undefined ? {} : { owner }),
   };
   turn.calls.set(update.toolCallId, call);
-  // A call ends the run of message chunks before it, held whitespace and all.
-  delete turn.waiting;
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {

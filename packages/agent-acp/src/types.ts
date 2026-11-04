@@ -457,8 +457,6 @@ export interface AcpTurn {
   hostPlan?: boolean;
   /** Every response part this turn holds, shared with the session's snapshot. */
   parts: Bag[];
-  /** The whitespace a run of message chunks has written before its part opened. */
-  waiting?: string;
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
   /** The session behind this turn, absent on one the transcript replays. */

@@ -902,20 +902,20 @@ it('reads back an interleaved turn with its parts in the order they streamed', a
   expect(parts.map((part) => part.id)).toEqual(live.map((part) => part.id));
 });
 
-it('reads back no part for a message that was only whitespace, with the ids the live turn held', async () => {
+it('reads back a part for a message that was only whitespace, with the ids the live turn held', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'blank');
   await runTurn(session, watch, 't1', 'blank it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
   const parts = turns?.[0]?.responseParts as Bag[];
-  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
-  expect(parts.map((part) => part.content)).toEqual(['first thought', undefined, 'second thought', ' \nthe answer']);
+  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'markdown', 'toolCall', 'reasoning', 'markdown']);
+  expect(parts.map((part) => part.content)).toEqual(['first thought', ' ', undefined, 'second thought', ' \nthe answer']);
   // A prose part's own id, and a call's on the call: a tool call part has none.
   const idOf = (part: Bag): unknown => (part.kind === 'toolCall' ? (part.toolCall as Bag).toolCallId : part.id);
   const live = session.allTurns()[0]?.responseParts as Bag[];
   expect(parts.map(idOf)).toEqual(live.map(idOf));
-  expect(parts.map(idOf)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+  expect(parts.map(idOf)).toEqual(['t1:0', 't1:1', 'call-2', 't1:3', 't1:4']);
 });
 
 it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {

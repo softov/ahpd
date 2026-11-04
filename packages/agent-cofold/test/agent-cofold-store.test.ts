@@ -302,6 +302,10 @@ const scripted = (steps: Step[]): ModelAdapter => {
 /** The first turn's parts as a client watching the chat drew them, folded as it folds. */
 const drawn = (view: ReturnType<typeof channels>): Bag[] => {
   let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
+  // The turn's start is the host's to say, as it says a client's, and the
+  // backend's actions follow it.
+  const start = { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello there', origin: { kind: 'user' } } };
+  state = chatReducer(state, start as unknown as ChatAction);
   for (const note of view.notes.filter((held) => held.channel === 'chat')) {
     state = chatReducer(state, note.action as unknown as ChatAction);
   }
@@ -430,8 +434,9 @@ it('shows live the parts its transcript rebuilds, in the order the model wrote t
   expect(read.map(idOf)).toEqual(['m1:0', 'c1', 'm2:0', 'm2:1']);
 });
 
-it('opens no part for text that is only whitespace, live or read back', async () => {
-  // Kimi K2.6's shape: a blank text between each thought and its call.
+it('opens a part for text that is only whitespace, live and read back', async () => {
+  // Kimi K2.6's shape: a blank text between each thought and its call, which
+  // opens a part as any text does, as VS Code's agents open one.
   const { live, read } = await played([
     {
       deltas: [{ type: 'reasoning.delta', text: 'THINK-1' }, { type: 'text.delta', text: ' ' }],
@@ -446,11 +451,10 @@ it('opens no part for text that is only whitespace, live or read back', async ()
       parts: [{ type: 'reasoning', text: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
     },
   ]);
-  expect(shape(live)).toEqual([['reasoning', 'THINK-1'], ['toolCall', 'c1'], ['reasoning', 'THINK-2'], ['markdown', 'REPLY']]);
+  expect(shape(live)).toEqual([['reasoning', 'THINK-1'], ['markdown', ' '], ['toolCall', 'c1'], ['reasoning', 'THINK-2'], ['markdown', 'REPLY']]);
   expect(shape(read)).toEqual(shape(live));
-  expect(live.map(idOf)).toEqual(['t1:1:0', 'c1', 't1:2:0', 't1:2:1']);
-  // The blank block keeps its place in the message, so `m1:1` names nothing.
-  expect(read.map(idOf)).toEqual(['m1:0', 'c1', 'm2:0', 'm2:1']);
+  expect(live.map(idOf)).toEqual(['t1:1:0', 't1:1:1', 'c1', 't1:2:0', 't1:2:1']);
+  expect(read.map(idOf)).toEqual(['m1:0', 'm1:1', 'c1', 'm2:0', 'm2:1']);
 });
 
 it('keeps the whitespace a reply starts with in its one part, live and read back', async () => {
@@ -458,8 +462,8 @@ it('keeps the whitespace a reply starts with in its one part, live and read back
     deltas: [{ type: 'text.delta', text: ' ' }, { type: 'text.delta', text: '\n' }, { type: 'text.delta', text: 'REPLY' }],
     parts: [{ type: 'text', text: ' \nREPLY' }],
   }]);
-  // Held until the words arrive, then sent ahead of them in the part they open.
-  expect(said.filter((action) => action.type === 'chat/delta').map((action) => action.content)).toEqual([' \nREPLY']);
+  // The part opens at the first text, and each delta goes out as it came.
+  expect(said.filter((action) => action.type === 'chat/delta').map((action) => action.content)).toEqual([' ', '\n', 'REPLY']);
   expect(shape(live)).toEqual([['markdown', ' \nREPLY']]);
   expect(shape(read)).toEqual(shape(live));
 });

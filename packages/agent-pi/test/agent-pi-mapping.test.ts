@@ -10,21 +10,19 @@ it('streams text into the part its block opened, and into the snapshot', () => {
   const one = turn();
   const [started] = streamed([]);
   mapEvent(one, started!);
-  // A text block opens its part at its first words, not at its start.
+  // A text block opens its part at its start, whatever it goes on to hold, as
+  // VS Code's Claude mapper opens one at a content block's start.
   expect(mapEvent(one, {
     type: 'message_update',
     message: {} as never,
     assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} as never },
-  })).toEqual([]);
+  })).toEqual([{ type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } }]);
   const actions = mapEvent(one, {
     type: 'message_update',
     message: {} as never,
     assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hello', partial: {} as never },
   });
-  expect(actions).toEqual([
-    { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
-    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' },
-  ]);
+  expect(actions).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' }]);
   // The snapshot is the parts, not a replay of the actions.
   expect(one.parts[0]?.content).toBe('hello');
 });
@@ -38,12 +36,14 @@ it('keeps the whitespace a text block starts with in its one part', () => {
     message: {} as never,
     assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta, partial: {} as never },
   });
-  expect(mapEvent(one, text(' '))).toEqual([]);
-  expect(mapEvent(one, text('\n'))).toEqual([]);
-  expect(mapEvent(one, text('hello'))).toEqual([
+  // The block's first text opens its part, whitespace or not, and each delta
+  // goes out as it came.
+  expect(mapEvent(one, text(' '))).toEqual([
     { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
-    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' \nhello' },
+    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' ' },
   ]);
+  expect(mapEvent(one, text('\n'))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: '\n' }]);
+  expect(mapEvent(one, text('hello'))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' }]);
   expect(mapEvent(one, text(' '))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' ' }]);
   expect(one.parts.map((p) => [p.kind, p.content])).toEqual([['markdown', ' \nhello ']]);
 });
@@ -104,10 +104,11 @@ it('keeps thinking, a call and thinking again in the order pi wrote them, live a
   }
 });
 
-it('opens no part for a text block that is only whitespace, live and replayed', async () => {
+it('opens a part for a text block that is only whitespace, live and replayed', async () => {
   const { replayEntries } = await import('../src/replay.js');
   const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.ts' } };
-  // Kimi K2.6's shape: a blank text block between each thought and its call.
+  // Kimi K2.6's shape: a blank text block between each thought and its call,
+  // which opens a part at its start as any block does.
   const messages: Bag[][] = [
     [{ type: 'thinking', thinking: 'THINK-1' }, { type: 'text', text: ' ' }, call],
     [{ type: 'thinking', thinking: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
@@ -118,9 +119,10 @@ it('opens no part for a text block that is only whitespace, live and replayed', 
   const seen = live.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
   // A tool call part has no id of its own: the id is its call's.
   expect(seen).toEqual([
-    ['u1:1:0', 'reasoning', 'THINK-1'], [undefined, 'toolCall', 'c1'], ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
+    ['u1:1:0', 'reasoning', 'THINK-1'], ['u1:1:1', 'markdown', ' '], [undefined, 'toolCall', 'c1'],
+    ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
   ]);
-  expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual(['REPLY']);
+  expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual([' ', 'REPLY']);
 
   const at = new Date().toISOString();
   const entries: Bag[] = [
