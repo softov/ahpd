@@ -2,7 +2,7 @@ import { RequestError } from '@agentclientprotocol/sdk';
 import type { AgentCapabilities, McpServer as AcpMcpServer } from '@agentclientprotocol/sdk';
 import { machineAsked, machinePathOf } from '@ahpd/sdk';
 import type { Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
-import { watchSession } from '../catalog.js';
+import { heardCapabilities, watchSession } from '../catalog.js';
 import { connectAcp } from '../connection.js';
 import type { AcpConnection, AcpOptions } from '../types.js';
 import { messageOf } from './common.js';
@@ -458,6 +458,8 @@ export function createOpening(ctx: SessionContext): Opening {
       ctx.loads = handshake.agentCapabilities?.loadSession === true;
       ctx.resumes = advertised(handshake.agentCapabilities?.sessionCapabilities?.resume);
       ctx.forks = advertised(handshake.agentCapabilities?.sessionCapabilities?.fork);
+      // And for the agent, which offers a fork only where its server can make one.
+      heardCapabilities(options, handshake.agentCapabilities);
       ctx.takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
       extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
       signIns = (handshake.authMethods ?? []).map((one) => one.id);

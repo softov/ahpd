@@ -159,6 +159,27 @@ export const deletes = (options: AcpOptions): boolean => deletesSessions.get(opt
 const deletesOf = (agentCapabilities: AgentCapabilities | undefined): boolean =>
   agentCapabilities?.sessionCapabilities?.delete !== undefined && agentCapabilities.sessionCapabilities.delete !== null;
 
+/**
+ * Whether the server behind these options advertised `session/fork`, as its
+ * last handshake said, a listing's or a session's.
+ *
+ * What the agent's `chats.fork` is read from, so the host offers a fork only
+ * for an agent whose server can make one, as VS Code's agents advertise fork
+ * only where they can fork their chats. Nothing until a server has spoken.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L741-L742
+ */
+const forksSessions = new WeakMap<AcpOptions, boolean>();
+
+/** Whether the last handshake for these options advertised `session/fork`. */
+export const forks = (options: AcpOptions): boolean => forksSessions.get(options) === true;
+
+/** Keep what one handshake said the server can do with its sessions. */
+export const heardCapabilities = (options: AcpOptions, agentCapabilities: AgentCapabilities | undefined): void => {
+  deletesSessions.set(options, deletesOf(agentCapabilities));
+  const fork = agentCapabilities?.sessionCapabilities?.fork;
+  forksSessions.set(options, fork !== undefined && fork !== null);
+};
+
 /** The rows the watched sessions answer with, in the order they were opened. */
 export const watchedRows = (provider: string): Listed[] =>
   [...watched.values()].filter((one) => one.provider === provider).map(listedOf);
@@ -404,11 +425,12 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   try {
     const handshake = await held.connection.initialize();
     /*
-     * What the server said it can do, kept for the agent's `delete` rather than
-     * for this read: the handshake is the only place `session/delete` is ever
-     * advertised, and this is the one call that reads it every time.
+     * What the server said it can do, kept for the agent's `delete` and
+     * `chats.fork` rather than for this read: the handshake is the only place
+     * `session/delete` and `session/fork` are ever advertised, and this is the
+     * one call that reads it every time.
      */
-    deletesSessions.set(options, deletesOf(handshake.agentCapabilities));
+    heardCapabilities(options, handshake.agentCapabilities);
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;

@@ -13,7 +13,7 @@
  */
 
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
-import { catalogueOf, deletes, findListed, forgetSession, loadedSession, stateFile } from './catalog.js';
+import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
@@ -123,16 +123,16 @@ export function acpAgent(options: AcpOptions): Agent {
     ...(options.variant === true ? { variant: true } : {}),
     ...(options.description !== undefined ? { description: options.description } : {}),
     /*
-     * A fork is declared here and decided per session.
+     * A fork, offered for an agent whose server advertised `session/fork`.
      *
-     * `chats.fork` is a field of the agent, set before any server is spawned,
-     * and a fork is only ever offered for a server that advertised
-     * `session.fork` - which is a session's own handshake and nothing this
-     * agent can know. So the capability is declared and each session's
-     * `forkPoint` answers `undefined` until its server has said it can, which
-     * is what the host reads to decide whether a turn has a fork at all.
+     * The handshake is where a server says so, a listing's or a session's, so
+     * the capability is read off the last one: none until a server has spoken,
+     * as VS Code's agents advertise fork only where they can fork their chats.
+     * Each session's `forkPoint` then says which of its turns a fork is cut at.
      */
-    chats: { fork: true },
+    get chats() {
+      return forks(options) ? { fork: true } : {};
+    },
     schema,
     defaults,
 

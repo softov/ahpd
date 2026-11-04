@@ -1336,17 +1336,22 @@ it('fails the turn after a death when the server can neither load nor resume a s
   expect(requests(log).filter((one) => one.method === 'session/new')).toHaveLength(1);
 });
 
-it('declares that it can fork, and offers no fork point on a server that cannot', async () => {
+it('offers no fork for an agent whose server cannot make one, and a fork once it says it can', async () => {
+  // Nothing before a server has spoken, and nothing after one that never
+  // advertised `session/fork`, as VS Code's agents advertise fork only where
+  // they can fork their chats.
   const { agent } = backend();
+  expect(agent.chats?.fork).toBeUndefined();
   const { session, watch } = start(agent, 'no-fork');
   await runTurn(session, watch, 't1', 'hi');
-
-  // The capability is a field of the agent, so it is declared before any server
-  // has spoken. What is per session is the fork point, and a server that never
-  // advertised `session.fork` has none to give.
-  expect(agent.chats?.fork).toBe(true);
-  expect(session.forkPoint).toBeDefined();
+  expect(agent.chats?.fork).toBeUndefined();
   expect(session.forkPoint?.('t1')).toBeUndefined();
+
+  // A server that advertises it is an agent a client may fork in.
+  const { agent: forking } = backend(['--fork']);
+  const { session: other, watch: seen } = start(forking, 'can-fork');
+  await runTurn(other, seen, 't1', 'hi');
+  expect(forking.chats?.fork).toBe(true);
 });
 
 it('offers a fork of the last turn only, and copies the conversation into a new session', async () => {
