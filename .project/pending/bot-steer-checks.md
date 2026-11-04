@@ -31,11 +31,17 @@ Open a bot chat in ahpw or VS Code.
 5. Check that the bot stops near 10, and that its post shows in the same main turn.
 6. Check that the main turn ends when the back session's turn ends.
 
+## The steer in the turn (host/20261104-0726)
+
+1. Check that the bot chat shows your second message as a quote, `> Stop at 10 instead.`, after the numbers posted before it.
+2. Open the back session, and check that it shows the same words quoted, with the context block.
+3. Check that the quote sits between the two tool calls where Claude took it in.
+
 ## After a reload
 
-1. Reload the window, and open the same bot chat.
-2. Write down whether the chat shows one turn or two. Two is the known [problem](../problems/a-bot-steer-shows-differently-after-a-reload.md).
+1. Reload the window, and open the same bot chat and the back session.
+2. Check that each shows one turn, with the quote where it was live.
 
 ## Reply
 
-Write "pass" for the first section, or what you saw. For the second, write "one turn" or "two turns".
+Write "pass" for each section, or what you saw.
