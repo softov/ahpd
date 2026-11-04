@@ -321,6 +321,17 @@ it('answers a steering message the CLI runs after the turn\'s last answer inside
   expect(((turns[0] as Bag).usage as Bag)?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.00179864, currency: 'USD' } });
 });
 
+/*
+ * A steering message goes to the CLI at priority `now`, into the work it is
+ * doing, as VS Code's Claude agent injects one; a turn's prompt goes at the
+ * CLI's own default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1271-L1282
+ */
+it('hands the CLI a steering message at priority now, and a turn prompt at its default', async () => {
+  await liveLate(LATE);
+  expect(sdk.handed.map((one) => [one.uuid, one.priority])).toEqual([[FIRST, undefined], [LATE, 'now']]);
+});
+
 it('gives a steering message whose id is not a UUID a uuid of its own, and answers it in the turn', async () => {
   const { chat, before, steered } = await liveLate('s1');
 

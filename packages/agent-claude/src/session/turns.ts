@@ -93,6 +93,12 @@ export function createTurns(ctx: SessionContext): Turns {
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
+      /*
+       * A steering message goes in now, into the work the CLI is doing, as
+       * VS Code's Claude agent injects one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1271-L1282
+       */
+      ...(owed?.steering === true ? { priority: 'now' as const } : {}),
       ...(uuid === undefined ? {} : { uuid: uuid as `${string}-${string}-${string}-${string}-${string}` }),
     });
     ctx.wake?.();
