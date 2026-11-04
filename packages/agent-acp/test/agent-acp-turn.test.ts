@@ -915,7 +915,7 @@ const startedFrom = (p: ReturnType<typeof peer>, chatUri: string): unknown[] => 
  */
 it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
-  begin(client, chatUri, 't1', 'hold it stop=refusal');
+  begin(client, chatUri, 't1', 'hold it erroratend');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   await queue(client, chatUri, 'waiting', 'second');
   await queue(client, chatUri, 'later', 'third');
@@ -1032,22 +1032,20 @@ const stoppedWith = async (reason: string): Promise<{ type?: string | undefined;
   return { type: types(p, chatUri).at(-1), ...(part === undefined ? {} : { error: part.error }) };
 };
 
-it('ends a turn the server stopped for its own reasons as an error naming the reason', async () => {
-  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
-    const stopped = await stoppedWith(reason);
-    // Not a finished answer: a turn that stopped early is not what was asked for.
-    expect(stopped.type).toBe('chat/error');
-    // The reason is the error's type, so a client can tell the three apart
-    // without reading the sentence.
-    expect(stopped.error?.errorType).toBe(reason);
-    expect(String(stopped.error?.message)).not.toBe('');
+it('completes a turn the server stopped at a limit or by declining, as VS Code\'s agents complete one', async () => {
+  for (const reason of ['end_turn', 'max_tokens', 'max_turn_requests', 'refusal']) {
+    // A stop is the end of what the agent did: an error is a turn whose send
+    // or execution failed.
+    expect((await stoppedWith(reason)).type).toBe('chat/turnComplete');
   }
 });
 
-it('completes an end_turn, and words a refusal as the agent declining', async () => {
-  expect((await stoppedWith('end_turn')).type).toBe('chat/turnComplete');
-  // A refusal is the agent declining, and its sentence says so.
-  expect(String((await stoppedWith('refusal')).error?.message)).toContain('declined');
+it('ends a turn whose prompt failed as a failed send, in the failure\'s own words', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'tell me something erroratend');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  const part = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part as { error?: Bag } | undefined;
+  expect(part?.error).toEqual({ errorType: 'sendFailed', message: expect.stringContaining('the model gave up at the end') });
 });
 
 it('completes a turn whose stop reason this bridge does not know', async () => {

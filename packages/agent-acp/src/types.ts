@@ -266,6 +266,8 @@ export interface AcpConnectionOptions {
   env?: Record<string, string>;
   cwd?: string;
   handlers: AcpHandlers;
+  /** Where each line the server writes on stderr goes. */
+  log?: (line: string) => void;
 }
 
 /** One open ACP connection over a server's stdio. */
@@ -354,14 +356,6 @@ export interface AcpConnection {
    * reason.
    */
   readonly ended: Promise<Error>;
-  /**
-   * The last of what the server wrote on stderr, for a failure to carry.
-   *
-   * Nothing surfaces it while the server runs: a healthy server's chatter is
-   * the server's, and a client is told about it only when it died. Settles once
-   * a dead server's last words have been read off the pipe.
-   */
-  stderrTail(): Promise<string>;
   /** End the subprocess; settles once it has gone, and never rejects. */
   close(): Promise<void>;
 }

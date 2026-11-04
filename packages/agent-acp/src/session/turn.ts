@@ -27,25 +27,6 @@ export interface Turn {
   ): void;
 }
 
-/**
- * What each stop reason that is not an answer says, by name.
- *
- * `end_turn` is absent because it is the server saying it is done and the turn is
- * what the client asked for. The other three are the server saying it stopped
- * early, and a turn that stopped early is not an answer: the model ran out of
- * room, the session used up the requests it was allowed, or the agent declined.
- *
- * A reason absent here - `end_turn`, and anything a later version of the
- * protocol names and this bridge has not heard of - ends the turn complete,
- * because a stop this code cannot describe is better read as an answer than
- * reported as a failure with no reason.
- */
-const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
-  max_tokens: 'The agent ran out of tokens before it answered',
-  max_turn_requests: 'The agent used every turn request this session allowed',
-  refusal: 'The agent declined to answer this prompt',
-};
-
 export function createTurn(ctx: SessionContext): Turn {
   const { emit, provider, start, inside, turns, doing, touch } = ctx;
 
@@ -127,15 +108,16 @@ export function createTurn(ctx: SessionContext): Turn {
    * End the running turn, whoever ended it.
    *
    * How it ended is the server's to say: `stopReasonFor` reads the stop reason
-   * into one of the three endings. A connection that failed before a stop reason
-   * arrived is an error, with the reason on the turn and the type this bridge
-   * uses for a failure of its own.
+   * into an ending. A send that failed before a stop reason arrived is an
+   * error typed by the stage VS Code's host names for it, `sendFailed`, with
+   * the failure's own words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
    */
   const finish = (
     turnId: string,
     ending: 'complete' | 'cancelled' | 'error',
     failure: { errorType: string; message: string } = {
-      errorType: 'turnFailed',
+      errorType: 'sendFailed',
       message: 'The ACP server did not answer',
     },
   ): void => {
@@ -202,16 +184,14 @@ export function createTurn(ctx: SessionContext): Turn {
   /**
    * End the turn the way the server's stop reason says to.
    *
-   * The reason is the error's type as well as its sentence, so a client can tell
-   * a refusal from a ceiling reached without reading prose, and the sentence
-   * says the agent declined rather than that something broke - a refusal is
-   * something the agent did.
+   * A stop is the end of what the agent did, so every reason but `cancelled`
+   * completes the turn: a turn the model ended at its token or request limit,
+   * or by declining, is one VS Code's agents complete, an error being a turn
+   * whose send or execution failed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
    */
   const stopReasonFor = (turnId: string, reason: StopReason): void => {
-    if (reason === 'cancelled') return finish(turnId, 'cancelled');
-    const said = NOT_AN_ANSWER[reason];
-    if (said === undefined) return finish(turnId, 'complete');
-    finish(turnId, 'error', { errorType: reason, message: said });
+    finish(turnId, reason === 'cancelled' ? 'cancelled' : 'complete');
   };
 
   /**
@@ -371,7 +351,7 @@ export function createTurn(ctx: SessionContext): Turn {
       // what this turn runs on, and one that can no longer be used refuses it.
       const refused = ctx.refreshOptions();
       if (refused !== undefined) {
-        finish(turnId, 'error', { errorType: 'turnFailed', message: refused });
+        finish(turnId, 'error', { errorType: 'sendFailed', message: refused });
         return;
       }
       const held = await ctx.open();
@@ -445,18 +425,9 @@ export function createTurn(ctx: SessionContext): Turn {
         finish(turnId, 'error', signIn);
         return;
       }
-      /*
-       * Whatever the server said on stderr rides on the failure, because an
-       * exit code is rarely why and the trace under it is. Read from the
-       * connection this turn prompted: a server that died is already off
-       * `live`, which is exactly the case a person most wants the trace for.
-       */
-      const said = messageOf(why);
-      const tail = connection === undefined ? '' : await connection.stderrTail();
-      finish(turnId, 'error', {
-        errorType: 'turnFailed',
-        message: tail === '' ? said : `${said}\n${tail}`,
-      });
+      // The failure's own words: what the server wrote on stderr went to the
+      // log as it arrived, as VS Code's agents log a runtime's stderr.
+      finish(turnId, 'error', { errorType: 'sendFailed', message: messageOf(why) });
     }
   };
 

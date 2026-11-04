@@ -443,6 +443,7 @@ export function createOpening(ctx: SessionContext): Opening {
                 releaseTerminal: ctx.releaseTerminal,
               }),
         },
+        ...(options.log === undefined ? {} : { log: options.log }),
       });
       ctx.live = connection;
       // A server that dies between turns is let go, so the next turn spawns

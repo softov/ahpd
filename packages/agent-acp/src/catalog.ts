@@ -298,6 +298,7 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
   ...(options.env === undefined ? {} : { env: options.env }),
   ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   handlers,
+  ...(options.log === undefined ? {} : { log: options.log }),
 });
 
 /**

@@ -97,6 +97,8 @@
  * - text containing `stop=<reason>` answers the prompt with that stop reason
  *   rather than `end_turn`, so a turn that stopped early can be told apart from
  *   one that finished;
+ * - text containing `erroratend` does whatever else the text asks and then
+ *   answers the prompt with a JSON-RPC error, so a turn fails after its calls;
  * - text containing `blocks` reports the content blocks the prompt arrived in,
  *   as `blocks=text|image|resource` with each block's text or its URI - a
  *   resource block saying its URI and then its own text on the next line - so a
@@ -1545,6 +1547,10 @@ const promptScript = async (id, params) => {
     });
   }
 
+  if (text.includes('erroratend')) {
+    write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'the model gave up at the end' } });
+    return;
+  }
   respond(id, { stopReason: stopReasonOf(text), ...countedFor(text) });
 };
 
