@@ -1,6 +1,6 @@
 ---
 title: The listing looks up recorded sessions
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:
