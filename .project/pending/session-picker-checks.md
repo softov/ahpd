@@ -25,14 +25,12 @@ Then open the new session form in ahpw or VS Code.
 2. Check that the `Bot` setting is a picker with each bot by its name.
 3. Choose a bot, and check that the chat opens with it.
 
+On 2026-11-04 the picker listed the bots, and the new session stopped: see [the problem](../problems/a-bot-chat-started-from-the-form-stops.md). The form order passed that day.
+
 ## ACP approvals list their modes
 
 1. Choose a Codex, Gemini or Qwen agent.
 2. Check that `Approvals` is a picker with the modes of that agent.
-
-## The form order
-
-1. Check that the computer comes first, then isolation and branch, then the agent's own settings.
 
 ## Reply
 
