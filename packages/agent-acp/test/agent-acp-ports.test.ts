@@ -285,9 +285,7 @@ it('refuses a permission and a question asked with no turn running, and an empty
     emit: (_channel: string, action: Bag) => { said.push(action); },
     provider: 'acp',
     start: { chatUri: 'ahp-chat:/none', getAutoApproval: () => undefined },
-    where: tmpdir(),
-    doing: () => {},
-    touch: () => {},
+    cwd: tmpdir(),
     seeds: [],
     replay: [],
     permissions: new Map(),
@@ -301,7 +299,7 @@ it('refuses a permission and a question asked with no turn running, and an empty
   // No turn holds a call or a question to show, so the server is answered at
   // once, as VS Code's host rejects a permission without an active turn and
   // its Claude cancels a question asked outside one.
-  expect(await handlers.askPermission({
+  expect(await handlers.requestPermission({
     sessionId: 's',
     toolCall: { toolCallId: 'c1', title: 'Remove a file', kind: 'delete' },
     options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }],
@@ -318,7 +316,7 @@ it('hands back at most outputByteLimit bytes of output, cut at a character bound
   const output = `start ${'\u{1F600}'.repeat(4)}`;
   const terminals = new Map([['t1', { handle: { output: () => ({ output }) }, outputByteLimit: 10, openedAt: '', command: 'x' }]]);
   const handlers = createHandlers({
-    emit: () => {}, provider: 'acp', start: {}, where: tmpdir(), doing: () => {}, touch: () => {},
+    emit: () => {}, provider: 'acp', start: {}, cwd: tmpdir(),
     seeds: [], replay: [], permissions: new Map(), terminals, elicitations: new Map(), options: {},
   } as unknown as SessionContext);
   const read = await handlers.terminalOutput({ sessionId: 's', terminalId: 't1' } as never);

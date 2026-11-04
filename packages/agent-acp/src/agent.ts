@@ -68,8 +68,8 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
    * No `model`: a model belongs to the turn, and ACP carries the choice as a
    * session config option the server names on `session/new`. The choices
    * reach a client through `probe` and `Session.models`, and the choice itself
-   * arrives on `begin`, so advertising a model here would be a second answer
-   * to a question the server already owns.
+   * arrives on `sendMessage`, so advertising a model here would be a second
+   * answer to a question the server already owns.
    *
    * The approvals control carries the modes the preset names, as its `enum`
    * and their names as its labels, so a harness nobody has found the modes for
@@ -107,7 +107,7 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
    * Only what was configured: a default invented for a model is a session that
    * picks a model nobody named. The model is not a schema property, but it is
    * still what a session that names none should run on, so it is defaulted
-   * here and reaches the turn through `begin`.
+   * here and reaches the turn through `sendMessage`.
    */
   const defaults = (): Record<string, unknown> => ({
     ...(options.model !== undefined ? { model: options.model } : {}),

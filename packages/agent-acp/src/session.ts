@@ -67,7 +67,7 @@ export function acpSession(
    * run a session with no workspace.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
    */
-  const where = start.workingDirectory ?? options.cwd ?? ensureWorkspacelessScratchDir(start.uri);
+  const cwd = start.workingDirectory ?? options.cwd ?? ensureWorkspacelessScratchDir(start.uri);
 
   /**
    * Whether a path is one this session was given to work in.
@@ -75,7 +75,7 @@ export function acpSession(
    * Both sides are resolved first, so a path that climbs out of a directory
    * with `..` is judged by where it lands rather than by how it was written.
    */
-  const directories = [where, ...(start.additional ?? [])].map((one) => resolve(one));
+  const directories = [cwd, ...(start.additional ?? [])].map((one) => resolve(one));
   const inside = (path: string): boolean => {
     const full = resolve(path);
     // The system's separator: `resolve` answers `C:\work` on Windows, never `C:/work`.
@@ -108,7 +108,7 @@ export function acpSession(
     start,
     provider,
     emit,
-    where,
+    cwd,
     inside,
     setModifiedAt,
     /*
@@ -119,16 +119,16 @@ export function acpSession(
     status: (): number => statusOf({
       waiting: ctx.permissions.size > 0 || ctx.elicitations.size > 0,
       active: ctx.active !== undefined,
-      failed: ctx.failed !== undefined,
+      failed: ctx.error !== undefined,
     }),
     offering: [...(start.tools ?? [])],
-    settings: { ...start.settings },
+    values: { ...start.settings },
     turns: [...(start.seed ?? [])],
     seeds: [...(start.seedCustomizations ?? [])],
     commands: [],
     modes: undefined,
     active: undefined,
-    waiting: [],
+    pendingTurns: [],
     replaced: new Set<string>(),
     mapping: undefined,
     cumulative: undefined,
@@ -138,14 +138,14 @@ export function acpSession(
     loads: false,
     resumes: false,
     forks: false,
-    takes: undefined,
+    promptCapabilities: undefined,
     replay: [],
     loading: false,
     opening: undefined,
     startedWith: '',
     cancelRequested: false,
-    closed: false,
-    failed: undefined,
+    disposed: false,
+    error: undefined,
     title: UNTITLED,
     renamed: false,
     provisional: false,
@@ -156,7 +156,7 @@ export function acpSession(
     elicitations: new Map(),
   } as unknown as SessionContext;
 
-  const { settings, turns, seeds, replay, permissions, terminals } = ctx;
+  const { values, turns, seeds, replay, permissions, terminals } = ctx;
 
   Object.assign(ctx, createConfig(ctx));
   Object.assign(ctx, createHandlers(ctx));
@@ -240,7 +240,7 @@ export function acpSession(
       emit('session', { type: 'session/titleChanged', title: said });
     },
     modifiedAt: () => modified,
-    workingDirectories: () => [uriOf(where)],
+    workingDirectories: () => [uriOf(cwd)],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -251,7 +251,7 @@ export function acpSession(
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(where)],
+      workingDirectories: [uriOf(cwd)],
       customizations: [...seeds, ...ctx.commands],
       /*
        * The calls this session has out with its clients, which is what a client
@@ -268,7 +268,7 @@ export function acpSession(
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits. The schema carries the server's modes once they
       // are known, so `permissionMode` has an enum exactly when it can have one.
-      config: { schema: ctx.schemaOf(), values: { ...settings } },
+      config: { schema: ctx.schemaOf(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -285,7 +285,7 @@ export function acpSession(
     sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      ctx.begin(turnId, text, model, from, attachments, turnOptions);
+      ctx.sendMessage(turnId, text, model, from, attachments, turnOptions);
     },
 
     changeModel: (model) => { chosen = model; },
@@ -313,7 +313,7 @@ export function acpSession(
      * and neither is any longer anything this turn will finish.
      */
     abort: () => {
-      ctx.waiting.length = 0;
+      ctx.pendingTurns.length = 0;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();
@@ -373,10 +373,10 @@ export function acpSession(
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     close: async (): Promise<void> => {
-      ctx.closed = true;
+      ctx.disposed = true;
       /*
        * Everything anybody is still waiting on is let go first.
        *
@@ -418,7 +418,7 @@ export function acpSession(
       // conversation and the transcript a row opens onto is this process's own
       // record of it. Only the live connection goes.
       // A turn still open has nobody left to answer it.
-      if (ctx.active !== undefined) ctx.finish(String(ctx.active.id), 'cancelled');
+      if (ctx.active !== undefined) ctx.endTurn(String(ctx.active.id), 'cancelled');
       // The connection goes last, and settles on the server's processes being
       // gone rather than on the request having been sent.
       await saying;

@@ -9,7 +9,7 @@ import type { Opening } from './opening.js';
 import type { Turn } from './turn.js';
 
 /** A turn handed while the server ran another: what `sendMessage` was handed. */
-export interface Waiting {
+export interface PendingTurn {
   turnId: string;
   text: string;
   model?: Chosen | undefined;
@@ -72,8 +72,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   offering: BoundTool[];
   /** Say one thing on one channel, to every client watching it. */
   emit: Emit;
-  /** The directory the server works in. */
-  where: string;
+  /** The directory the server works in, ACP's `cwd`. */
+  cwd: string;
   /** Whether a path is one this session was given to work in. */
   inside: (path: string) => boolean;
   /**
@@ -85,8 +85,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   setModifiedAt: (at: string) => void;
   /** `SessionStatus`: 8 is in progress, 4 waits on a person and 1 is idle. */
   status: () => number;
-  /** The config in force, by key. `session/configChanged` merges into this. */
-  settings: Record<string, unknown>;
+  /** The config values in force, by key. `session/configChanged` merges into this. */
+  values: Record<string, unknown>;
   /** Finished turns. The running one is `active` and is deliberately not here. */
   turns: Bag[];
   /** What the host offered until the server reports its own. */
@@ -111,7 +111,7 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
    */
-  waiting: Waiting[];
+  pendingTurns: PendingTurn[];
   /** The turns a later one took the place of, which run on and end in no history. */
   replaced: Set<string>;
   /** The running turn's mapping, so an update knows what it belongs to. */
@@ -155,8 +155,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * answer, and what decides whether a turn has a fork point at all.
    */
   forks: boolean;
-  /** What the server said it can take in a prompt, once the handshake has said it. */
-  takes: PromptCapabilities | undefined;
+  /** What the server said it can take in a prompt, once its `initialize` answer has said it. */
+  promptCapabilities: PromptCapabilities | undefined;
   /**
    * The updates a server replayed while this session was opening.
    *
@@ -180,9 +180,10 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   startedWith: string;
   /** Whether a client asked to stop, read when the prompt settles. */
   cancelRequested: boolean;
-  closed: boolean;
+  /** Whether the session was disposed, after which no turn starts. */
+  disposed: boolean;
   /** Why the last turn failed, or nothing. Cleared when a turn starts. */
-  failed: string | undefined;
+  error: string | undefined;
   title: string;
   /**
    * Whether a person named this session themselves.

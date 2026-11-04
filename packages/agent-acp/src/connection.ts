@@ -378,13 +378,13 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   const connection = app.connect(stream);
 
   /**
-   * The handshake's reply, kept so it is asked for once.
+   * The server's `initialize` answer, kept so it is asked for once.
    *
    * A server is told what a client can do at the start of a connection and
    * never again, so `initialize` answers the held reply on a second call
    * rather than negotiating twice.
    */
-  let handshake: InitializeResponse | undefined;
+  let initializeResponse: InitializeResponse | undefined;
 
   /**
    * One call, failed with the server's death rather than the SDK's closed stream.
@@ -435,14 +435,14 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
 
   return {
     initialize: (): Promise<InitializeResponse> => {
-      if (handshake !== undefined) return Promise.resolve(handshake);
+      if (initializeResponse !== undefined) return Promise.resolve(initializeResponse);
       const greeting: InitializeRequest = {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities,
         clientInfo: CLIENT_INFO,
       };
       return heard(() => connection.agent.request(methods.agent.initialize, greeting)).then((reply) => {
-        handshake = reply;
+        initializeResponse = reply;
         const says = reply.agentCapabilities?._meta?.[AUTH_STATUS];
         announces = says !== undefined && says !== null;
         handOver();

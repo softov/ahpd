@@ -35,8 +35,8 @@ import type { HeldTerminal, SessionContext } from './context.js';
 
 /** Everything the server sends this session: its updates, its requests and the answers to them. */
 export interface Handlers {
-  receivedUpdate(sessionId: string, update: SessionUpdate): void;
-  askPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
+  sessionUpdate(sessionId: string, update: SessionUpdate): void;
+  requestPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
   /**
    * Whether a tool the host serves may run, asked before the tools server runs
    * it.
@@ -51,7 +51,7 @@ export interface Handlers {
   settleElicitations(): void;
   readTextFile(request: ReadTextFileRequest): Promise<ReadTextFileResponse>;
   writeTextFile(request: WriteTextFileRequest): Promise<WriteTextFileResponse>;
-  openTerminal(request: CreateTerminalRequest): Promise<CreateTerminalResponse>;
+  createTerminal(request: CreateTerminalRequest): Promise<CreateTerminalResponse>;
   terminalOutput(request: TerminalOutputRequest): Promise<TerminalOutputResponse>;
   waitForTerminalExit(request: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse>;
   killTerminal(request: KillTerminalRequest): Promise<KillTerminalResponse>;
@@ -91,7 +91,7 @@ const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
   options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
 
 export function createHandlers(ctx: SessionContext): Handlers {
-  const { emit, provider, start, where, seeds, replay, permissions, terminals, elicitations } = ctx;
+  const { emit, provider, start, cwd, seeds, replay, permissions, terminals, elicitations } = ctx;
 
   /**
    * One command the server offers, as the skill a client draws.
@@ -221,10 +221,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * this conversation's; it is dropped rather than written into the wrong turn.
    * A mode, a config or a command update moves the session whether or not a
    * turn is running, because the server may say so at any time and a client
-   * draws them from the session's state.
+   * draws them from the session's state. ACP's `sessionUpdate`.
    */
-  const receivedUpdate = (sessionId: string, update: SessionUpdate): void => {
-    if (ctx.closed) return;
+  const sessionUpdate = (sessionId: string, update: SessionUpdate): void => {
+    if (ctx.disposed) return;
     if (ctx.acpSessionId !== undefined && sessionId !== ctx.acpSessionId) return;
     /*
      * When this arrived, which is what a tool call's start and end are: ACP
@@ -257,8 +257,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
       return;
     }
     if (update.sessionUpdate === 'config_option_update') {
-      ctx.offersChanged(update.configOptions);
-      ctx.learnOffers(update.configOptions);
+      ctx.configOptionsChanged(update.configOptions);
+      ctx.learnConfigOptions(update.configOptions);
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {
@@ -386,8 +386,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * The request's `cwd` is a machine path, so the port is given it in the host's
    * spelling. No `cwd` at all is sent when the request names none, so the port
    * uses the machine's own working directory, as the server's own spawn does.
+   * ACP's `createTerminal`.
    */
-  const openTerminal = async (request: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
+  const createTerminal = async (request: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
     const shells = start.terminals;
     if (shells === undefined) throw new Error(`${provider}: this session has no shells`);
     const env = environmentOf(request);
@@ -395,7 +396,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     let run: OpenTerminal;
     if (id === undefined) {
       run = {
-        cwd: request.cwd ?? where,
+        cwd: request.cwd ?? cwd,
         command: request.command,
         ...(request.args !== undefined && request.args.length > 0 ? { args: request.args } : {}),
         ...(env === undefined ? {} : { env }),
@@ -419,7 +420,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       // directory the command itself works in is the machine's, in the argv
       // `how` answered.
       run = {
-        cwd: where,
+        cwd,
         command: how.command,
         ...(how.args === undefined ? {} : { args: how.args }),
         ...(how.env === undefined ? {} : { env: how.env }),
@@ -512,9 +513,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
    *
    * A tool the operator's rule names is the exception: its question offers the
    * once options alone, so the card has nothing on it that would keep an
-   * answer.
+   * answer. ACP's `requestPermission`.
    */
-  const askPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
+  const requestPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
     const option = (kind: PermissionOptionKind): string | undefined =>
       request.options.find((one) => one.kind === kind)?.optionId;
     const allow = option('allow_once');
@@ -693,7 +694,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (reported.asked) {
       return bag(bag(callPartOf(ctx.mapping, reported.toolCallId)).toolCall).confirmed === 'user-action';
     }
-    const answered = await askPermission({
+    const answered = await requestPermission({
       sessionId: ctx.acpSessionId ?? '',
       toolCall: {
         toolCallId: reported.toolCallId,
@@ -956,12 +957,12 @@ export function createHandlers(ctx: SessionContext): Handlers {
   };
 
   return {
-    receivedUpdate,
-    askPermission,
+    sessionUpdate,
+    requestPermission,
     askTool,
     readTextFile,
     writeTextFile,
-    openTerminal,
+    createTerminal,
     terminalOutput,
     waitForTerminalExit,
     killTerminal,

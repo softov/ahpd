@@ -8,29 +8,30 @@ import type { SessionContext } from './context.js';
 /** The server's modes, its config options and its models, and what is drawn from them. */
 export interface Config {
   learnModes(state: SessionModeState | null | undefined): void;
-  learnOffers(list: SessionConfigOption[] | null | undefined): void;
+  learnConfigOptions(list: SessionConfigOption[] | null | undefined): void;
   learnModels(answer: unknown): void;
   configChanged(key: string, value: unknown): void;
-  offersChanged(list: SessionConfigOption[]): void;
+  configOptionsChanged(list: SessionConfigOption[]): void;
   syncConfig(held: Record<string, unknown>): void;
   schemaOf(): Bag;
-  chooseModel(held: { connection: AcpConnection; sessionId: string }, chosen: Chosen | undefined): Promise<void>;
+  changeModel(held: { connection: AcpConnection; sessionId: string }, chosen: Chosen | undefined): Promise<void>;
   sendAsked(held: { connection: AcpConnection; sessionId: string }, asked: Record<string, unknown>): Promise<void>;
   models: Session['models'];
   setConfig: NonNullable<Session['setConfig']>;
 }
 
 export function createConfig(ctx: SessionContext): Config {
-  const { emit, provider, settings, start } = ctx;
+  const { emit, provider, values, start } = ctx;
 
   /**
-   * The session config options the server named, once it has.
+   * The session config options the server named, once it has: ACP's
+   * `configOptions`.
    *
    * This is where a model choice lives in ACP: the option whose category is
    * `model`, with the values the server serves. The bridge does not invent one,
    * so a session that has not opened answers no models.
    */
-  let offers: SessionConfigOption[] = [];
+  let configOptions: SessionConfigOption[] = [];
   /**
    * The models a server from before config options named, where it named none.
    *
@@ -52,17 +53,17 @@ export function createConfig(ctx: SessionContext): Config {
   const learnModes = (state: SessionModeState | null | undefined): void => {
     if (state === null || state === undefined) return;
     ctx.modes = { ...state };
-    settings.permissionMode = state.currentModeId;
-    settings.availableApprovalModes = state.availableModes.map((one) => one.id);
+    values.permissionMode = state.currentModeId;
+    values.availableApprovalModes = state.availableModes.map((one) => one.id);
   };
 
   /** The option a model choice is set through, when the server named one. */
   const modelOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
-    offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'model');
+    configOptions.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'model');
 
   /** The option a mode choice is set through, where the server names one. */
   const modeOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
-    offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
+    configOptions.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
 
   /**
    * The key an option's value is kept under.
@@ -87,22 +88,22 @@ export function createConfig(ctx: SessionContext): Config {
    * something this bridge cannot put in front of a person.
    */
   const controlOptions = (): SessionConfigOption[] =>
-    offers.filter((one) => (one.type === 'select' || one.type === 'boolean')
+    configOptions.filter((one) => (one.type === 'select' || one.type === 'boolean')
       && keyOf(one) !== 'model' && keyOf(one) !== 'permissionMode');
 
   /**
    * Remember the session config options the server named, and where each stands.
    *
    * What moved is said by the caller: an open through `syncConfig` once it is
-   * over, a value set and a turn's model through `offersChanged`.
+   * over, a value set and a turn's model through `configOptionsChanged`.
    */
-  const learnOffers = (list: SessionConfigOption[] | null | undefined): void => {
+  const learnConfigOptions = (list: SessionConfigOption[] | null | undefined): void => {
     if (list === null || list === undefined) return;
-    offers = [...list];
-    for (const option of offers) settings[keyOf(option)] = option.currentValue;
+    configOptions = [...list];
+    for (const option of configOptions) values[keyOf(option)] = option.currentValue;
     // A `mode` option's values are the modes the session may take.
     const mode = modeOption();
-    if (mode !== undefined) settings.availableApprovalModes = choicesOf(mode).map((one) => one.value);
+    if (mode !== undefined) values.availableApprovalModes = choicesOf(mode).map((one) => one.value);
   };
 
   /**
@@ -123,7 +124,7 @@ export function createConfig(ctx: SessionContext): Config {
       .filter((one): one is { modelId: string; name: string } => typeof bag(one).modelId === 'string')
       .map((one) => ({ id: one.modelId, name: typeof one.name === 'string' ? one.name : one.modelId }));
     const current = bag(named).currentModelId;
-    if (typeof current === 'string') settings.model = current;
+    if (typeof current === 'string') values.model = current;
   };
 
   /**
@@ -137,8 +138,8 @@ export function createConfig(ctx: SessionContext): Config {
    * open learned once the open is over.
    */
   const configChanged = (key: string, value: unknown): void => {
-    if (isDeepStrictEqual(settings[key], value)) return;
-    settings[key] = value;
+    if (isDeepStrictEqual(values[key], value)) return;
+    values[key] = value;
     if (!ctx.loading) emit('session', { type: 'session/configChanged', config: { [key]: value } });
   };
 
@@ -150,7 +151,7 @@ export function createConfig(ctx: SessionContext): Config {
    * every update, and on the answer to every value set, and only what moved is
    * news.
    */
-  const offersChanged = (list: SessionConfigOption[]): void => {
+  const configOptionsChanged = (list: SessionConfigOption[]): void => {
     for (const option of list) configChanged(keyOf(option), option.currentValue);
     const mode = list.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
     if (mode !== undefined) configChanged('availableApprovalModes', choicesOf(mode).map((one) => one.value));
@@ -177,7 +178,7 @@ export function createConfig(ctx: SessionContext): Config {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11447-L11478
    */
   const syncConfig = (held: Record<string, unknown>): void => {
-    const moved = Object.fromEntries(Object.entries(settings)
+    const moved = Object.fromEntries(Object.entries(values)
       .filter(([key, value]) => !isDeepStrictEqual(held[key], value) && !setting.includes(key)));
     if (Object.keys(moved).length > 0) emit('session', { type: 'session/configChanged', config: moved });
   };
@@ -264,7 +265,7 @@ export function createConfig(ctx: SessionContext): Config {
    * failure here fails the turn rather than prompting with the wrong model: an
    * answer from a model nobody selected is worse than an error saying so.
    */
-  const chooseModel = async (
+  const changeModel = async (
     held: { connection: AcpConnection; sessionId: string },
     chosen: Chosen | undefined,
   ): Promise<void> => {
@@ -285,7 +286,7 @@ export function createConfig(ctx: SessionContext): Config {
      * model by the call it knew instead.
      */
     if (option === undefined) {
-      if (settings.model === chosen.id) return;
+      if (values.model === chosen.id) return;
       await held.connection.setModel({ sessionId: held.sessionId, modelId: chosen.id });
       configChanged('model', chosen.id);
       return;
@@ -296,8 +297,8 @@ export function createConfig(ctx: SessionContext): Config {
       configId: option.id,
       value: chosen.id,
     });
-    offersChanged(answer.configOptions);
-    learnOffers(answer.configOptions);
+    configOptionsChanged(answer.configOptions);
+    learnConfigOptions(answer.configOptions);
   };
 
   /**
@@ -369,8 +370,8 @@ export function createConfig(ctx: SessionContext): Config {
     if (key === 'model' && option === undefined && !(listedModels ?? []).some((one) => one.id === value)) {
       return `${provider}: this ACP server names no model option, so model cannot be set`;
     }
-    const before = settings[key];
-    settings[key] = value;
+    const before = values[key];
+    values[key] = value;
     try {
       if (option !== undefined) {
         // Built for the option's own kind, which the guards above have said:
@@ -378,8 +379,8 @@ export function createConfig(ctx: SessionContext): Config {
         const answer = option.type === 'boolean'
           ? await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, type: 'boolean', value: value === true })
           : await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, value: String(value) });
-        offersChanged(answer.configOptions);
-        learnOffers(answer.configOptions);
+        configOptionsChanged(answer.configOptions);
+        learnConfigOptions(answer.configOptions);
       }
       else if (key === 'model') {
         await held.connection.setModel({ sessionId: held.sessionId, modelId: String(value) });
@@ -391,7 +392,7 @@ export function createConfig(ctx: SessionContext): Config {
       return true;
     }
     catch (why: unknown) {
-      settings[key] = before;
+      values[key] = before;
       return `${provider}: ${key} was not set: ${messageOf(why)}`;
     }
   };
@@ -410,7 +411,7 @@ export function createConfig(ctx: SessionContext): Config {
     if (ctx.opening === undefined) {
       const refused = refusalOf(key, value);
       if (refused !== undefined) return refused;
-      settings[key] = value;
+      values[key] = value;
       return true;
     }
     setting.push(key);
@@ -456,8 +457,8 @@ export function createConfig(ctx: SessionContext): Config {
    * `asked` is the config every client held as the open began: the values the
    * session was started with and every one a client set while no server was
    * open. The open reads it before it learns the server's own state, which
-   * `learnModes`, `learnOffers` and `learnModels` write over `settings`. Each
-   * value is sent where the server offers it and sits elsewhere, through the
+   * `learnModes`, `learnConfigOptions` and `learnModels` write over `values`.
+   * Each value is sent where the server offers it and sits elsewhere, through the
    * call `setConfig` makes for its key, as VS Code's Claude agent starts its
    * runtime on the model the session chose before it launched.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1160-L1177
@@ -473,7 +474,7 @@ export function createConfig(ctx: SessionContext): Config {
   ): Promise<void> => {
     for (const [key, value] of Object.entries(asked)) {
       const offered = offeredFor(key);
-      if (offered === undefined || value === settings[key]) continue;
+      if (offered === undefined || value === values[key]) continue;
       const taken = offered.includes(value)
         ? await applyConfig(held, key, value)
         : `${provider}: the server does not offer ${key} ${JSON.stringify(value)}`;
@@ -483,13 +484,13 @@ export function createConfig(ctx: SessionContext): Config {
 
   return {
     learnModes,
-    learnOffers,
+    learnConfigOptions,
     learnModels,
     configChanged,
-    offersChanged,
+    configOptionsChanged,
     syncConfig,
     schemaOf,
-    chooseModel,
+    changeModel,
     sendAsked,
     models,
     setConfig,
