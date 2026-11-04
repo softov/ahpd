@@ -921,6 +921,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3101-L3103
        */
       const uri = sessionFor(channel);
+      /*
+       * A session whose lead chat runs on another host has its bits there.
+       *
+       * The read or the archive goes to that host, which answers the client
+       * and says the bit as the session's action, kept here as it is said: the
+       * host running a session is the one producer of its state, and a relay
+       * forwards a client's messages to it.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+       */
+      const held = sessions.get(uri);
+      if (held !== undefined && ctx.leadOf(held)?.flag?.(
+        type === 'session/isReadChanged' ? 'read' : 'archived',
+        type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
+        'session',
+      ) === true) return;
       const flag = (): void => {
         const read = type === 'session/isReadChanged';
         const chats = read ? readAggregate(ctx, uri) : [];

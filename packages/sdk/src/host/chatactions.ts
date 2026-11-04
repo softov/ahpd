@@ -13,10 +13,12 @@ import type { ConnectionContext, HostContext } from './context.js';
 /**
  * Set or clear one of a session's own two bits, and say so.
  *
- * A session's `IsRead` and `IsArchived` are this host's rather than a
- * backend's: a harness asked would have no idea whether a person had read a
- * transcript. `session/isReadChanged` and `session/isArchivedChanged` reach
- * this, a client's on a session channel and this host's own.
+ * A session's `IsRead` and `IsArchived` are the host's that runs it rather
+ * than a harness's: a harness asked would have no idea whether a person had
+ * read a transcript. `session/isReadChanged` and `session/isArchivedChanged`
+ * reach this, a client's on a session channel, this host's own, and those of
+ * the host inside that runs a session in a machine, said under `origin` where
+ * they answer a client.
  *
  * A read bit moved here is the session's. The chats it moves with, and when,
  * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
@@ -36,6 +38,7 @@ export function sessionFlag(
   bit: number,
   on: boolean,
   action: Record<string, unknown>,
+  origin?: Origin,
 ): boolean {
   const before = ctx.kept.flags(idOf(uri));
   const after = on ? before | bit : before & ~bit;
@@ -45,7 +48,7 @@ export function sessionFlag(
   // Every client watching, and the catalogue: a flag one client sets is a flag
   // the others have to see, which is what having a host for this buys over
   // each client keeping its own.
-  ctx.dispatch(uri, action);
+  ctx.dispatch(uri, action, origin);
   ctx.summaryMoved(uri);
   // Archived: asleep, or its tree given back where it is asleep already, and
   // let go by the residency where nothing holds it.
@@ -270,6 +273,7 @@ export function chatAction(
   if (bitOf !== undefined && byChat.get(channel)?.chat.flag?.(
     bitOf === Status.IsRead ? 'read' : 'archived',
     bitOf === Status.IsRead ? action.isRead === true : action.isArchived === true,
+    'chat',
   ) === true) return;
   /*
    * A session's default chat is not archived on its own.

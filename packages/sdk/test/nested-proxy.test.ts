@@ -867,6 +867,41 @@ it('carries a read and an archive of the lead chat to the host inside, whose bit
 });
 
 /*
+ * The session's own read and archived bits are the host inside's too, as the
+ * host running a session is the one producer of its state in VS Code's designs
+ * across hosts: a client's read and archive of the session go there, and the
+ * bit the host inside says, at the client's action or a turn's end, is the
+ * session's out here, said once.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+ */
+it('carries a read and an archive of the session to the host inside, whose bits the session holds', async () => {
+  const inner = innerHost(backend());
+  const { host, client, dispatch, told } = await outside(inner);
+  const session = 'ahp-session:/outer';
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  await until(() => told('chat/turnComplete').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await settleInner();
+  const carried = (type: string): Bag[] => inner.messages
+    .filter((message) => message.method === 'dispatchAction' && message.params?.action?.type === type);
+  // The turn's end moved the session's read bit inside, and a client heard it once.
+  expect(told('session/isReadChanged').map((one) => one.action.isRead)).not.toContain(true);
+  expect(told('session/isReadChanged').length).toBeLessThanOrEqual(1);
+
+  await dispatch(2, { type: 'session/isReadChanged', isRead: true }, session);
+  await until(() => told('session/isReadChanged').some((one) => one.origin?.clientSeq === 2));
+  expect(carried('session/isReadChanged').map((message) => message.params.action)).toEqual([{ type: 'session/isReadChanged', isRead: true }]);
+  const read = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: Bag } };
+  expect(Number((read.snapshot.state.summary as Bag | undefined)?.status ?? read.snapshot.state.status) & Status.IsRead).toBe(Status.IsRead);
+
+  await dispatch(3, { type: 'session/isArchivedChanged', isArchived: true }, session);
+  await until(() => told('session/isArchivedChanged').some((one) => one.origin?.clientSeq === 3));
+  expect(carried('session/isArchivedChanged').map((message) => message.params.action)).toEqual([{ type: 'session/isArchivedChanged', isArchived: true }]);
+  expect(told('session/isArchivedChanged').filter((one) => one.origin?.clientSeq === 3).map((one) => one.rejectionReason)).toEqual([undefined]);
+  await host.close();
+});
+
+/*
  * The host inside refusing what the host outside handed it is a refusal of the
  * client outside that sent it, with the inside's reason, and the chat stays as
  * it was. The echo backend takes no message mid-turn.

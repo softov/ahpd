@@ -1625,11 +1625,15 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       carry('chat', { type: 'chat/draftChanged', ...(draft === undefined ? {} : { draft }) });
     },
     /*
-     * The host inside runs the chat, so a client's read and archive go there,
-     * and its answer and its bits come back as every action of the chat does.
+     * The host inside runs the session and its chat, so a client's read and
+     * archive of either go there, and its answer and its bits come back as
+     * every action of the session and the chat does.
      */
-    flag: (bit: 'read' | 'archived', on: boolean): boolean => {
-      carry('chat', bit === 'read' ? { type: 'chat/isReadChanged', isRead: on } : { type: 'chat/isArchivedChanged', isArchived: on });
+    flag: (bit: 'read' | 'archived', on: boolean, of: 'chat' | 'session'): boolean => {
+      if (of === 'session') {
+        carry('session', bit === 'read' ? { type: 'session/isReadChanged', isRead: on } : { type: 'session/isArchivedChanged', isArchived: on });
+      }
+      else carry('chat', bit === 'read' ? { type: 'chat/isReadChanged', isRead: on } : { type: 'chat/isArchivedChanged', isArchived: on });
       return true;
     },
     /* Taken only while the inner chat has a turn running. */
