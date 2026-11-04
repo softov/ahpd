@@ -409,9 +409,13 @@ export function createTurns(ctx: SessionContext): Turns {
      * A steering message the CLI was handed and has not taken in, taken back
      * by a client: withdrawn, as the reference host has its provider withdraw
      * a steering message a client removes after handing it over. One the CLI
-     * has not read leaves its input; one it holds is answered nowhere. Nothing
-     * is said: the host has said the removal.
+     * has not read leaves its input; one it holds is withdrawn through the
+     * CLI's own `cancel_async_message`, as VS Code's Copilot withdraws one its
+     * SDK holds, and one the CLI no longer holds runs and is answered in the
+     * turn, as Copilot keeps one already delivered. Nothing is said: the host
+     * has said the removal.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6884-L6905
      */
     withdrawSteeringMessage: (id) => {
       for (const [uuid, owed] of [...ctx.owed]) {
@@ -420,8 +424,14 @@ export function createTurns(ctx: SessionContext): Turns {
         if (unread >= 0) {
           ctx.waiting.splice(unread, 1);
           ctx.owed.delete(uuid);
+          continue;
         }
-        else owed.withdrawn = true;
+        // The SDK's own request for the control the CLI names
+        // `cancel_async_message`, which the SDK's types leave undeclared.
+        const handle = ctx.handle as typeof ctx.handle & { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
+        void handle.cancelAsyncMessage(uuid).then((cancelled) => {
+          if (cancelled && ctx.handle === handle) ctx.owed.delete(uuid);
+        }, () => {});
       }
       if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
     },

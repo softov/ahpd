@@ -57,7 +57,13 @@ const sdk = vi.hoisted(() => {
     started: [] as Bag[],
     /** What the SDK's transcript reader returns. */
     messages: [] as Record<string, unknown>[],
-    reset() { state.held = []; state.wake = undefined; state.handed = []; state.started = []; state.messages = []; },
+    /** The uuids the session asked the CLI to cancel, and whether the CLI still held them. */
+    cancelled: [] as string[],
+    holds: true,
+    reset() {
+      state.held = []; state.wake = undefined; state.handed = []; state.started = []; state.messages = [];
+      state.cancelled = []; state.holds = true;
+    },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
       state.wake?.();
@@ -84,6 +90,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
         }
       },
       interrupt: async () => {},
+      // The SDK's request for the CLI's `cancel_async_message`, answering whether it still held the message.
+      cancelAsyncMessage: async (uuid: string) => { sdk.cancelled.push(uuid); return sdk.holds; },
       setPermissionMode: async () => {},
       setModel: async () => {},
       applyFlagSettings: async () => {},
@@ -330,6 +338,47 @@ it('answers a steering message the CLI runs after the turn\'s last answer inside
 it('hands the CLI a steering message at priority now, and a turn prompt at its default', async () => {
   await liveLate(LATE);
   expect(sdk.handed.map((one) => [one.uuid, one.priority])).toEqual([[FIRST, undefined], [LATE, 'now']]);
+});
+
+/*
+ * A steering message a client takes back while the CLI holds it is withdrawn
+ * through the CLI's `cancel_async_message`, as VS Code's Copilot withdraws one
+ * its SDK holds, and the turn ends at the answer to its own prompt; one the CLI
+ * no longer held runs, and the turn waits for its answer, as Copilot keeps one
+ * already delivered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6884-L6905
+ */
+const withdrawn = async (holds: boolean) => {
+  const live = await opened();
+  sdk.holds = holds;
+  const [first, rest] = late();
+  const [answered, after] = splitAfter(rest, (frame) => frame.type === 'result');
+  live.session.sendMessage(FIRST, ALPHA_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  expect(live.session.sendSteeringMessage?.({ id: LATE, text: BETA_TEXT })).toBe(true);
+  await settle();
+  live.session.withdrawSteeringMessage?.(LATE);
+  await settle();
+  sdk.push(...answered);
+  await settle();
+  return { ...live, after };
+};
+
+it('withdraws a steering message the CLI holds through its cancel, and ends the turn at its own answer', async () => {
+  const { chat } = await withdrawn(true);
+  expect(sdk.cancelled).toEqual([LATE]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([FIRST]);
+});
+
+it('keeps a steering message the CLI no longer held, and ends the turn at its answer', async () => {
+  const { chat, after } = await withdrawn(false);
+  expect(sdk.cancelled).toEqual([LATE]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete')).toEqual([]);
+  sdk.push(...after);
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([FIRST]);
 });
 
 it('gives a steering message whose id is not a UUID a uuid of its own, and answers it in the turn', async () => {
