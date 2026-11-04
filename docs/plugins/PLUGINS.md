@@ -2382,10 +2382,10 @@ A diff with no `oldText` is a file the agent created, which the changeset says b
 A diff of a path outside the session's own directories is shown and not recorded, because it is something the agent says it did somewhere this session was never given.
 Every file the agent writes through `fs/write_text_file` is captured the same way, once before the write and once after it, and the before is read before the write truncates the file.
 
-A `!command` in the composer is the host's shell turn, not the server's: the
-bridge implements `ran`, so the daemon spawns the command in one of its own
-terminals, opens a `terminal` tool call around it and closes the turn with what
-it printed. Nothing about the command reaches the ACP server, and the server is
+A `!command` in the composer is the host's local command, not the server's: the
+daemon spawns the command in one of its own terminals, opens a `terminal` tool
+call around it and closes the turn with what it printed, as it does for every
+backend. Nothing about the command reaches the ACP server, and the server is
 never asked to stop for it - one already mid-prompt stays mid-prompt.
 
 A command that is not there fails the turn that asked for it in a sentence naming

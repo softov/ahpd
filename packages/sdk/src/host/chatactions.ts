@@ -6,6 +6,7 @@ import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentCh
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
+import type { Session } from '../types/session.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
 import type { Origin } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -336,20 +337,54 @@ export function chatAction(
     });
   };
   /*
+   * The command a start's text runs in a chat of `on`'s session, as this
+   * host's local command: run once the client's start is said and before the
+   * turn is admitted, so it runs in a chat that is read-only, archived or
+   * whose agent has ended as much as in any other, as the reference host runs
+   * its local commands ahead of its admission.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+   */
+  const commandOf = (on: Session): string | undefined =>
+    (type === 'chat/turnStarted' ? ctx.commandIn(on, String(messageOf(action).text ?? '')) : undefined);
+  /**
+   * The client's start said, and its command `run` as the turn on `chat`, a
+   * chat of `on`'s session. While an embedder is on its way out the turn ends
+   * unrun in the embedder's words, as every other turn is refused then.
+   */
+  const bang = (on: Session, chat: string, run: string): void => {
+    if (ctx.refusing !== undefined) {
+      unsent(chat, 'rejected', ctx.refusing);
+      return;
+    }
+    const turnId = String(action.turnId ?? '');
+    if (!ctx.answered(origin)) dispatch(chat, action, origin);
+    void fire({ type: 'message', session: on.uri, chat, turn: turnId, text: String(messageOf(action).text ?? '') });
+    const by = ownerFor(connection);
+    if (by !== undefined) ctx.senders.set(turnId, by);
+    ctx.sentBy.set(turnId, connection);
+    ctx.bang(on, chat, turnId, run);
+  };
+  /*
    * A worker's chat is read-only, whichever side of a restart it is on.
    *
    * Nobody types into a subagent: its conversation is the harness's work
    * inside somebody else's call. What a client may still send on one is
    * an answer to what the worker asked there and a stop, and those are
    * the lead chat's backend's to act on, since that backend runs the
-   * worker. A start is ended in the reference host's words for a read-only
-   * chat, and anything else is refused here, before the resume below, which
-   * would start an agent for a chat the client cannot write to.
+   * worker. A command typed into one runs as this host's local command,
+   * ahead of the admission that refuses any other start in the reference
+   * host's words for a read-only chat; anything else is refused here, before
+   * the resume below, which would start an agent for a chat the client
+   * cannot write to.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
   const worker = toolCallOfSubagentChat(channel) !== undefined;
   if (worker && type === 'chat/turnStarted') {
-    unsent(channel, 'readOnly', 'This chat is read-only.');
+    const owning = sessions.get(sessionFor(channel));
+    const lead = owning === undefined ? undefined : leadOf(owning);
+    const command = lead === undefined ? undefined : commandOf(lead);
+    if (lead !== undefined && command !== undefined) bang(lead, channel, command);
+    else unsent(channel, 'readOnly', 'This chat is read-only.');
     return;
   }
   if (worker && !WORKER_ACTIONS.has(type)) {
@@ -626,6 +661,11 @@ export function chatAction(
   }
   if (!session) {
     nothing();
+    return;
+  }
+  const command = commandOf(session);
+  if (command !== undefined) {
+    bang(session, session.chatUri, command);
     return;
   }
   /*

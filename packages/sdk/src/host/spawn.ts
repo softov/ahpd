@@ -1680,7 +1680,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     // The name it is held under, which is the session's own and not its
     // provider's. Recorded so every other answer about it uses that same string.
     names.set(idOf(uri), uri);
-    byChat.set(chatUri, { uri, chat: session });
+    byChat.set(chatUri, { uri, chat: session, say: (action) => { wired.emit('chat', action); } });
     /*
      * The answer this chat is born with, written down and not said.
      *

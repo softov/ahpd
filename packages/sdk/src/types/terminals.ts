@@ -5,6 +5,32 @@ import type { OnWire } from './wire.js';
 import type { Bag } from './common.js';
 import type { Emit } from './session.js';
 
+/**
+ * The terminal a `!` command runs in, as soon as it is open.
+ *
+ * `isPty` is the terminal's own, as its state says it: a client reads it to
+ * decide whether the output holds VT sequences. Absent where the state says
+ * nothing.
+ */
+export interface CommandTerminal {
+  /** The channel a client subscribes to. */
+  uri: string;
+  /** Whether a pseudoterminal runs the command. */
+  isPty?: boolean;
+}
+
+/** What a `!` command did, once it has run to its exit. */
+export interface Ran {
+  /** Everything it printed. Empty when it printed nothing. */
+  output: string;
+  /** The terminal it ran in. */
+  terminal: string;
+  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
+  isPty?: boolean;
+  /** What it exited with. */
+  code: number;
+}
+
 /** Who currently holds a terminal: a connected client, or a session. */
 /**
  * Who is holding a terminal, in the protocol's own type.

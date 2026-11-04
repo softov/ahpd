@@ -1,6 +1,6 @@
 ---
 title: A `!` command is the host's
-status: todo
+status: done
 depends: [task-05-the-host-owns-the-queue.md]
 layer: host
 refs:
@@ -38,5 +38,13 @@ Its call completes with the exit or the failure, and its turn completes.
 
 ## Resume
 
-- **From 05:** `ran` takes no queued form; a queued `!` message reaches it once the queue drain admits it, under the drain's turn.
+- **Done:** steps 1 to 6, at the commit that closes this task, with a case for each validation item.
+- **Contract:** `ran` and `RunCommand` left the Session contract; `CommandTerminal` and `Ran` are the host's terminal types.
+- **Runners gone:** the command runners of Claude, cofold, pi and ACP, with the command forms of their queues.
+- **The bot and the nested proxy:** their cases sit in `bot-chat` and `nested-proxy`, whose harnesses build those backends.
+- **Session in a machine:** its `!` turn is carried inside like any turn, and the host inside runs it as its local command.
+- **Why inside:** task 09 carries a client's action on such a session whole to the host inside.
+- **Embedder's hold:** a `!` turn started while an embedder is on its way out ends unrun, in the embedder's words.
+- **Cases moved:** the call times of a command, once asked of ACP, Claude and pi, are asked of the host.
+- **Unsettled:** VS Code seeds a provisional session title from a command, and here the backends title their sessions.
 

@@ -25,9 +25,9 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, callTimes, createClientCalls, holdsTheQueue, idFor, partsOf, reason, startOf, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
+import { activityOf, bag, callTimes, createClientCalls, holdsTheQueue, idFor, partsOf, reason, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session, Start, StatusBits, ToolEffects,
+  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
@@ -107,7 +107,7 @@ const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
 
 /**
  * A turn said while pi ran another: what it runs, the queued message it came
- * from if it did, and the turn as it was said. A command carries what runs it.
+ * from if it did, and the turn as it was said.
  */
 interface Waiting {
   said: Bag;
@@ -115,7 +115,6 @@ interface Waiting {
   from?: MessageFrom | undefined;
   queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
-  command?: { text: string; run: RunCommand };
 }
 
 /**
@@ -1110,7 +1109,7 @@ export function piSession(
         origin: rest.from?.origin ?? { kind: 'user' },
         ...(rest.from?._meta !== undefined ? { _meta: rest.from._meta } : {}),
         ...(rest.attachments !== undefined && rest.attachments.length > 0 ? { attachments: rest.attachments } : {}),
-        ...(rest.command === undefined && ran !== undefined
+        ...(ran !== undefined
           ? { model: { id: ran, ...(rest.model?.config !== undefined ? { config: rest.model.config } : {}) } }
           : {}),
       },
@@ -1272,21 +1271,17 @@ export function piSession(
       // Steering first, as the drain below takes it.
       const [head] = queued.splice(Math.max(0, queued.findIndex((one) => one.steering === true)), 1);
       if (head === undefined) return;
-      const held = bag(head.command);
       hand(String(head.id), String(bag(head.message).text ?? ''), {
         queuedMessageId: String(head.id),
-        ...(typeof held.text === 'string'
-          ? { command: { text: held.text, run: held.run as RunCommand } }
-          : { model: head.model as Chosen | undefined, attachments: attachmentsOf(head.message) }),
+        model: head.model as Chosen | undefined,
+        attachments: attachmentsOf(head.message),
       });
       return;
     }
     // A turn said while another ran goes first, as it was said.
     const first = waiting.shift();
     if (first !== undefined) {
-      const turnId = String(first.said.id);
-      if (first.command !== undefined) runCommand(turnId, first.command.text, first.command.run, first.queuedMessageId, first.said);
-      else begin(turnId, String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
+      begin(String(first.said.id), String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
       return;
     }
     // Nor behind a failure a client can resume, which waits to be resumed.
@@ -1300,13 +1295,6 @@ export function piSession(
     const [next] = queued.splice(Math.max(0, queued.findIndex((held) => held.steering === true)), 1);
     if (next === undefined) return;
     const id = String(next.id);
-    const command = bag(next.command);
-    if (typeof command.text === 'string') {
-      // A `!command` that waited. What waited is the command, not its text, so
-      // it is run rather than asked about.
-      runCommand(id, String(command.text), command.run as RunCommand, id);
-      return;
-    }
     begin(
       id,
       String(bag(next.message).text ?? ''),
@@ -1315,99 +1303,6 @@ export function piSession(
       id,
       attachmentsOf(next.message),
     );
-  };
-
-  /**
-   * A person's `!command`, run by the host in one of its own shells.
-   *
-   * pi has a shell of its own, but this turn is not pi's: the person asked the
-   * host to run something, and the host owns the terminal a client watches.
-   */
-  const runCommand = (turnId: string, command: string, run: RunCommand, queuedMessageId?: string, said?: Bag): void => {
-    const startedAt = said === undefined ? new Date().toISOString() : String(said.startedAt);
-    const toolCallId = `${turnId}:shell`;
-    const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-    /*
-     * A `terminal` call shown as `Terminal`, with the command as its intention,
-     * its line and its input, as the reference host's own: a client draws a
-     * shell by that name.
-     * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L67-L82
-     */
-    const started: Bag = { toolName: 'terminal', displayName: 'Terminal', intention: command };
-    const part: Bag = {
-      kind: 'toolCall',
-      toolCall: { toolCallId, ...started, status: 'running' },
-    };
-    // A command said while another turn ran runs as it was said.
-    if (said !== undefined) (said.responseParts as Bag[]).push(part);
-    active = said ?? { id: turnId, startedAt, message, responseParts: [part] };
-    mapping = undefined;
-    if (said === undefined) emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message, ...(queuedMessageId !== undefined ? { queuedMessageId } : {}) });
-    emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
-    const held = bag(part.toolCall);
-    held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
-    /*
-     * Onto the held call and into the action, from one object: the snapshot a
-     * client reads later is the call a client watching was sent.
-     */
-    const ready: Bag = { invocationMessage: command, confirmed: 'not-needed', toolInput: command };
-    Object.assign(held, ready);
-    emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, ...ready, _meta: held._meta });
-    activity.say(`Running ${command}`);
-
-    /*
-     * The block a client opens the command's terminal from. `isPty` is the
-     * terminal's own, which a client reads to decide whether the output holds
-     * VT sequences, and it is left out where the host says nothing.
-     */
-    const terminalOf = (terminal: CommandTerminal): Bag => ({
-      type: 'terminal',
-      resource: terminal.uri,
-      title: 'Terminal',
-      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
-    });
-    void run(toolCallId, (opened) => {
-      if (active === undefined || String(active.id) !== turnId) return;
-      /*
-       * The terminal as soon as it opens, so a client watches the output
-       * arrive. Onto the call and into the action from one object, and with
-       * no `_meta`, which the reducer would put in place of the call's.
-       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
-       */
-      const content = [terminalOf(opened)];
-      held.content = content;
-      emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
-    }).then((ran) => {
-      // The terminal again, with how the command ended, and then the text it printed.
-      const content: Bag[] = [
-        ...(ran.terminal === undefined ? [] : [{
-          ...terminalOf({ uri: ran.terminal, ...(ran.isPty === undefined ? {} : { isPty: ran.isPty }) }),
-          result: {
-            ...(ran.code !== undefined ? { exitCode: ran.code } : {}),
-            ...(ran.output === '' ? {} : { preview: ran.output }),
-          },
-        }]),
-        ...(ran.output === '' ? [] : [{ type: 'text', text: ran.output }]),
-      ];
-      const result: Bag = {
-        success: ran.success,
-        pastTenseMessage: ran.said,
-        ...(content.length === 0 ? {} : { content }),
-        ...(ran.success
-          ? {}
-          : { error: { message: ran.code === undefined ? ran.said : `Exited ${ran.code}` } }),
-      };
-      Object.assign(held, result, { status: 'completed' });
-      held._meta = withCallTimes(bag(held._meta), callTimes(startOf(held._meta) ?? Date.now(), Date.now()));
-      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, _meta: held._meta, result });
-      finish('complete');
-    }).catch((error: unknown) => {
-      finish('error', reason(error));
-      // A command's turn starts the queue however it ended, as the reference
-      // host drains after every local command.
-      // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
-      startNext();
-    });
   };
 
   /** The model a client picked, taken by the next send: pi keeps a model it took. */
@@ -1503,12 +1398,6 @@ export function piSession(
     changeModel: (model) => { chosen = model; },
     // pi runs as its own agent, so an agent picked is kept by nothing.
     changeAgent: () => {},
-
-    // A command sent as a turn while pi runs another is said now and run after it.
-    ran: (turnId, command, run) => {
-      if (active !== undefined || waiting.length > 0) hand(turnId, `!${command}`, { command: { text: command, run } });
-      else runCommand(turnId, command, run);
-    },
 
     /**
      * A message into the turn that is already running.

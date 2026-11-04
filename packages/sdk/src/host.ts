@@ -313,9 +313,8 @@ export function createHost(options: HostOptions): Host {
    * session started fresh has none, and its backend's record is not read.
    */
   const resumedSessions = new Set<string>();
-  /**
-  /** Every chat, back to the session holding it. */
-  const byChat = new Claiming<{ uri: string; chat: Session }>(claims, 'chat', (_, held) => held.uri);
+  /** Every chat, back to the session holding it, and the road its turns are said on. */
+  const byChat = new Claiming<{ uri: string; chat: Session; say(action: Record<string, unknown>): void }>(claims, 'chat', (_, held) => held.uri);
   /**
    * The peer directories each chat was given, when they are not its session's.
    *
@@ -1484,7 +1483,7 @@ export function createHost(options: HostOptions): Host {
     removeSession, restart, restartChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
     permitted, toolDefinitions, retool, renameChat,
-    commanded, terminalInfo, heldTerminals, changed, due, startForAutomation,
+    terminalInfo, heldTerminals, changed, due, startForAutomation,
     past, history, subHistory, titles, refresh, held,
     snapshotOf, value,
   } = ctx;

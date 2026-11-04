@@ -1,5 +1,5 @@
 import type { Store, RunHandle } from '@cofold/agents';
-import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, RunCommand, Start } from '@ahpd/sdk';
+import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Start } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
@@ -10,8 +10,7 @@ import type { Turns } from './turns.js';
 
 /**
  * A turn said while a run held another: what it runs, the queued message it
- * came from if it did, and the turn as it was said. A command carries what
- * runs it.
+ * came from if it did, and the turn as it was said.
  */
 export interface Waiting {
   said: Bag;
@@ -19,7 +18,6 @@ export interface Waiting {
   from?: MessageFrom | undefined;
   queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
-  command?: { text: string; run: RunCommand };
 }
 
 /**

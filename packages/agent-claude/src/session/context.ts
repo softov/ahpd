@@ -213,9 +213,7 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * About one turn, not about the session for the rest of its life. It reads
    * into `Status.Error`, the status a chat's state opens with, as the turn's
    * `chat/error` leaves it in every client's. Starting a turn supersedes it:
-   * what went wrong last time is not what is happening now. A `!` command
-   * that failed is a call that failed, in a turn that completed, and sets
-   * nothing here.
+   * what went wrong last time is not what is happening now.
    */
   failed: string | undefined;
   /**

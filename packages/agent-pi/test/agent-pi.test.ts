@@ -630,14 +630,6 @@ it('names where a watched turn ended as the point a fork copies through', async 
   expect(session.forkPoint?.('never-watched')).toBeUndefined();
 });
 
-it('names no point for a !command turn, which is not pi running', async () => {
-  const { session } = opened();
-  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
-  await settled();
-  expect(session.forkPoint?.('t1')).toBeUndefined();
-  expect(session.endPoint?.('t1')).toBeUndefined();
-});
-
 /*
  * A cut pi refuses is logged, and the turn runs on pi's leaf: the reference
  * host logs an agent's cut that failed (agentSideEffects.ts L1982-L1986 at
@@ -737,13 +729,6 @@ it('sends what the turn used, before it ends, and keeps it on the transcript', a
 it('sends no usage for a turn that had no assistant message', async () => {
   const { session, types } = opened();
   session.sendMessage('t1', 'hello');
-  await settled();
-  expect(types('chat')).not.toContain('chat/usage');
-});
-
-it('sends no usage for a !command turn, which is not pi running', async () => {
-  const { session, types } = opened();
-  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
   await settled();
   expect(types('chat')).not.toContain('chat/usage');
 });

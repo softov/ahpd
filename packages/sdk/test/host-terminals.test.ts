@@ -5,7 +5,6 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
-import type { CommandTerminal, Ran, RunCommand } from '../src/types/session.js';
 import type { OpenedTerminal, SpawnPty } from '../src/types/terminals.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
@@ -200,18 +199,63 @@ describe('a command typed into the conversation', () => {
     }
   });
 
-  it('says a command failed when it did', async () => {
+  /*
+   * A command that ran and exited with a code is a call that failed with no
+   * error, since nothing went wrong running it, and its turn is complete, as
+   * the reference host completes the call and ends every local command's turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L141-L148
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L212
+   */
+  it('says a command that exited with a code failed, with no error, and holds its turn complete', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!exit 3' } } },
     });
-    const said = await ended(p, chatUri);
-    const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as {
-      success: boolean; pastTenseMessage: string;
-    };
-    expect(result.success).toBe(false);
-    expect(result.pastTenseMessage).toContain('3');
+    const said = await ended(p, chatUri, 't1');
+    const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as Record<string, unknown> | undefined;
+    expect(result).toMatchObject({ success: false, pastTenseMessage: 'Command exited with code 3' });
+    expect(result).not.toHaveProperty('error');
+    const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string; state: string }[] } };
+    }).snapshot.state.turns;
+    expect(held.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete']]);
+  });
+
+  /*
+   * A command that could not run is a call that failed with why, and its turn
+   * is complete all the same, as the reference host completes the call of a
+   * command that threw and ends the turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L118-L135
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L212
+   */
+  it('says a command that could not run failed with why, and completes its turn', async () => {
+    const host = createHost({
+      path: tmpdir(),
+      agents: [claude({ paths: [tmpdir()] })],
+      terminals: { create: () => { throw new Error('no shell to be had'); } },
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/unrun';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(tmpdir())] } });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!ls' } } },
+    });
+    const said = await ended(p, chatUri, 't1');
+    expect(said.find((one) => one.type === 'chat/toolCallComplete')?.result).toEqual({
+      success: false,
+      pastTenseMessage: 'Failed to run command',
+      error: { message: 'no shell to be had' },
+    });
+    expect(said.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't1')).toBe(true);
+    expect(sdk.said).toEqual([]);
   });
 
   it('sends a lone exclamation mark to the agent, because it is not a command', async () => {
@@ -355,10 +399,10 @@ describe('a command typed into the conversation', () => {
 
   /*
    * A command sent as a turn while a turn runs is taken: its start takes the
-   * running turn's place, as the reducer replaces the active turn, and Claude
-   * runs it at once, as the reference host runs a `!` command it is handed
-   * without forwarding it to the agent.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
+   * running turn's place, as the reducer replaces the active turn, and this
+   * host runs it at once as its local command, as the reference host runs a
+   * `!` command it is handed without forwarding it to the agent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L40
    */
   it('runs a command sent as a turn while a turn runs, in that turn\'s place', async () => {
     const { client, peer: p, chatUri } = await shelled();
@@ -387,88 +431,97 @@ describe('a command typed into the conversation', () => {
     expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
   });
 
-  it('ends a command\'s turn in an error when the backend cannot hold one, rather than asking it', async () => {
+  it('says a command on pipes runs in no pseudoterminal', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
+    });
+    const said = await ended(p, chatUri, 't1');
+    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: false };
+    expect(said.find((one) => one.type === 'chat/toolCallContentChanged')?.content).toEqual([named]);
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { content: unknown[] } | undefined;
+    expect(done?.content[0]).toMatchObject({ ...named, result: { exitCode: 0 } });
+  });
+
+  it('says when the command ran, and how long it took', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo timed', origin: { kind: 'user' } } } },
+    });
+    const said = await ended(p, chatUri, 't1');
+    const metaOf = (type: string): Record<string, unknown> =>
+      (said.find((one) => one.type === type)?._meta ?? {}) as Record<string, unknown>;
+    // Started when it was ready to run, and not yet ended then.
+    expect(metaOf('chat/toolCallReady')['ahpd.startedAt']).toEqual(expect.any(String));
+    expect(metaOf('chat/toolCallReady')['ahpd.endedAt']).toBeUndefined();
+    expect(metaOf('chat/toolCallComplete')).toMatchObject({
+      'ahpd.startedAt': expect.any(String),
+      'ahpd.endedAt': expect.any(String),
+      'ahpd.durationMs': expect.any(Number),
+    });
+  });
+
+  /** A session of the echo example, which runs no command of its own and says back what it is handed, `pace` apart. */
+  const echoing = async (pace = 0) => {
     const { echo } = await import('../../../examples/echo/agent.js');
-    const host = createHost({ path: tmpdir(), agents: [echo({ path: tmpdir(), pace: 0 })], ...machine() });
+    const host = createHost({ path: tmpdir(), agents: [echo({ path: tmpdir(), pace })], ...machine() });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0']));
-    const uri = 'ahp-session:/no-command';
-    await client.handle({
-      method: 'createSession',
-      params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(tmpdir())] },
-    });
+    const uri = 'ahp-session:/echoing';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(tmpdir())] } });
     const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo must-not-run' } } },
-    });
-    await settle();
-    // Said, and ended before anything is asked. `echo` implements no `ran`, and
-    // a host that handed `!echo must-not-run` to its model would answer with
-    // prose about the command - which is what the prefix exists to prevent.
-    // The turn ends in an error saying why, as VS Code's host ends a turn its
-    // admission refuses.
-    const ended = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action as
-      { part?: { error?: { message?: string } } } | undefined;
-    expect(ended?.part?.error?.message).toContain('cannot run a command in a turn');
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
-  });
-});
-
-/*
- * What a backend hears about the terminal a `!` command runs in: the terminal
- * as soon as it opens, and whether a pseudoterminal runs it.
- */
-describe('the terminal a command runs in', () => {
-  /** The host's `run` for one `!` command, which the case calls by hand. */
-  const commanding = async (pty?: SpawnPty): Promise<RunCommand> => {
-    const runs: RunCommand[] = [];
-    const inner = claude({ paths: [tmpdir()] });
-    const agent: Agent = { ...inner, create: (start) => ({ ...inner.create(start), ran: (_turnId, _command, run) => { runs.push(run); } }) };
-    const host = createHost({
-      path: tmpdir(),
-      agents: [agent],
-      ...machine(),
-      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
-    });
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
-    const uri = 'ahp-session:/ran';
-    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(tmpdir())] } });
-    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { defaultChat: string } };
-    }).snapshot.state.defaultChat;
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
-    });
-    const run = runs[0];
-    if (run === undefined) throw new Error('the host handed the backend no run');
-    return run;
+    return { client, peer: p, chatUri };
   };
 
-  it('tells the backend the terminal as it opens, and that a pseudoterminal runs it', async () => {
-    const pty = fakePty();
-    const run = await commanding(pty.spawn);
-    const seen: CommandTerminal[] = [];
-    const ran = run('call-1', (terminal) => { seen.push(terminal); });
-    // Open, while the command has printed nothing and has not ended.
-    expect(seen).toEqual([{ uri: expect.stringMatching(/^ahp-terminal:/), isPty: true }]);
-    pty.say('out\r\n');
-    pty.exit(0);
-    expect(await ran).toMatchObject({ success: true, terminal: seen[0]?.uri, isPty: true, code: 0 });
+  /*
+   * A queued command on an idle chat: the client's set said first, then the
+   * drain's start for it, and then the command run as that turn's local
+   * command, as the reference host's drain admits a queued message and its
+   * local command takes the turn, whatever agent the chat has.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L326
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L40
+   */
+  it('runs a queued one on an idle chat once the drain starts its turn, after the set', async () => {
+    const { client, peer: p, chatUri } = await echoing();
+    queue(client, chatUri, 'q1', '!echo drained');
+    const said = await ended(p, chatUri, 'q1');
+    const told = ['chat/pendingMessageSet', 'chat/turnStarted', 'chat/toolCallStart'];
+    expect(said.map((one) => String(one.type)).filter((type) => told.includes(type))).toEqual(told);
+    expect(said.find((one) => one.type === 'chat/turnStarted')).toMatchObject({ queuedMessageId: 'q1', message: { text: '!echo drained' } });
+    expect(said.find((one) => one.type === 'chat/toolCallStart')).toMatchObject({ toolName: 'terminal', intention: 'echo drained' });
+    // Never said back: the agent was not handed it.
+    expect(said.some((one) => one.type === 'chat/responsePart')).toBe(false);
   });
 
-  it('says a command on pipes runs in no pseudoterminal', async () => {
-    const run = await commanding();
-    const seen: CommandTerminal[] = [];
-    const done: Ran = await run('call-1', (terminal) => { seen.push(terminal); });
-    expect(seen).toEqual([{ uri: done.terminal, isPty: false }]);
-    expect(done).toMatchObject({ success: true, isPty: false, output: expect.stringContaining('said-on-pipes') });
+  /*
+   * A command sent as a turn while another runs runs at once, on a backend
+   * that runs no command of its own as much as on any other: the reference
+   * host runs its local commands ahead of the admission a question waits on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+   */
+  it('runs one sent while another turn runs at once, its terminal open before that turn ends', async () => {
+    const { client, peer: p, chatUri } = await echoing(150);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight nine ten eleven twelve' } } },
+    });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo at-once' } } },
+    });
+    const said = await ended(p, chatUri, 't2');
+    // Named, run and over, while the echo in front of it is still saying its words.
+    expect(said.some((one) => one.type === 'chat/toolCallContentChanged' && one.turnId === 't2')).toBe(true);
+    expect(said.find((one) => one.type === 'chat/toolCallComplete' && one.turnId === 't2')?.result).toMatchObject({ success: true, pastTenseMessage: 'Ran command' });
+    expect(said.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't1')).toBe(false);
+    expect(said.some((one) => one.type === 'chat/delta' && String(one.content).includes('at-once'))).toBe(false);
   });
 });
 

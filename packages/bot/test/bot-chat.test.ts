@@ -10,6 +10,7 @@ import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
+import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { botChatAgent, CHAT_PROVIDER, turns } from '../src/chat.js';
@@ -73,8 +74,10 @@ const actions = (notes: Notes, channel: string): Bag[] => notes
  * this file wants: who may read a bot, and so who may start a chat with one, is
  * the provider's business and is checked there. Nothing below is a question
  * about a grant.
+ *
+ * `more` is what a case adds to the host, such as the shells a command runs in.
  */
-function made() {
+function made(more: Partial<HostOptions> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-chat-'));
   loose.push(root);
   /** Where a bot's own folder goes, which is the plugin's `root` option. */
@@ -109,6 +112,7 @@ function made() {
     resources: fileResources(),
     sessions,
     records,
+    ...more,
   };
   const { options } = foldHostOptions(base, [contribution]);
   const host = createHost(options);
@@ -406,6 +410,31 @@ it('tells the chat\'s holder which turn a client stopped', async () => {
     params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   expect(stops).toEqual([[HELD, 't1']]);
+});
+
+/*
+ * A `!` command typed into a chat with a bot is the host's local command, as
+ * the reference host runs one ahead of its admission whatever agent the chat
+ * has: run in a terminal, its call and its turn completed by the host, and
+ * whoever answers the chat never told of it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+ */
+it('runs a command typed into the chat in a terminal, and tells nobody who answers it', async () => {
+  const { host } = made({ terminals: shellTerminals() });
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const heard: ChatMessage[] = [];
+  turns(HELD).onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', '!echo from-the-bot-chat');
+  const over = (): boolean => actions(notes, CHAT).some((one) => one['type'] === 'chat/turnComplete' && one['turnId'] === 't1');
+  for (let i = 0; i < 200 && !over(); i++) await new Promise((resolve) => { setTimeout(resolve, 25); });
+  expect(over()).toBe(true);
+  const done = actions(notes, CHAT).find((one) => one['type'] === 'chat/toolCallComplete');
+  expect(done).toMatchObject({ turnId: 't1', result: { success: true, pastTenseMessage: 'Ran command' } });
+  expect(JSON.stringify(done?.['result'])).toContain('from-the-bot-chat');
+  expect(heard).toEqual([]);
 });
 
 it('ends a turn with a notice, and with a cancellation', async () => {

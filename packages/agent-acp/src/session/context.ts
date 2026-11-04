@@ -1,5 +1,5 @@
 import type { CreateElicitationResponse, PromptCapabilities, SessionModeState, SessionUpdate } from '@agentclientprotocol/sdk';
-import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, OpenedTerminal, RunCommand, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, OpenedTerminal, Start } from '@ahpd/sdk';
 import type { TypedAnswer } from '../mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
 import type { ClientCalls } from './clientcalls.js';
@@ -11,8 +11,7 @@ import type { Turn } from './turn.js';
 
 /**
  * A turn said while the server ran another: what it runs, the queued message
- * it came from if it did, and the turn as it was said. A command carries what
- * runs it.
+ * it came from if it did, and the turn as it was said.
  */
 export interface Waiting {
   said: Bag;
@@ -20,7 +19,6 @@ export interface Waiting {
   from?: MessageFrom | undefined;
   queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
-  command?: { text: string; run: RunCommand };
 }
 
 /**

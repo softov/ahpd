@@ -357,43 +357,6 @@ export interface SessionOptions {
   onHandshake?(): void;
 }
 
-/**
- * The terminal a host-run command runs in, as soon as it is open.
- *
- * `isPty` is the terminal's own, as its state says it: a client reads it to
- * decide whether the output holds VT sequences. Absent where the state says
- * nothing.
- */
-export interface CommandTerminal {
-  /** The channel a client subscribes to. */
-  uri: string;
-  /** Whether a pseudoterminal runs the command. */
-  isPty?: boolean;
-}
-
-/** What a host-run command did, once it has finished doing it. */
-export interface Ran {
-  /** Whether it exited cleanly. */
-  success: boolean;
-  /** One line about how it went, in the past tense, for the finished call. */
-  said: string;
-  /** Everything it printed. Empty when it printed nothing. */
-  output: string;
-  /** The terminal it ran in, so a client can watch it while it runs. */
-  terminal?: string;
-  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
-  isPty?: boolean;
-  /** What it exited with, where the runtime reported one. */
-  code?: number;
-}
-
-/**
- * The host's half of a `!` command, as `Session.ran` is handed it: run the
- * command for the tool call `toolCallId`, tell `opened` the terminal as soon as
- * it opens, and answer with what the command did.
- */
-export type RunCommand = (toolCallId: string, opened?: (terminal: CommandTerminal) => void) => Promise<Ran>;
-
 /** Who a message came from, when not the person at the keyboard. */
 export interface MessageFrom {
   /** `Message.origin`. The user's when absent. */
@@ -580,36 +543,6 @@ export interface Session {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
    */
   channel?(uri: string): SessionChannel | undefined;
-
-  /**
-   * Run one command as a turn of this chat's, without asking the agent.
-   *
-   * What the composer's `!` prefix means: the person typed a command rather
-   * than a question, and the answer is a shell's. The turn is still the
-   * chat's - a host that emitted one this session did not know about would
-   * serve a snapshot without it the moment anybody re-subscribed - so the
-   * session opens it, reports the tool call, and closes it when `run`
-   * settles.
-   *
-   * `run` is the host's half: it is handed the id of the tool call this turn
-   * is about and answers with what happened. The terminal is the host's
-   * because the shell is - a session has no port to spawn one through. `run`
-   * calls `opened` with the terminal as soon as it is open, which is when the
-   * call names it, so a client watches the output arrive rather than only
-   * reading it afterwards, as the reference host's `!` command does:
-   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
-   *
-   * Optional. `terminalCommandPrefix` is advertised per host rather than per
-   * backend, because the protocol's capability is the host's - so a backend
-   * that leaves this out is one whose `!command` turn the host refuses, with
-   * the reason, rather than one it silently turns into a question.
-   *
-   * A queued `!` message is handed here once the host's queue drain admits it,
-   * under the turn the drain started for it, as the reference host runs a
-   * `!` command its drain admits.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
-   */
-  ran?(turnId: string, command: string, run: RunCommand): void;
 
   /**
    * Hand one steering message to the turn that is running.

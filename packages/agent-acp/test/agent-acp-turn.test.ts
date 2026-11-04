@@ -798,8 +798,7 @@ it("runs a !command in the host's shell rather than asking the server", async ()
   await until(() => ended(p, chatUri));
 
   // The host's shell, not the ACP server: one tool call named `terminal`,
-  // completed with what the shell printed. Before `ran` existed here the host
-  // refused the turn, because the bridge had no way to hold it.
+  // completed with what the shell printed, as the host's local command.
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({ toolName: 'terminal' });
   const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
@@ -821,10 +820,12 @@ it("runs a !command in the host's shell rather than asking the server", async ()
 /*
  * A command sent as a turn while a turn runs is taken, as a question is: said
  * at once, it takes the running turn's place as the reducer replaces the active
- * turn, and runs once the turn in front of it is over. A stop of it stops the
- * turn in front of it too, and it never runs.
+ * turn, and the host runs it at once as its local command, with the turn in
+ * front of it still waiting on its server, as the reference host runs its
+ * local commands ahead of the admission a question waits on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
  */
-it('takes a !command sent as a turn during a turn, said at once, and a stop of it stops both', async () => {
+it('runs a !command sent as a turn during a turn at once, in that turn\'s place', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hold it');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
@@ -832,25 +833,17 @@ it('takes a !command sent as a turn during a turn, said at once, and a stop of i
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo acp-took' } } },
   });
-  await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 6));
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
   const took = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6);
   expect(took.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason)).toEqual([undefined]);
   expect(took[0]?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.turnId === 't2');
+  expect(JSON.stringify(completed?.action.result)).toContain('acp-took');
+  // The turn it took the place of is in no history.
   const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-    snapshot: { state: { activeTurn?: { id: string }; turns: { id: string }[] } };
+    snapshot: { state: { turns: { id: string }[] } };
   }).snapshot.state;
-  expect(held.activeTurn?.id).toBe('t2');
-  expect(held.turns.map((turn) => turn.id)).not.toContain('t1');
-
-  client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
-  });
-  await until(() => types(p, uri).includes('session/inputNeededRemoved'));
-  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't2'));
-  // The turn t2 took the place of ends in no client's state, and t2's command never runs.
-  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't1')).toBe(false);
-  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't2')).toBe(false);
+  expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
 });
 
 /*

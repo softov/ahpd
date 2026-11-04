@@ -133,8 +133,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions }[];
   /** Live sessions, by their own uri. */
   sessions: Map<string, Held>;
-  /** Every chat of a live session, by its own URI. */
-  byChat: Claiming<{ uri: string; chat: Session }>;
+  /**
+   * Every chat of a live session, by its own URI, with `say`: the road its
+   * backend's actions take, which keeps each turn of the chat, for a turn
+   * this host runs itself.
+   */
+  byChat: Claiming<{ uri: string; chat: Session; say(action: Bag): void }>;
   /** The worker chats this host opened, by URI. */
   subagents: Claiming<LiveSubagent>;
   /** The sessions being charged to an owner, by their own uri. */

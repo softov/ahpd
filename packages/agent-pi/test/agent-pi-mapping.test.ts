@@ -284,15 +284,6 @@ it('starts an approved call when it was approved, and says none for a denied one
   clock.mockRestore();
 });
 
-it('says when a command of the person\'s own ran', async () => {
-  const { session, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
-  session.ran?.('t1', 'ls -la', async () => ({ success: true, said: 'Listed files', output: 'a b c' }));
-  await settled();
-  const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 't1:shell')?.action;
-  expect(metaOf(for1('chat/toolCallReady'))['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(timed(for1('chat/toolCallComplete'))).toBe(true);
-});
-
 it('gives a replayed call the times of the entries that ran it', async () => {
   const { replayEntries } = await import('../src/replay.js');
   const call = { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } };

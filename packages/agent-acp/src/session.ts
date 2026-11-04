@@ -283,8 +283,6 @@ export function acpSession(
     // nothing.
     changeAgent: () => {},
 
-    ran: ctx.ran,
-
     /**
      * Stop the running turn.
      *

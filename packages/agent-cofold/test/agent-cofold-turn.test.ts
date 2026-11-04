@@ -819,8 +819,7 @@ it('runs a !command in a shell rather than asking a model', async () => {
   await until(() => ended(p, chatUri), 4000);
 
   // The host's shell, not the model: one tool call named `terminal`, completed
-  // with what the shell printed. Before `ran` existed here this turn was handed
-  // to cofold as the prompt `!echo cofold-ran-it`.
+  // with what the shell printed, as the host's local command.
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({ toolName: 'terminal' });
   // The command as typed, not the JSON-quoted string, so the terminal row shows

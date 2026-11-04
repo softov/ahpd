@@ -1,7 +1,7 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerId } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
-import { localPath, uriOf } from '../resources/fileuri.js';
+import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -11,9 +11,9 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { BANG, HOSTS_OWN } from './common.js';
+import { HOSTS_OWN, bangCommand } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { commandTurnKey, startsRead } from './chatactions.js';
+import { startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
@@ -154,6 +154,8 @@ export interface Lifecycle {
   ): string | undefined | Promise<string | undefined>;
   /** A turn this host begins itself, with no client's start behind it: said, then sent. */
   startTurn(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined;
+  /** The command a turn's text runs as this host's local command, in a chat of `session`, or nothing. */
+  commandIn(session: Session, text: string): string | undefined;
   /** A turn begun, refused or failed, from what `beginOrRun` answers when `begin` asks it, and what is still to come of it. */
   beginTurn(
     begin: () => string | undefined | Promise<string | undefined>,
@@ -1393,28 +1395,45 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
+   * The command a turn's text runs as this host's local command, in a chat of
+   * `session`, or nothing for a question.
+   *
+   * Nothing where this host has no shells to run one in. Nothing for a session
+   * in a machine either: its turns are carried to the host inside, which runs
+   * a command typed into one as its own local command, in the machine the
+   * session works in.
+   */
+  const commandIn = (session: Session, text: string): string | undefined =>
+    options.terminals && kept.nested?.(idOf(session.uri)) === undefined ? bangCommand(text) : undefined;
+
+  /**
    * A turn this host begins itself, with no client's start behind it: said,
-   * then sent, as the reference host starts a turn of its own.
+   * then sent, or run as this host's local command where its text is one, as
+   * the reference host starts a turn of its own.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L64-L68
    */
-  const startTurn = (session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined => {
+  const startTurn =(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined => {
     sayStart(session, turnId, text, model, from, attachments);
-    return sendTurn(session, turnId, text, model, from, attachments);
+    const command = commandIn(session, text);
+    if (command === undefined) return sendTurn(session, turnId, text, model, from, attachments);
+    ctx.bang(session, session.chatUri, turnId, command);
+    return undefined;
   };
 
   /**
    * A message's turn, whichever way it arrived.
    *
-   * `!ls` is a command, and everything else is a question. Trimmed, and empty
-   * means it was neither: a lone `!` is somebody typing an exclamation mark,
-   * and it goes to the agent like any other text. A turn reaches a backend by
-   * more than one road - a live session, one resumed from disk for it, a
-   * chat's first message, a message the queue drain admits - and each takes
-   * this one, so none of them hands `!ping` to a model.
+   * `!ls` is a command, run as this host's local command, and everything else
+   * is a question for the agent. A turn reaches a backend by more than one
+   * road - a live session, one resumed from disk for it, a chat's first
+   * message, a message the queue drain admits - and each takes this one, so
+   * none of them hands `!ping` to a model. A command runs before the checks
+   * that admit a question, whatever backend the chat has, as the reference
+   * host runs its local commands ahead of its admission; `commandIn` says
+   * which text is one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
    *
-   * Answers why the command cannot run when the backend has no `Session.ran`,
-   * for the caller to refuse with; handing the text to the model instead is
-   * the one thing the prefix promises not to do.
+   * Answers why a question is refused, for the caller to end the turn with.
    *
    * `sender` is who asked, held against this turn for as long as it runs.
    *
@@ -1446,7 +1465,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined> => {
     /*
-     * No new turn while an embedder is on its way out.
+     * No new turn while an embedder is on its way out, a command's as much as
+     * a question's: the close that follows would end it.
      *
      * Every road a turn reaches a backend by comes through here, which is why
      * the hold is asked here rather than at each of them. Read off the context
@@ -1455,6 +1475,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * stop, rather than only saying so.
      */
     if (ctx.refusing !== undefined) return ctx.refusing;
+    const command = commandIn(session, text);
+    if (command !== undefined) {
+      const by = sender === undefined ? undefined : ownerFor(sender);
+      if (by !== undefined) senders.set(turnId, by);
+      if (sender !== undefined) sentBy.set(turnId, sender);
+      if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
+      else said();
+      ctx.bang(session, session.chatUri, turnId, command);
+      return undefined;
+    }
     /*
      * A turn with nowhere to charge.
      *
@@ -1484,18 +1514,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // A turn stopped while it was prepared is never handed to the backend.
       if (stopped?.() === true) return undefined;
       /*
-       * A turn asked for while one runs is begun all the same, a command's as
-       * much as a question's, with no refusal in between: its start is said at
-       * once, so it takes the running turn's place in every client's state, as
-       * the protocol's reducer replaces the active turn, and the backend runs it
-       * once the work in front of it is done. The reference host refuses a
-       * start only while a workspace changes, and otherwise applies it and
-       * hands it to its agent.
+       * A turn asked for while one runs is begun all the same, with no refusal
+       * in between: its start is said at once, so it takes the running turn's
+       * place in every client's state, as the protocol's reducer replaces the
+       * active turn, and the backend runs it once the work in front of it is
+       * done. The reference host refuses a start only while a workspace
+       * changes, and otherwise applies it and hands it to its agent.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13429-L13435
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
        */
-      const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       // Who sent it, against the turn's id.
       if (who !== undefined) senders.set(turnId, who);
       // And the window itself, under the same id, for whatever has to ask it
@@ -1503,37 +1531,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (sender !== undefined) sentBy.set(turnId, sender);
       // What its records are charged under, under the same id.
       if (keys !== undefined) keepKeys(turnId, keys);
-      if (command === '' || !options.terminals) {
-        /*
-         * With what this turn is told, decided by the backend when it begins.
-         *
-         * The one place a message becomes a turn, whoever sent it and whichever
-         * way it arrived - so this is where every turn of a session is given
-         * the same thing, and the only thing that decides it is what the
-         * session holds at the moment the turn starts.
-         */
-        if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-        else said();
-        void sendTurn(session, turnId, text, model, from, attachments, stopped);
-        return undefined;
-      }
-      if (!session.ran) {
-        // Refused, so no turn will ever end under this id to let its sender go.
-        forgetSender(turnId);
-        forgetKeys(turnId);
-        return `${provider} cannot run a command in a turn; use a terminal instead`;
-      }
-      said?.();
-      ctx.commandTurns.set(commandTurnKey(session.chatUri, turnId), false);
-      const first = session.workingDirectories()[0];
-      const where = first === undefined ? options.path : localPath(first);
-      session.ran(turnId, command, (toolCallId, opened) => ctx.commanded(command, where, {
-        kind: 'session',
-        session: session.uri,
-        chat: session.chatUri,
-        turnId,
-        toolCallId,
-      }, opened));
+      /*
+       * With what this turn is told, decided by the backend when it begins.
+       *
+       * The one place a message becomes a turn, whoever sent it and whichever
+       * way it arrived - so this is where every turn of a session is given
+       * the same thing, and the only thing that decides it is what the
+       * session holds at the moment the turn starts.
+       */
+      if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
+      else said();
+      void sendTurn(session, turnId, text, model, from, attachments, stopped);
       return undefined;
     };
     /*
@@ -2001,6 +2009,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
     chatAgent, chatConfig, isolated,
-    shelve, restore, beginOrRun, startTurn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
+    shelve, restore, beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
   };
 }

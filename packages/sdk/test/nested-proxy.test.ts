@@ -10,6 +10,7 @@ import { machinePathOf } from '../src/machines/machine.js';
 import { nestedAgent } from '../src/sessions/nested.js';
 import { Status } from '../src/sessions/catalog.js';
 import { fileSessions } from '../src/sessions/sessions.js';
+import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { BackgroundTask } from '../src/types/background.js';
@@ -1757,6 +1758,53 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
+});
+
+/*
+ * A `!` command typed into a session in a machine is carried to the host
+ * inside, which runs it as its own local command in the machine the session
+ * works in, as the reference host runs a local command ahead of admitting a
+ * turn; this host opens no terminal of its own for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+ */
+it('a command typed into a nested session runs in the host inside, and in no terminal out here', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-nested-bang-'));
+  const inner = innerHost(backend(), { terminals: shellTerminals() });
+  const opened: string[] = [];
+  const host = createHost({
+    path: REPO_ROOT,
+    agents: [{ ...backend(), runsNested: true }],
+    agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
+    terminals: { create: (options) => { opened.push(options.uri); return shellTerminals().create(options); } },
+    computers: { how: async () => ({ command: 'true', args: [] }), connect: async () => ({ host: inner.proc }) },
+  });
+  const peer = trusting();
+  const client = host.accept(peer);
+  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
+  const uri = 'ahp-session:/banged';
+  const chat = chatUriFor(uri);
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, workingDirectories: [uriOf(dir)], config: { computer: 'computer://box' } } });
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo inside', origin: { kind: 'user' } } } },
+  });
+  const said = (): Bag[] => peer.seen
+    .filter(({ method, params }) => method === 'action' && params.channel === chat)
+    .map(({ params }) => params.action as Bag);
+  try {
+    await until(() => said().some((one) => one.type === 'chat/turnComplete' && one.turnId === 't1'), 1000);
+    const done = said().find((one) => one.type === 'chat/toolCallComplete');
+    expect(done).toMatchObject({ turnId: 't1', result: { success: true, pastTenseMessage: 'Ran command' } });
+    expect(JSON.stringify(done?.result)).toContain('inside');
+    expect(opened).toEqual([]);
+  }
+  finally {
+    // The host inside goes as a process does once it is stopped, which is what the close waits on.
+    inner.crash(0, 'SIGTERM');
+    await host.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 it('a nested chat a client removes is disposed inside the machine', async () => {

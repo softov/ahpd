@@ -273,29 +273,34 @@ describe('Host.close refuses what would start', () => {
     client.close();
   });
 
-  it('answers a command asked for after the close with the refusal, and opens no terminal', async () => {
-    let run: ((toolCallId: string) => Promise<{ success: boolean; said?: string }>) | undefined;
-    const base = echo({ path: dir, pace: 0 });
-    const agent: Agent = {
-      ...base,
-      create: (start) => ({ ...base.create(start), ran: (_turnId, _command, given) => { run = given; } }),
-    };
+  it('answers a command asked for once the close began with the refusal on its call, and opens no terminal', async () => {
     const opened: string[] = [];
     const host = createHost({
       path: dir,
-      agents: [agent],
+      agents: [echo({ path: dir, pace: 0 })],
       terminals: { create: (options) => { opened.push(options.uri); return shellTerminals().create(options); } },
     });
-    const client = await hello(host);
+    const told: { method: string; params: unknown }[] = [];
+    const client = host.accept({ ...peer(), notify: (method: string, params: unknown) => { told.push({ method, params }); } } as unknown as Peer);
+    await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
+    const chat = chatUriFor('ahp-session:/one');
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/one') } });
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    const closing = host.close();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!ls' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!ls' } } },
     });
-    expect(run).toBeDefined();
-    await host.close();
-    expect(await run?.('call-1')).toMatchObject({ success: false, said: 'This host is closing, so nothing new starts on it' });
+    await closing;
+    const said = told
+      .filter((note) => note.method === 'action' && (note.params as { channel: string }).channel === chat)
+      .map((note) => (note.params as { action: Record<string, unknown> }).action);
+    expect(said.find((one) => one.type === 'chat/toolCallComplete')?.result).toEqual({
+      success: false,
+      pastTenseMessage: 'Failed to run command',
+      error: { message: 'This host is closing, so nothing new starts on it' },
+    });
+    expect(said.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't1')).toBe(true);
     expect(opened).toEqual([]);
     client.close();
   });

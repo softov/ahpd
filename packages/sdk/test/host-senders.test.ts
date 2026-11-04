@@ -164,14 +164,14 @@ describe('a turn lets go of its sender', () => {
     expect(held()).toEqual(EMPTY);
   });
 
-  it('when a ! command reaches a backend that cannot run one', async () => {
+  it('when a ! command\'s turn completes', async () => {
     const { dispatch, held, peer: p } = await signedIn({ terminals: shellTerminals() });
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo must-not-run' } });
-    await wait(50);
-    const ended = p.notes
-      .map((note) => note.params as { action?: { type?: string; part?: { error?: { message?: string } } } })
-      .find((params) => params.action?.type === 'chat/error');
-    expect(ended?.action?.part?.error?.message).toContain('cannot run a command in a turn');
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo let-go' } });
+    const completed = (): boolean => p.notes
+      .map((note) => note.params as { action?: { type?: string; turnId?: string } })
+      .some((params) => params.action?.type === 'chat/turnComplete' && params.action.turnId === 't1');
+    for (let i = 0; i < 200 && !completed(); i++) await wait(25);
+    expect(completed()).toBe(true);
     expect(held()).toEqual(EMPTY);
   });
 

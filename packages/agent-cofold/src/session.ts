@@ -227,8 +227,7 @@ export function cofoldSession(
   const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
   Object.assign(ctx, turnAgent);
 
-  const { methods: queueMethods, ...turnOffers } = createTurns(ctx);
-  Object.assign(ctx, turnOffers);
+  Object.assign(ctx, createTurns(ctx));
   Object.assign(ctx, createRuns(ctx));
   const { methods: answerMethods, ...pauses } = createPauses(ctx);
   Object.assign(ctx, pauses);
@@ -364,8 +363,6 @@ export function cofoldSession(
     resumeTurn: (turnId) => {
       if (!ctx.resumeTurn(turnId)) throw new Error(`${turnId} is not a turn this backend can run again`);
     },
-
-    ...queueMethods,
 
     /**
      * Stop the running turn.

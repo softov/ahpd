@@ -33,3 +33,5 @@ The connection's later actions go on without waiting for that answer.
 
 ## Resume
 
+- **From 06:** a `!` turn on a session in a machine goes to the proxy like any turn, for the host inside to run.
+

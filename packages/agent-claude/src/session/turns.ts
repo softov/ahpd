@@ -1,6 +1,6 @@
-import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
+import type { ActiveTurn } from '@microsoft/agent-host-protocol';
 import { holdsTheQueue, titleFrom } from '@ahpd/sdk';
-import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, OnWire, RunCommand, SteeringMessage, TurnOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, SteeringMessage, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, list, str, UUID } from './common.js';
 import { EFFORTS } from './config.js';
@@ -31,7 +31,6 @@ export interface Turns {
     changeModel: (model: Chosen) => void;
     changeAgent: (agent: { uri: string } | undefined) => void;
     setTitle: (title: string) => void;
-    ran: (turnId: string, command: string, run: RunCommand) => void;
     sendSteeringMessage: (message: SteeringMessage) => boolean;
     withdrawSteeringMessage: (id: string) => void;
     setDraft: (draft: Bag | undefined) => void;
@@ -45,8 +44,8 @@ const attachedTo = (message: Bag): MessageAttachment[] | undefined =>
   Array.isArray(message.attachments) ? message.attachments as MessageAttachment[] : undefined;
 
 /**
- * A turn a client sent while another ran: what `begin` or `ran` was handed,
- * and the turn as it was said once it was. A command carries what runs it.
+ * A turn a client sent while another ran: what `sendMessage` was handed, and
+ * the turn as it was said once it was.
  */
 interface Handed {
   turnId: string;
@@ -55,7 +54,6 @@ interface Handed {
   from?: MessageFrom | undefined;
   attachments?: MessageAttachment[] | undefined;
   options?: TurnOptions | undefined;
-  command?: { text: string; run: RunCommand };
   said?: Bag;
 }
 
@@ -234,18 +232,12 @@ export function createTurns(ctx: SessionContext): Turns {
 
   /**
    * The turns handed while another ran that are not said yet, said as the
-   * chat's turn, each taking the place of the one before it. A command is run
-   * as it is said, as a command sent while nothing begins is.
+   * chat's turn, each taking the place of the one before it.
    */
   const sayHanded = (): void => {
     if (ctx.active === undefined) return;
     for (const one of [...handed]) {
       if (one.said !== undefined) continue;
-      if (one.command !== undefined) {
-        handed.splice(handed.indexOf(one), 1);
-        runCommand(one.turnId, one.command.text, one.command.run);
-        continue;
-      }
       const model = one.model?.id ?? ctx.chosen;
       const turn = {
         id: one.turnId,
@@ -504,20 +496,6 @@ export function createTurns(ctx: SessionContext): Turns {
     const [next] = ctx.queued.splice(Math.max(0, ctx.queued.findIndex((held) => held.steering === true)), 1);
     if (!next)
       return;
-    /*
-     * A command somebody typed is run, not asked.
-     *
-     * `ran` queued it as text so a client could see it waiting, and handing
-     * that text to the CLI is the one thing `!` exists not to do. It runs
-     * under a fresh turn id with the waiting row named, which is how a queued
-     * message of any other kind becomes a turn.
-     */
-    const held = bag(next.command);
-    const typed = str(held.text);
-    if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as RunCommand, str(next.id));
-      return;
-    }
     const message = bag(next.message);
     // Read back, not re-parsed: `queue` wrote this entry from a `Chosen` and
     // the values in it are the ones it kept.
@@ -537,137 +515,6 @@ export function createTurns(ctx: SessionContext): Turns {
     const attachments = attachedTo(message);
     void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from, attachments,
       next.options as TurnOptions | undefined);
-  };
-
-  /**
-   * One shell command as a turn of this chat's.
-   *
-   * The whole of what `!command` means, and one function because it is reached
-   * two ways: immediately from `ran`, and later from `startNext` when the
-   * command was typed while a turn was already running. Both put the command
-   * and its output in the transcript as a tool call rather than pushing
-   * anything to the CLI. `queuedMessageId` names the waiting row the command
-   * came from, so a client clears it the way it clears any other.
-   */
-  const runCommand = (
-    turnId: string,
-    command: string,
-    run: RunCommand,
-    queuedMessageId?: string,
-  ): void => {
-    const turn: Bag = {
-      id: turnId,
-      startedAt: new Date().toISOString(),
-      message: { text: `!${command}`, origin: { kind: 'user' } },
-      responseParts: [],
-      usage: undefined,
-    } satisfies WireTurn<ActiveTurn> as Bag;
-    ctx.active = turn;
-    ctx.startedAt = Date.now();
-    ctx.failed = undefined;
-    ctx.emit('chat', {
-      type: 'chat/turnStarted', turnId, startedAt: turn.startedAt, message: turn.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
-    if (ctx.title === 'New session') ctx.retitle(titleFrom(command, 'New session'));
-    ctx.doing('Running');
-    const toolCallId = `${turnId}:command`;
-    /*
-     * `terminal` as the name, which is what the reference host calls it.
-     *
-     * A client draws a tool call by its name, and one called anything else
-     * would be drawn as an unknown tool rather than as the shell it is.
-     */
-    const call = {
-      toolCallId,
-      toolName: 'terminal',
-      displayName: 'Terminal',
-      intention: command,
-      invocationMessage: command,
-      toolInput: command,
-      // The person typed it themselves, so there is nobody left to ask.
-      confirmed: 'not-needed',
-      status: 'running',
-      _meta: { toolKind: 'terminal' },
-    } satisfies OnWire<ToolCallRunningState> as Bag;
-    // As a part, the way every other call is held: the bare call went
-    // into the snapshot with no `kind`, so a client that subscribed after
-    // the command ran had a row it could not draw.
-    ctx.holdPart(turn, { kind: 'toolCall', toolCall: call });
-    ctx.emit('chat', {
-      type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
-      displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },
-    });
-    ctx.emit('chat', {
-      type: 'chat/toolCallReady', turnId, toolCallId,
-      invocationMessage: command, toolInput: command, confirmed: 'not-needed',
-      _meta: ctx.stampStart(call),
-    });
-    /*
-     * The block a client opens the command's terminal from. `isPty` is the
-     * terminal's own, which a client reads to decide whether the output holds
-     * VT sequences, and it is left out where the host says nothing.
-     */
-    const terminalOf = (terminal: CommandTerminal): OnWire<ToolResultTerminalContent> => ({
-      type: 'terminal',
-      resource: terminal.uri,
-      title: 'Terminal',
-      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
-    });
-    void run(toolCallId, (opened) => {
-      if (ctx.active !== turn) return;
-      /*
-       * The terminal as soon as it opens, so a client watches the output
-       * arrive, as the reference host names its own. Onto the call and into
-       * the action from one object, and with no `_meta`, which the reducer
-       * would put in place of the call's.
-       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
-       */
-      const content = [terminalOf(opened)];
-      call.content = content;
-      ctx.emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
-    }).then((done) => {
-      if (ctx.active !== turn) return;
-      // The terminal again, with how the command ended, and then the text it
-      // printed: `content` is replaced, not appended to.
-      const watched = done.terminal === undefined ? [] : [{
-        ...terminalOf({ uri: done.terminal, ...(done.isPty === undefined ? {} : { isPty: done.isPty }) }),
-        result: {
-          ...(done.code !== undefined ? { exitCode: done.code } : {}),
-          ...(done.output === '' ? {} : { preview: done.output }),
-        },
-      } satisfies OnWire<ToolResultTerminalContent>];
-      const said = done.output === ''
-        ? []
-        : [{ type: 'text', text: done.output } satisfies OnWire<ToolResultTextContent>];
-      const shown = [...watched, ...said];
-      const result = {
-        success: done.success,
-        pastTenseMessage: done.said,
-        content: shown,
-        ...(done.success ? {} : { error: { message: done.said } }),
-      } satisfies Partial<OnWire<ToolCallCompletedState>>;
-      Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
-      ctx.emit('chat', {
-        type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: ctx.stampEnd(call),
-      });
-      /*
-       * Complete however the command ended, as the action says: a command
-       * that failed is a call that failed, and the turn that ran it is over.
-       * The reference's `!` command reports its failure on the call and ends
-       * every local command's turn with `chat/turnComplete`.
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L106-L117
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L213
-       */
-      turn.state = 'complete';
-      turn.duration = Date.now() - ctx.startedAt;
-      ctx.turns.push(turn);
-      ctx.active = undefined;
-      ctx.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
-      ctx.doing(undefined);
-      ctx.touch();
-      ctx.startNext();
-    });
   };
 
   /**
@@ -754,28 +601,6 @@ export function createTurns(ctx: SessionContext): Turns {
     changeModel: (model) => { wanted = model; },
     changeAgent: (agent) => { picked = agent; },
     setTitle: (said) => { if (said !== '') ctx.title = said; },
-
-    /**
-     * A turn this host answered itself, with a shell rather than the agent.
-     *
-     * The same shape as any other turn - it opens, carries one tool call, and
-     * completes - because that is what makes it readable afterwards: the
-     * command and its output are in the transcript beside the conversation
-     * they interrupted, rather than in a panel that closed. Nothing is pushed
-     * to the CLI, which is the whole difference from `begin`.
-     */
-    ran: (turnId, command, run) => {
-      /*
-       * A command sent as a turn runs now, and takes the place of the turn
-       * running, as the reference host runs a `!` command it is handed without
-       * forwarding it to the agent; the agent's turn it replaced runs on, and
-       * its answer goes nowhere. One sent while a turn is still beginning is
-       * run once that turn is said.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
-       */
-      if (ctx.active === undefined && ctx.beginning !== undefined) handed.push({ turnId, text: `!${command}`, command: { text: command, run } });
-      else runCommand(turnId, command, run);
-    },
 
     /**
      * Into the turn that is already running, rather than after it.
