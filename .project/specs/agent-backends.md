@@ -264,11 +264,14 @@ The reason: a request the host holds is settled by the host, and only it can sen
 
 WHEN the root config sets `enableCustomTerminalTool`, the host is not Windows, and the host has a terminal store
 THEN `Start.tools` carries `bash`, `read_bash`, `write_bash`, `bash_shutdown`, `list_bash` and the other shell's primary, each marked `overridesBuiltInTool`
-AND a backend that offers one under its own name replaces its own: Claude disallows `Bash` and aliases it to `mcp__ahp__bash`, and pi drops its own `bash` and `powershell` for the host's
+AND a backend with a tool of the same name replaces its own tool with the host's
+AND Claude disallows `Bash` and aliases it to `mcp__ahp__bash`
+AND pi drops its own `bash` and `powershell` for the host's
 AND a call of one shows the terminal it opened through `opened`, and keeps it in the content of `chat/toolCallComplete`.
 WHEN any of the three is not so
 THEN the tools are not offered, and a backend keeps its own shell.
-The reason: the reference host's terminal tool takes the place of the harness's own, and a backend that kept both would run the model's commands in a shell the person cannot watch.
+The reason: the reference host's terminal tool takes the place of the harness's own.
+A backend that kept both would run the model's commands in a shell the person cannot watch.
 
 ### A terminal that a tool result names stays
 
