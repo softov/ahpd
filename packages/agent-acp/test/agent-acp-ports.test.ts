@@ -10,6 +10,8 @@ import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
+import { createHandlers } from '../src/session/handlers.js';
+import type { SessionContext } from '../src/session/context.js';
 import { anyone, signIn } from './people.js';
 import type { ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -275,6 +277,40 @@ it('opens a shell the host owns, waits for it, and reads what it printed', async
   // The argv arrived whole, the exit wait resolved with the real code, and the
   // output is what a shell on this machine printed.
   expect(prose(p, chatUri)).toContain('term=hello from the shell|exit=0');
+});
+
+it('refuses a permission and a question asked with no turn running, and an empty question in one', async () => {
+  const said: Bag[] = [];
+  const ctx = {
+    emit: (_channel: string, action: Bag) => { said.push(action); },
+    provider: 'acp',
+    start: { chatUri: 'ahp-chat:/none', getAutoApproval: () => undefined },
+    where: tmpdir(),
+    doing: () => {},
+    touch: () => {},
+    seeds: [],
+    replay: [],
+    permissions: new Map(),
+    terminals: new Map(),
+    elicitations: new Map(),
+    mapping: undefined,
+    options: {},
+  } as unknown as SessionContext;
+  const handlers = createHandlers(ctx);
+  const form = { sessionId: 's', mode: 'form', message: 'Which branch?', requestedSchema: { type: 'object', properties: { branch: { type: 'string' } } } };
+  // No turn holds a call or a question to show, so the server is answered at
+  // once, as VS Code's host rejects a permission without an active turn and
+  // its Claude cancels a question asked outside one.
+  expect(await handlers.askPermission({
+    sessionId: 's',
+    toolCall: { toolCallId: 'c1', title: 'Remove a file', kind: 'delete' },
+    options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }],
+  } as never)).toBe('cancelled');
+  expect(await handlers.askElicitation(form as never)).toEqual({ action: 'cancel' });
+  // In a turn, a question with neither a page nor a field is cancelled unasked.
+  ctx.mapping = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  expect(await handlers.askElicitation({ ...form, requestedSchema: { type: 'object', properties: {} } } as never)).toEqual({ action: 'cancel' });
+  expect(said).toEqual([]);
 });
 
 it('asks the person, and answers with the once option they chose', async () => {

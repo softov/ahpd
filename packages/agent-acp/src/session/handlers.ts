@@ -539,6 +539,16 @@ export function createHandlers(ctx: SessionContext): Handlers {
         if (allow !== undefined) return { optionId: allow };
       }
     }
+    /*
+     * A question with no turn running is one nobody can be shown: the chat has
+     * no turn to hold the call. It is refused at once, as VS Code's host
+     * rejects a permission without an active turn.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+     */
+    if (ctx.mapping === undefined) {
+      ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`);
+      return 'cancelled';
+    }
     const offered = confirmationOptions(matched ? onlyOnce(request.options) : request.options);
     const toolCallId = request.toolCall.toolCallId;
     const requestId = `${toolCallId}:permission`;
@@ -732,6 +742,14 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const held = bag(request);
     const page = pageOf(request);
     const questions = page === undefined ? questionsFor(held.requestedSchema) : [];
+    /*
+     * A question is put on the chat only while a turn runs there, and only as
+     * a page to open or a form with something on it, as VS Code's Claude puts
+     * an elicitation to a person; any other is answered `cancel` at once.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1346-L1349
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitationBridge.ts#L50-L59
+     */
+    if (ctx.mapping === undefined || (page === undefined && questions.length === 0)) return Promise.resolve({ action: 'cancel' });
     const id = nameOf(request, str(held.toolCallId));
     const message = str(held.message);
     const asking: Bag = {
