@@ -223,9 +223,11 @@ export function createTurns(ctx: SessionContext): Turns {
     const part = ctx.addFailure(turn, why);
     turn.state = 'error';
     turn.duration = said === undefined ? 0 : Math.max(0, Date.now() - Date.parse(String(said.startedAt)));
-    if (said === undefined || said === ctx.active) ctx.turns.push(turn);
+    // A turn a later one took the place of is in no history, and its failure is not the chat's.
+    const shown = said === undefined || said === ctx.active;
+    if (shown) ctx.turns.push(turn);
     if (said !== undefined && said === ctx.active) ctx.active = undefined;
-    ctx.failed = why;
+    if (shown) ctx.failed = why;
     if (said === undefined) {
       ctx.emit('chat', {
         type: 'chat/turnStarted',
@@ -244,9 +246,12 @@ export function createTurns(ctx: SessionContext): Turns {
    * The turns handed while another ran that are not said yet, said as the
    * chat's turn, each taking the place of the one before it. A command is run
    * as it is said, as a command sent while nothing begins is.
+   *
+   * One handed while the turn in front of it is still beginning waits until
+   * that turn is said, or is over without having begun.
    */
   const sayHanded = (): void => {
-    if (ctx.active === undefined) return;
+    if (ctx.active === undefined && ctx.beginning !== undefined) return;
     for (const one of [...handed]) {
       if (one.said !== undefined) continue;
       if (one.command !== undefined) {
@@ -305,6 +310,21 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     const dropped = (): boolean => handedTurn !== undefined && handed[0] !== handedTurn;
     /*
+     * A turn that could not begin fails, and leaves the queue behind it
+     * waiting, as the reference host drains nothing after a turn that failed.
+     * The turns handed behind it go on, since the reference host handed each
+     * to its agent when it came and its Claude agent sends them one after
+     * another.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+     */
+    const refuse = (why: string): void => {
+      if (handedTurn !== undefined) handed.shift();
+      refuseTurn(turnId, text, why, queuedMessageId, from, attachments, handedTurn?.said);
+      if (handed.length > 0) startNext();
+    };
+    /*
      * The tools the session was handed before this turn, landed first.
      *
      * A change of tools reaches the CLI as `setMcpServers`, which the CLI
@@ -329,8 +349,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * says the CLI never started.
      */
     if (ctx.gone !== undefined) {
-      if (handedTurn !== undefined) handed.shift();
-      refuseTurn(turnId, text, ctx.gone, queuedMessageId, from, attachments, handedTurn?.said);
+      refuse(ctx.gone);
       return;
     }
     /*
@@ -347,10 +366,8 @@ export function createTurns(ctx: SessionContext): Turns {
     ctx.beginning = turnId;
     const refused = ctx.refreshPreset() ?? ctx.switchAgent(from?.agent?.uri);
     ctx.beginning = undefined;
-    // A failed turn, which leaves the queue behind it waiting.
     if (refused !== undefined) {
-      if (handedTurn !== undefined) handed.shift();
-      refuseTurn(turnId, text, refused, queuedMessageId, from, attachments, handedTurn?.said);
+      refuse(refused);
       return;
     }
     /*
@@ -370,8 +387,7 @@ export function createTurns(ctx: SessionContext): Turns {
       if (refused === undefined) ctx.chosen = model.id;
       if (dropped()) return;
       if (refused !== undefined) {
-        if (handedTurn !== undefined) handed.shift();
-        refuseTurn(turnId, text, refused, queuedMessageId, from, attachments, handedTurn?.said);
+        refuse(refused);
         return;
       }
     }
@@ -480,10 +496,12 @@ export function createTurns(ctx: SessionContext): Turns {
    *
    * A turn handed while another ran goes first, once it is said and the CLI
    * owes nothing in front of it: the queue is behind the chat's turn, and that
-   * turn is the last one handed.
+   * turn is the last one handed. One handed while the turn in front of it was
+   * beginning is said here, once that turn is over without having begun.
    */
   const startNext = (): void => {
     if (ctx.closed) return;
+    if (handed.some((one) => one.said === undefined)) sayHanded();
     const first = handed[0];
     if (first !== undefined) {
       if (first.said !== undefined && ctx.owed.size === 0 && ctx.beginning === undefined) {
