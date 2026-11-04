@@ -56,7 +56,7 @@ daemon start -> load -> readJson per file -> skipped file stays -> next write fo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an unreadable file is moved aside](task-01-an-unreadable-file-is-moved-aside.md) | todo | - |
+| [01 - an unreadable file is moved aside](task-01-an-unreadable-file-is-moved-aside.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -64,12 +64,12 @@ daemon start -> load -> readJson per file -> skipped file stays -> next write fo
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-unreadable-file-is-moved-aside.md](task-01-an-unreadable-file-is-moved-aside.md).
+- **Done so far:** task 01 is implemented on 2026-11-04.
+- **Next action:** review.
 - **Open questions:** none.
-- **Watch out for:** the log line must not quote the file's contents; `not-json` errors quote what the parser choked on.
+- **Watch out for:** nothing open.
 
 ## Final verification checklist
 
-- [ ] `pnpm --filter @ahpd/sdk test` passes, run alone.
-- [ ] `pnpm typecheck` and `pnpm lint` pass.
+- [x] `pnpm --filter @ahpd/sdk test` passes, run alone.
+- [x] `pnpm typecheck` and `pnpm boundary` pass.
