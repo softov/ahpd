@@ -7,6 +7,7 @@ refs:
   - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L494](../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L494) - \"reports an edit before the row that runs it\", which timed out waiting"
   - "[code://packages/computer/test/computer-needs.test.ts#L1197](../../packages/computer/test/computer-needs.test.ts#L1197) - \"drops only the unreadable variable and logs it, where the profile says drop\", which got no `-e` arguments"
   - "[code://packages/computer/test/computer-disposable.test.ts#L2100](../../packages/computer/test/computer-disposable.test.ts#L2100) - \"fetches what a machine committed before the machine goes\", which timed out after 20 s"
+  - "[code://packages/computer/test/computer-options.test.ts](../../packages/computer/test/computer-options.test.ts) - \"takes a profile's gitGuard by its values\", whose hook timed out after 10 s"
   - problems/two-attachment-cases-time-out-on-windows.md - the same kind of failure in other cases
   - problems/a-cofold-titling-case-times-out-on-windows.md - the same kind of failure in other cases
 ---
@@ -20,8 +21,9 @@ On 2026-11-04, three cases failed in the Windows job `windows (1/3)`, each once,
 | cofold tools, "reports an edit before the row that runs it" | main, 685733f0 | `timed out waiting` |
 | computer needs, "drops only the unreadable variable" | #228, 41859251099 | `expected [] to deeply equal [ 'OTHER_KEY', 'A' ]` |
 | computer disposable, "fetches what a machine committed" | #230, 41869756715 | `Test timed out in 20000ms` |
+| computer options, "takes a profile's gitGuard by its values" | #237, 41936208437 | `Hook timed out in 10000ms` |
 
-#228 does not touch `packages/computer`, and #230 changes two docs pages only. Each case passes on Linux.
+#228 and #237 do not touch `packages/computer`, and #230 changes two docs pages only. Each case passes on Linux.
 
 On Linux, the `processes` job of #233 failed once, in run 41901468359. The case is "runs its own script under sh, and reads what this host has" in `computer-servercheck.test.ts`, with `Test timed out in 5000ms`. Its rerun failed the same way, and the case takes 1 s on Softov's machine. The script calls `docker version` and `docker info`, which wait on the runner's Docker daemon. The same run hit the known case of [two-attachment-cases-time-out-on-windows.md](two-attachment-cases-time-out-on-windows.md) on Windows.
 
