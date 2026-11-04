@@ -241,7 +241,7 @@ ahpd runs your agents and keeps their sessions. Connect with the client that sui
 ### 🌐 Browser → @ahpd/web
 Manage sessions, files, terminals, and host settings from your browser.
 
-[GitHub](https://github.com/softov/ahpw) · [Releases](https://github.com/softov/ahpw/releases)
+[GitHub](https://github.com/ahpio/ahpw) · [Releases](https://github.com/ahpio/ahpw/releases)
 
 ### 🖥️ Desktop → ahp-desk
 Connect to multiple hosts, manage local installations, and work in dedicated windows.
