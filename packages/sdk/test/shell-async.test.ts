@@ -121,7 +121,7 @@ const hosted = async (extra: { time?: Clock; users?: boolean } = {}) => {
     if (found === undefined) throw new Error(`no tool ${name}`);
     return await found.handler(input, { _meta: { 'claudecode/toolUseId': id } });
   };
-  return { client, p, dir, uri, chatUri, kept, call, chatState };
+  return { host, client, p, dir, uri, chatUri, kept, call, chatState };
 };
 
 const text = (answer: Answer): string => answer.content.map((one) => one.text).join('');
@@ -244,6 +244,32 @@ describe.skipIf(!posix)('the end of an async command', () => {
     // The row went before the turn: a client is not told the work is still
     // going while the turn that reads its end runs.
     expect(await rowsOf(on)).toEqual([]);
+  });
+
+  it('starts no turn when the session is closed under it, and does not bring the session back', async () => {
+    const on = await hosted();
+    await on.call('bash', { command: 'sleep 30', mode: 'async' });
+    await until(async () => (await rowsOf(on)).length === 1, 'the row');
+    const queries = sessionQueries().length;
+    await on.client.handle({ method: 'disposeSession', params: { channel: on.uri } });
+    await new Promise((resolve) => { setTimeout(resolve, 500); });
+    // A woken turn would have opened the session's backend again.
+    expect(sessionQueries().length).toBe(queries);
+    const listed = await on.client.handle({ method: 'listSessions', params: { channel: ROOT } }) as { items?: { resource?: string }[] };
+    expect((listed.items ?? []).map((one) => one.resource)).not.toContain(on.uri);
+  });
+
+  it('starts no turn when the host closes under it', async () => {
+    const on = await hosted();
+    await on.call('bash', { command: 'sleep 30', mode: 'async' });
+    await until(async () => (await rowsOf(on)).length === 1, 'the row');
+    const queries = sessionQueries().length;
+    await on.host.close();
+    await new Promise((resolve) => { setTimeout(resolve, 500); });
+    // A turn begun while the host closed would have opened the backend again,
+    // and a message queued then would be read back as one the person sent.
+    expect(sessionQueries().length).toBe(queries);
+    expect(on.kept.chats('shell-async').flatMap((one) => (one as { queued?: unknown[] }).queued ?? [])).toEqual([]);
   });
 
   it('is queued behind a turn that is already running', async () => {

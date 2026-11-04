@@ -84,7 +84,15 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented: `mode` on the shell tool, `Shells.start` on the per-chat manager, `ToolCall.background()` built on the chat's held tasks, the row with its terminal and stop, and `packages/sdk/test/shell-async.test.ts`. Task 02 is implemented: `ctx.beginWakeTurn` shared by a wake and a command's end, the end's prompt built from the command, the code and the output, the sender read when the command starts, and the docs in `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md`.
+- **Done so far:** tasks 01 and 02.
+  - The shell tool has `mode`, and the per-chat manager has `Shells.start`.
+  - `ToolCall.background()` sets a row on the chat's held tasks, with the terminal and a stop.
+  - `ctx.beginWakeTurn` begins a turn for a wake and for a command's end.
+  - The end's prompt names the command, its exit code and its output.
+  - The sender is read when the command starts.
+  - No turn begins once the host is closing, or the chat or session is closed.
+  - `packages/sdk/test/shell-async.test.ts` covers both tasks.
+  - `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md` describe the mode.
 - **Next action:** none. Both tasks are implemented; the plan's last gate, a live test daemon, is not run yet.
 - **Open questions:** none.
 - **Watch out for:** the end of a command must not call `setWake`.
