@@ -328,5 +328,9 @@ describe.skipIf(!posix)('the end of an async command', () => {
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1, usage: { input_tokens: 3, output_tokens: 5 } });
     await until(() => records.some((one) => one.turn === woken?.turnId), 'the usage record');
     expect(records.find((one) => one.turn === woken?.turnId)?.owner).toBe('user:ana');
+    // The host started it: a system notification, not a message from another chat.
+    const message = (woken?.message ?? {}) as { origin?: unknown; _meta?: Record<string, unknown> };
+    expect(message.origin).toEqual({ kind: 'systemNotification' });
+    expect(message._meta?.['vscode.chat.delegation']).toBeUndefined();
   });
 });
