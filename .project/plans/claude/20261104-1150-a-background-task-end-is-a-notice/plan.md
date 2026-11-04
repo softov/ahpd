@@ -81,7 +81,7 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 ## Resume state
 
 - **Done so far:** all three tasks are implemented. Live, the turn a background task's end wakes opens with the task's summary and origin `systemNotification`; after a restart the same frame restores the same way, and the host keeps that turn its own.
-- **Next action:** none; `implemented.md` records what was verified.
+- **Next action:** none; `implemented.md` records what was verified. Softov checked it by hand on 2026-11-04.
 - **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn and leaves no pending summary.
 
 ## Final verification checklist
