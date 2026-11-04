@@ -355,14 +355,16 @@ const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?
 /**
  * One diff, as the file edit a client draws and as an entry in the changeset.
  *
- * Only the `after` side goes in the block: no `file://` URI addresses what a
- * file used to be, and the diff's own `oldText` is what the turn's review holds
- * as the before side. A file with no `oldText` is one the agent created. A
- * diff of a path outside the session's own directories is shown and not
- * recorded - it is something the agent says it did somewhere this session was
- * never given.
+ * The block's two sides are the diff's own texts, held by the host as the
+ * call's, with the lines each has that the other lacks, as VS Code's file edit
+ * tracker keeps a call's sides; a file with no `oldText` is one the agent
+ * created. A turn the transcript replays has no host to hold them, and its
+ * block names the file as it is. A diff of a path outside the session's own
+ * directories is shown and not recorded in the changeset: it is something the
+ * agent says it did somewhere this session was never given.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/fileEditTracker.ts#L331-L342
  */
-const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
+const fileEdit = (turn: AcpTurn, toolCallId: string, diff: Diff): Bag => {
   // In the system's own spelling, as the write's capture is: a server on
   // Windows may join a path with `/`, and one file named two ways is two rows.
   // A path an agent in a machine names is its machine path, read as the host's.
@@ -371,7 +373,8 @@ const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
   if (turn.reach !== undefined && turn.reach.within(path)) {
     turn.reach.changed(path, diff.oldText ?? undefined);
   }
-  return { type: 'fileEdit', after: { uri, content: { uri } } };
+  return turn.reach?.completed(toolCallId, path, diff.oldText ?? undefined, diff.newText)
+    ?? { type: 'fileEdit', after: { uri, content: { uri } } };
 };
 
 /**
@@ -382,7 +385,7 @@ const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
  * It says `isPty` as the session's handle does, and nothing on a turn the
  * transcript replays, which holds no handle.
  */
-const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[] => {
+const contentBlocks = (turn: AcpTurn, toolCallId: string, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
   for (const entry of content ?? []) {
     if (entry.type === 'content' && entry.content.type === 'text') {
@@ -391,7 +394,7 @@ const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[]
       const isPty = turn.reach?.isPty(entry.terminalId);
       blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', ...(isPty === undefined ? {} : { isPty }) });
     } else if (entry.type === 'diff') {
-      blocks.push(fileEdit(turn, entry));
+      blocks.push(fileEdit(turn, toolCallId, entry));
     }
   }
   return blocks;
@@ -468,7 +471,7 @@ export function mapUpdate(
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
     }
 
     /*
@@ -488,7 +491,7 @@ export function mapUpdate(
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
       if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
     }
 
     /*

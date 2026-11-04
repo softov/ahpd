@@ -564,6 +564,24 @@ export function gitChanges(): ChangesetSource {
     + `/${encodeURIComponent(toolCallId)}${escaped(slashed(path))}`;
 
   /**
+   * The text of each side of an edit a call made, by the URI it is served under.
+   *
+   * Held as long as the captured sides are: the call said what the file held on
+   * either side of it, and its content names both.
+   */
+  const made = new Map<string, string>();
+
+  /**
+   * One side of an edit a call made, as `ahp-edit://call/<session>/<call>/<phase>/<path>`.
+   *
+   * A proposed side's shape, under an authority of its own and with the phase
+   * after the call, because a call that made an edit has two sides to name.
+   */
+  const madeUri = (session: string, toolCallId: string, path: string, phase: 'before' | 'after'): string =>
+    `${CAPTURED}//call/${Buffer.from(session, 'utf8').toString('base64url')}`
+    + `/${encodeURIComponent(toolCallId)}/${phase}${escaped(slashed(path))}`;
+
+  /**
    * The `kept` key an `ahp-edit:` URI names, or nothing when no side is held under it.
    *
    * Under the `turn` authority the session is the first segment, in base64url.
@@ -1543,6 +1561,28 @@ export function gitChanges(): ChangesetSource {
     },
 
     /*
+     * An edit a call made, with both sides as the call said them.
+     *
+     * VS Code's file edit tracker keeps the file as it was before the call and
+     * as the call left it, under URIs of the call's own, with the lines each
+     * side has that the other lacks; an agent that reports its edit as a diff
+     * has said both sides already, so they are held as it said them. No
+     * `before` is a file the call created, which no line was taken from.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/fileEditTracker.ts#L331-L342
+     */
+    complete: (session, toolCallId, path, before, after) => {
+      const file = uriOf(path);
+      const sides = { before: madeUri(session, toolCallId, path, 'before'), after: madeUri(session, toolCallId, path, 'after') };
+      if (before !== undefined) made.set(sides.before, before);
+      made.set(sides.after, after);
+      return {
+        ...(before === undefined ? {} : { before: { uri: file, content: { uri: sides.before } } }),
+        after: { uri: file, content: { uri: sides.after } },
+        diff: counted(before ?? '', after),
+      };
+    },
+
+    /*
      * The answer is in, or the session is gone: the text goes with it.
      *
      * Nothing else is done on the way out. A tool that was approved has
@@ -1613,12 +1653,12 @@ export function gitChanges(): ChangesetSource {
      */
     read: async (uri) => {
       /*
-       * A preview, which is the one thing here that is not a change of the
-       * past: the file the tool was offered has not been written yet. Read
-       * first, because it is looked up whole rather than parsed - a pending
-       * URI says nothing a phase walk could find.
+       * A preview, of a file the tool was offered and has not written yet, and
+       * a side of an edit a call said. Read first, because each is looked up
+       * whole: a pending URI says nothing a phase walk could find, and a call's
+       * side is held under the URI it was minted as.
        */
-      const previewing = proposed.get(uri);
+      const previewing = proposed.get(uri) ?? made.get(uri);
       if (previewing !== undefined) return { data: previewing, encoding: 'utf-8' };
       // Captured sides are held, not fetched: neither is on disk any more.
       if (uri.startsWith(CAPTURED)) {

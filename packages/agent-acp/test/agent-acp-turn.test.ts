@@ -652,8 +652,8 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
   // The shell is the host's own, so the block is the one a `!command` builds.
   expect(content[0]).toMatchObject({ type: 'terminal', title: 'Terminal', isPty: false });
   expect(String((content[0] as Bag).resource)).toContain('terminal');
-  // The file, as the edit a client draws: the after side is the file itself,
-  // and there is no before here because no URI names what a file used to be.
+  // The file, as the edit a client draws, from a source that holds no sides
+  // of a call's own: the block names the file as it is.
   expect(content[1]).toEqual({
     type: 'fileEdit',
     after: { uri: uriOf(join(path, 'painted.txt')), content: { uri: uriOf(join(path, 'painted.txt')) } },
@@ -665,6 +665,22 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
     { turnId: 't1', path: join(path, 'painted.txt'), phase: 'before' },
     { turnId: 't1', path: join(path, 'painted.txt'), phase: 'after' },
   ]);
+});
+
+it('shows a diff as both sides the call said, with the lines each lacks', async () => {
+  const changes = gitChanges();
+  const { client, peer: p, chatUri, path } = await talking({ changes });
+  begin(client, chatUri, 't1', 'paint it');
+  await until(() => ended(p, chatUri));
+
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  const edit = (done?.action.result as { content: Bag[] }).content[1] as { before?: Bag; after?: Bag };
+  const file = uriOf(join(path, 'painted.txt'));
+  // Both sides are the diff's own texts, held as the call's, and the counts
+  // are the lines each has that the other lacks, so a client draws a diff.
+  expect(edit).toMatchObject({ type: 'fileEdit', before: { uri: file }, after: { uri: file }, diff: { added: 1, removed: 1 } });
+  expect(await text(changes, String((edit.before?.content as Bag).uri))).toBe('a blank canvas\n');
+  expect(await text(changes, String((edit.after?.content as Bag).uri))).toBe('a line of paint\n');
 });
 
 it('holds the before side a diff carried, which the file itself no longer has', async () => {

@@ -529,6 +529,17 @@ export interface Start {
    */
   onEditSettled?(toolCallId: string): void;
   /**
+   * An edit a call made, with the text on either side of it as the agent said
+   * them, answered as the file edit a client draws the call's diff from.
+   *
+   * For a backend whose agent reports an edit with both texts, as an ACP diff
+   * does: the host holds them under URIs of the call's own and counts the
+   * lines each has that the other lacks. `before` absent is a file the call
+   * created. Optional both ways: nothing back is a host that holds no sides,
+   * and the caller draws the edit as the file it left.
+   */
+  onEditCompleted?(toolCallId: string, path: string, before: string | undefined, after: string): FileEdit | undefined;
+  /**
    * A turn this backend has written under an id of its own.
    *
    * The host names a turn when a client sends one, and what this host keeps

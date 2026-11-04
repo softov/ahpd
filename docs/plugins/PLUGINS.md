@@ -2377,8 +2377,10 @@ A call that arrives already finished is started, readied and completed at once, 
 
 What the call carries is what a client draws beside it.
 Terminal content is the host's own terminal, the one the server opened through the host, and it draws with the same block a `!command` turn closes with.
-A diff is shown as the file edit it is, the after side being the file itself, and recorded in the turn's changeset beside the before side the diff carried - by the time the diff arrives the file holds only the new text, so that before side is the diff's own `oldText`.
-A diff with no `oldText` is a file the agent created, which the changeset says by leaving the before side out.
+A diff is shown as the file edit it is, both sides being the diff's own `oldText` and `newText`, held by the host's changeset source as the call's and counted for the lines each has that the other lacks, as VS Code's file edit tracker keeps a call's sides.
+It is recorded in the turn's changeset beside the before side the diff carried: by the time the diff arrives the file holds only the new text, so that before side is the diff's own `oldText`.
+A diff with no `oldText` is a file the agent created, which the block and the changeset both say by leaving the before side out.
+A host with no changeset source holds no sides, and the block names the file as it is.
 A diff of a path outside the session's own directories is shown and not recorded, because it is something the agent says it did somewhere this session was never given.
 Every file the agent writes through `fs/write_text_file` is captured the same way, once before the write and once after it, and the before is read before the write truncates the file.
 

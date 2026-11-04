@@ -424,6 +424,12 @@ export interface AcpReach {
    */
   changed(path: string, before?: string): void;
   /**
+   * An edit a call made, as the file edit a client draws: both sides held as
+   * the call's own, from the texts the diff carries. Nothing where the host
+   * holds no sides.
+   */
+  completed(toolCallId: string, path: string, before: string | undefined, after: string): Bag | undefined;
+  /**
    * Whether a pseudoterminal runs a terminal this session opened for the
    * server, as its handle says. Nothing for one it did not open, or whose
    * handle says nothing.

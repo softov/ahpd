@@ -1541,6 +1541,11 @@ export function createSpawn(ctx: HostContext): Spawn {
         options.changes?.settle?.(uri, toolCallId);
       },
       /*
+       * An edit a call made, both sides of which the agent said: held by the
+       * same source, which mints the URIs a client reads them from.
+       */
+      onEditCompleted: (toolCallId, path, before, after) => options.changes?.complete?.(uri, toolCallId, path, before, after),
+      /*
        * A turn the backend has written under an id of its own.
        *
        * What the host keeps against a turn is kept against the id the client
