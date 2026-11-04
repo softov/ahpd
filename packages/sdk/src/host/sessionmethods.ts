@@ -64,7 +64,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
     snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake, watches,
-    withSender,
   } = ctx;
 
   /**
@@ -143,14 +142,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     /*
      * What the chat is, read before its process goes: the name its backend
      * keeps the conversation under, which is what the destination resumes it
-     * by, and the turns it owns, which the store has to be told because it
-     * cannot find them itself - a sender is kept per session and turn and
-     * every chat of a session writes into the same map.
+     * by, and the turns it owns, which seed it there.
      */
     const own = found.chat.agentId() as string;
     const all = found.chat.allTurns() as Bag[];
     const talking = { resume: own, seed: all };
-    const turns = all.map((one) => String(one.id ?? ''));
     /*
      * The folders the chat works in, which travel with it: its root is the
      * session's own and its peers are the ones it was opened with, so a chat
@@ -177,8 +173,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     const config = dest?.config ?? held.config;
     /*
      * Out of the source, in the store and here: the chat's own record - its
-     * title, its senders and its entry on the session's chat list - and the
-     * two maps that say which session is holding it.
+     * title and its entry on the session's chat list - and the two maps that
+     * say which session is holding it.
      *
      * The claim is set as well as dropped, and the order matters: `drop` keeps
      * the claim a key already has, and `Claiming.set` will not overwrite one,
@@ -186,7 +182,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * until this line puts it where it now belongs.
      */
     const was = [...held.chats.keys()];
-    kept.moveChat(idOf(found.uri), idOf(into), chatUri, turns);
+    kept.moveChat(idOf(found.uri), idOf(into), chatUri);
     // And the outputs its terminals kept and its local turns, which are the
     // chat's own.
     ctx.moveChatOutputs(found.uri, into, chatUri);
@@ -220,7 +216,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * list it was in the middle of is a catalogue order this host changed
        * for a move it refused.
        */
-      kept.moveChat(idOf(into), idOf(found.uri), chatUri, turns);
+      kept.moveChat(idOf(into), idOf(found.uri), chatUri);
       ctx.moveChatOutputs(into, found.uri, chatUri);
       ctx.moveChatLocalTurns(into, found.uri, chatUri);
       byChat.delete(chatUri);
@@ -512,10 +508,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       dispatch(channel, {
         type: 'chat/turnsLoaded',
-        // The action declares no `_meta` of its own, so the turns are the
-        // whole of it: a client paging back through a conversation must not
-        // find the sender gone on the oldest page.
-        turns: withSender(idOf(owning), page.turns),
+        turns: page.turns,
         ...(page.turnsNextCursor ? { turnsNextCursor: page.turnsNextCursor } : {}),
       });
       return {};

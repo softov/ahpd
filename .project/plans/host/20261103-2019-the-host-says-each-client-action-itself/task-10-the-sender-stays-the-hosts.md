@@ -1,6 +1,6 @@
 ---
 title: The sender stays the host's
-status: todo
+status: done
 depends: [task-01-the-host-says-the-clients-action.md]
 layer: host
 refs:
@@ -34,4 +34,9 @@ No action and no state a client reads carries it.
 - Run it again: the usage record still names who sent the work.
 
 ## Resume
+
+- **Done:** steps 1 to 4, at the commit that closes this task, the two validation items in one host-senders case.
+- **The store:** `sender`, `setSender` and `moveChat`'s turns go; a row's `senders` is read past and written back without it.
+- **Kept in memory:** the meter's owner, the plugin events' `sender` and the queue drain's sender of a message.
+- **Deleted with their subject:** two sessions cases on the stored sender, and their `naming` helper.
 

@@ -227,17 +227,6 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setOwner(id: string, value: Owner | undefined): void;
   /**
-   * Who sent one of this session's turns, as the same typed reference.
-   *
-   * Keyed by turn as well as by session because two people can be talking in
-   * one session and only the turn says which of them it was. Undefined is the
-   * answer for a turn nobody was recorded as having sent: one sent before this
-   * was kept, and a worker's turn this host opened rather than a person asked.
-   */
-  sender(id: string, turnId: string): Owner | undefined;
-  /** Record it, or forget it with `undefined`. */
-  setSender(id: string, turnId: string, value: Owner | undefined): void;
-  /**
    * Which harness this session runs on, or nothing where none was recorded.
    *
    * Two harnesses can read the same transcripts, so an id on its own says
@@ -521,15 +510,12 @@ export interface SessionStore {
    * Move one chat from one session to another, in one write.
    *
    * A chat's own record travels with it: its title, its entry on the source's
-   * chat list and its place on the destination's. `turns` names the turns the
-   * store must carry too, because it cannot find them itself - a sender is kept
-   * per session and turn, and every chat of a session writes into the same map,
-   * so which of those turns are the moved chat's is only known to the caller.
+   * chat list and its place on the destination's.
    *
    * Both ids are session ids, as everywhere in this store. A chat the source
    * does not hold is not an error here: the caller has already read it.
    */
-  moveChat(from: string, to: string, uri: string, turns: string[]): void;
+  moveChat(from: string, to: string, uri: string): void;
   /**
    * The ids of the sessions this store holds.
    *

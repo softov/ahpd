@@ -19,7 +19,6 @@ import { ownerOf } from '../utils/values.js';
  */
 interface Held {
   chatTitlesOf(id: string): Record<string, string> | undefined;
-  sendersOf(id: string): Record<string, Owner> | undefined;
   parent(id: string): string | undefined;
   setParent(id: string, value: string | undefined): void;
   rootOf(id: string): string;
@@ -105,15 +104,6 @@ export function memorySessions(): SessionStore & Held {
     setScope: (id, value) => { patch(id, { scope: value }); },
     owner: (id) => rows.get(id)?.owner,
     setOwner: (id, value) => { patch(id, { owner: value }); },
-    sender: (id, turnId) => rows.get(id)?.senders?.get(turnId),
-    setSender: (id, turnId, value) => {
-      // Copied rather than edited in place, because the row is replaced whole:
-      // the map a row holds is never written to after it is put there.
-      const held = new Map(rows.get(id)?.senders);
-      if (value === undefined) held.delete(turnId);
-      else held.set(turnId, value);
-      patch(id, { senders: held.size === 0 ? undefined : held });
-    },
     provider: (id) => rows.get(id)?.provider,
     setProvider: (id, value) => { patch(id, { provider: value }); },
     uri: (id) => rows.get(id)?.uri,
@@ -178,37 +168,27 @@ export function memorySessions(): SessionStore & Held {
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
     setChats: (id, list) => { patch(id, { chats: list.length === 0 ? undefined : [...list] }); },
-    moveChat: (from, to, uri, turns) => {
+    moveChat: (from, to, uri) => {
       /*
        * The moving chat's own record, read before either row is written: its
-       * entry on the source's list, the title it was given, and the senders of
-       * the turns it owns. A row is replaced whole, so both rows are built from
-       * what is read here.
+       * entry on the source's list and the title it was given. A row is
+       * replaced whole, so both rows are built from what is read here.
        */
       const source = rows.get(from);
       const chat = (source?.chats ?? []).find((one) => one.uri === uri);
       const titles = new Map(source?.chatTitles);
       const title = titles.get(uri);
       titles.delete(uri);
-      const senders = new Map(source?.senders);
-      const ours = new Map<string, Owner>();
-      for (const turn of turns) {
-        const who = senders.get(turn);
-        if (who === undefined) continue;
-        ours.set(turn, who);
-        senders.delete(turn);
-      }
       const left = (source?.chats ?? []).filter((one) => one.uri !== uri);
       patch(from, {
         chats: left.length === 0 ? undefined : left,
         chatTitles: titles.size === 0 ? undefined : titles,
-        senders: senders.size === 0 ? undefined : senders,
       });
       /*
        * And onto the destination, as one write: the entry appended to its list,
-       * the senders its turns name, and the title. Only the fields this move
-       * changes are handed over, so a `chatTitles` map the destination already
-       * has is not replaced by a copy of itself.
+       * and the title. Only the fields this move changes are handed over, so a
+       * `chatTitles` map the destination already has is not replaced by a copy
+       * of itself.
        *
        * The entry is copied, because a read answers with the store's own
        * objects and this one is about to be written into another row.
@@ -216,13 +196,10 @@ export function memorySessions(): SessionStore & Held {
       const target = rows.get(to);
       const list = [...(target?.chats ?? [])];
       if (chat !== undefined) list.push({ ...chat });
-      const theirs = new Map(target?.senders);
-      for (const [turn, who] of ours) theirs.set(turn, who);
       const named = new Map(target?.chatTitles);
       if (title !== undefined) named.set(uri, title);
       patch(to, {
         chats: list.length === 0 ? undefined : list,
-        ...(ours.size === 0 ? {} : { senders: theirs }),
         ...(title === undefined ? {} : { chatTitles: named }),
       });
     },
@@ -231,10 +208,6 @@ export function memorySessions(): SessionStore & Held {
     sessions: () => [...rows.keys()],
     chatTitlesOf: (id) => {
       const held = rows.get(id)?.chatTitles;
-      return held === undefined ? undefined : Object.fromEntries(held);
-    },
-    sendersOf: (id) => {
-      const held = rows.get(id)?.senders;
       return held === undefined ? undefined : Object.fromEntries(held);
     },
     rowOf: (id) => {
@@ -247,7 +220,6 @@ export function memorySessions(): SessionStore & Held {
         ...(held.config === undefined ? {} : { config: held.config }),
         ...(held.scope === undefined ? {} : { scope: held.scope }),
         ...(held.owner === undefined ? {} : { owner: held.owner }),
-        ...(held.senders === undefined ? {} : { senders: held.senders }),
         ...(held.provider === undefined ? {} : { provider: held.provider }),
         ...(held.uri === undefined ? {} : { uri: held.uri }),
         ...(held.tools === undefined ? {} : { tools: held.tools }),
@@ -429,7 +401,6 @@ interface Row {
   /** `null` is charged to nothing on purpose, which is not the same as never decided. */
   scope?: Scope | null | undefined;
   owner?: Owner | undefined;
-  senders?: Map<string, Owner> | undefined;
   provider?: string | undefined;
   /** The name the host holds the session under, when it chose one. */
   uri?: string | undefined;
@@ -465,7 +436,7 @@ interface Row {
  */
 const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
-  && row.owner === undefined && row.senders === undefined && row.provider === undefined
+  && row.owner === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined
@@ -488,7 +459,6 @@ interface Saved {
   config?: Record<string, unknown>;
   scope?: Scope | null;
   owner?: string;
-  senders?: Record<string, string>;
   provider?: string;
   /** The name the host holds the session under, when it chose one. */
   uri?: string;
@@ -643,7 +613,6 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.config === undefined ? {} : { config: held.config }),
       ...(held.scope === undefined ? {} : { scope: held.scope }),
       ...(held.owner === undefined ? {} : { owner: held.owner }),
-      ...(held.senders === undefined ? {} : { senders: Object.fromEntries(held.senders) }),
       ...(held.provider === undefined ? {} : { provider: held.provider }),
       ...(held.uri === undefined ? {} : { uri: held.uri }),
       ...(held.tools === undefined ? {} : { tools: held.tools }),
@@ -750,15 +719,6 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       }
       const owner = ownerOf(row.owner);
       if (owner !== undefined) inner.setOwner(row.id, owner);
-      // A turn's sender is a typed reference or it is nothing, one value at a
-      // time: a row written by something that meant something else is ignored
-      // rather than guessed at, as an owner that is not one already is.
-      if (typeof row.senders === 'object' && row.senders !== null && !Array.isArray(row.senders)) {
-        for (const [turnId, sender] of Object.entries(row.senders)) {
-          const who = ownerOf(sender);
-          if (who !== undefined) inner.setSender(row.id, turnId, who);
-        }
-      }
       // A harness is named by whatever string the agent called itself, so any
       // non-empty one is taken as it stands. A row written before providers
       // were kept has none, and reads as a session nothing was recorded for.
@@ -853,8 +813,6 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setScope: (id, value) => { touched(id, () => { inner.setScope(id, value); }); },
     owner: (id) => inner.owner(id),
     setOwner: (id, value) => { touched(id, () => { inner.setOwner(id, value); }); },
-    sender: (id, turnId) => inner.sender(id, turnId),
-    setSender: (id, turnId, value) => { touched(id, () => { inner.setSender(id, turnId, value); }); },
     provider: (id) => inner.provider(id),
     setProvider: (id, value) => { touched(id, () => { inner.setProvider(id, value); }); },
     uri: (id) => inner.uri?.(id),
@@ -897,10 +855,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
     // Two rows move, so two files have to be written - which is why this is
     // written out rather than handed to `touched`, which names one.
-    moveChat: (from, to, uri, turns) => {
+    moveChat: (from, to, uri) => {
       heard.add(from);
       heard.add(to);
-      inner.moveChat(from, to, uri, turns);
+      inner.moveChat(from, to, uri);
       dirty.add(from);
       dirty.add(to);
       later();

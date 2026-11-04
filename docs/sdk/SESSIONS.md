@@ -25,7 +25,7 @@ The session is stored under the id the client named and the backend is told that
 
 `disposeSession` checks first, then tears the running half down, then asks the backend for its own copy, then drops the row and tells every client with `root/sessionRemoved`. A session this host only lists has nothing to tear down and goes straight to the same delete.
 
-Nothing about a session outlives the process except what a store was given. The sessions themselves come back either way, because they are read from the backend's own transcripts; what is this host's own is the read and archived bits, the settings chosen, the owner and who sent each turn, and where those go is `--sessions`. `file`, the default, writes one file per session and reads them once at startup. `memory` forgets them, which a daemon started for one run wants and a daemon that restarts does not: a restart there returns every archived session to the catalogue and marks every read one unread.
+Nothing about a session outlives the process except what a store was given. The sessions themselves come back either way, because they are read from the backend's own transcripts; what is this host's own is the read and archived bits, the settings chosen and the owner, and where those go is `--sessions`. `file`, the default, writes one file per session and reads them once at startup. `memory` forgets them, which a daemon started for one run wants and a daemon that restarts does not: a restart there returns every archived session to the catalogue and marks every read one unread.
 
 ## Sleep and wake
 
