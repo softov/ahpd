@@ -116,7 +116,9 @@ const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine =
   description: 'Claude Code, with one record per agent: its own directories, models and options.',
   schema: kindSchema(),
   templates: [{
-    name: 'Claude Code',
+    // A record's name is its agent's, and VS Code's Claude agent is shown as `Claude`.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L738
+    name: 'Claude',
     description: 'Claude Code as this host runs it, on the directories the plugin serves.',
     config: {},
   }],

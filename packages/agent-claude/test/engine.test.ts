@@ -157,7 +157,8 @@ it('registers the claude engine, its template and host-only field', async () => 
     hostOnly: ['extraArgs'],
     keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
   });
-  expect(engine?.templates?.[0]?.name).toBe('Claude Code');
+  // The agent a record from it serves is named as VS Code's Claude agent is.
+  expect(engine?.templates?.[0]?.name).toBe('Claude');
   expect(typeof engine?.open).toBe('function');
 
   // The fields of this backend, without the four the agents channel owns: a

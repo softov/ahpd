@@ -428,7 +428,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
 
   return {
     provider: options.provider ?? 'claude',
-    displayName: options.displayName ?? 'Claude Code',
+    // The name VS Code's Claude agent is shown under, for an agent no record named.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L738
+    displayName: options.displayName ?? 'Claude',
     ...(options.variant === true ? { variant: true } : {}),
     // Both, because the SDK resumes at a named prompt: `resumeSessionAt` with
     // `forkSession` continues from a turn under a new id, and a side chat is
