@@ -162,8 +162,8 @@ export interface PiCall {
   toolCallId: string;
   toolName: string;
   displayName: string;
-  /** What the call runs on, as its row is titled once pi names its arguments. */
-  said?: string;
+  /** The row's `invocationMessage`, what the call runs on once pi names its arguments. */
+  invocationMessage?: string;
   /** The arguments pi named for the call, which its past tense reads. */
   input?: Bag;
   /** The output a shell call has printed so far, which each change says whole. */

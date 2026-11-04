@@ -251,7 +251,8 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
   if (!Number.isFinite(headerTime)) return undefined;
 
   let name: string | undefined;
-  let words = '';
+  // The first message's words, as pi's own listing's `firstMessage`.
+  let firstMessage = '';
   let lastActivity: number | undefined;
   for (const entry of entries) {
     // The latest `session_info` wins, a clear included, as pi reads it.
@@ -262,9 +263,9 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
     if (message.role !== 'user' && message.role !== 'assistant') continue;
     const at = typeof message.timestamp === 'number' ? message.timestamp : Date.parse(entry.timestamp);
     if (Number.isFinite(at)) lastActivity = Math.max(lastActivity ?? 0, at);
-    if (words === '' && message.role === 'user') {
+    if (firstMessage === '' && message.role === 'user') {
       const text = wordsOf(message.content);
-      if (text !== '') words = text;
+      if (text !== '') firstMessage = text;
     }
   }
 
@@ -276,7 +277,7 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
     // an untitled session, as VS Code lists a provider's session that has no
     // summary.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6141-L6146
-    title: name ?? titleFrom(words, ''),
+    title: name ?? titleFrom(firstMessage, ''),
     createdAt: created.toISOString(),
     modifiedAt: (lastActivity !== undefined && lastActivity > 0 ? new Date(lastActivity) : created).toISOString(),
     workingDirectories: [uriOf(cwd === '' ? directory : cwd)],

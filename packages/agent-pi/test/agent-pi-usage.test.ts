@@ -44,13 +44,13 @@ function fakePi() {
     leaf: () => 'entry-1',
     promptAfter: () => undefined,
     levels: () => ['off'],
-    chosen: () => undefined,
-    takesImages: () => false,
-    choose: async () => true,
+    modelSelection: () => undefined,
+    supportsVision: () => false,
+    setModel: async () => true,
     rename: async () => {},
-    rewind: async () => true,
+    truncate: async () => true,
     useEnv: async () => {},
-    close: () => {},
+    dispose: () => {},
   };
   return {
     backend,

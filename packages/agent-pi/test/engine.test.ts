@@ -220,6 +220,6 @@ it('applies an edit of the record at the next turn, not to the one already runni
     { DEEPSEEK_API_KEY: 'second-key' },
   ]);
   // The model moved at the second turn, and not before it.
-  expect(pi.asked.filter((one) => one.kind === 'choose')).toEqual([{ kind: 'choose', id: 'openai/gpt-5' }]);
+  expect(pi.asked.filter((one) => one.kind === 'setModel')).toEqual([{ kind: 'setModel', id: 'openai/gpt-5' }]);
   expect(ran(session)[1]?.model).toMatchObject({ id: 'openai/gpt-5' });
 });

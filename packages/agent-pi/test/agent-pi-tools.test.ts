@@ -500,7 +500,7 @@ it('rebuilds pi on the same session and the model it was on', async () => {
   } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  const before = pi.asked.filter((one) => one.kind === 'choose').length;
+  const before = pi.asked.filter((one) => one.kind === 'setModel').length;
   await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }]);
   session.sendMessage('t2', 'again');
   await settled();
@@ -511,10 +511,10 @@ it('rebuilds pi on the same session and the model it was on', async () => {
   expect(second.instructions).toEqual(['be nice']);
   expect(second.onToolCall).toBeDefined();
   // The model and thinking level the session was on are applied again.
-  const chooses = pi.asked.filter((one) => one.kind === 'choose');
-  expect(chooses.length).toBeGreaterThan(before);
-  expect(chooses[chooses.length - 1]).toEqual({
-    kind: 'choose',
+  const moves = pi.asked.filter((one) => one.kind === 'setModel');
+  expect(moves.length).toBeGreaterThan(before);
+  expect(moves[moves.length - 1]).toEqual({
+    kind: 'setModel',
     id: 'anthropic/claude-opus-5',
     config: { [THINKING_KEY]: 'off' },
   });

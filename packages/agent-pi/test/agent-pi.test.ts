@@ -427,8 +427,8 @@ it('passes the chosen model and its thinking level through to pi', async () => {
   session.changeModel({ id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose'))
-    .toEqual({ kind: 'choose', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
+  expect(pi.asked.find((one) => one.kind === 'setModel'))
+    .toEqual({ kind: 'setModel', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
   expect(types('chat')).not.toContain('chat/error');
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
 });
@@ -459,7 +459,7 @@ it('opens a session on a configured model pi does not have', async () => {
   const { session, pi, types } = opened({}, { model: 'openrouter/nobody' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openrouter/nobody' });
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toEqual({ kind: 'setModel', id: 'openrouter/nobody' });
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
   expect(types('chat')).not.toContain('chat/error');
 });
@@ -468,14 +468,14 @@ it('runs a new session on the model the options name', async () => {
   const { session, pi } = opened({}, { model: 'openai/gpt-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openai/gpt-5' });
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toEqual({ kind: 'setModel', id: 'openai/gpt-5' });
 });
 
 it('keeps a resumed session on the model its own file recorded', async () => {
   const { session, pi } = opened({ resume: 'pi-session-1' } as Partial<Start>, { model: 'openai/gpt-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toBeUndefined();
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toBeUndefined();
 });
 
 it('lets a turn choose over the configured model', async () => {
@@ -483,7 +483,7 @@ it('lets a turn choose over the configured model', async () => {
   session.changeModel({ id: 'anthropic/claude-opus-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.filter((one) => one.kind === 'choose').map((one) => one.id))
+  expect(pi.asked.filter((one) => one.kind === 'setModel').map((one) => one.id))
     .toEqual(['openai/gpt-5', 'anthropic/claude-opus-5']);
 });
 
@@ -761,11 +761,11 @@ it('reports the level pi moved to as a value in force, which a client reduces', 
   expect(session.settings().thinkingLevel).toBe('high');
 });
 
-it('truncates by moving pi own leaf, which is what a rewind is', async () => {
+it('truncates by moving pi own leaf back', async () => {
   const { session, pi } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
+  expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-7');
 });
 
 it('answers where a watched turn ended, and nothing for one it never saw end', async () => {
@@ -808,11 +808,11 @@ it('names where a watched turn ended as the point a fork copies through', async 
  */
 it('runs the turn when pi refuses to move the leaf back, and logs the refusal', async () => {
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
-  pi.refuseRewind();
+  pi.refuseTruncate();
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
+  expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-7');
   expect(last('chat/error')).toBeUndefined();
   expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('hello');
   expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);

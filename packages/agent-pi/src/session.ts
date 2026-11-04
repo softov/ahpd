@@ -80,27 +80,27 @@ export type OpenPi = (options: BackendOptions) => Promise<PiBackend>;
  * attachment, the reference block - are joined with a blank line, in the order
  * the client attached them.
  *
- * `takesImages` is the model the turn runs on, so a picture goes as bytes only
- * where pi's model takes one. Everywhere else the helper names it by path.
+ * `supportsVision` is the model the turn runs on, so a picture goes as bytes
+ * only where pi's model takes one. Everywhere else the helper names it by path.
  */
 const promptFor = async (
   text: string,
   attachments: MessageAttachment[] | undefined,
-  takesImages: boolean,
+  supportsVision: boolean,
 ): Promise<{ text: string; images: ImageContent[] }> => {
   if (attachments === undefined || attachments.length === 0) return { text, images: [] };
-  const parts = await partsOf(text, attachments, { images: takesImages });
-  const said: string[] = [];
+  const parts = await partsOf(text, attachments, { images: supportsVision });
+  const texts: string[] = [];
   const images: ImageContent[] = [];
   for (const part of parts) {
     if (part.type === 'image') images.push({ type: 'image', data: part.data, mimeType: part.mimeType });
-    else said.push(part.text);
+    else texts.push(part.text);
   }
-  return { text: said.join('\n\n'), images };
+  return { text: texts.join('\n\n'), images };
 };
 
 /** A turn handed while pi ran another: what `sendMessage` was handed. */
-interface Waiting {
+interface PendingTurn {
   turnId: string;
   text: string;
   model?: Chosen | undefined;
@@ -202,7 +202,7 @@ export function piSession(
    * each start, so the turn it took the place of runs on here.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    */
-  const waiting: Waiting[] = [];
+  const pendingTurns: PendingTurn[] = [];
   /** The turn whose prompt pi has been handed, which steering goes into. */
   let prompted: string | undefined;
   /** Whether the running turn's message is in pi's file, ahead of its prompt. */
@@ -230,7 +230,7 @@ export function piSession(
   let resumedFrom: { duration: number; at: number; usage: Bag | undefined } | undefined;
   let modified = new Date().toISOString();
   /** What a turn failed with, or nothing. Cleared when a turn starts. */
-  let failed: string | undefined;
+  let error: string | undefined;
   /**
    * The last assistant message of the running turn, or nothing yet.
    *
@@ -247,15 +247,16 @@ export function piSession(
    * turn has used so far, so a client watches the number grow rather than
    * being handed the last answer's count, and the sum is what the turn ends on.
    */
-  let spent: Bag | undefined;
+  let usage: Bag | undefined;
   /**
    * The steering messages handed to pi and not yet read, by id, oldest first,
-   * each with the answer its hand-off is waiting on.
+   * each with the answer its hand-off is waiting on: VS Code's submitted
+   * steering.
    *
    * pi holds them in the order they were handed and says the queue on every
    * change, so the ones its queue no longer counts are the oldest here.
    */
-  const handed: string[] = [];
+  const submittedSteering: string[] = [];
   const answers = new Map<string, (taken: boolean) => void>();
   let draft: Bag | undefined;
   /** The models pi reported, once it has been asked, as the spec's model info. */
@@ -295,7 +296,8 @@ export function piSession(
   }
   /** The catalogue's record, so a transcript can be read back after the turn. */
   let record: WatchedSession | undefined;
-  let watched: WatchedTurn | undefined;
+  /** The running turn's record in `watchedTurns`, sealed when the turn ends. */
+  let turn: WatchedTurn | undefined;
 
   /** A steering message pi read into the turn, taken out of the chat, its hand-off answered `true`. */
   const takenOut = (id: string): void => {
@@ -313,7 +315,7 @@ export function piSession(
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1949
    */
   const handBack = (): void => {
-    const left = handed.splice(0);
+    const left = submittedSteering.splice(0);
     if (left.length === 0) return;
     live?.clearSteering();
     for (const id of left) {
@@ -584,7 +586,7 @@ export function piSession(
   const bits = (): StatusBits => ({
     waiting: pending.size > 0,
     active: active !== undefined,
-    failed: failed !== undefined,
+    failed: error !== undefined,
   });
 
   /**
@@ -675,12 +677,12 @@ export function piSession(
     },
   });
 
-  /** Seal the turn being watched, which is what makes a transcript turns. */
+  /** Seal the running turn's record, which is what makes a transcript turns. */
   const seal = (state: NonNullable<WatchedTurn['state']>, duration: number): void => {
-    if (watched === undefined) return;
-    watched.state = state;
-    watched.duration = Number.isFinite(duration) ? duration : 0;
-    watched = undefined;
+    if (turn === undefined) return;
+    turn.state = state;
+    turn.duration = Number.isFinite(duration) ? duration : 0;
+    turn = undefined;
   };
 
   /**
@@ -734,9 +736,9 @@ export function piSession(
    * the prompt has no such reply, and is not one.
    */
   const finish = (ending: 'complete' | 'cancelled' | 'error', why?: string, resumable = false): void => {
-    const turn = active;
-    if (turn === undefined) return;
-    const turnId = String(turn.id);
+    const ended = active;
+    if (ended === undefined) return;
+    const turnId = String(ended.id);
     namePrompt();
     // A call cut off before its end still owes the `after` it was announced with.
     for (const callId of [...editing.keys()]) settleEdit(callId);
@@ -746,7 +748,7 @@ export function piSession(
      * runs, and a client's reducer skips it on the turn's end; the snapshot
      * says the same, or a reload shows it streaming forever.
      */
-    for (const part of turn.responseParts as Bag[]) {
+    for (const part of ended.responseParts as Bag[]) {
       const row = part.kind === 'toolCall' ? bag(part.toolCall) : undefined;
       if (row?.status !== 'streaming') continue;
       row.status = 'cancelled';
@@ -758,15 +760,15 @@ export function piSession(
      * the run before's to, as VS Code's host says a resumed turn's end; the
      * turn holds its time across both runs.
      */
-    const attempt = resumedFrom === undefined ? Date.now() - Date.parse(String(turn.startedAt)) : Date.now() - resumedFrom.at;
+    const attempt = resumedFrom === undefined ? Date.now() - Date.parse(String(ended.startedAt)) : Date.now() - resumedFrom.at;
     const duration = resumedFrom === undefined ? attempt : resumedFrom.duration + attempt;
     resumedFrom = undefined;
-    turn.state = ending;
-    turn.duration = duration;
+    ended.state = ending;
+    ended.duration = duration;
     // A turn a later one took the place of is in no history, as the reducer
     // keeps none of it, and its failure is not the chat's.
     const gone = replaced.delete(turnId);
-    if (!gone) turns.push(turn);
+    if (!gone) turns.push(ended);
     seal(ending, duration);
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
@@ -777,7 +779,7 @@ export function piSession(
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration: attempt });
     else {
       const message = why === undefined || why === '' ? 'pi did not answer' : why;
-      if (!gone) failed = message;
+      if (!gone) error = message;
       const part: Bag = {
         kind: 'error',
         error: { errorType: 'turnFailed', message },
@@ -785,7 +787,7 @@ export function piSession(
       };
       // On the turn as well, so a snapshot holds what a client that watched the
       // turn end was handed, and a client that reopens the chat can resume it.
-      (turn.responseParts as Bag[]).push(part);
+      (ended.responseParts as Bag[]).push(part);
       emit('chat', { type: 'chat/error', turnId, duration: attempt, part });
     }
     /*
@@ -797,7 +799,7 @@ export function piSession(
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8204
      */
     if (!gone) {
-      modified = new Date(Date.parse(String(turn.startedAt)) + duration).toISOString();
+      modified = new Date(Date.parse(String(ended.startedAt)) + duration).toISOString();
       if (record !== undefined) record.modifiedAt = modified;
     }
     // The steering the turn did not read, and the turn handed behind it, which
@@ -825,11 +827,11 @@ export function piSession(
     // ending, and the ending is what moves that turn into the history.
     // The sum of the calls is already what it sent as it stood; what ends
     // the turn is the whole of it.
-    if (spent !== undefined && active !== undefined) {
-      const held = mergeLogicalTurnUsage(resumedFrom?.usage, spent) ?? spent;
+    if (usage !== undefined && active !== undefined) {
+      const held = mergeLogicalTurnUsage(resumedFrom?.usage, usage) ?? usage;
       active.usage = held;
-      if (watched !== undefined) watched.usage = held;
-      emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: spent });
+      if (turn !== undefined) turn.usage = held;
+      emit('chat', { type: 'chat/usage', turnId: String(active.id), usage });
     }
     if (cancelled) finish('cancelled');
     else if (answered?.stopReason === 'error') finish('error', answered.errorMessage, true);
@@ -867,12 +869,12 @@ export function piSession(
        * and then nothing is sent for it. A resumed turn says this run's sum,
        * which the host merges over the run before's, and holds the two merged.
        */
-      const sum = addUsage(spent, event.message);
-      if (sum !== undefined && sum !== spent && active !== undefined) {
-        spent = sum;
+      const sum = addUsage(usage, event.message);
+      if (sum !== undefined && sum !== usage && active !== undefined) {
+        usage = sum;
         const held = mergeLogicalTurnUsage(resumedFrom?.usage, sum) ?? sum;
         active.usage = held;
-        if (watched !== undefined) watched.usage = held;
+        if (turn !== undefined) turn.usage = held;
         emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: sum });
       }
     }
@@ -887,7 +889,7 @@ export function piSession(
        * holds has been read into the turn, or let go, and is taken out.
        */
       case 'queue_update': {
-        for (const id of handed.splice(0, Math.max(0, handed.length - event.steering.length))) takenOut(id);
+        for (const id of submittedSteering.splice(0, Math.max(0, submittedSteering.length - event.steering.length))) takenOut(id);
         return;
       }
 
@@ -1043,7 +1045,7 @@ export function piSession(
        * choice arrives in `begin` after this and still wins.
        */
       if (options.model !== undefined && start.resume === undefined && start.forkAt === undefined) {
-        await backend.choose(options.model);
+        await backend.setModel(options.model);
       }
       // `rewindAt` is the host asking for a truncation on a resumed session.
       if (start.rewindAt !== undefined) {
@@ -1054,7 +1056,7 @@ export function piSession(
          * cut that failed and goes on: the clients already hold the cut.
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1982-L1986
          */
-        const moved = await backend.rewind(start.rewindAt);
+        const moved = await backend.truncate(start.rewindAt);
         if (!moved) console.warn(`@ahpd/agent-pi: pi refused to move the leaf back to ${start.rewindAt}`);
       }
       // The host learns this agent's models from here; a rebuild lists the
@@ -1079,7 +1081,7 @@ export function piSession(
        */
       if (opening === started) opening = undefined;
       const abandoned: unknown = live;
-      if (abandoned !== undefined) (abandoned as PiBackend).close();
+      if (abandoned !== undefined) (abandoned as PiBackend).dispose();
       live = undefined;
       throw error;
     }
@@ -1096,24 +1098,24 @@ export function piSession(
    */
   const reopen = async (previous: PiBackend): Promise<PiBackend> => {
     const id = previous.id;
-    // Read before closing: the new session has its own model until told.
-    const carrying = previous.chosen();
+    // Read before disposing: the new session has its own model until told.
+    const carrying = previous.modelSelection();
     unsubscribe?.();
     unsubscribe = undefined;
-    previous.close();
+    previous.dispose();
     live = undefined;
     stale = false;
     const rebuilt = build(id, false);
     opening = rebuilt;
     try {
       const backend = await rebuilt;
-      if (carrying !== undefined) await backend.choose(carrying.id, carrying.config);
+      if (carrying !== undefined) await backend.setModel(carrying.id, carrying.config);
       return backend;
     }
     catch (error: unknown) {
       // Nothing is live after a failed rebuild, so the next turn opens again.
       const abandoned: unknown = live;
-      if (abandoned !== undefined && abandoned !== previous) (abandoned as PiBackend).close();
+      if (abandoned !== undefined && abandoned !== previous) (abandoned as PiBackend).dispose();
       live = undefined;
       if (opening === rebuilt) opening = undefined;
       throw error;
@@ -1159,12 +1161,12 @@ export function piSession(
     attachments?: MessageAttachment[],
     turnOptions?: TurnOptions,
   ): void => {
-    failed = undefined;
+    error = undefined;
     cancelled = false;
     resumed = false;
     kept = false;
     answered = undefined;
-    spent = undefined;
+    usage = undefined;
     const startedAt = new Date().toISOString();
     // The record as it is now: what this turn runs on is the record's, and the
     // turn before's options are not what a person who just edited it asked for.
@@ -1182,7 +1184,7 @@ export function piSession(
      * the one it used. A turn's own choice wins, then a model the record moved
      * to, then the model the session is already on, then the record's default.
      */
-    const ran = model?.id ?? (moved ? options.model : undefined) ?? live?.chosen()?.id ?? options.model;
+    const ran = model?.id ?? (moved ? options.model : undefined) ?? live?.modelSelection()?.id ?? options.model;
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : { origin: { kind: 'user' } }),
@@ -1211,8 +1213,8 @@ export function piSession(
       calls: new Map(),
       ownerOf: clientOf,
     };
-    watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
-    watchedTurns.push(watched);
+    turn = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
+    watchedTurns.push(turn);
     // A turn's start is the chat's `modifiedAt`, as the reducer moves it, and
     // the record's.
     modified = String(active.startedAt);
@@ -1253,12 +1255,12 @@ export function piSession(
            * model its agent does not offer on the chat's own.
            * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
            */
-          if (!await backend.choose(wanted, model?.config)) {
+          if (!await backend.setModel(wanted, model?.config)) {
             options.log?.(`${provider}: chat ${start.chatUri} keeps its model: pi does not offer ${wanted}`);
           }
           if (stopped()) return;
         }
-        const asked = await promptFor(text, attachments, backend.takesImages());
+        const asked = await promptFor(text, attachments, backend.supportsVision());
         if (stopped()) return;
         /*
          * What the host has to say on this turn, by pi's own channel for words
@@ -1285,7 +1287,7 @@ export function piSession(
   /** The first turn handed while another ran, once nothing runs. */
   const sendNext = (): void => {
     if (closed || active !== undefined) return;
-    const next = waiting.shift();
+    const next = pendingTurns.shift();
     if (next !== undefined) begin(next.turnId, next.text, next.model, next.from, next.attachments, next.options);
   };
 
@@ -1377,9 +1379,9 @@ export function piSession(
     sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      const shown = waiting.at(-1)?.turnId ?? (cancelled || active === undefined ? undefined : String(active.id));
+      const shown = pendingTurns.at(-1)?.turnId ?? (cancelled || active === undefined ? undefined : String(active.id));
       if (shown !== undefined) replaced.add(shown);
-      waiting.push({ turnId, text, model, from, attachments, options: turnOptions });
+      pendingTurns.push({ turnId, text, model, from, attachments, options: turnOptions });
       sendNext();
     },
 
@@ -1412,14 +1414,14 @@ export function piSession(
           try {
             // Built the way the turn's own prompt is, so a picture pasted into
             // a correction reaches pi as one when the model takes it.
-            const asked = await promptFor(text, attachments, backend.takesImages());
+            const asked = await promptFor(text, attachments, backend.supportsVision());
             // The turn ended while the pictures were read, and handed back what it held.
             if (prompted !== turnId) {
               answers.delete(id);
               resolve(false);
               return;
             }
-            handed.push(id);
+            submittedSteering.push(id);
             queued = await backend.steer(asked.text, asked.images) === 'queued';
           }
           catch (error) {
@@ -1433,8 +1435,8 @@ export function piSession(
             console.warn(`@ahpd/agent-pi: pi did not take the steering message ${id}: ${reason(error)}`);
           }
           if (queued) return;
-          const at = handed.indexOf(id);
-          if (at >= 0) handed.splice(at, 1);
+          const at = submittedSteering.indexOf(id);
+          if (at >= 0) submittedSteering.splice(at, 1);
           if (answers.has(id)) takenOut(id);
         })();
       });
@@ -1453,7 +1455,7 @@ export function piSession(
     resumeTurn: (turnId) => {
       const last = turns.at(-1);
       const part = (last?.responseParts as Bag[] | undefined)?.at(-1);
-      if (closed || active !== undefined || waiting.length > 0 || last === undefined || String(last.id) !== turnId
+      if (closed || active !== undefined || pendingTurns.length > 0 || last === undefined || String(last.id) !== turnId
         || last.state !== 'error' || part?.kind !== 'error' || part.resumable !== true) {
         throw new Error(`${turnId} is not a turn this backend can run again`);
       }
@@ -1466,12 +1468,12 @@ export function piSession(
       delete last.state;
       delete last.duration;
       active = last;
-      failed = undefined;
+      error = undefined;
       cancelled = false;
       resumed = true;
       answered = undefined;
       // This run's own usage, which the host merges over the run before's.
-      spent = undefined;
+      usage = undefined;
       const parts = last.responseParts as Bag[];
       mapping = {
         turnId,
@@ -1484,11 +1486,11 @@ export function piSession(
       // The transcript's own record of the turn, so what the run adds is read
       // back with it, running again until this run ends. A turn read from pi's
       // file is there once the file has been.
-      watched = watchedTurns.find((one) => one.turnId === turnId);
-      if (watched !== undefined) {
-        watched.parts = parts;
-        delete watched.state;
-        delete watched.duration;
+      turn = watchedTurns.find((one) => one.turnId === turnId);
+      if (turn !== undefined) {
+        turn.parts = parts;
+        delete turn.state;
+        delete turn.duration;
       }
       activity.say('Thinking');
 
@@ -1515,7 +1517,7 @@ export function piSession(
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
      */
     abort: () => {
-      waiting.length = 0;
+      pendingTurns.length = 0;
       if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');
@@ -1644,7 +1646,7 @@ export function piSession(
       unsubscribe?.();
       unsubscribe = undefined;
       namePrompt();
-      live?.close();
+      live?.dispose();
       live = undefined;
       opening = undefined;
     },

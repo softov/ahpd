@@ -324,7 +324,7 @@ export function pastTenseOf(call: PiCall, success: boolean): string | { markdown
   const command = call.toolName === 'bash' || call.toolName === 'powershell' ? call.input?.command : undefined;
   const first = typeof command === 'string' && command !== '' ? command.split('\n')[0] : undefined;
   return first === undefined
-    ? call.said ?? call.displayName
+    ? call.invocationMessage ?? call.displayName
     : { markdown: `Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}` };
 }
 
@@ -426,7 +426,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const call = turn.calls.get(event.toolCallId);
       if (call !== undefined) {
         call.input = bag(event.args);
-        call.said = describe(event.toolName, call.input);
+        call.invocationMessage = describe(event.toolName, call.input);
       }
       // A row the model's stream opened was announced there, so the start is
       // held for the row and has no action of its own here.
@@ -454,7 +454,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-      const said = call.said ?? call.displayName;
+      const invocationMessage = call.invocationMessage ?? call.displayName;
       /*
        * A call still `streaming` was never readied: pi failed it before its
        * `tool_call` hook, for a tool it does not have, arguments that do not
@@ -465,7 +465,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const unreadied = held.status === 'streaming';
       const owner = turn.ownerOf?.(call.toolName);
       const readied: Bag = {
-        invocationMessage: said,
+        invocationMessage,
         confirmed: 'not-needed',
         ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
       };

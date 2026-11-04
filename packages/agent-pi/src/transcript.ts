@@ -29,9 +29,9 @@ export type TranscriptTurn = Transcript[number];
  * after its parts, VS Code's resumable `executionInterrupted`.
  */
 export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[] {
-  return session.turns.map((watched) => ({
-    id: watched.turnId,
-    startedAt: watched.startedAt,
+  return session.turns.map((turn) => ({
+    id: turn.turnId,
+    startedAt: turn.startedAt,
     /*
      * The message as the turn had it, its attachments and model included. A
      * turn this bridge began is the person's unless somebody said otherwise,
@@ -39,15 +39,15 @@ export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[
      * typed read cannot carry a `Bag` that has none.
      */
     message: {
-      ...watched.message,
-      text: String(watched.message.text ?? ''),
-      origin: watched.message.origin ?? { kind: 'user' },
+      ...turn.message,
+      text: String(turn.message.text ?? ''),
+      origin: turn.message.origin ?? { kind: 'user' },
     },
-    responseParts: watched.state === undefined
-      ? [...watched.parts, { kind: 'error', error: { ...INTERRUPTED }, resumable: true }]
-      : watched.parts,
-    usage: watched.usage,
-    state: watched.state ?? 'error',
-    ...(watched.duration === undefined ? {} : { duration: watched.duration }),
+    responseParts: turn.state === undefined
+      ? [...turn.parts, { kind: 'error', error: { ...INTERRUPTED }, resumable: true }]
+      : turn.parts,
+    usage: turn.usage,
+    state: turn.state ?? 'error',
+    ...(turn.duration === undefined ? {} : { duration: turn.duration }),
   })) as TranscriptTurn[];
 }

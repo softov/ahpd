@@ -37,7 +37,7 @@ const until = async (check: () => boolean, times = 400): Promise<void> => {
   throw new Error(`still waiting after ${times} tries`);
 };
 
-/** A pi that ends every turn at once and records the rewind it was asked for. */
+/** A pi that ends every turn at once and records the truncation it was asked for. */
 function fakePi() {
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const asked: Bag[] = [];
@@ -58,28 +58,28 @@ function fakePi() {
     leaf: () => 'entry-1',
     promptAfter: () => undefined,
     levels: () => ['off'],
-    chosen: () => undefined,
-    takesImages: () => false,
-    choose: async () => true,
+    modelSelection: () => undefined,
+    supportsVision: () => false,
+    setModel: async () => true,
     rename: () => {},
-    rewind: async (entryId) => {
-      asked.push({ kind: 'rewind', entryId });
+    truncate: async (entryId) => {
+      asked.push({ kind: 'truncate', entryId });
       if (refuses > 0) { refuses -= 1; return false; }
       return true;
     },
     useEnv: async () => {},
-    close: () => {},
+    dispose: () => {},
   };
   return {
     backend,
     asked,
     opens,
-    refuseRewindOnce: () => { refuses = 1; },
+    refuseTruncateOnce: () => { refuses = 1; },
     open: (async (options: BackendOptions) => { opens.push(options); return backend; }) as OpenPi,
   };
 }
 
-it('accepts a truncation through the host and rewinds the restarted session', async () => {
+it('accepts a truncation through the host and truncates the restarted session', async () => {
   const pi = fakePi();
   const base = piAgent({ sessionDir: join(root, 'pi') }, [root], async () => []);
   const agent: Agent = {
@@ -124,8 +124,8 @@ it('accepts a truncation through the host and rewinds the restarted session', as
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
-  await until(() => pi.asked.some((one) => one.kind === 'rewind'));
-  expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-1');
+  await until(() => pi.asked.some((one) => one.kind === 'truncate'));
+  expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-1');
   // The host holds this client's subscriptions until it is told the peer is
   // gone, and a session left subscribed keeps a timer alive in the worker.
   client.close();
@@ -138,9 +138,9 @@ it('accepts a truncation through the host and rewinds the restarted session', as
  * that fails (agentSideEffects.ts L1982-L1986 at a4e689ae), so a client that
  * truncated sees its next turn run.
  */
-it('runs the turn after pi refused the rewind, and logs the refusal', async () => {
+it('runs the turn after pi refused the truncation, and logs the refusal', async () => {
   const pi = fakePi();
-  pi.refuseRewindOnce();
+  pi.refuseTruncateOnce();
   const sent: { channel: string; action: Bag }[] = [];
   const start: Start = {
     uri: 'ahp-session:/s1',
@@ -158,7 +158,7 @@ it('runs the turn after pi refused the rewind, and logs the refusal', async () =
   await until(() => sent.some((one) => one.action.type === 'chat/turnComplete'));
   expect(sent.filter((one) => one.action.type === 'chat/error')).toEqual([]);
   expect(pi.opens).toHaveLength(1);
-  expect(pi.asked.filter((one) => one.kind === 'rewind')).toHaveLength(1);
+  expect(pi.asked.filter((one) => one.kind === 'truncate')).toHaveLength(1);
   expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
   warned.mockRestore();
   session.close();
