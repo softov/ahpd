@@ -79,7 +79,7 @@ const held = (session: Session): Bag => {
 /** One turn, run to its end. */
 async function turn(session: Session, actions: Bag[], turnId: string, text: string): Promise<void> {
   const before = actions.length;
-  session.begin(turnId, text);
+  session.sendMessage(turnId, text);
   await until(() => actions.slice(before).some((action) => action.type === 'chat/turnComplete'
     || action.type === 'chat/turnCancelled'
     || action.type === 'chat/error'));

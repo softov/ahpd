@@ -301,16 +301,16 @@ export function createAutomations(ctx: HostContext): Automations {
    * stops one.
    *
    * A run is sessions and what runs in a session is a turn, so the call is the
-   * one `chat/turnCancelled` makes: the chat is asked to cancel the turn it is
-   * running, and the backend's own ending is what the run reads. A session that
-   * is not live here has no turn to cancel, which is the same answer as one
-   * between turns.
+   * one `chat/turnCancelled` makes: the chat's backend is asked to stop the
+   * turn it is running, and the backend's own ending is what the run reads. A
+   * session that is not live here has no turn to stop, which is the same
+   * answer as one between turns.
    */
   const stopTurn = (session: string): void => {
     const chat = byChat.get(chatUriFor(session))?.chat;
     if (chat === undefined) return;
     const active = (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-    if (typeof active?.id === 'string') chat.cancel(active.id);
+    if (typeof active?.id === 'string') void chat.abort();
   };
 
   /**
@@ -600,7 +600,7 @@ export function createAutomations(ctx: HostContext): Automations {
     }
     if (overlap === 'steer' && facts !== undefined && flight.session !== undefined) {
       const chat = byChat.get(chatUriFor(flight.session))?.chat;
-      if (chat?.steer?.(crypto.randomUUID(), wakeMessage(templateOf(automation), facts)) === true) {
+      if (chat?.sendSteeringMessage?.({ id: crypto.randomUUID(), text: wakeMessage(templateOf(automation), facts) }) === true) {
         log(`${said} into the turn that was already running`);
         return;
       }
@@ -666,8 +666,8 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.text.trim() === '') return;
     const turnId = crypto.randomUUID();
     if (wanted.owner !== undefined) senders.set(turnId, wanted.owner);
-    byChat.get(chatUriFor(session))?.chat
-      .begin(turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } }, undefined, turnInstructions(session));
+    const chat = byChat.get(chatUriFor(session))?.chat;
+    if (chat !== undefined) void ctx.startTurn(chat, turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
   };
 
   /**

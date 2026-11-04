@@ -171,7 +171,7 @@ it('lists a session that was created and torn down, with its workspace and title
   const model = createFakeModel({ script: [{ text: 'hi there' }], stream: true });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'remember the number 41');
+  one.session.sendMessage('t1', 'remember the number 41');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -192,7 +192,7 @@ it('answers a session on disk with the row the listing answers, title and worksp
   const model = createFakeModel({ script: [{ text: 'hi there' }], stream: true });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'remember the number 41');
+  one.session.sendMessage('t1', 'remember the number 41');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -215,7 +215,7 @@ it('finds a session written after the last listing, and nothing for one the stor
   const model = createFakeModel({ script: [{ text: 'hi' }, { text: 'said later' }], stream: true });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'the first one');
+  one.session.sendMessage('t1', 'the first one');
   await until(() => ended(one.view));
   one.session.close();
   expect((await agent.list?.())?.map((row) => row.id)).toEqual(['one']);
@@ -223,7 +223,7 @@ it('finds a session written after the last listing, and nothing for one the stor
   // A conversation that happened after that listing: `find` reads the store
   // when it is asked, so the row is there although no listing has seen it.
   const two = open(agent, 'late', sweep);
-  two.session.begin('t2', 'said later');
+  two.session.sendMessage('t2', 'said later');
   await until(() => ended(two.view));
   two.session.close();
 
@@ -238,7 +238,7 @@ it('reads one record and never lists the store', async () => {
   const agent = backend(root, model, allowAll());
   const store = made[before] as Store;
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'hello');
+  one.session.sendMessage('t1', 'hello');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -325,7 +325,7 @@ const played = async (steps: Step[], tools: BoundTool[] = [lookup([])]): Promise
   const { root, sweep } = place();
   const agent = backend(root, scripted(steps), allowAll());
   const one = open(agent, 'one', sweep, { tools });
-  one.session.begin('t1', 'hello there');
+  one.session.sendMessage('t1', 'hello there');
   await until(() => ended(one.view));
   one.session.close();
   const turns = await agent.transcript?.('one');
@@ -391,7 +391,7 @@ it('titles a call by the subject the run sent, live and read back', async () => 
     { deltas: [{ type: 'text.delta', text: 'done' }], parts: [{ type: 'text', text: 'done' }] },
   ]), allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'read it');
+  one.session.sendMessage('t1', 'read it');
   await until(() => ended(one.view));
   one.session.close();
   const turns = await agent.transcript?.('one');
@@ -479,7 +479,7 @@ it('rebuilds a turn with its text, its reasoning and its tool call in order', as
   });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep, { tools: [lookup([])] });
-  one.session.begin('t1', 'hello there');
+  one.session.sendMessage('t1', 'hello there');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -523,7 +523,7 @@ it('rebuilds a call whose run recorded a result but no start, with a start it wo
   });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep, { tools: [] });
-  one.session.begin('t1', 'hello there');
+  one.session.sendMessage('t1', 'hello there');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -580,7 +580,7 @@ it('reopens a paused run through start.resume without replaying the input', asyn
     stream: true,
   }), asks);
   const before = open(first, 'one', sweep, { tools: [tool] });
-  before.session.begin('t1', 'hi');
+  before.session.sendMessage('t1', 'hi');
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   /*
    * Wait for the pause to be persisted, not only announced: the request event
@@ -639,7 +639,7 @@ it('replays a paused shell command as the question it was, whatever the rules sa
     stream: true,
   }), asks);
   const before = open(first, 'rules', sweep);
-  before.session.begin('t1', 'hi');
+  before.session.sendMessage('t1', 'hi');
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'rules');
 
@@ -690,7 +690,7 @@ it('answers a request the replay announced before the resumed run had a handle',
     stream: true,
   }), asks);
   const before = open(first, 'one', sweep, { tools: [tool] });
-  before.session.begin('t1', 'hi');
+  before.session.sendMessage('t1', 'hi');
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'one');
 
@@ -731,7 +731,7 @@ it('answers a pause the resumed run raises after the restart', async () => {
     stream: true,
   }), asks);
   const before = open(first, 'one', sweep, { tools: [tool] });
-  before.session.begin('t1', 'hi');
+  before.session.sendMessage('t1', 'hi');
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'one');
 
@@ -783,9 +783,9 @@ it('reads a turn back under the id its client gave it', async () => {
   const { root, sweep } = place();
   const agent = backend(root, createFakeModel({ script: [{ text: 'first' }, { text: 'second' }], stream: true }), allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'say first');
+  one.session.sendMessage('t1', 'say first');
   await until(() => ended(one.view));
-  one.session.begin('client-chosen-2', 'say second');
+  one.session.sendMessage('client-chosen-2', 'say second');
   await until(() => one.view.notes.filter((held) => held.action.type === 'chat/turnComplete').length === 2);
   one.session.close();
   expect((await agent.transcript?.('one'))?.map((turn) => turn.id)).toEqual(['t1', 'client-chosen-2']);
@@ -795,13 +795,13 @@ it('appends a new run under the same session id when a finished session is resum
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'first' }], stream: true }), allowAll());
   const before = open(first, 'one', sweep);
-  before.session.begin('t1', 'say first');
+  before.session.sendMessage('t1', 'say first');
   await until(() => ended(before.view));
   before.session.close();
 
   const second = backend(root, createFakeModel({ script: [{ text: 'second' }], stream: true }), allowAll());
   const after = open(second, 'one', sweep, { resume: 'one', seed: [] });
-  after.session.begin('t2', 'say second');
+  after.session.sendMessage('t2', 'say second');
   await until(() => ended(after.view));
 
   expect(after.session.agentId()).toBe('one');
@@ -825,7 +825,7 @@ it('takes a second turn handed while a resumed session opens, said at once and r
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'first' }], stream: true }), allowAll());
   const before = open(first, 'one', sweep);
-  before.session.begin('t1', 'say first');
+  before.session.sendMessage('t1', 'say first');
   await until(() => ended(before.view));
   before.session.close();
 
@@ -836,8 +836,8 @@ it('takes a second turn handed while a resumed session opens, said at once and r
    */
   const second = backend(root, createFakeModel({ script: [{ text: 'second' }, { text: 'third' }], stream: true }), allowAll());
   const after = open(second, 'one', sweep, { resume: 'one', seed: [] });
-  after.session.begin('t2', 'say second');
-  after.session.begin('t3', 'say third');
+  after.session.sendMessage('t2', 'say second');
+  after.session.sendMessage('t3', 'say third');
   const done = (turnId: string): boolean => after.view.notes.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === turnId);
   await until(() => done('t3'));
 
@@ -866,7 +866,7 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
     stream: true,
   }), asks);
   const before = open(first, 'one', sweep, { tools: [tool] });
-  before.session.begin('t1', 'hi');
+  before.session.sendMessage('t1', 'hi');
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'one');
 
@@ -877,7 +877,7 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
    */
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
-  after.session.begin('t2', 'something else');
+  after.session.sendMessage('t2', 'something else');
   await until(
     () => after.view.notes.some((one) => one.action.type === 'chat/turnStarted' && one.action.turnId === 't2'),
     4000,
@@ -899,11 +899,11 @@ it('keeps two chats of one session in two conversations, each with its own turn'
   const agent = backend(root, model, allowAll());
 
   const one = open(agent, 'shared', sweep, { chatId: 'chat-one' });
-  one.session.begin('t1', 'said in one');
+  one.session.sendMessage('t1', 'said in one');
   await until(() => ended(one.view));
   one.session.close();
   const two = open(agent, 'shared', sweep, { chatId: 'chat-two' });
-  two.session.begin('t2', 'said in two');
+  two.session.sendMessage('t2', 'said in two');
   await until(() => ended(two.view));
   two.session.close();
 
@@ -925,7 +925,8 @@ it('rebuilds a turn with the model it ran on, after a restart', async () => {
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());
   const before = open(first, 'one', sweep);
-  before.session.begin('t1', 'hi', { id: 'open_router/x' });
+  before.session.changeModel({ id: 'open_router/x' });
+  before.session.sendMessage('t1', 'hi');
   await until(() => ended(before.view));
   before.session.close();
 
@@ -940,7 +941,7 @@ it('rebuilds a turn with no model when its run recorded none', async () => {
   const { root, sweep } = place();
   const agent = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'hi');
+  one.session.sendMessage('t1', 'hi');
   await until(() => ended(one.view));
   one.session.close();
 
@@ -1071,7 +1072,7 @@ it('stops listing a session that the store no longer has', async () => {
   const model = createFakeModel({ script: [{ text: 'gone' }], stream: true });
   const agent = backend(root, model, allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'still here');
+  one.session.sendMessage('t1', 'still here');
   await until(() => ended(one.view));
   one.session.close();
   expect((await agent.list?.())?.map((row) => row.id)).toEqual(['one']);
@@ -1115,14 +1116,14 @@ it('skips a run a rewind removed between the run list and its events', async () 
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'answer one' }], stream: true }), allowAll());
   const one = open(first, 'one', sweep);
-  one.session.begin('t1', 'the first thing');
+  one.session.sendMessage('t1', 'the first thing');
   await until(() => ended(one.view));
   one.session.close();
 
   // A second turn, so the read has a run to lose beside one that stays.
   const second = backend(root, createFakeModel({ script: [{ text: 'answer two' }], stream: true }), allowAll());
   const two = open(second, 'one', sweep, { resume: 'one' });
-  two.session.begin('t2', 'the second thing');
+  two.session.sendMessage('t2', 'the second thing');
   await until(() => ended(two.view));
   two.session.close();
 
@@ -1152,7 +1153,7 @@ it('fails the read when a run\'s events are missing for a reason other than the 
   const { root, sweep } = place();
   const agent = backend(root, createFakeModel({ script: [{ text: 'answer' }], stream: true }), allowAll());
   const one = open(agent, 'one', sweep);
-  one.session.begin('t1', 'still here');
+  one.session.sendMessage('t1', 'still here');
   await until(() => ended(one.view));
   one.session.close();
 

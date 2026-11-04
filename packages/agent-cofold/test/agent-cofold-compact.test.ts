@@ -135,7 +135,7 @@ const run = async (
     view.types('chat').filter((type) => type === 'chat/turnComplete' || type === 'chat/turnCancelled').length;
   for (const [index, text] of texts.entries()) {
     const wanted = ends() + 1;
-    session.begin(`t${index + 1}`, text);
+    session.sendMessage(`t${index + 1}`, text);
     const limit = Date.now() + 4000;
     while (ends() < wanted) {
       if (Date.now() > limit) throw new Error('timed out waiting for the turn');

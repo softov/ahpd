@@ -39,7 +39,7 @@ const callStatuses = (sent: { channel: string; action: Bag }[]): Map<string, str
 it('asks a person before a call runs, and runs it on their answer', async () => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
   await settled();
@@ -57,7 +57,7 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
 it('answers what it is waiting on in its state, so a client that connects late sees the question', async () => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(session.sessionState().inputNeeded).toBeUndefined();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
@@ -72,7 +72,7 @@ it('answers what it is waiting on in its state, so a client that connects late s
 it('blocks a declined call with the reason the model reads', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
@@ -83,7 +83,7 @@ it('blocks a declined call with the reason the model reads', async () => {
 it('answers two waiting calls independently, and a cancel answers both it leaves', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   let first: Bag | undefined;
   let second: Bag | undefined;
@@ -98,7 +98,7 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   expect(first).toBeUndefined();
   // The second is still a question, so the session is still waiting.
   expect(session.status()).toBe(Status.InputNeeded);
-  session.cancel('t1');
+  session.abort();
   await two;
   expect(second).toEqual({ block: true, reason: 'The turn was stopped' });
 
@@ -128,7 +128,7 @@ it.each([
 ])('draws a live %s call by what it runs on, while it runs and once it is done', async (name, input, said) => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', name, input);
   expect(last('chat/toolCallReady')?.invocationMessage).toBe(said);
@@ -141,7 +141,7 @@ it.each([
 it('draws an asked call by what it runs on, and keeps the tool in its question', async () => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls -la' });
   await settled();
@@ -155,7 +155,7 @@ it('draws an asked call by what it runs on, and keeps the tool in its question',
 it('opens one row for an asked call, starts it once and readies it once', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
   await settled();
@@ -178,7 +178,7 @@ it('opens one row for an asked call, starts it once and readies it once', async 
 it('completes a call pi failed before its hook, as a client folds it', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // An unknown tool or arguments that fail validation: pi opens the row and
   // closes it with an error, and the `tool_call` hook never runs.
@@ -208,7 +208,7 @@ it('does not send a client tool to its client until the person approves it', asy
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'editor__open', {});
   await settled();
@@ -239,7 +239,7 @@ it('does not send a client tool to its client until the person approves it', asy
 it('keeps a declined call cancelled in the snapshot and for a client', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
@@ -255,7 +255,7 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
 
 it('still asks under projectTrust deny, because the inline extension is not the project\'s own', async () => {
   const { session, pi } = opened({}, { projectTrust: 'deny' });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.onToolCall).toBeDefined();
 });
@@ -271,7 +271,7 @@ async function verdict(
 ): Promise<'run' | 'ask' | 'refused'> {
   const { session, pi } = opened({ tools, settings: { permissionMode: mode } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   let resolved = false;
   let answer: Bag | undefined;
@@ -377,7 +377,7 @@ it('keeps pi own effects for a name it owns, even when a host tool declares othe
 it('names the mode in a refusal rather than asking anybody', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'plan' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const answer = await pi.opens[0]?.onToolCall!(
     { type: 'tool_call', toolCallId: 'c1', toolName: 'edit', input: { path: join(root, 'a.txt') } } as never,

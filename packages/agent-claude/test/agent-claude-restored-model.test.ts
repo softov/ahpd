@@ -108,7 +108,8 @@ it('leaves the model empty when what was stored is not a name', async () => {
 
 it('lets a message name another model, as it did before', async () => {
   const { session } = await opened({ model: 'opus' });
-  session.begin('t1', 'first', { id: 'sonnet' });
+  session.changeModel({ id: 'sonnet' });
+  session.sendMessage('t1', 'first');
   await new Promise((done) => { setTimeout(done, 20); });
   expect((session.sessionState()._meta as Bag | undefined)?.['ahpd.model']).toBe('sonnet');
 });

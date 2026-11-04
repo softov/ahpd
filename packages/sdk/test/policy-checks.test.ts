@@ -145,9 +145,11 @@ const reporting = (provider: string, reports = 1): Agent => {
     displayName: provider,
     create: (start: Start) => {
       const session = base.create(start);
+      let model: { id: string } | undefined;
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        changeModel: (picked) => { model = picked; },
+        sendMessage: (turnId, text, from) => {
           start.emit('chat', {
             type: 'chat/turnStarted',
             turnId,

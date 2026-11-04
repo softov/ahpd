@@ -109,7 +109,7 @@ const runTurn = async (
   text: string,
 ): Promise<void> => {
   opened.view.notes.length = 0;
-  opened.session.begin(turnId, text);
+  opened.session.sendMessage(turnId, text);
   await until(() => finished(opened.view));
 };
 

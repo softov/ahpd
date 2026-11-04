@@ -200,7 +200,7 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   await settle();
   expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
 
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settle();
   // The turn already running stays on the CLI it started on, even after the
   // record changes under it.
@@ -209,7 +209,7 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   await settle();
   expect(sdk.options).toHaveLength(1);
 
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await settle();
 
   // A second CLI, built from what the record says now, resumed onto the

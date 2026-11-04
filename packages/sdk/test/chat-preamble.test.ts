@@ -54,14 +54,14 @@ function recording(dir: string) {
       const kept: Session = {
         ...chat,
         forkPoint: () => 'point',
-        begin: (...args: Parameters<Session['begin']>) => {
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
           begun.push({ chat: start.chatUri, text: args[1] });
           // A turn that asks for a worker opens one, as a backend's own subagent call does.
           if (args[1] === 'spawn a worker') {
             const worker = start.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
             if (worker !== undefined) workers.push(worker.uri);
           }
-          chat.begin(...args);
+          return chat.sendMessage(...args);
         },
       };
       return kept;

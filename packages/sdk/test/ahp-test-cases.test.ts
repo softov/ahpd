@@ -530,10 +530,6 @@ const REFUSALS: Record<string, {
     said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
     source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
     holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
-  }, {
-    said: (action) => `${String(action.turnId)} is not a turn this host can rewind to`,
-    source: 'host policy, host/chatactions.ts: a truncation cuts the backend at its own end of the turn, and a backend that never ran the turn has none',
-    holds: (state, action) => ((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
   }],
   'chat/toolCallResultConfirmed': [{
     said: () => 'No tool call here asks for its result to be confirmed',

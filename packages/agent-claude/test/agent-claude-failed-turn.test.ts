@@ -156,7 +156,7 @@ it("ends a turn the CLI failed with the CLI's own words, said once", async () =>
   });
   await settle();
   const before = session.chatState();
-  session.begin('t1', 'Reply with the single word: ok');
+  session.sendMessage('t1', 'Reply with the single word: ok');
   await settle();
   sdk.push(notice, result);
   await settle();
@@ -174,7 +174,7 @@ it('marks a failed model call resumable, on chat/error and on the turn', async (
   sdk.reset();
   const { session, chat } = live();
   await settle();
-  session.begin('t1', 'Reply with the single word: ok');
+  session.sendMessage('t1', 'Reply with the single word: ok');
   await settle();
   sdk.push(notice, result);
   await settle();
@@ -193,7 +193,7 @@ it('does not mark a turn refused before the CLI resumable', async () => {
   // The CLI ends, so the next turn is one that never reaches one.
   sdk.queries.at(-1)?.close();
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
 
   const part = chat.find((one) => one.type === 'chat/error')?.part as Bag;
@@ -208,7 +208,7 @@ it('does not mark a turn whose login was refused resumable', async () => {
   logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
   const { session, chat } = live({ preset: { logins: ['work'] }, logins: { open: logins, owner: () => 'host' } });
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
   sdk.push(
     { ...notice, message: { ...notice.message, content: [{ type: 'text', text: 'denied' }] } },
@@ -242,11 +242,11 @@ const worked = { ...result, subtype: 'success', is_error: false, result: 'ok' };
 const twoTurns = async () => {
   const { session, chat } = live();
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
   sdk.push(step('a1'), worked);
   await settle();
-  session.begin('t2', 'two');
+  session.sendMessage('t2', 'two');
   await settle();
   sdk.push(step('a2'), broke);
   await settle();
@@ -259,7 +259,7 @@ it('resumes a failed turn at the end of the turn before, and sends its prompt ag
   const clis = sdk.queries.length;
   const prompts = sdk.said.length;
 
-  expect(session.resume?.('t2')).toBe(true);
+  expect(() => session.resumeTurn?.('t2')).not.toThrow();
   // Said while the client's action is applied, so the host echoes it - and
   // before anything of the new run is said.
   const at = chat.findIndex((one) => one.type === 'chat/turnResume');
@@ -285,16 +285,16 @@ it('resumes a turn whose model call failed, as the CLI reports it', async () => 
   sdk.reset();
   const { session } = live();
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
   sdk.push(step('a1'), worked);
   await settle();
-  session.begin('t2', 'two');
+  session.sendMessage('t2', 'two');
   await settle();
   sdk.push(notice, result);
   await settle();
 
-  expect(session.resume?.('t2')).toBe(true);
+  expect(() => session.resumeTurn?.('t2')).not.toThrow();
   await settle();
   expect(sdk.queries.at(-1)?.options.resumeSessionAt).toBe('a1');
   expect(sdk.said.at(-1)).toBe('two');
@@ -304,13 +304,13 @@ it("starts a conversation's first turn over under its id", async () => {
   sdk.reset();
   const { session } = live();
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
   sdk.push(step('a1'), broke);
   await settle();
   const clis = sdk.queries.length;
 
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   await settle();
   // Nothing to cut back to, so the conversation is deleted and named again.
   expect(sdk.queries).toHaveLength(clis + 1);
@@ -322,7 +322,7 @@ it("starts a conversation's first turn over under its id", async () => {
 it('ends a resumed turn that fails again with one more resumable error part', async () => {
   sdk.reset();
   const { session } = await twoTurns();
-  expect(session.resume?.('t2')).toBe(true);
+  expect(() => session.resumeTurn?.('t2')).not.toThrow();
   await settle();
   sdk.push(step('a3'), broke);
   await settle();
@@ -332,7 +332,7 @@ it('ends a resumed turn that fails again with one more resumable error part', as
   expect(errors.filter((part) => part.kind === 'error')).toHaveLength(2);
   expect(errors.at(-1)?.resumable).toBe(true);
   // And the turn can be asked for again.
-  expect(session.resume?.('t2')).toBe(true);
+  expect(() => session.resumeTurn?.('t2')).not.toThrow();
 });
 
 it('refuses a turn that cannot be resumed', async () => {
@@ -340,29 +340,29 @@ it('refuses a turn that cannot be resumed', async () => {
   sdk.reset();
   const running = live();
   await settle();
-  running.session.begin('t1', 'one');
+  running.session.sendMessage('t1', 'one');
   await settle();
   sdk.push(step('a1'), broke);
   await settle();
-  running.session.begin('t2', 'two');
+  running.session.sendMessage('t2', 'two');
   await settle();
-  expect(running.session.resume?.('t1')).toBe(false);
+  expect(() => running.session.resumeTurn?.('t1')).toThrow();
 
   // A turn that is not the latest.
   sdk.reset();
   const older = live();
   await settle();
-  older.session.begin('t1', 'one');
+  older.session.sendMessage('t1', 'one');
   await settle();
   sdk.push(step('a1'), broke);
   await settle();
-  older.session.begin('t2', 'two');
+  older.session.sendMessage('t2', 'two');
   await settle();
   sdk.push(step('a2'), worked);
   await settle();
-  expect(older.session.resume?.('t1')).toBe(false);
+  expect(() => older.session.resumeTurn?.('t1')).toThrow();
   // A turn that did not fail.
-  expect(older.session.resume?.('t2')).toBe(false);
+  expect(() => older.session.resumeTurn?.('t2')).toThrow();
 
   // A turn that failed with nothing to run again on, whose part says so.
   sdk.reset();
@@ -370,11 +370,11 @@ it('refuses a turn that cannot be resumed', async () => {
   await settle();
   sdk.queries.at(-1)?.close();
   await settle();
-  gone.session.begin('t1', 'one');
+  gone.session.sendMessage('t1', 'one');
   await settle();
   const turns = (gone.session.chatState() as Bag).turns as Bag[];
   expect((bag(turns.at(-1)).responseParts as Bag[]).at(-1)?.resumable).toBeUndefined();
-  expect(gone.session.resume?.('t1')).toBe(false);
+  expect(() => gone.session.resumeTurn?.('t1')).toThrow();
 });
 
 /*
@@ -389,7 +389,7 @@ it('starts nothing queued behind a failed turn, and the head once a client takes
   logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
   const { session, chat } = live({ preset: { logins: ['work'] }, logins: { open: logins, owner: () => 'host' } });
   await settle();
-  session.begin('t1', 'one');
+  session.sendMessage('t1', 'one');
   await settle();
   session.queue('waiting', 'two');
   session.queue('later', 'three');
@@ -417,7 +417,7 @@ it('starts nothing behind a failure a client can resume, a message queued after 
   sdk.reset();
   const { session, chat } = live();
   await settle();
-  session.begin('t1', 'Reply with the single word: ok');
+  session.sendMessage('t1', 'Reply with the single word: ok');
   await settle();
   session.queue('waiting', 'two');
   await settle();

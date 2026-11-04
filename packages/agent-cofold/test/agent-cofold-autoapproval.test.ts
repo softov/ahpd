@@ -106,7 +106,7 @@ async function open(args: {
 it('runs a shell command the owner\'s rules allow, without asking', async () => {
   const { asked, check } = approving(['echo hi']);
   const { session, notes, dir } = await open({ script: shell('echo hi'), check });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => ended(notes));
 
   expect(asked).toEqual([
@@ -127,7 +127,7 @@ it('runs a shell command the owner\'s rules allow, without asking', async () => 
 it('asks for a shell command no rule matches', async () => {
   const { asked, check } = approving(['make test']);
   const { session, notes, dir } = await open({ script: shell('echo hi'), check });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   expect(asked).toEqual([
@@ -149,7 +149,7 @@ it('asks for a shell command no rule matches', async () => {
 
 it('asks when the host offers no check at all', async () => {
   const { session, notes, dir } = await open({ script: shell('echo hi') });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   expect((of(notes, 'session/inputNeededSet')[0]?.request as Bag).kind).toBe('toolConfirmation');
@@ -169,7 +169,7 @@ it('asks the check only about cofold\'s shell', async () => {
     // The mode that asks before a write, so the call reaches the policy.
     settings: { permissionMode: 'default' },
   });
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   // The rule is read for the call's tool name, by the hook and again as the
@@ -199,7 +199,7 @@ it('asks for a shell tool the rule names, and offers no session choice', async (
   // question: it wins over a line that would otherwise run unasked.
   const { asked, check } = ruling(['shell_exec'], ['echo hi']);
   const { session, notes, dir } = await open({ script: shell('echo hi'), check });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   expect(asked).toEqual([
@@ -230,7 +230,7 @@ it('never lets a matched call be allowed for the session', async () => {
     ],
     check,
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
   // A client sending the id of the session choice the question did not offer:
   // the answer is still an approval for this one call, and cofold remembers
@@ -238,7 +238,7 @@ it('never lets a matched call be allowed for the session', async () => {
   session.confirm('c1', true, 'allow-session');
   await when(() => endings(notes) === 1);
 
-  session.begin('t2', 'run it again');
+  session.sendMessage('t2', 'run it again');
   await when(() => of(notes, 'session/inputNeededSet').length > 1);
   expect(of(notes, 'session/inputNeededSet')).toHaveLength(2);
   session.confirm('c2', false);
@@ -261,7 +261,7 @@ it('remembers no session choice for a tool the rule named after the question was
     ],
     check,
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
   const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
   expect(ids(bag(entry.toolCall).options)).toEqual(['allow-once', 'allow-session', 'deny']);
@@ -269,7 +269,7 @@ it('remembers no session choice for a tool the rule named after the question was
   session.confirm('c1', true, 'allow-session');
   await when(() => endings(notes) === 1);
 
-  session.begin('t2', 'run it again');
+  session.sendMessage('t2', 'run it again');
   await when(() => of(notes, 'session/inputNeededSet').length > 1);
   session.confirm('c2', false);
   await when(() => endings(notes) === 2);
@@ -287,7 +287,7 @@ it.each(['auto', 'acceptEdits', 'bypassPermissions'] as const)(
   async (permissionMode) => {
     const { check } = ruling(['read_file']);
     const { session, notes, dir } = await open({ script: read, check, settings: { permissionMode } });
-    session.begin('t1', 'read it');
+    session.sendMessage('t1', 'read it');
     await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
     const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
@@ -301,7 +301,7 @@ it.each(['auto', 'acceptEdits', 'bypassPermissions'] as const)(
 it('refuses a tool the rule names in dontAsk mode, without asking', async () => {
   const { check } = ruling(['read_file']);
   const { session, notes, dir } = await open({ script: read, check, settings: { permissionMode: 'dontAsk' } });
-  session.begin('t1', 'read it');
+  session.sendMessage('t1', 'read it');
   await when(() => endings(notes) === 1);
 
   expect(of(notes, 'session/inputNeededSet')).toEqual([]);
@@ -325,20 +325,20 @@ it('asks a tool the rule names even when a session approval was already remember
     ],
     check,
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
   // Allowed for the session before any rule names the tool, so cofold keeps it.
   session.confirm('c1', true, 'allow-session');
   await when(() => endings(notes) === 1);
 
   // The remembered approval is what answers the question, not the policy.
-  session.begin('t2', 'run it again');
+  session.sendMessage('t2', 'run it again');
   await when(() => endings(notes) === 2);
   expect(of(notes, 'session/inputNeededSet')).toHaveLength(1);
 
   // The rule names the tool, and the remembered approval no longer answers it.
   named.push('shell_exec');
-  session.begin('t3', 'run it once more');
+  session.sendMessage('t3', 'run it once more');
   await when(() => of(notes, 'session/inputNeededSet').length > 1);
   session.confirm('c3', false);
   await when(() => endings(notes) === 3);

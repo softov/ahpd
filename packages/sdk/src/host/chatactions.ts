@@ -669,6 +669,12 @@ export function chatAction(
     const resumed = ctx.resumedTurns.get(`${channel}\n${turn}`);
     dispatch(channel, resumed === undefined ? action : { ...action, duration: resumed.duration + (Date.now() - resumed.since) }, origin);
   };
+  /** `running`'s backend told to stop what it runs; one that cannot is a line in the log. */
+  const aborted = (running: NonNullable<typeof held>): void => {
+    const failed = (error: unknown): void => { log(`${running.chatUri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`); };
+    try { void Promise.resolve(running.abort()).catch(failed); }
+    catch (error) { failed(error); }
+  };
   /**
    * Whether the held running turn has an input request by this id that has
    * no response yet, which is what an input action answers.
@@ -750,9 +756,10 @@ export function chatAction(
         unsent(session.chatUri, 'sendFailed', attached.refusal, since);
         break;
       }
+      // Its start is the client's, said above, so nothing more is said for it.
       beginTurn(
         () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments,
-          undefined, undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
+          undefined, () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
         (why) => { unsent(session.chatUri, 'rejected', why, since); },
         (why) => { unsent(session.chatUri, 'sendFailed', why, since); },
       );
@@ -1053,14 +1060,14 @@ export function chatAction(
        */
       const moved = [...ours, ...fixed];
       /*
-       * One answer for the whole action: every key the client sent, as each
-       * was taken, in one echo, or the action refused and nothing of it kept.
-       * "The server validates and broadcasts the action", and its client holds
-       * it pending until that answer; the reference host checks every key it
-       * is given and then says the client's action once, or refuses it.
+       * One answer for the whole action, by this host's own checks of it and
+       * before anything it causes: every key the client sent in one echo, or
+       * the action refused and nothing of it kept. "The server validates and
+       * broadcasts the action", and its client holds it pending until that
+       * answer; the reference host checks a config change, then says the
+       * client's action once, or refuses it.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L603-L608
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13548-L13588
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13661
        */
       const refused = (why: string): void => {
         for (const key of Object.keys(config)) undo(key);
@@ -1096,7 +1103,7 @@ export function chatAction(
        * session or to one chat in it.
        *
        * A key the schema does not declare goes to the backend too, which
-       * takes it or says why it will not.
+       * takes it or says why it did not.
        */
       const asked = Object.entries(config)
         .filter(([key]) => {
@@ -1108,13 +1115,26 @@ export function chatAction(
         refused(`${asked[0]?.[0] ?? ''} is not a config key this backend takes`);
         break;
       }
+      /*
+       * A value its property's list does not offer, in the reference host's
+       * words for one, since a client draws a property with a list as a
+       * picker of exactly those values.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L148
+       */
+      const unoffered = asked.find(([key, value]) => {
+        const listed = propertyOf(owning?.agent, key) as { enum?: unknown[]; enumDynamic?: boolean } | undefined;
+        return value !== undefined && Array.isArray(listed?.enum) && listed.enum.length > 0 && listed.enumDynamic !== true
+          && !listed.enum.some((candidate) => candidate === value);
+      });
+      if (unoffered !== undefined) {
+        refused(`Session configuration '${unoffered[0]}' does not offer '${String(unoffered[1])}'.`);
+        break;
+      }
       const uri = session.uri;
       /*
-       * Every key as the session holds it once the action is in force: the
-       * value the session actually has where a start changed it - a source is
-       * made into a machine on the way in, so a client told the source back
-       * would hold a value the session is not running with - and each key the
-       * backend took as the client sent it.
+       * Every key as the client sent it, a source the session was already
+       * made from read as that machine, kept and said once the change is
+       * checked.
        */
       const said = (taken: Record<string, unknown>): void => {
         for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
@@ -1131,18 +1151,33 @@ export function chatAction(
         }
       };
       /*
-       * The keys the backend is asked about, one at a time in the order they
-       * were sent, and the rest as the session holds them. A refusal puts back
-       * each key taken before it, in the backend and in the session's config,
-       * so the action leaves nothing of itself behind, in the backend's own
-       * words, because only it knows whether the key or the value was the
-       * problem. The connection's next dispatch is not held for the answer:
-       * a backend may answer a value only as it is closed, by the start a
-       * later dispatch of the same connection asks for.
-       *
-       * A key taken is said in the client's own words, as the reference host
-       * says a client's config action in the client's own keys.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+       * The keys the schema does not declare, which are the backend's to
+       * judge before the change is said: the schema this host checks says
+       * nothing of them, and a backend may take a key it does not advertise
+       * or refuse one it does not serve, in its own words. A refusal puts back
+       * each such key taken before it.
+       */
+      const unschemed = asked.filter(([key]) => propertyOf(owning?.agent, key) === undefined);
+      const judged = async (): Promise<string | undefined> => {
+        const done: string[] = [];
+        for (const [key, value] of unschemed) {
+          const answer = await Promise.resolve(session.setConfig?.(key, value))
+            .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+          if (answer !== true) {
+            for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
+            return typeof answer === 'string' ? answer : `${key} is not a config key this backend takes`;
+          }
+          done.push(key);
+        }
+        return undefined;
+      };
+      /*
+       * The keys handed to the session's backend once the change is said, one
+       * at a time in the order they were sent. A string answer is the
+       * backend's own words for a value it could not take, which this host
+       * logs: the change stands as every client was told it, as the reference
+       * host applies a config change its checks passed to its agents.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
        *
        * Every chat, or only this one, as the property says. A permission
        * mode and an output style are the session's: the chats are peers on
@@ -1152,21 +1187,13 @@ export function chatAction(
        * backend takes is a key another may not, so it is left to the chat's
        * own config.
        */
-      const taking = async (): Promise<Record<string, unknown> | string> => {
-        const taken: Record<string, unknown> = {};
-        const done: string[] = [];
-        for (const [key, value] of Object.entries(config)) {
-          if (!asked.some(([one]) => one === key)) {
-            taken[key] = owning?.config[key] ?? value;
-            continue;
+      const handing = async (): Promise<void> => {
+        for (const [key, value] of asked) {
+          if (!unschemed.some(([one]) => one === key)) {
+            const answer = await Promise.resolve(session.setConfig?.(key, value))
+              .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+            if (answer !== true) log(`${session.chatUri}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
           }
-          const answer = await Promise.resolve(session.setConfig?.(key, value));
-          if (answer !== true) {
-            for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
-            return typeof answer === 'string' ? answer : `${key} is not a config key this backend takes`;
-          }
-          done.push(key);
-          taken[key] = value;
           const everywhere = propertyOf(owning?.agent, key)?.scope === 'chat'
             ? []
             : (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
@@ -1174,11 +1201,11 @@ export function chatAction(
           for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
         }
         /*
-         * A key this host takes goes to every chat's backend once the action
-         * is taken, as the reference host's agents are handed every key but
-         * its own and read one as it stands: what a backend answers decides
-         * nothing, since this host took the key. A nested session's host
-         * inside judges that session's commands by the locations it is handed.
+         * A key this host takes goes to every chat's backend, as the reference
+         * host's agents are handed every key but its own and read one as it
+         * stands: what a backend answers decides nothing, since this host took
+         * the key. A nested session's host inside judges that session's
+         * commands by the locations it is handed.
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L205-L217
          */
@@ -1186,7 +1213,6 @@ export function chatAction(
           if (!Object.hasOwn(HOSTS_TAKEN, key)) continue;
           for (const chat of owning === undefined ? [session] : owning.chats.values()) void Promise.resolve(chat.setConfig?.(key, value));
         }
-        return taken;
       };
       /*
        * A fixed key that did not move is not a change at all: a client
@@ -1194,11 +1220,18 @@ export function chatAction(
        * than asking for anything, and it is answered with the rest.
        */
       if ((moved.length === 0 && rescoped.length === 0) || owning === undefined) {
-        void taking().then((taken) => {
-          if (typeof taken === 'string') refused(taken);
-          else said(taken);
+        if (unschemed.length === 0) {
+          said(config);
+          void handing();
+          break;
+        }
+        return judged().then((why) => {
+          if (why !== undefined) refused(why);
+          else {
+            said(config);
+            void handing();
+          }
         });
-        break;
       }
       const mine = { ...settled };
       for (const [key, value] of [...ours, ...rescoped]) mine[key] = value;
@@ -1242,11 +1275,18 @@ export function chatAction(
         refused(why);
       };
       if (moved.length === 0) {
-        void taking().then((taken) => {
-          if (typeof taken === 'string') withdrawn(taken);
-          else said(taken);
+        if (unschemed.length === 0) {
+          said(config);
+          void handing();
+          break;
+        }
+        return judged().then((why) => {
+          if (why !== undefined) withdrawn(why);
+          else {
+            said(config);
+            void handing();
+          }
         });
-        break;
       }
       /*
        * The restart, held while it runs.
@@ -1260,28 +1300,38 @@ export function chatAction(
        * waited re-runs against the backend that is actually there.
        *
        * Whether this session may move to the machine it is being
-       * moved to is asked here, where the keys are still theirs and
-       * the backend is still the one it was - not inside `restart`,
-       * which is past the point of undoing anything. It is the same
+       * moved to is asked first, where the keys are still theirs and
+       * the backend is still the one it was. It is the same
        * `admitted` a client's `createSession` asks, against the
        * person who owns the work and the scope it is being charged
-       * to.
+       * to, and it is one of this host's checks of the change: a
+       * refusal undoes the whole action, the keys, the row this host
+       * decides from and the charge the scope moved onto, before
+       * anything of it is said, and the session stays exactly where
+       * it was.
        *
-       * A refusal undoes the whole action: the keys, the row this host
-       * decides from, and the charge the scope moved onto. Nothing is announced either - the change
-       * never happened, so a `configChanged` would tell every other
-       * subscriber about a setting the session does not have, and a
-       * key written to the store would be what a resume starts the
-       * lead chat with. The session stays exactly where it was.
-       *
-       * The backend started again is started on the session's config,
-       * which holds every key of the action, so each is answered as the
-       * session then holds it.
+       * Admitted, the change is said, and the restart is its side
+       * effect. The backend started again is started on the session's
+       * config, which holds every key of the action; a machine it made
+       * from a source the client named is said after it as this
+       * host's own, since every client holds the source. The client's
+       * next dispatch waits for the check, so what it sends after the
+       * change is said after it.
        */
+      const admission = admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
+      let spoken = false;
       const work = (async (): Promise<string | undefined> => {
-        const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
+        const wrong = await admission;
         if (wrong !== undefined) return wrong;
+        said(config);
+        spoken = true;
         await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection, undefined, conn.tokensFor);
+        const made = Object.entries(config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
+        if (made.length > 0) {
+          const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
+          for (const [key, value] of Object.entries(machine)) if (!HOSTS_OWN.includes(key)) remember(key, value);
+          dispatch(uri, { type: 'session/configChanged', config: machine });
+        }
         return undefined;
       })();
       // The promise a close and a turn's send wait on, made from the work's: a
@@ -1296,15 +1346,19 @@ export function chatAction(
         (wrong) => {
           clear();
           if (wrong !== undefined) withdrawn(wrong);
-          else said(Object.fromEntries(Object.entries(config).map(([key, value]) => [key, owning.config[key] ?? value])));
         },
         (error: unknown) => {
           clear();
+          const why = error instanceof Error ? error.message : String(error);
+          if (!spoken) {
+            withdrawn(why);
+            return;
+          }
           lives.delete(uri);
-          refused(error instanceof Error ? error.message : String(error));
+          log(`${uri} did not start again: ${why}`);
         },
       );
-      break;
+      return admission.then(() => undefined, () => undefined);
     }
     /*
      * The latest turn, run again rather than typed again.
@@ -1380,7 +1434,7 @@ export function chatAction(
       break;
     }
     case 'chat/turnResume': {
-      if (session.resume === undefined) {
+      if (session.resumeTurn === undefined) {
         no('this backend cannot run a turn again');
         break;
       }
@@ -1418,15 +1472,18 @@ export function chatAction(
       dispatch(channel, action, origin);
       const resumed = { duration: typeof last.duration === 'number' ? last.duration : 0, since: Date.now() };
       ctx.resumedTurns.set(`${channel}\n${named}`, resumed);
-      if (!session.resume(named)) {
+      const rejected = (error: unknown): void => {
+        if (!ctx.resumedTurns.has(`${channel}\n${named}`)) return;
         ctx.resumedTurns.delete(`${channel}\n${named}`);
         dispatch(channel, {
           type: 'chat/error',
           turnId: named,
           duration: resumed.duration + (Date.now() - resumed.since),
-          part: { kind: 'error', error: { errorType: 'sendFailed', message: `${named} is not a turn this backend can run again` }, resumable: true },
+          part: { kind: 'error', error: { errorType: 'sendFailed', message: error instanceof Error ? error.message : String(error) }, resumable: true },
         });
-      }
+      };
+      try { void Promise.resolve(session.resumeTurn(named)).catch(rejected); }
+      catch (error) { rejected(error); }
       break;
     }
     /*
@@ -1454,11 +1511,11 @@ export function chatAction(
         break;
       }
       if (!worker) {
-        // The stop is said when it is taken, and the backend running the turn
-        // it names is told after.
-        const turn = String(activeHeld.id ?? '');
-        stopped(turn);
-        if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
+        // The stop is said when it is taken, and the chat's backend is then
+        // told to stop what it runs, as the reference host aborts its agent.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+        stopped(String(activeHeld.id ?? ''));
+        aborted(session);
         break;
       }
       /*
@@ -1475,7 +1532,7 @@ export function chatAction(
       }
       stopped(String(activeHeld.id ?? ''));
       if (session.stopWorker !== undefined && call !== undefined) session.stopWorker(call);
-      else if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === lead) session.cancel(lead);
+      else aborted(session);
       break;
     }
     /**
@@ -1502,7 +1559,7 @@ export function chatAction(
        * the reference host refuses steering to a provider that cannot take it.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13513-L13516
        */
-      if (kind === 'steering' && !session.steer) {
+      if (kind === 'steering' && !session.sendSteeringMessage) {
         no('This backend cannot take a message mid-turn');
         break;
       }
@@ -1549,7 +1606,14 @@ export function chatAction(
       const steering = kind === 'steering' && activeHeld !== undefined;
       if (steering) {
         dispatch(session.chatUri, action, origin);
-        if (session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
+        const sender = messageFrom(message);
+        const handed = session.sendSteeringMessage?.({
+          id,
+          text: String(message.text ?? ''),
+          ...(read.attachments === undefined ? {} : { attachments: read.attachments }),
+          ...(sender === undefined ? {} : { from: sender }),
+        });
+        if (handed === true || handed instanceof Promise) break;
       }
       /*
        * A queued message, or a steering message with no turn running to steer.
@@ -1982,36 +2046,37 @@ export function chatAction(
        * in front of an agent that remembers all of it. So the agent forgets it,
        * as the reference's does: the backend stops, its conversation is
        * deleted, and a new one begins for the same chat with nothing to resume,
-       * seeded with the turns the chat keeps. Only a backend that can delete
-       * forgets, so one that cannot is refused.
+       * seeded with the turns the chat keeps. A backend that cannot delete
+       * keeps its conversation, as the reference host's provider without a
+       * truncation keeps its history.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1141-L1168
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
        *
-       * The backend stops before the delete, because a backend that is still
-       * writing writes the conversation back behind it. The action is said
-       * once the delete has worked, so a delete that fails refuses an action
-       * no client has applied, and the chat comes back on the conversation it
-       * had. Held in `restarting` the whole time, so an action sent behind it
-       * reaches the new backend rather than the one that stopped.
+       * The action is said first, as the reference host says a truncation
+       * before its provider cuts anything. The backend stops before the
+       * delete, because a backend that is still writing writes the
+       * conversation back behind it, and a delete that fails is logged and
+       * leaves the chat to come back on the conversation it had. Held in
+       * `restarting` the whole time, so an action sent behind it reaches the
+       * new backend rather than the one that stopped.
        */
       const startOver = (kept: Bag[]): void => {
         const owner = sessions.get(session.uri);
         const agent = owner === undefined ? undefined : chatAgent(owner, session.chatUri);
         if (owner === undefined || agent?.delete === undefined) {
-          no('This host can drop the turns after one, but not a conversation entire');
+          uncut(all.slice(kept.length) as Bag[], 'its backend cannot delete a conversation');
           return;
         }
         const uri = session.uri;
         const chatUri = session.chatUri;
         // Read before anything closes, as a closed chat's is.
         const own = session.agentId() ?? ctx.recordedChat(idOf(uri), chatUri)?.backendId;
+        dispatch(chatUri, action, origin);
+        ctx.forgetTurnOutputs(uri, chatUri, all.slice(kept.length) as Bag[]);
+        ctx.forgetLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
         const work = (async () => {
           await session.close('stopping');
           const failed = own === undefined || own === '' ? undefined : await ctx.deletedChat(own, agent, ctx.dirOf(uri));
-          if (failed === undefined) {
-            dispatch(chatUri, action, origin);
-            ctx.forgetTurnOutputs(uri, chatUri, all.slice(kept.length) as Bag[]);
-            ctx.forgetLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
-          }
           ctx.described.delete(chatUri);
           spawn(
             agent,
@@ -2038,9 +2103,22 @@ export function chatAction(
           () => { if (restarting.get(uri) === held) restarting.delete(uri); },
           (error: unknown) => {
             if (restarting.get(uri) === held) restarting.delete(uri);
-            no(error instanceof Error ? error.message : String(error));
+            log(`${chatUri} kept its conversation: ${error instanceof Error ? error.message : String(error)}`);
           },
         );
+      };
+      /*
+       * A truncation its backend cannot make, said all the same: every client
+       * drops the turns after the one named, and the backend keeps the history
+       * it has, as the reference host's provider with no truncation of its own
+       * does. The outputs and local turns of what was dropped go with it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+       */
+      const uncut = (dropped: Bag[], why: string): void => {
+        dispatch(session.chatUri, action, origin);
+        ctx.forgetTurnOutputs(session.uri, session.chatUri, dropped);
+        ctx.forgetLocalTurns(session.uri, session.chatUri, dropped);
+        log(`${session.chatUri} keeps the history after ${turnId ?? 'its start'}: ${why}`);
       };
       // Every turn: the action's `turnId` is optional, and its absence means
       // "clear the whole conversation".
@@ -2056,7 +2134,7 @@ export function chatAction(
       }
       const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
       if (at < 0) {
-        no(`${turnId} is not a turn this host can rewind to`);
+        uncut([], 'its backend holds no such turn');
         break;
       }
       /*
@@ -2074,14 +2152,13 @@ export function chatAction(
       }
       // The backend's own name for the end of that turn. Absent for a
       // turn the backend cannot name the end of, such as one read back by
-      // a backend that names only the turns it watched, and a rewind to a
-      // point the backend cannot be told is the half of this that would
-      // silently not happen.
+      // a backend that names only the turns it watched, and the backend
+      // then keeps its history.
       const point = session.endPoint?.(concrete);
       const started = session.agentId();
       const owner = sessions.get(session.uri);
       if (point === undefined || started === undefined || owner === undefined) {
-        no(`${turnId} is not a turn this host can rewind to`);
+        uncut(all.slice(at + 1) as Bag[], 'its backend names no point to rewind it to');
         break;
       }
       /*

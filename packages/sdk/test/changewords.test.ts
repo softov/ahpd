@@ -170,8 +170,8 @@ const backing = (dir: string, answer: string | undefined, over: Partial<Agent> =
       const chat = base.create(start);
       const said: Session = {
         ...chat,
-        begin: (turnId, text, model, from) => {
-          chat.begin(turnId, text, model, from);
+        sendMessage: (turnId, text, from) => {
+          void chat.sendMessage(turnId, text, from);
           asked.push({ chat: start.chatUri, text });
           const newest = chat.allTurns().at(-1);
           if (newest !== undefined) {
@@ -211,16 +211,18 @@ const stuck = (dir: string, over: Partial<Agent> = {}) => {
     probe: async () => ({ models: [{ id: 'fast', name: 'Fast' }], commands: [], customizations: [] }),
     create: (start) => {
       const chat = base.create(start);
+      let running: string | undefined;
       return {
         ...chat,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           asked.push({ chat: start.chatUri, text });
-          if (askedForWords(text)) return;
-          chat.begin(turnId, text, model, from);
+          running = turnId;
+          if (askedForWords(text)) return undefined;
+          return chat.sendMessage(turnId, text, from);
         },
-        cancel: (turnId) => {
-          stopped.push(turnId);
-          chat.cancel(turnId);
+        abort: () => {
+          if (running !== undefined) stopped.push(running);
+          return chat.abort();
         },
       };
     },

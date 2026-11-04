@@ -77,8 +77,8 @@ const waiting = (agent: Agent): Agent => ({
     const session = agent.create(start) as Session;
     return {
       ...session,
-      begin: (...args: Parameters<Session['begin']>) => { void Promise.resolve().then(() => { session.begin(...args); }); },
-      cancel: (turnId: string) => { void Promise.resolve().then(() => { session.cancel(turnId); }); },
+      sendMessage: (...args: Parameters<Session['sendMessage']>) => { void Promise.resolve().then(() => { session.sendMessage(...args); }); },
+      abort: () => { void Promise.resolve().then(() => session.abort()); },
     };
   },
 });
@@ -105,7 +105,7 @@ const gated = (agent: Agent) => {
       ...agent,
       create: (start: Start): Session => {
         const session = agent.create(start) as Session;
-        return { ...session, begin: (...args: Parameters<Session['begin']>) => { held.push(() => { session.begin(...args); }); } };
+        return { ...session, sendMessage: (...args: Parameters<Session['sendMessage']>) => { held.push(() => { session.sendMessage(...args); }); } };
       },
     },
     release: () => { for (const begin of held.splice(0)) begin(); },
@@ -201,7 +201,7 @@ it('sends nothing for a turn stopped while its machine is set where the host\'s 
     ...base,
     create: (start: Start): Session => {
       const session = base.create(start) as Session;
-      return { ...session, begin: (...args: Parameters<Session['begin']>) => { begun.push(args[0]); session.begin(...args); } };
+      return { ...session, sendMessage: (...args: Parameters<Session['sendMessage']>) => { begun.push(args[0]); session.sendMessage(...args); } };
     },
   };
   const { host, p, client, dispatch } = await serving(counting, { computers } as Partial<HostOptions>, { computer: 'computer://box' });
@@ -244,6 +244,153 @@ it('ends a turn on an archived session in an error, as read-only', async () => {
     ['chat/error', undefined, undefined],
   ]);
   expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'archived' } });
+  await host.close();
+});
+
+/**
+ * The echo backend with what the host hands it written down in order, and
+ * each of the turn's three calls able to fail.
+ */
+const handing = (fails: { model?: boolean; agent?: boolean; send?: boolean } = {}) => {
+  const calls: string[] = [];
+  const base = echo({ path: dir, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        changeModel: (model) => {
+          calls.push(`model ${model.id}`);
+          if (fails.model === true) return Promise.reject(new Error('no such model here'));
+          return session.changeModel(model);
+        },
+        changeAgent: (picked) => {
+          calls.push(`agent ${picked?.uri ?? 'its own'}`);
+          if (fails.agent === true) return Promise.reject(new Error('no such agent here'));
+          return session.changeAgent(picked);
+        },
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          calls.push(`send ${args[0]}`);
+          if (fails.send === true) return Promise.reject(new Error('the prompt did not go out'));
+          return session.sendMessage(...args);
+        },
+        abort: () => {
+          calls.push('abort');
+          return session.abort();
+        },
+      };
+    },
+  };
+  return { agent, calls };
+};
+
+/** A client's start naming a model and an agent. */
+const picking = (turnId: string): Bag => ({
+  type: 'chat/turnStarted',
+  turnId,
+  startedAt: new Date().toISOString(),
+  message: { origin: { kind: 'user' }, text: 'one two', model: { id: 'fast' }, agent: { uri: 'agent:/planner' } },
+});
+
+/*
+ * A turn's model and agent are handed before its prompt, as VS Code's host
+ * changes its agent's model and agent before the send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2240
+ */
+it('hands a turn\'s model and agent to its backend before its prompt', async () => {
+  const { agent, calls } = handing();
+  const { host, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => calls.includes('send t1'), 'the send');
+  expect(calls).toEqual(['model fast', 'agent agent:/planner', 'send t1']);
+  await host.close();
+});
+
+/*
+ * A model the backend will not take fails the turn before its prompt goes out,
+ * in VS Code's words for a failed model selection.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2570
+ */
+it('ends a turn in a modelSelectionFailed error when its backend will not take the model', async () => {
+  const { agent, calls } = handing({ model: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+  expect(calls).not.toContain('send t1');
+  expect(p.heard.find((one) => one.action.type === 'chat/error')?.action.part)
+    .toMatchObject({ error: { errorType: 'modelSelectionFailed', message: 'no such model here' } });
+  await host.close();
+});
+
+/*
+ * An agent the backend will not take is logged, and the turn is sent all the
+ * same, as VS Code's host sends it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2236-L2238
+ */
+it('sends a turn whose agent its backend will not take', async () => {
+  const { agent, calls } = handing({ agent: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => calls.includes('send t1'), 'the send');
+  expect(p.heard.some((one) => one.action.type === 'chat/error')).toBe(false);
+  await host.close();
+});
+
+/*
+ * A send that fails ends its turn in VS Code's words for one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends a turn in a sendFailed error when its backend\'s send fails', async () => {
+  const { agent } = handing({ send: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+  expect(p.heard.find((one) => one.action.type === 'chat/error')?.action.part)
+    .toMatchObject({ error: { errorType: 'sendFailed', message: 'the prompt did not go out' } });
+  await host.close();
+});
+
+/*
+ * A stop of the chat's running turn aborts what its backend runs, as VS
+ * Code's host aborts its agent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+ */
+it('aborts its backend at a stop of the turn the chat runs', async () => {
+  const { agent, calls } = handing();
+  const { host, dispatch } = await serving({ ...agent, create: (start: Start) => ({ ...agent.create(start) as Session, sendMessage: () => undefined }) });
+  await dispatch(1, picking('t1'));
+  await settle();
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  expect(calls).toContain('abort');
+  await host.close();
+});
+
+/*
+ * A turn this host begins itself, a chat's first message among them, is said
+ * as the host's before its backend is sent it, as VS Code's host starts a
+ * turn of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L64-L68
+ */
+it('says the start of a turn it begins itself, with its backend saying none', async () => {
+  const base = echo({ path: dir, pace: 0 });
+  const sent: string[] = [];
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => ({ ...base.create(start) as Session, sendMessage: (turnId: string) => { sent.push(turnId); } }),
+  };
+  const { host, client } = await serving(agent);
+  await client.handle({
+    method: 'createChat',
+    params: { channel: SESSION, chat: 'ahp-chat:/second', initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+  });
+  await until(() => sent.length > 0, 'the send');
+  const held = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/second' } }) as {
+    snapshot: { state: { activeTurn?: { id: string; message: { text: string } } } };
+  }).snapshot.state;
+  expect(held.activeTurn?.id).toBe(sent[0]);
+  expect(held.activeTurn?.message.text).toBe('hello');
   await host.close();
 });
 
@@ -314,7 +461,9 @@ const resuming = (agent: Agent, runs: boolean): Agent => ({
           duration: 5,
         }],
       }) as ReturnType<Session['chatState']>,
-      resume: () => runs,
+      resumeTurn: () => {
+        if (!runs) throw new Error('nothing to run again');
+      },
     };
   },
 });
@@ -369,7 +518,7 @@ it('says a stop when it is taken, and nothing of the turn its backend ends after
   const base = echo({ path: dir, pace: 5 });
   const finishing: Agent = {
     ...base,
-    create: (start: Start): Session => ({ ...(base.create(start) as Session), cancel: () => {} }),
+    create: (start: Start): Session => ({ ...(base.create(start) as Session), abort: () => {} }),
   };
   const { host, p, client, dispatch } = await serving(finishing);
   p.heard.length = 0;
@@ -470,8 +619,8 @@ it('says a denial with everything the client sent, before its backend\'s own wor
       const session = base.create(start) as Session;
       return {
         ...session,
-        begin: (...args: Parameters<Session['begin']>) => {
-          session.begin(...args);
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          session.sendMessage(...args);
           const turnId = args[0];
           start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'call-1', toolName: 'bash', displayName: 'Bash' });
           start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'call-1', invocationMessage: 'Run ls', toolInput: 'ls' });
@@ -536,7 +685,7 @@ it('answers a client\'s start with its own action exactly as sent, whatever its 
       const session = base.create(start) as Session;
       return {
         ...session,
-        begin: (...args: Parameters<Session['begin']>) => {
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
           start.emit('chat', {
             type: 'chat/turnStarted',
             turnId: args[0],
@@ -544,7 +693,7 @@ it('answers a client\'s start with its own action exactly as sent, whatever its 
             _meta: { rebuilt: true },
             message: { text: args[1], origin: { kind: 'agent' }, model: { id: 'filled-in' } },
           });
-          session.begin(...args);
+          session.sendMessage(...args);
         },
       };
     },
@@ -576,8 +725,8 @@ const busy = (agent: Agent): Agent => ({
     const doing = (activity: string): void => { start.emit('chat', { type: 'chat/activityChanged', activity }); };
     return {
       ...session,
-      begin: (...args: Parameters<Session['begin']>) => {
-        session.begin(...args);
+      sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+        session.sendMessage(...args);
         start.emit('chat', {
           type: 'chat/toolCallStart', turnId: args[0], toolCallId: 'call-1', toolName: 'look', displayName: 'Look',
           contributor: { kind: 'client', clientId: 'window' },

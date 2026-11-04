@@ -400,8 +400,28 @@ export interface MessageFrom {
   origin?: { kind: 'user' | 'agent' | 'tool' | 'automation' | 'systemNotification' };
   /** `Message._meta`, carried whole. */
   _meta?: Bag;
-  /** `Message.agent`, the protocol's `AgentSelection`: the agent this message picked. */
+  /**
+   * `Message.agent`, the protocol's `AgentSelection`: the agent this message
+   * picked, for a message the backend holds until its turn. A send's is handed
+   * with `changeAgent`.
+   */
   agent?: { uri: string };
+}
+
+/**
+ * A steering message, as the host hands it to a backend: the protocol's
+ * `PendingMessage`, its message read into the words, the files and the sender
+ * a backend takes.
+ */
+export interface SteeringMessage {
+  /** The pending message's id, the client's. */
+  id: string;
+  /** What it says. */
+  text: string;
+  /** Its own attachments, as `sendMessage` takes them. */
+  attachments?: MessageAttachment[];
+  /** Who sent it, when not the person at the keyboard. */
+  from?: MessageFrom;
 }
 
 /**
@@ -423,8 +443,8 @@ export interface TurnOptions {
 }
 
 /**
- * A backend's answer to one config value: `true` for taken as asked, or the
- * refusal in the backend's words.
+ * A backend's answer to one config value: `true` for taken as asked, or its
+ * own words for a value it could not take.
  */
 export type ConfigTaken = true | string;
 
@@ -598,29 +618,49 @@ export interface Session {
   ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering'): void;
 
   /**
-   * Put a message into the turn that is already running.
+   * Hand one steering message to the turn that is running.
    *
    * Steering, in the protocol's word: somebody correcting an agent halfway
    * rather than waiting for it to finish doing the thing they are trying to
-   * stop. Answers whether there was a turn to steer - a chat with nothing
-   * running has nothing to inject into, and the caller says so rather than
-   * quietly turning it into an ordinary message.
+   * stop. The answer is one of three, as the reference host's agents answer:
+   * `true` when the backend took it; `false` when it cannot yet, a turn still
+   * preparing its prompt among them, so the host keeps it pending; and a
+   * promise of `false` when the turn it was meant for ended first, handing it
+   * back unsent, so the host runs it as the next turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
    *
-   * `attachments` are the message's own, as `begin` takes them: the files the
-   * host wrote for whatever the client pasted, which is what the correction is
-   * about as often as the words are.
-   *
-   * `from` is the message's sender, as `begin` takes it: the turn a backend
-   * begins with the steered text keeps the origin and `_meta` of the message
-   * that was steered. Absent, the message is the user's.
+   * `message.attachments` are the message's own, as `sendMessage` takes them:
+   * the files the host wrote for whatever the client pasted, which is what the
+   * correction is about as often as the words are. `message.from` is its
+   * sender, so a turn a backend runs with the steered text keeps the origin
+   * and `_meta` of the message that was steered. Absent, the message is the
+   * user's.
    *
    * Optional. A backend that cannot take a message mid-turn leaves it out,
    * and this host refuses steering for that backend with that as the reason.
    */
-  steer?(id: string, text: string, attachments?: MessageAttachment[], from?: MessageFrom): boolean;
+  sendSteeringMessage?(message: SteeringMessage): boolean | Promise<boolean>;
 
   /**
-   * Start a turn with what was said, optionally naming a model.
+   * Take back a steering message handed with `sendSteeringMessage` that a
+   * client removed before the model read it. One the model read stays in its
+   * turn. Without it, the host refuses a removal of steering while a turn
+   * runs, as the reference host does.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
+   */
+  withdrawSteeringMessage?(id: string): void;
+
+  /**
+   * Send what was said as the turn `turnId`, whose start the host has said:
+   * the client's own, or the host's for a turn it begins itself. The backend
+   * says no start of it.
+   *
+   * The turn's model and agent are handed before it, with `changeModel` and
+   * `changeAgent`, as the reference host hands an agent's before its send.
+   * Settles once the prompt is the agent's; a rejection is a send that
+   * failed, and the host ends the turn in a `sendFailed` error with its
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1303-L1311
    *
    * `from` is the message's provenance when it was not typed by a person:
    * `origin` (`{ kind: 'agent' }` for a message another session's agent
@@ -636,41 +676,62 @@ export interface Session {
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
    *
-   * A turn handed while another runs takes that one's place: its start is said
-   * at once, so every client holds it as the chat's turn, as the protocol's
-   * reducer replaces the active turn, and it runs once the work in front of it
-   * is done. The turn it replaced runs on, its actions name it, and it is in no
-   * history; a stop of the turn that took its place stops that work and drops
-   * the turns waiting behind it. The reference host hands a client's start to
-   * its agent at once, and its agents run each in turn.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8720-L8750
+   * A turn handed while another runs is a send of its own, which the backend
+   * runs once the work in front of it is done, as the reference host hands a
+   * client's start to its agent at once and its agents run each in turn. The
+   * turn it replaced in every client's state runs on, its actions name it,
+   * and it is in no history.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
    */
-  begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
+  sendMessage(turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void | Promise<void>;
+
+  /**
+   * The model a client picked for this chat's next send. A model the backend
+   * takes is the chat's for the turns after it too, and the chat keeps the one
+   * it has when the backend will not take another.
+   *
+   * The host hands a turn's model before its send when the chat's backend
+   * offers it, and logs one it does not. A rejection fails the turn being
+   * prepared, in a `modelSelectionFailed` error.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
+   */
+  changeModel(model: Chosen): void | Promise<void>;
+
+  /**
+   * The agent this chat's turns run as from its next send, or the backend's
+   * own when absent: the protocol's `AgentSelection` a message carries.
+   *
+   * Handed before every send. A rejection is logged, and the turn is sent all
+   * the same, as the reference host sends it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2236-L2238
+   */
+  changeAgent(agent: { uri: string } | undefined): void | Promise<void>;
+
   /**
    * Run the latest turn again, without adding a message.
    *
    * What `chat/turnResume` asks for: the turn errored, its message and its
    * parts are intact, and the client wants the same prompt tried again rather
-   * than typed again. Answers whether there was such a turn to resume.
+   * than typed again. Rejects when the backend holds no such turn to run, and
+   * the host ends the turn again in an error that can be resumed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1313-L1314
    *
    * Optional. A backend that cannot re-run a turn leaves it out, and the host
    * refuses the action with that as the reason.
    */
-  resume?(turnId: string): boolean;
+  resumeTurn?(turnId: string): void | Promise<void>;
 
   /**
-   * Stop the running turn, named by its id, and answer anything it was
-   * blocked on.
+   * Stop what this chat runs: the turn in flight and everything the backend
+   * holds of it, with anything it was blocked on answered.
    *
-   * The host calls this when a client's stop names the turn the chat runs,
-   * with that turn's id, once it has said the client's stop to every client
-   * of the chat: the turn has ended in their state, and what the backend says
-   * of it afterwards is not said again. A stop naming any other turn, or none,
-   * reaches no backend.
+   * The host calls this when a client's stop names the chat's running turn,
+   * once it has said the stop to every client of the chat: the turn has ended
+   * in their state, and what the backend says of it afterwards is not said
+   * again. A stop naming any other turn, or none, reaches no backend.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1316-L1317
    */
-  cancel(turnId: string): void;
+  abort(): void | Promise<void>;
 
   /**
    * Stop one worker, named by the tool call that spawned it, and leave the
@@ -688,9 +749,10 @@ export interface Session {
    * would be the only thing that could ever send it, and nothing in a client
    * watches for a turn to end. The same `id` twice edits what is waiting.
    *
-   * `attachments` are the message's own, as `begin` takes them, and are held
-   * with it: a picture pasted into a message that waits its turn is still a
-   * picture when the turn comes.
+   * `attachments` are the message's own, as `sendMessage` takes them, and are
+   * held with it: a picture pasted into a message that waits its turn is still
+   * a picture when the turn comes. `model` is the turn's, and `from.agent` the
+   * agent it picked, both read when the turn comes.
    *
    * `options` is what the turn is given beside the message, held with it and
    * read when the turn comes - which is later than this call, so the words
@@ -698,7 +760,7 @@ export interface Session {
    *
    * `kind` is the pending message's, `queued` when absent. A `steering` one is
    * a steering message no turn was running to take, handed only to a backend
-   * with `steer`: it runs ahead of every queued message, behind the steering
+   * with `sendSteeringMessage`: it runs ahead of every queued message, behind the steering
    * messages already waiting, as the reference host runs steering that came
    * too late to steer a turn, in the order its queue holds them. The chat
    * shows the steering message set last, as the protocol's reducer holds one.
@@ -850,24 +912,21 @@ export interface Session {
   setAnswer?(requestId: string, questionId: string, answer: Bag | undefined): boolean;
 
   /**
-   * Take one config value, or say why not.
+   * Take one config value a client set, once the host has said it.
    *
-   * Every key a client sets goes through here, including the ones a backend
+   * Every key a client sets comes here, including the ones a backend
    * advertises in its own schema: the host reads that schema for how a key
    * behaves - whether it can move on a running session, whether it belongs to
    * the session or to one chat - and knows nothing about what any key means.
+   * The host checks a change against the schema and says it, as the reference
+   * host says a client's config change in the client's own keys and then
+   * applies it to its agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13661
    *
-   * `true` when it was taken as it was asked. A string is the refusal, in the
-   * backend's own words, and it is a string rather than `false` because only
-   * the backend knows which of the two things went wrong: a key it does not
-   * serve, or a value it will not take for a key it does. A host that answered
-   * both with one sentence would be telling a client its control does not
-   * exist when the truth is that the value was wrong.
-   *
-   * What every client is told is the key and value the client sent, as the
-   * reference host says a client's config action in the client's own keys.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L587-L599
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+   * `true` when it was taken as it was asked. A string is the backend's own
+   * words for a value it could not take, a key it does not serve or a value
+   * it will not take for a key it does, which the host logs: the change
+   * stands as every client was told it.
    */
   setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */

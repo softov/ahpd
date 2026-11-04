@@ -140,9 +140,11 @@ function metered(scripts: Script[]): Agent {
       const session = base.create(start);
       const say = (action: Bag): void => { start.emit('chat', action); };
       let running: string | undefined;
+      let model: { id: string } | undefined;
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        changeModel: (picked) => { model = picked; },
+        sendMessage: (turnId, text, from) => {
           const script = waiting.shift() ?? { end: 'complete' as const };
           if (script.unstated !== true) {
             say({
@@ -178,8 +180,9 @@ function metered(scripts: Script[]): Agent {
           }
           say({ type: 'chat/turnComplete', turnId, duration: 1 });
         },
-        cancel: (turnId) => {
-          if (running !== turnId) return;
+        abort: () => {
+          const turnId = running;
+          if (turnId === undefined) return;
           running = undefined;
           say({ type: 'chat/turnCancelled', turnId, duration: 1 });
         },
@@ -188,7 +191,7 @@ function metered(scripts: Script[]): Agent {
          *
          * This fake starts a turn without the example backend underneath it
          * knowing - it says `chat/turnStarted` itself and never calls that
-         * backend's `begin` - so the state under it reports no `activeTurn`.
+         * backend's `sendMessage` - so the state under it reports no `activeTurn`.
          * The host reads `activeTurn` to tell a stop that stops something from
          * one that changes nothing, which is a question this fake has to be
          * able to answer.

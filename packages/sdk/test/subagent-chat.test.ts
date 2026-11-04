@@ -100,7 +100,9 @@ function spawning(late = false): Agent {
           resource: start.chatUri, title, status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [], usage: undefined };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           /*
@@ -187,7 +189,7 @@ function spawning(late = false): Agent {
             finish();
           })();
         },
-        cancel: () => {},
+        abort: () => {},
         queue: () => {},
         unqueue: () => {},
         setDraft: () => {},
@@ -423,7 +425,9 @@ function askingInWorker(stoppable = false): Agent {
           resource: start.chatUri, title: 'Fake session', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           start.emit('chat', {
@@ -462,13 +466,13 @@ function askingInWorker(stoppable = false): Agent {
             start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: id, invocationMessage: 'Run it', toolInput: 'true' });
           }
         },
-        cancel: (turnId) => {
-          told.push({ what: 'cancel', id: turnId });
+        abort: () => {
           const turn = active;
+          told.push({ what: 'cancel', id: String(turn?.id ?? '') });
           if (!turn) return;
           active = undefined;
           turns.push({ ...turn, state: 'cancelled', duration: 1 });
-          start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id), duration: 1 });
+          start.emit('chat', { type: 'chat/turnCancelled', turnId: String(turn.id), duration: 1 });
         },
         queue: () => {},
         unqueue: () => {},
@@ -790,7 +794,9 @@ function busy(stoppable = false): Agent {
           resource: start.chatUri, title: 'Busy', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           if (text !== 'spawn' && text !== 'ask') return;
@@ -820,7 +826,7 @@ function busy(stoppable = false): Agent {
             worker.end('complete');
           };
         },
-        cancel: () => {},
+        abort: () => {},
         queue: () => {},
         unqueue: () => {},
         setDraft: () => {},

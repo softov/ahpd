@@ -98,7 +98,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
     emit: view.emit,
     tools: [writing(ran)],
   } as unknown as Start);
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await until(() => ended(view) || asked(view));
   // A paused run is stopped rather than left waiting on a person who is not there.
   if (asked(view)) session.close();

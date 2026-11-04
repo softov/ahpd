@@ -25,7 +25,7 @@
 
 import { resolve, sep } from 'node:path';
 import { activityOf, statusOf, uriOf } from '@ahpd/sdk';
-import type { Bag, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
 import { createConfig } from './session/config.js';
@@ -167,6 +167,9 @@ export function acpSession(
   Object.assign(ctx, createQueue(ctx));
   Object.assign(ctx, createClientCalls(ctx));
 
+  /** The model a client picked, taken by the next send: the server keeps a model it took. */
+  let chosen: Chosen | undefined;
+
   return {
     uri: start.uri,
     chatUri: start.chatUri,
@@ -267,9 +270,18 @@ export function acpSession(
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    // The host's five, and not its sixth: the queue's own sixth is the queued
-    // message's id, and the host's is the turn's options.
-    begin: (turnId, text, model, from, attachments) => ctx.begin(turnId, text, model, from, attachments),
+    // The host's four, and not its fifth, the turn's options; the model is the
+    // one picked for this send.
+    sendMessage: (turnId, text, from, attachments) => {
+      const model = chosen;
+      chosen = undefined;
+      ctx.begin(turnId, text, model, from, attachments);
+    },
+
+    changeModel: (model) => { chosen = model; },
+    // An ACP server is asked as the agent it is, so an agent picked is kept by
+    // nothing.
+    changeAgent: () => {},
 
     ran: ctx.ran,
 
@@ -295,17 +307,16 @@ export function acpSession(
      * and drops the turns waiting behind it.
      * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
      */
-    cancel: (turnId) => {
+    abort: () => {
       const shown = ctx.waiting.at(-1)?.said;
-      if (shown !== undefined && String(shown.id) === turnId) {
+      if (shown !== undefined) {
         ctx.waiting.length = 0;
         shown.state = 'cancelled';
         shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
         turns.push(shown);
-        emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        emit('chat', { type: 'chat/turnCancelled', turnId: String(shown.id), duration: shown.duration });
         touch();
       }
-      else if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();

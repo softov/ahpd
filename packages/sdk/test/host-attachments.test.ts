@@ -28,7 +28,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
+import type { Chosen, MessageAttachment, MessageFrom, Session, SteeringMessage } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /** The key the reference client looks for, and the shape it reads. */
@@ -121,10 +121,10 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
       };
       return {
         ...session,
-        begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => {
+        sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[]) => {
           said.begun.push({ turnId, text, ...(attachments === undefined ? {} : { attachments }) });
           said.handed.set(turnId, attachments);
-          session.begin(turnId, text, model, from, attachments);
+          return session.sendMessage(turnId, text, from, attachments);
         },
         queue: (id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => {
           said.queued.push({ id, text, ...(attachments === undefined ? {} : { attachments }) });
@@ -136,11 +136,12 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
         // the way a real one does - a message with nothing running to take it
         // is not taken - which is also what makes the order two dispatches
         // were applied in something a case can see.
-        steer: (id: string, text: string, attachments?: MessageAttachment[]) => {
+        sendSteeringMessage: (message: SteeringMessage) => {
+          const { id, text, attachments } = message;
           const running = (session.chatState() as Bag).activeTurn !== undefined || (held && said.begun.length > 0);
           if (!running) return false;
           said.steered.push({ id, text, ...(attachments === undefined ? {} : { attachments }) });
-          return session.steer?.(id, text, attachments) ?? true;
+          return session.sendSteeringMessage?.(message) ?? true;
         },
         chatState: () => {
           const state = session.chatState() as Bag;

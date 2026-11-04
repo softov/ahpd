@@ -1197,9 +1197,19 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           const concrete = ctx.concreteTurnOf(uri, from.chat.chatUri, all as Bag[], at);
           const point = concrete === undefined ? undefined : from.chat.forkPoint?.(concrete);
           const started = from.chat.agentId();
-          if (point === undefined || started === undefined)
-            throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn this host can fork from`);
-          made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
+          /*
+           * A turn the backend names no point for, one read back by a backend
+           * that names only the turns it watched, is forked all the same: the
+           * new chat holds the turns up to it and its backend begins a
+           * conversation of its own, as the reference host hands its provider
+           * the host's turns and forks what the provider can.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7424-L7476
+           */
+          if (point === undefined || started === undefined) {
+            ctx.log(`${String(source.chat ?? '')}: its backend names no point for ${turnId}, so the fork begins a conversation of its own`);
+            made = { seed: all.slice(0, at + 1) as Bag[] };
+          }
+          else made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
         }
         else {
           if (sourceAgent.chats?.sideChat !== true)

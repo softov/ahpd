@@ -215,7 +215,7 @@ it('gives a host spawn none of the machine env', async () => {
     },
   } as never);
   started.push(session);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
 
   const env = JSON.parse(readFileSync(out, 'utf8')) as Record<string, string>;
@@ -249,7 +249,7 @@ it('hands a machine port none of the machine env with the command it runs there'
     },
   } as never);
   started.push(session);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
 
   expect(asked).toHaveLength(1);
@@ -382,7 +382,7 @@ const signedIn = async (placed: boolean) => {
     },
   } as never);
   started.push(session);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   const requests = readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { method?: string; params?: Bag });
   return { ended, said, argv, requests, folder, raw: readFileSync(log, 'utf8') };
@@ -469,7 +469,7 @@ const terminalIn = async (placed: boolean) => {
     emit: (_channel: string, action: Bag) => { actions.push(action); },
   } as never);
   started.push(session);
-  session.begin('t1', 'term now');
+  session.sendMessage('t1', 'term now');
   const over = (): boolean => actions.some((one) => one.type === 'chat/turnComplete' || one.type === 'chat/error');
   for (let i = 0; i < 3000 && !over(); i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   const ofType = (type: string): Bag[] => actions.filter((one) => one.type === type);
@@ -568,7 +568,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
     },
   } as never);
   started.push(session);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
 
   const env = JSON.parse(readFileSync(out, 'utf8')) as Record<string, string>;

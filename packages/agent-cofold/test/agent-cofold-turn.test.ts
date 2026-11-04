@@ -1265,18 +1265,18 @@ it('answers no for a resume the session cannot make', async () => {
   });
 
   // Not the newest turn.
-  expect(open([done('t1'), failed('t2', true)]).resume?.('t1')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', true)]).resumeTurn?.('t1')).toThrow();
   // The newest turn, but it did not fail.
-  expect(open([done('t1')]).resume?.('t1')).toBe(false);
+  expect(() => open([done('t1')]).resumeTurn?.('t1')).toThrow();
   // The newest turn failed, and its error does not offer a resume.
-  expect(open([done('t1'), failed('t2', false)]).resume?.('t2')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', false)]).resumeTurn?.('t2')).toThrow();
   // It offers one, but only to a process that watched the turn before it run:
   // this one was read back off a seed, so there is no point to cut to.
-  expect(open([done('t1'), failed('t2', true)]).resume?.('t2')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', true)]).resumeTurn?.('t2')).toThrow();
   // Closed.
   const closed = open([failed('t1', true)]);
   await closed.close();
-  expect(closed.resume?.('t1')).toBe(false);
+  expect(() => closed.resumeTurn?.('t1')).toThrow();
 
   // A turn still running has nothing to reopen yet.
   const busy = cofoldAgent({ adapter: heldModel(), memory: true }).create({
@@ -1288,8 +1288,8 @@ it('answers no for a resume the session cannot make', async () => {
     emit: () => {},
     clientToolTimeoutMs: 600_000,
   });
-  busy.begin('t1', 'hi');
-  expect(busy.resume?.('t1')).toBe(false);
+  busy.sendMessage('t1', 'hi');
+  expect(() => busy.resumeTurn?.('t1')).toThrow();
   await busy.close();
 });
 

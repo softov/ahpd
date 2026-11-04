@@ -141,8 +141,8 @@ const reporting = (counted: { stops: number; inner: Start | undefined }, base: A
     counted.inner = given;
     return {
       ...held,
-      begin: (...args: Parameters<typeof held.begin>) => {
-        held.begin(...args);
+      sendMessage: (...args: Parameters<typeof held.sendMessage>) => {
+        void held.sendMessage(...args);
         given.backgroundTasks?.set(given.chatUri, {
           id: 'shell:t-sleep',
           kind: 'shell',
@@ -165,7 +165,7 @@ const opened = async () => {
   const outside = seam();
   const lines: string[] = [];
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 2000, log: (line) => { lines.push(line); } }).create(start(emit, outside.tasks));
-  session.begin('t1', 'run it in the background');
+  void session.sendMessage('t1', 'run it in the background');
   await until(() => outside.set.length > 0);
   return { session, seen, outside, counted, inner, lines };
 };

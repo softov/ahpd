@@ -330,7 +330,7 @@ it('cancels a worker that was still waiting for its spawn', async () => {
   ]);
   expect(asked).toEqual([]);
 
-  session.cancel('');
+  session.abort();
   await settle();
 
   // Its chat opens as the turn is stopped rather than five seconds after it,
@@ -463,7 +463,7 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
   const lines = fixture('claude-subagent.jsonl');
   const { workers, session, asked } = await replay('claude-subagent.jsonl', lines.slice(0, 6));
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  session.cancel('');
+  session.abort();
   await settle();
   expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
   // The inner tool's result, which the harness sends after the interrupt.
@@ -480,9 +480,9 @@ it('leaves a background worker from an earlier turn running when a later turn is
   const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
   const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
   expect(workers.has(call)).toBe(true);
-  session.begin('t2', 'and another thing');
+  session.sendMessage('t2', 'and another thing');
   await settle();
-  session.cancel('t2');
+  session.abort();
   await settle();
   expect(workers.get(call)?.ended ?? []).toEqual([]);
   sdk.push(...lines.slice(7));
@@ -582,7 +582,7 @@ it('cancels the lead turn when the worker has no task id yet', async () => {
 /** A session with a lead turn open, and the asks and frames a test drives it with. */
 async function leadTurn() {
   const { main, workers, session } = await replay('none', []);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await settle();
   return { main, workers, session };
 }
@@ -626,7 +626,7 @@ it('settles an ask no scope claimed as skipped when the lead turn is cancelled',
   const { session } = await leadTurn();
   const asked = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_orphan', agentID: 'agent-unknown' });
   await settle();
-  session.cancel('t1');
+  session.abort();
   await settle();
   expect(keptCall(session, 'toolu_orphan')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
   expect((session.sessionState().inputNeeded ?? []) as Bag[]).toEqual([]);

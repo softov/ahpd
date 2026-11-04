@@ -59,7 +59,7 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
   // The same turn run live, as pi raises it, reads the same.
   const { session, pi } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'read a.ts');
+  session.sendMessage('t1', 'read a.ts');
   await settled();
   const asked = streamed([
     { type: 'thinking', thinking: 'I should read it.' },
@@ -165,7 +165,7 @@ it('keeps the turns from pi file in the record of a session resumed and run agai
     resume: disk.id,
   } as Start);
   for (let i = 0; i < 200 && session.endPoint?.(disk.first) === undefined; i++) await settled();
-  session.begin('t3', 'once more');
+  session.sendMessage('t3', 'once more');
   await settled();
   const turns = await agent.transcript?.(disk.id);
   expect(turns?.map((one) => one.id)).toEqual([disk.first, disk.second, 't3']);
@@ -307,7 +307,7 @@ const CLIENT_ID = '0192f5e0-7c1a-7b3e-9a4d-2f6c8e1b3a57';
 
 it('opens a new session under the UUID its URI names', async () => {
   const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, chatUri: `ahp-chat:/${CLIENT_ID}` });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.id).toBe(CLIENT_ID);
   expect(pi.opens[0]?.resume).toBeUndefined();
@@ -315,14 +315,14 @@ it('opens a new session under the UUID its URI names', async () => {
 
 it('leaves the id to pi when the URI does not name a UUID', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.id).toBeUndefined();
 });
 
 it('resumes under the id it was resumed with, not the URI', async () => {
   const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1' });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.resume).toBe('pi-session-1');
   expect(pi.opens[0]?.id).toBeUndefined();
@@ -331,7 +331,7 @@ it('resumes under the id it was resumed with, not the URI', async () => {
 
 it('opens a fork at the entry the host named, rather than the source itself', async () => {
   const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1', forkAt: 'entry-7' });
-  session.begin('t2', 'hello');
+  session.sendMessage('t2', 'hello');
   await settled();
   expect(pi.opens[0]?.resume).toBe('pi-session-1');
   expect(pi.opens[0]?.forkAt).toBe('entry-7');

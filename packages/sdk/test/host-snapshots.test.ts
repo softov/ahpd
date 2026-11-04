@@ -77,8 +77,8 @@ describe('what it says it is doing', () => {
         });
         return {
           ...session,
-          begin: (...args: Parameters<typeof session.begin>) => {
-            session.begin(...args);
+          sendMessage: (...args: Parameters<typeof session.sendMessage>) => {
+            void session.sendMessage(...args);
             start.emit('chat', { type: 'chat/activityChanged', activity });
             if (own !== undefined) start.emit('session', { type: 'session/activityChanged', activity: own });
           },

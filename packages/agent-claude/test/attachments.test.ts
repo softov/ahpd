@@ -173,14 +173,14 @@ async function open(context?: string) {
 
 it('sends a message with no attachments as the string it always was', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'what is this');
+  session.sendMessage('t1', 'what is this');
   await settle();
   expect(said).toEqual(['what is this']);
 });
 
 it('sends a pasted image as an image, and one too large by path', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'look', undefined, undefined, [
+  session.sendMessage('t1', 'look', undefined, [
     written(smallImage, 'small.png', 'image/png'),
     written(largeImage, 'large.png', 'image/png'),
   ]);
@@ -195,7 +195,7 @@ it('sends a pasted image as an image, and one too large by path', async () => {
 
 it('inlines a pasted text up to 64 KiB and names what is larger', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'read this', undefined, undefined, [
+  session.sendMessage('t1', 'read this', undefined, [
     written(note, 'note.txt', 'text/plain'),
     written(longText, 'long.txt', 'text/plain'),
   ]);
@@ -210,7 +210,7 @@ it('inlines a pasted text up to 64 KiB and names what is larger', async () => {
 
 it('inlines a text of exactly the limit, which is the largest one that fits', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'read this', undefined, undefined, [written(pasted, 'pasted.txt', 'text/plain')]);
+  session.sendMessage('t1', 'read this', undefined, [written(pasted, 'pasted.txt', 'text/plain')]);
   await settle();
   expect(said).toEqual([[
     textBlock('read this'),
@@ -220,7 +220,7 @@ it('inlines a text of exactly the limit, which is the largest one that fits', as
 
 it('names a PDF and anything of an unknown type, because a document block is not sent', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'here', undefined, undefined, [
+  session.sendMessage('t1', 'here', undefined, [
     written(pdf, 'paper.pdf', 'application/pdf'),
     written(unknown, 'blob.bin', 'application/octet-stream'),
   ]);
@@ -234,7 +234,7 @@ it('names a PDF and anything of an unknown type, because a document block is not
 
 it('names a file somebody picked, which is one they work in rather than paste', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'look at this', undefined, undefined, [existing(picked, 'picked.txt', 'text/plain')]);
+  session.sendMessage('t1', 'look at this', undefined, [existing(picked, 'picked.txt', 'text/plain')]);
   await settle();
   // Small and textual, and still named: only a file this host wrote is the
   // message's own, and a copy of somebody's buffer is not what they attached.
@@ -243,7 +243,7 @@ it('names a file somebody picked, which is one they work in rather than paste', 
 
 it('keeps the side chat\'s carried prefix in the first block', async () => {
   const { session, said } = await open('what came before');
-  session.begin('t1', 'and now', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
+  session.sendMessage('t1', 'and now', undefined, [written(smallImage, 'small.png', 'image/png')]);
   await settle();
 
   expect(said).toEqual([[
@@ -254,7 +254,7 @@ it('keeps the side chat\'s carried prefix in the first block', async () => {
 
 it('sends a queued message with its image when its turn comes', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settle();
   session.queue('q1', 'second', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
   await settle();
@@ -271,7 +271,7 @@ it('sends a queued message with its image when its turn comes', async () => {
 
 it('sends a queued message with no attachments as the string it always was', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settle();
   session.queue('q1', 'second');
   await settle();
@@ -282,9 +282,9 @@ it('sends a queued message with no attachments as the string it always was', asy
 
 it('sends a steering message with its pasted text into the turn that is running', async () => {
   const { session, said } = await open();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settle();
-  expect(session.steer?.('s1', 'actually', [written(note, 'note.txt', 'text/plain')])).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'actually', attachments: [written(note, 'note.txt', 'text/plain')] })).toBe(true);
   await settle();
 
   expect(said).toEqual([
@@ -295,7 +295,7 @@ it('sends a steering message with its pasted text into the turn that is running'
 
 it('keeps a queued message\'s attachments where a client reads them waiting', async () => {
   const { session } = await open();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settle();
   const one = written(smallImage, 'small.png', 'image/png');
   session.queue('q1', 'second', undefined, undefined, [one]);

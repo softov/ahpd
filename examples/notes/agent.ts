@@ -619,7 +619,12 @@ export function notes(options: NotesOptions): Agent {
         queuedMessages: [...queued],
       }),
 
-      begin: (turnId, text) => { beginTurn(turnId, text); },
+      sendMessage: (turnId, text) => { beginTurn(turnId, text); },
+
+      // Notes are taken on no model and as no agent, so a pick of either is
+      // kept by nothing.
+      changeModel: () => {},
+      changeAgent: () => {},
 
       queue: (id, text) => {
         const entry: Bag = { id, message: { text } };
@@ -677,7 +682,7 @@ export function notes(options: NotesOptions): Agent {
        * is a session that reports `InputNeeded` for the rest of its life and
        * a promise that is never settled.
        */
-      cancel: (turnId) => {
+      abort: () => {
         // The chat's turn is the last one said; the turns it took the place of
         // stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
@@ -700,7 +705,7 @@ export function notes(options: NotesOptions): Agent {
         remember();
         start.emit('chat', {
           type: 'chat/turnCancelled',
-          turnId: turnId || String(turn.id),
+          turnId: String(turn.id),
           duration: turn.duration,
         });
       },
@@ -736,11 +741,9 @@ export function notes(options: NotesOptions): Agent {
       /**
        * This backend's own key, changed on a running session.
        *
-       * A sentence for a key or a value it does not have, and saying which is
-       * the point: a setter that reported success and changed nothing would
-       * leave a client showing a session in a mode it is not in, and one that
-       * said "no such key" about a bad *value* would tell it to stop drawing a
-       * control that works.
+       * A sentence for a key or a value it does not have, saying which, for
+       * the host's log: a key nobody serves and a value nobody takes are two
+       * different things to go and fix.
        */
       setConfig: (key, value) => {
         if (key !== 'ask') return `${key} is not a config key this backend takes`;

@@ -127,13 +127,15 @@ it('fails the turn on a model the CLI refuses, sends nothing, and stays on the m
   const { session, prompts, chat, message, failure } = await open();
   sdk.refuses['claude-2.1'] = "Model 'claude-2.1' not found";
 
-  session.begin('t1', 'first', { id: 'opus' });
+  session.changeModel({ id: 'opus' });
+  session.sendMessage('t1', 'first');
   await settle();
   sdk.push(ended());
   await settle();
   expect(prompts).toEqual(['first']);
 
-  session.begin('t2', 'second', { id: 'claude-2.1' });
+  session.changeModel({ id: 'claude-2.1' });
+  session.sendMessage('t2', 'second');
   await settle();
 
   // Started and then failed, both events, so a client clears its own row.
@@ -143,7 +145,7 @@ it('fails the turn on a model the CLI refuses, sends nothing, and stays on the m
   expect(prompts).toEqual(['first']);
   expect(message('t2').model).toBeUndefined();
 
-  session.begin('t3', 'third');
+  session.sendMessage('t3', 'third');
   await settle();
   expect(message('t3').model).toEqual({ id: 'opus' });
 });
@@ -151,7 +153,8 @@ it('fails the turn on a model the CLI refuses, sends nothing, and stays on the m
 it('runs on a model the CLI takes, and says which one, as before', async () => {
   const { session, prompts, chat, message } = await open();
 
-  session.begin('t1', 'first', { id: 'opus' });
+  session.changeModel({ id: 'opus' });
+  session.sendMessage('t1', 'first');
   await settle();
 
   expect(sdk.asked).toEqual(['opus']);
@@ -167,7 +170,8 @@ it('holds the queue behind a turn that is switching models, and sends the prompt
   let release = (): void => {};
   sdk.takes.slow = new Promise<void>((resolve) => { release = resolve; });
 
-  session.begin('t1', 'first', { id: 'slow' });
+  session.changeModel({ id: 'slow' });
+  session.sendMessage('t1', 'first');
   session.queue('q1', 'second');
   await settle(5);
 

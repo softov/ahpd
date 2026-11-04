@@ -89,7 +89,9 @@ function linking(): Agent {
           modifiedAt: new Date().toISOString(), turns,
           ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           const startedAt = new Date().toISOString();
           active = {
             id: turnId, startedAt, message: { text, origin: { kind: 'user' } },
@@ -123,7 +125,7 @@ function linking(): Agent {
             _meta: { toolKind: 'subagent' },
           });
         },
-        cancel: () => {},
+        abort: () => {},
         queue: () => {},
         unqueue: () => {},
         setDraft: () => {},

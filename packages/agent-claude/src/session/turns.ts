@@ -1,6 +1,6 @@
 import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { holdsTheQueue, titleFrom } from '@ahpd/sdk';
-import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, OnWire, RunCommand, TurnOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, OnWire, RunCommand, SteeringMessage, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, list, str, UUID } from './common.js';
 import { EFFORTS } from './config.js';
@@ -27,10 +27,12 @@ export interface Turns {
   /** Open the turn that answers the steering message sent under `uuid`, with the others its turn left. */
   present: (uuid: string) => void;
   methods: {
-    begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
+    sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
+    changeModel: (model: Chosen) => void;
+    changeAgent: (agent: { uri: string } | undefined) => void;
     setTitle: (title: string) => void;
     ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering') => void;
-    steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
+    sendSteeringMessage: (message: SteeringMessage) => boolean;
     queue: (
       id: string,
       text: string,
@@ -43,8 +45,8 @@ export interface Turns {
     setDraft: (draft: Bag | undefined) => void;
     unqueue: (id: string) => void;
     reorder: (order: string[]) => void;
-    resume: (turnId: string) => boolean;
-    cancel: (turnId: string) => void;
+    resumeTurn: (turnId: string) => void;
+    abort: () => void;
   };
 }
 
@@ -723,31 +725,44 @@ export function createTurns(ctx: SessionContext): Turns {
     if (first !== undefined && left.some(([, owed]) => owed.cli === 'queued')) present(first[0]);
   };
 
+  /**
+   * The model a client picked, taken by the next send: the CLI keeps a model
+   * it took, and the chat keeps the one it has when the CLI will not.
+   */
+  let wanted: Chosen | undefined;
+  /** The agent a client picked for this chat's turns, or the CLI's own. */
+  let picked: { uri: string } | undefined;
+
   const methods: Turns['methods'] = {
     /**
-     * A model named on the turn takes effect and **stays** in effect.
+     * A model picked takes effect and **stays** in effect.
      *
-     * The SDK has no per-turn model, so honouring `message.model` means
-     * `setModel` before the prompt - and setting it back afterwards would
+     * The SDK has no per-turn model, so honouring a turn's model means
+     * `setModel` before its prompt - and setting it back afterwards would
      * race the next turn onto whichever call landed last. Leaving it is the
-     * behaviour that can be explained; silently ignoring the field is the one
+     * behaviour that can be explained; silently ignoring the pick is the one
      * that cannot, because the transcript would then credit a turn to a model
      * that never ran it. The switch is awaited rather than fired, so a turn
-     * naming a model the CLI will not take fails with its reason instead of
-     * being labelled with it and answered by another one.
+     * on a model the CLI will not take fails with its reason instead of being
+     * labelled with it and answered by another one.
      */
-    begin: (turnId, text, model, from, attachments, options) => {
+    sendMessage: (turnId, text, from, attachments, options) => {
+      const sent = picked === undefined ? from : { ...from, agent: picked };
+      const model = wanted;
+      wanted = undefined;
       /*
-       * A turn sent while another runs or begins takes its place, said at once,
-       * and is begun once the CLI has answered what is in front of it.
+       * A turn sent while another runs or begins is begun once the CLI has
+       * answered what is in front of it.
        */
       if (busy()) {
-        handed.push({ turnId, text, model, from, attachments, options });
+        handed.push({ turnId, text, model, from: sent, attachments, options });
         sayHanded();
         return;
       }
-      void beginTurn(turnId, text, model, undefined, from, attachments, options);
+      void beginTurn(turnId, text, model, undefined, sent, attachments, options);
     },
+    changeModel: (model) => { wanted = model; },
+    changeAgent: (agent) => { picked = agent; },
     setTitle: (said) => { if (said !== '') ctx.title = said; },
 
     /**
@@ -803,7 +818,7 @@ export function createTurns(ctx: SessionContext): Turns {
     /**
      * Into the turn that is already running, rather than after it.
      *
-     * The same door `begin` and the queue go through: the prompt handed to the
+     * The same door `sendMessage` and the queue go through: the prompt handed to the
      * CLI is a generator that stays open for the life of the session, so a
      * message pushed while a turn runs reaches the CLI while that turn runs.
      * The CLI folds it into the turn at the turn's next tool call. Once the
@@ -817,7 +832,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * The uuid is the steering message's own id when that is a UUID, as a
      * turn's prompt goes under its turn's id, and a new one otherwise.
      */
-    steer: (id, text, attachments) => {
+    sendSteeringMessage: ({ id, text, attachments }) => {
       if (!ctx.active) return false;
       const message = {
         text,
@@ -972,12 +987,13 @@ export function createTurns(ctx: SessionContext): Turns {
      * `chat/turnResume` is said here, while the client's action is being
      * applied, so it goes out as that action's echo.
      */
-    resume: (turnId) => {
-      if (busy()) return false;
+    resumeTurn: (turnId) => {
+      const unrunnable = new Error(`${turnId} is not a turn this backend can run again`);
+      if (busy()) throw unrunnable;
       const last = ctx.turns.at(-1);
-      if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') return false;
+      if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') throw unrunnable;
       const end = bag((last.responseParts as Bag[] | undefined)?.at(-1));
-      if (end.kind !== 'error' || end.resumable !== true) return false;
+      if (end.kind !== 'error' || end.resumable !== true) throw unrunnable;
       /*
        * The turn is off the history before the cut is read, because what a
        * rewind cuts is the end of the turn *before* this one. `cutOf` walks
@@ -992,7 +1008,7 @@ export function createTurns(ctx: SessionContext): Turns {
       const cut = ctx.cutOf();
       if (cut === undefined) {
         ctx.turns.push(last);
-        return false;
+        throw unrunnable;
       }
       const again = { ...last } as Bag;
       // `state` and `duration` are what made it a finished turn; an active one
@@ -1017,10 +1033,9 @@ export function createTurns(ctx: SessionContext): Turns {
         // A failed turn, which leaves the queue behind it waiting.
         ctx.failTurn(`The conversation could not start over: ${restarted.failed}`);
       })();
-      return true;
     },
 
-    cancel: (turnId) => {
+    abort: () => {
       /*
        * The turns handed while another ran go with the stop: the chat's turn
        * ends below, and the ones it took the place of are sent to nobody. The
@@ -1091,7 +1106,7 @@ export function createTurns(ctx: SessionContext): Turns {
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.waiting !== undefined) ctx.releaseHeld(scope.parent);
       }
-      const cancelling = turnId || str(ctx.active?.id);
+      const cancelling = str(ctx.active?.id);
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.parent === '' || scope.chat === undefined) continue;
         const made = ctx.spawning.get(scope.parent)?.turn;
@@ -1105,7 +1120,7 @@ export function createTurns(ctx: SessionContext): Turns {
         ctx.turns.push(turn);
         ctx.active = undefined;
         ctx.interrupted = true;
-        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || turn.id, duration: turn.duration });
+        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
       }
       ctx.doing(undefined);
       ctx.touch();

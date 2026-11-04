@@ -20,7 +20,7 @@
 
 import type { ModelInfo, Store } from '@cofold/agents';
 import { activityOf, bag, idOf, reason, str, uriOf } from '@ahpd/sdk';
-import type { Bag, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
 import { harnessConfig } from './config.js';
@@ -254,6 +254,9 @@ export function cofoldSession(
     });
   }
 
+  /** The model a client picked, taken by the next send: cofold keeps a model it took. */
+  let chosen: Chosen | undefined;
+
   return {
     uri: start.uri,
     chatUri: start.chatUri,
@@ -341,8 +344,15 @@ export function cofoldSession(
       queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from, attachments) =>
-      ctx.beginTurn(turnId, text, model, from, undefined, attachments),
+    sendMessage: (turnId, text, from, attachments) => {
+      const model = chosen;
+      chosen = undefined;
+      ctx.beginTurn(turnId, text, model, from, undefined, attachments);
+    },
+
+    changeModel: (model) => { chosen = model; },
+    // cofold runs one agent, its own, so an agent picked is kept by nothing.
+    changeAgent: () => {},
 
     /**
      * Run the latest turn again, without adding a message.
@@ -351,7 +361,9 @@ export function cofoldSession(
      * reopened as it was and its prompt runs again under the same id, after
      * the store is cut back to the turn before it.
      */
-    resume: (turnId) => ctx.resumeTurn(turnId),
+    resumeTurn: (turnId) => {
+      if (!ctx.resumeTurn(turnId)) throw new Error(`${turnId} is not a turn this backend can run again`);
+    },
 
     ...queueMethods,
 
@@ -368,17 +380,16 @@ export function cofoldSession(
      * drops the turns waiting behind it.
      * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
      */
-    cancel: (turnId) => {
+    abort: () => {
       const shown = ctx.waiting.at(-1)?.said;
-      if (shown !== undefined && String(shown.id) === turnId) {
+      if (shown !== undefined) {
         ctx.waiting.length = 0;
         shown.state = 'cancelled';
         shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
         turns.push(shown);
-        start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        start.emit('chat', { type: 'chat/turnCancelled', turnId: String(shown.id), duration: shown.duration });
         ctx.touch();
       }
-      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) return;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.stop('the client stopped the turn');
@@ -406,7 +417,7 @@ export function cofoldSession(
      * text and then the parts, and the first part is always that text, so only
      * what follows it is handed over.
      */
-    steer: (id, text, attachments, from) => {
+    sendSteeringMessage: ({ id, text, attachments, from }) => {
       const live = ctx.handle;
       if (live === undefined) return false;
       const message: Bag = {

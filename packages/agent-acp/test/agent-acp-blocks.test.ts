@@ -130,7 +130,7 @@ const prompt = async (
   attachments: MessageAttachment[],
 ): Promise<string> => {
   const before = watch.ended();
-  session.begin('t1', 'what are these blocks?', undefined, undefined, attachments);
+  session.sendMessage('t1', 'what are these blocks?', undefined, attachments);
   await until(() => watch.ended() > before);
   const said = watch.prose();
   const at = said.indexOf('blocks=');
@@ -288,7 +288,7 @@ it.skipIf(!posix)('names a large file, a pipe and a device without reading them'
 /** Run one turn with nothing attached to it, and wait for it to settle. */
 const turn = async (session: Session, watch: Watcher, text: string): Promise<void> => {
   const before = watch.ended();
-  session.begin('t1', text);
+  session.sendMessage('t1', text);
   await until(() => watch.ended() > before);
 };
 
@@ -298,7 +298,7 @@ it('sends a queued message with its attachments when its turn starts', async () 
   // Queued while the turn before it is still running, so it waits rather than
   // being sent: what it becomes when its turn comes is its text and its
   // attachments, which a client was already shown as waiting.
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   session.queue('q1', 'what are these blocks?', undefined, undefined, [PICTURE]);
   expect(watch.waiting()[0]?.attachments).toEqual([PICTURE]);
   await until(() => watch.prose().includes('blocks='));

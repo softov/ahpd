@@ -237,10 +237,11 @@ export function createChangesets(ctx: HostContext): Changesets {
          * it, and the ask waiting on a turn that is never going to end - the
          * one thing this limit exists to prevent.
          */
-        try { session.cancel(turnId); }
-        catch (error) {
+        const stopped = (error: unknown): void => {
           ctx.log(`${uri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        };
+        try { void Promise.resolve(session.abort()).catch(stopped); }
+        catch (error) { stopped(error); }
         resolve(false);
       }, limit);
     });

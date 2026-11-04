@@ -155,10 +155,10 @@ it('opens one backend per record, with the record\'s own id, name, model, trust 
 
   // One at a time, so what each backend was told is that record's.
   const one = opened(first);
-  one.session.begin('t1', 'hello');
+  one.session.sendMessage('t1', 'hello');
   await until(() => endings(one.sent).length === 1);
   const two = opened(second);
-  two.session.begin('t1', 'hello');
+  two.session.sendMessage('t1', 'hello');
   await until(() => endings(two.sent).length === 1);
   expect(endings(one.sent)).toEqual(['chat/turnComplete']);
   expect(endings(two.sent)).toEqual(['chat/turnComplete']);
@@ -194,7 +194,7 @@ it('applies an edit of the record at the next turn, not to the one already runni
   let model: string | undefined;
   const { session, sent } = opened(engine.open(viewOf('pi-live', () => held, { model: () => model })));
 
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await until(() => endings(sent).length === 1);
   expect(endings(sent)).toEqual(['chat/turnComplete']);
 
@@ -203,7 +203,7 @@ it('applies an edit of the record at the next turn, not to the one already runni
   // its record before each turn, and the first turn was already prompted.
   held = { env: { DEEPSEEK_API_KEY: 'second-key' } };
   model = 'openai/gpt-5';
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await until(() => endings(sent).length === 2);
   expect(endings(sent)).toEqual(['chat/turnComplete', 'chat/turnComplete']);
 

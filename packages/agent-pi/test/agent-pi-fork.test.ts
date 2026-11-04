@@ -177,7 +177,7 @@ it('refuses a session asked to fork and rewind at once, writing nothing', async 
   } as Start;
   const session = piSession({ sessionDir }, start, open);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => sent.some((one) => one.action.type === 'chat/error'));
   const failure = sent.find((one) => one.action.type === 'chat/error')?.action;
   expect(((failure?.part as Bag).error as Bag).message).toContain('cannot fork and rewind at once');

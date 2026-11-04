@@ -115,9 +115,9 @@ function backend() {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           began.push(text);
-          session.begin(turnId, text, model, from);
+          return session.sendMessage(turnId, text, from);
         },
       };
     },

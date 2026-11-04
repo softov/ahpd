@@ -152,7 +152,7 @@ it('runs the turn after pi refused the rewind, and logs the refusal', async () =
   const session = piSession({}, start, pi.open);
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => sent.some((one) => one.action.type === 'chat/turnComplete'));
   expect(sent.filter((one) => one.action.type === 'chat/error')).toEqual([]);
   expect(pi.opens).toHaveLength(1);

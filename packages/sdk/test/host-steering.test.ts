@@ -52,7 +52,7 @@ function backend() {
       const session = base.create(start);
       return {
         ...session,
-        steer: (id, text) => {
+        sendSteeringMessage: ({ id, text }) => {
           if (session.chatState().activeTurn === undefined) return false;
           steers.push({ id, text });
           start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text, origin: { kind: 'user' } } });

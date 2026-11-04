@@ -86,7 +86,7 @@ const failer = (): Agent => {
       const session = inner.create(start);
       return {
         ...session,
-        begin: (turnId, text) => {
+        sendMessage: (turnId, text) => {
           start.emit('chat', { type: 'chat/turnStarted', turnId, message: { text } });
           start.emit('chat', {
             type: 'chat/error',

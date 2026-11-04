@@ -380,7 +380,7 @@ it('keeps nothing for a turn stopped while the file was read', async () => {
     const { session, sent, kept } = await open();
     sdk.push(called('Bash'), answered(noticeFor(path), structuredFor(path)));
     await settle();
-    session.cancel(String(started(sent)[0]?.turnId));
+    session.abort();
     // The model's next call waits behind the read, so its turn starts once the
     // stopped call's result has been read and mapped.
     sdk.push(called('Bash', 'toolu_2', 'm2'));
@@ -401,7 +401,7 @@ it('keeps nothing for a result that arrives after its turn was stopped', async (
   const { session, sent, kept } = await open();
   sdk.push(called('Bash'));
   await settle();
-  session.cancel(String(started(sent)[0]?.turnId));
+  session.abort();
   // The model's next call opens a turn once the stopped call's result has been
   // read, so the result has been read when that turn starts.
   sdk.push(answered(noticeFor(path), structuredFor(path)), called('Bash', 'toolu_2', 'm2'));
@@ -414,7 +414,7 @@ it('keeps nothing for a stopped turn\'s result that arrives while a later turn r
   const { session, sent, kept } = await open();
   sdk.push(called('Bash'));
   await settle();
-  session.cancel(String(started(sent)[0]?.turnId));
+  session.abort();
   sdk.push(called('Bash', 'toolu_2', 'm2'));
   await until(() => started(sent).length === 2);
   // The stopped call's result, then the running call's: the second is read

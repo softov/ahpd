@@ -144,7 +144,7 @@ const settled = async (): Promise<void> => { await new Promise((done) => { setTi
 it('grows the total it sends with every call, and ends on the sum', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'read two files');
+  session.sendMessage('t1', 'read two files');
   await settled();
 
   pi.raise(call({ input: 100, output: 20, cost: 0.01 }));
@@ -187,7 +187,7 @@ it('grows the total it sends with every call, and ends on the sum', async () => 
 it('names the model of the last call, whatever the turn ran before', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'switch model');
+  session.sendMessage('t1', 'switch model');
   await settled();
 
   pi.raise(call({ input: 10, model: 'claude-opus-5' }));
@@ -205,7 +205,7 @@ it('names the model of the last call, whatever the turn ran before', async () =>
 it('sends no usage for a call that failed before the provider answered', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   pi.raise(call({ input: 40, output: 5, cost: 0.02 }));
@@ -234,7 +234,7 @@ it('sends no usage for a call that failed before the provider answered', async (
 it('sends the cost split the way pi priced it, the sent side summed into one part', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'read two files');
+  session.sendMessage('t1', 'read two files');
   await settled();
 
   // pi prices the tokens it sent as three of its four parts. The protocol has
@@ -258,7 +258,7 @@ it('sends the cost split the way pi priced it, the sent side summed into one par
 it('sends a call priced as a bare total with no split invented for it', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   // A total and no parts: there is nothing to say which side of the call cost
@@ -276,13 +276,13 @@ it('sends a call priced as a bare total with no split invented for it', async ()
 it('starts the next turn from nothing, rather than on what the last one used', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise(call({ input: 100, output: 20, cost: 0.01 }));
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
 
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   pi.raise(call({ input: 7, output: 3, cost: 0.002 }));
   pi.raise({ type: 'agent_settled', aborted: false });

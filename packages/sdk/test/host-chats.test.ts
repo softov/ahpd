@@ -165,8 +165,14 @@ describe('dropping the turns after one', () => {
     expect(truncated?.origin).toEqual({ clientId: 'probe', clientSeq: 3 });
   });
 
-  it('refuses a turn it has no rewind point for, rather than clearing the screen alone', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+  /*
+   * A truncation its backend cannot make is said all the same, and the backend
+   * keeps its history, as VS Code's host says a truncation and its provider
+   * without one cuts nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+   */
+  it('says a truncation at a turn it has no rewind point for, and starts no CLI again', async () => {
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
@@ -175,20 +181,17 @@ describe('dropping the turns after one', () => {
     // Finished without the CLI ever naming what it did - which is every turn
     // read back off a transcript rather than watched running.
     await emit({ type: 'result', session_id: 'sdk-1', subtype: 'success', is_error: false, duration_ms: 1 });
+    const queries = sdk.queries.length;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chatUri, clientSeq: 4, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('not a turn this host can rewind to');
-    // And nothing moved: the turn is still there and the CLI was not restarted.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { id: string }[] } };
-    }).snapshot.state;
-    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
-    expect(uri).toBeTruthy();
+    const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/truncated');
+    expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[4, undefined]]);
+    // The CLI was not started again: it keeps the history it has.
+    expect(sdk.queries.length).toBe(queries);
   });
 
   it('drops the turn that is running, and comes back idle', async () => {
@@ -299,6 +302,36 @@ describe('a chat made out of another', () => {
 
     // And the conversation through that turn is visible in the new chat: a
     // fork that starts empty is a new chat, not a fork.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+  });
+
+  /*
+   * A turn its backend names no fork point for is forked all the same, into a
+   * conversation of the new chat's own, as VS Code's host hands its provider
+   * the host's turns and forks what it can.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7424-L7476
+   */
+  it('forks at a turn it has no fork point for into a conversation of the new chat\'s own', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    // Finished without the CLI ever naming what it did, so nothing names where
+    // the turn ended.
+    await emit({ type: 'result', session_id: 'sdk-1', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    });
+    const fresh = sessionQueries().at(-1);
+    expect(fresh?.options.forkSession).toBeUndefined();
+    expect(fresh?.options.resume).toBeUndefined();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
       snapshot: { state: { turns: { id: string }[] } };
     }).snapshot.state;

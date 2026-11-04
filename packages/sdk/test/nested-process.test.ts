@@ -233,7 +233,7 @@ it('a real inner host killed mid-turn ends the turn and the session, naming the 
   let host: ChildProcessWithoutNullStreams | undefined;
   const env = { ...home(), PACE: '50' };
   const session = proxy(() => { host = ahpd(env); return host; }).create(start(emit));
-  session.begin('t1', 'one two three four five six seven eight nine ten');
+  session.sendMessage('t1', 'one two three four five six seven eight nine ten');
   await until(() => has('chat/delta'));
   expect(has('chat/delta')).toBe(true);
   host?.kill('SIGKILL');
@@ -355,7 +355,7 @@ it('a resumed session continues the transcript the inner host kept under its id'
   const first = recorder();
   let inner: ChildProcessWithoutNullStreams | undefined;
   const one = proxy(() => { inner = ahpd(env); return inner; }).create(start(first.emit, { uri: 'ahp-session:/kept-here', chatUri: 'ahp-chat:/kept-here' }));
-  one.begin('t1', 'first words');
+  one.sendMessage('t1', 'first words');
   await until(() => first.has('chat/turnComplete'));
   const gone = new Promise((resolve) => { inner?.once('close', resolve); });
   one.close();
@@ -363,7 +363,7 @@ it('a resumed session continues the transcript the inner host kept under its id'
 
   const second = recorder();
   const two = proxy(() => ahpd(env)).create(start(second.emit, { uri: 'ahp-session:/kept-here', chatUri: 'ahp-chat:/kept-here', resume: 'kept-here' }));
-  two.begin('t2', 'second words');
+  two.sendMessage('t2', 'second words');
   await until(() => second.has('chat/turnComplete') || second.has('session/creationFailed'));
   expect(second.of('session/creationFailed')).toBeUndefined();
   const turns = two.allTurns() as Bag[];
@@ -432,7 +432,7 @@ it('a resume the inner host has no transcript for makes the session there', asyn
    * answers the subscribe with `No agent for session`, and the session is made
    * there under that same id rather than the turn being refused.
    */
-  session.begin('t1', 'first words');
+  session.sendMessage('t1', 'first words');
   await until(() => has('chat/turnComplete') || has('session/creationFailed'));
   expect(of('session/creationFailed')).toBeUndefined();
   expect(has('chat/turnComplete')).toBe(true);
@@ -483,7 +483,7 @@ it.skipIf(!posix)('a closed session stops an inner host that will not take SIGTE
   let inner: ChildProcessWithoutNullStreams | undefined;
   const env = { ...home(), IGNORE_SIGTERM: '1' };
   const session = proxy(() => { inner = ahpd(env); return inner; }).create(start(emit));
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => has('chat/turnComplete'));
   const gone = new Promise<string | null>((resolve) => { inner?.once('close', (_code, signal) => { resolve(signal); }); });
   const closedAt = Date.now();

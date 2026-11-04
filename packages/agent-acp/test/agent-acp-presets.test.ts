@@ -148,7 +148,7 @@ const spawnOf = async (
   process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
 
   const session = sessionOf(kind, id, held, `run-${id}`);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && !existsSync(out); i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   if (!existsSync(out)) throw new Error(`${command} was not run`);
   return JSON.parse(readFileSync(out, 'utf8')) as Probe;
@@ -186,7 +186,7 @@ const turnOf = async (
       }
     },
   });
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
 
   const raw = existsSync(log) ? readFileSync(log, 'utf8') : '';
@@ -424,7 +424,7 @@ it('replaces a row\'s modes with the ones a session hears', async () => {
     },
   }));
   started.push(session);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   expect(ended).toEqual(['chat/turnComplete']);
 

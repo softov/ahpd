@@ -110,7 +110,7 @@ async function started(emit: (channel: string, action: Bag) => void = () => {}):
   });
   await settle();
   await session.setTools?.([offered]);
-  session.begin('t1', 'say hello in the room');
+  session.sendMessage('t1', 'say hello in the room');
   await settle();
   sdk.push(calling);
   await settle();
@@ -150,7 +150,7 @@ it('tells a call waiting on a person that the turn was stopped, before anything 
     .then(heard);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
 
   const [first, ...after] = sdk.heard;
@@ -168,7 +168,7 @@ it('tells a call a client is running that the turn was stopped, before anything 
   void handler()({ text: 'hello' }, { _meta: { 'claudecode/toolUseId': 'toolu_post' } }).then(heard);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
 
   const [first, ...after] = sdk.heard;
@@ -215,7 +215,7 @@ it('interrupts at once a turn whose open call the CLI runs itself', async () => 
   });
   await settle();
 
-  session.cancel('t1');
+  session.abort();
 
   // Nothing of the CLI's own is answered here, and only the interrupt stops it.
   expect(sdk.heard).toEqual(['interrupt']);

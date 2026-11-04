@@ -140,7 +140,7 @@ it('fails a turn on a session whose CLI is gone, instead of thinking for ever', 
   // The CLI has to have exited before the turn, which is the case that broke:
   // a person picks a machine, reads the screen, then types.
   await new Promise((resolve) => setTimeout(resolve, 600));
-  session.begin('t1', 'anything');
+  session.sendMessage('t1', 'anything');
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   const failure = seen.find((one) => one.type === 'chat/error');

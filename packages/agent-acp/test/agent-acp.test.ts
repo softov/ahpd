@@ -163,7 +163,7 @@ it('is busy while an acp terminal runs', async () => {
   await session.setConfig?.('permissionMode', 'code');
   expect(session.busy?.()).toBe(false);
 
-  session.begin('t1', 'term');
+  session.sendMessage('t1', 'term');
   for (let i = 0; i < 400 && opened.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
   expect(opened).toHaveLength(1);
   expect(session.busy?.()).toBe(true);

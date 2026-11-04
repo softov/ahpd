@@ -114,7 +114,7 @@ async function started() {
   });
   await settle();
   const before = session.chatState();
-  session.begin('t1', 'count to 200');
+  session.sendMessage('t1', 'count to 200');
   await settle();
   return { session, sent, chat, before, edits };
 }
@@ -132,7 +132,7 @@ const callIn = (state: Bag, id: string): Bag | undefined => ((state.turns ?? [])
 it('leaves a session idle when its turn was stopped and the interrupt result comes after', async () => {
   const { session, sent } = await started();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push(interrupted);
   await settle();
@@ -147,7 +147,7 @@ it('leaves a stopped call as a client watching it built it', async () => {
   sdk.push(running);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push(interrupted);
   await settle();
@@ -162,7 +162,7 @@ it('changes nothing when a stopped call\'s result comes after the stop', async (
   sdk.push(running);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   const stopped = chat.length;
   sdk.push(late, interrupted);
@@ -189,7 +189,7 @@ it('records a stopped edit against the turn it was made in', async () => {
   });
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push({ ...late, message: { role: 'user', content: [{ ...late.message.content[0], tool_use_id: 'toolu_write' }] } }, interrupted);
   await settle();

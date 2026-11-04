@@ -859,8 +859,8 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   // Somebody answers this chat, which is what leaves the first turn open.
   const heard: string[] = [];
   turns(solo).onMessage = (message) => { heard.push(message.turnId); };
-  session.begin('t1', 'hello');
-  session.begin('t2', 'and then this');
+  session.sendMessage('t1', 'hello');
+  session.sendMessage('t2', 'and then this');
 
   // Said at once, in the open turn's place, as the reducer replaces the active
   // turn; the open turn is still the one being answered.
@@ -1283,7 +1283,7 @@ it('tells a resumed chat\'s messages to the agent\'s listener, as it does a new 
     resume: 'again',
   } as Start);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
 
   expect(heard).toEqual([{ session: 'bot-chat:/again', chat: 'ahp-chat:/again', turnId: 't1', text: 'hello' }]);
   expect(turns('bot-chat:/again').onMessage).toBeDefined();

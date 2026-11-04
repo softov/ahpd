@@ -54,7 +54,7 @@ const failureUnder = async (spawn: (asked: Asked) => Spawned): Promise<string> =
     },
   });
   await until(() => session.status() === 2);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => said.length > 0);
   session.close();
   return said[0] ?? '';

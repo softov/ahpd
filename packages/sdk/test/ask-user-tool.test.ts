@@ -35,7 +35,7 @@ const quiet = (): Agent => {
         // Say the turn began and stop there. Echo would answer and complete
         // it before the case could ask, and a question needs a turn to be
         // drawn in.
-        begin: (turnId, text) => {
+        sendMessage: (turnId, text) => {
           start.emit('chat', {
             type: 'chat/turnStarted',
             turnId,

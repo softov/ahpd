@@ -250,7 +250,7 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
 
   // Sent before the inner session exists, so it is the gate that is under test
   // as much as the turn.
-  session.begin('t1', 'hello world');
+  session.sendMessage('t1', 'hello world');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
@@ -307,15 +307,17 @@ const scriptedAgent = (
       workingDirectories: () => [uriOf(REPO_ROOT)],
       sessionState: () => ({ resource: session.uri, provider: PROVIDER, title: 'Scripted', status: 1, lifecycle: 'ready', chats: [], workingDirectories: [uriOf(REPO_ROOT)] }),
       chatState: () => ({ resource: session.chatUri, title: 'Scripted', status: 1, modifiedAt: new Date().toISOString(), turns: [] }),
-      begin: (turnId: string, text: string) => {
+      sendMessage: (turnId: string, text: string) => {
         session.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text } });
         onBegin(session, turnId, text);
       },
+      changeModel: () => {},
+      changeAgent: () => {},
       confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
         told.confirmed.push({ id: toolCallId, approved, ...(optionId === undefined ? {} : { option: optionId }) });
       },
       answer: (requestId: string, accepted: boolean, answers: Bag) => { told.answered.push({ id: requestId, accepted, answers }); return true; },
-      cancel: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
+      abort: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
       setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}),
       // A backend that can background a startup answers by emitting, so this
@@ -348,7 +350,7 @@ it('a tool call that asks for confirmation is confirmed from outside', async () 
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/toolCallReady'));
   // What the client outside reads is the inner session's own ask.
   expect(seen.find(({ action }) => action.type === 'chat/toolCallReady')?.action.toolCallId).toBe('call-1');
@@ -376,7 +378,7 @@ it('a chat waiting on a confirmation inside says it waits on somebody', async ()
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/toolCallReady'));
   await until(() => session.status() !== Status.InProgress);
   expect(session.status()).toBe(Status.InputNeeded);
@@ -399,7 +401,7 @@ it('relays the inner host\'s row for the lead chat and its canvases, under the o
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   await settleInner();
   const outer = canvasResource('ahp-chat:/outer', 'board');
@@ -456,7 +458,7 @@ it('names a terminal of the host inside by the outer host\'s copy, which carries
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), outputTerminals } as unknown as Start);
 
-  session.begin('t1', 'build it');
+  session.sendMessage('t1', 'build it');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   await until(() => copies[0]?.exit !== undefined);
   expect(inside).not.toBe('');
@@ -486,7 +488,7 @@ it('a chat\'s background work goes out on the outer chat, and comes back off it'
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'run it in the background');
+  session.sendMessage('t1', 'run it in the background');
   await until(() => seen.some(({ action }) => action.type === 'chat/backgroundWorkSet'));
   /*
    * A background action names no chat of its own, so what says which chat it
@@ -519,7 +521,7 @@ it('a question the inner agent asks is answered from outside', async () => {
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'ask me');
+  session.sendMessage('t1', 'ask me');
   await until(() => seen.some(({ action }) => action.type === 'chat/inputRequested'));
   expect(seen.find(({ action }) => action.type === 'chat/inputRequested')?.action.request.id).toBe('req-1');
   // A draft answer is taken while the request is open, and refused for one that is not.
@@ -542,14 +544,14 @@ it('steer, resume, config and the MCP controls answer what the inner session hol
   const inner = innerHost(backend());
   const { seen, emit } = recorder();
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   const written = inner.messages.length;
 
   // Nothing is running, so there is nothing to steer and nothing is sent.
-  expect(session.steer?.('s1', 'faster')).toBe(false);
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'faster' })).toBe(false);
   // The last turn completed, so there is nothing to run again.
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t1')).toThrow();
   // A key the inner schema does not have is refused in a sentence.
   expect(typeof await session.setConfig?.('nonsense', 1)).toBe('string');
   // Ids the inner state does not hold are refused.
@@ -581,7 +583,7 @@ it('a sign-in the inner session asks for is awaited outside and reaches the inne
   const inner = innerHost(agent);
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'use the server');
+  session.sendMessage('t1', 'use the server');
   await until(() => (session.awaiting?.() ?? []).length > 0);
   expect(session.awaiting?.()).toEqual([resource]);
   expect(await session.authenticated?.(resource, 'token-1')).toBe(true);
@@ -605,7 +607,7 @@ it('a sign-in aimed at one server reaches that server inside, and no other', asy
   const inner = innerHost(agent);
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'use the server');
+  session.sendMessage('t1', 'use the server');
   await until(() => (session.awaiting?.() ?? []).length > 0);
   expect(await session.authenticated?.(resource, 'token-2', 'mcp:other')).toBe(true);
   // The host inside was told which server: the token is that one's alone.
@@ -620,7 +622,7 @@ it('a background request is handed to the host inside, and its answer comes back
   const inner = innerHost(agent);
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   /*
@@ -664,7 +666,7 @@ it('close disposes the inner session before the process is signalled', async () 
   (inner.proc as unknown as { kill: (signal?: string) => boolean }).kill = (signal = 'SIGTERM') => { told.order.push(`kill:${signal}`); return true; };
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => inner.messages.some((message) => message.method === 'dispatchAction'));
   session.close();
   await until(() => told.order.some((step) => step.startsWith('kill:')));
@@ -729,7 +731,7 @@ it('a restart goes on when the host inside it stopped will not go', async () => 
     timeoutMs: 500,
     log: (line) => lines.push(line),
   }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => inner.messages.some((message) => message.method === 'dispatchAction'));
 
   const waited = await Promise.race([
@@ -923,11 +925,16 @@ it('cancel stops the inner turn', async () => {
   const agent = nestedAgent(backend(30), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 });
   const session = agent.create(start(emit));
 
-  session.begin('t1', 'one two three four five six seven eight nine ten');
+  session.sendMessage('t1', 'one two three four five six seven eight nine ten');
   await until(() => seen.some(({ action }) => action.type === 'chat/delta'));
-  session.cancel('t1');
-  await until(() => seen.some(({ action }) => action.type === 'chat/turnCancelled'));
-  expect(seen.find(({ action }) => action.type === 'chat/turnCancelled')?.action.turnId).toBe('t1');
+  void session.abort();
+  // The stop goes to the host inside, which ends the turn there; the host
+  // outside says its client's stop itself.
+  const stop = (): Bag | undefined => inner.messages
+    .map((one) => (one.params as Bag | undefined)?.action as Bag | undefined)
+    .find((action) => action?.type === 'chat/turnCancelled');
+  await until(() => stop() !== undefined);
+  expect(stop()?.turnId).toBe('t1');
   // A cancelled turn never reports itself complete, whether or not the inner
   // backend is still streaming.
   await new Promise((resolve) => { setTimeout(resolve, 200); });
@@ -940,7 +947,7 @@ it('killing the inner host ends the outer session with what it last said', async
   const { seen, emit } = recorder();
   const agent = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 });
   const session = agent.create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   inner.say('ahpd: the machine has gone away');
@@ -956,14 +963,14 @@ it('a session whose inner host ended says why, and a later turn goes nowhere', a
   const inner = innerHost(backend());
   const { seen, emit } = recorder();
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   expect(session.ended?.()).toBeUndefined();
   inner.crash(3);
   await until(() => seen.some(({ action }) => action.type === 'session/creationFailed'));
   const said = seen.find(({ action }) => action.type === 'session/creationFailed')?.action.error.message;
   const before = seen.length;
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await new Promise((resolve) => { setTimeout(resolve, 50); });
   expect(seen.length).toBe(before);
   expect(session.ended?.()).toBe(said);
@@ -1976,7 +1983,7 @@ it('an inner subagent chat is opened outside through the subagent seam, and its 
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
-  session.begin('t1', 'go');
+  session.sendMessage('t1', 'go');
   await until(() => outside.ended.length > 0);
   expect(outside.asked).toEqual([{ toolCallId: 'call-1', request: { title: 'Explore', prompt: 'look around' } }]);
   // The worker's own turn is the one the seam opened, so nothing starts another.
@@ -2011,7 +2018,7 @@ it('a worker chat the outer seam cannot open is logged, and the session runs on'
       log: (line: string) => { lines.push(line); },
     })
       .create({ ...start(emit), subagent: () => { throw new Error('the outer chat is gone'); } } as unknown as Start);
-    session.begin('t1', 'go');
+    session.sendMessage('t1', 'go');
     await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
     // A rejection nobody holds is raised on a later turn of the loop than the
     // one that made it, so the case lets the tick pass before reading.
@@ -2032,7 +2039,7 @@ it('a link to an inner subagent chat in the lead chat names the outer chat', asy
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
-  session.begin('t1', 'go');
+  session.sendMessage('t1', 'go');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   const links = JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
   expect(links.length).toBeGreaterThan(0);

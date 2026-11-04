@@ -173,8 +173,8 @@ const naming = (agent: Agent): Agent => ({
     const own = (turn: Bag): Bag => ({ ...turn, id: written.get(String(turn.id)) ?? turn.id });
     return {
       ...session,
-      begin: (turnId, text, model, from) => {
-        session.begin(turnId, text, model, from);
+      sendMessage: (turnId, text, from) => {
+        void session.sendMessage(turnId, text, from);
         // Said after the turn began, because that is when the host knows who
         // sent it - and after in Claude too, where the uuid arrives with the
         // prompt's first echo rather than before the turn was ever announced.
@@ -194,7 +194,7 @@ const naming = (agent: Agent): Agent => ({
 /**
  * Echo under a backend that writes down what each turn was handed.
  *
- * The words of a message reach a backend as `begin`'s `text` and what was
+ * The words of a message reach a backend as `sendMessage`'s `text` and what was
  * attached to it as an argument of its own, so the record a test reads is what
  * says the host passed the attachment on rather than writing it into the
  * prose - which is the only thing a backend that can see an image would notice.
@@ -205,9 +205,9 @@ const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agen
     const session = agent.create(start);
     return {
       ...session,
-      begin: (turnId, text, model, from, attachments) => {
+      sendMessage: (turnId, text, from, attachments) => {
         seen.push(attachments);
-        session.begin(turnId, text, model, from, attachments);
+        return session.sendMessage(turnId, text, from, attachments);
       },
     };
   },
@@ -226,11 +226,17 @@ const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
   ...agent,
   create: (start) => {
     const session = agent.create(start);
+    // The agent a send picked, handed before it, read with the send's sender.
+    let picked: { uri: string } | undefined;
     return {
       ...session,
-      begin: (turnId, text, model, from, attachments) => {
-        seen.push(from);
-        session.begin(turnId, text, model, from, attachments);
+      changeAgent: (chosen) => {
+        picked = chosen;
+        return session.changeAgent(chosen);
+      },
+      sendMessage: (turnId, text, from, attachments) => {
+        seen.push(picked === undefined ? from : { ...from, agent: picked });
+        return session.sendMessage(turnId, text, from, attachments);
       },
       queue: (id, text, model, from) => {
         seen.push(from);

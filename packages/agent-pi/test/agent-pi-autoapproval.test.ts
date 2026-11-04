@@ -52,7 +52,7 @@ it('runs a bash command the owner\'s rules allow, without asking', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'make test' });
@@ -76,7 +76,7 @@ it('runs a powershell command the rules allow, and says which shell it is', asyn
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'powershell', { command: 'Get-ChildItem' });
@@ -98,7 +98,7 @@ it('asks for a shell command no rule matches', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
@@ -115,7 +115,7 @@ it('asks for a shell command no rule matches', async () => {
 it('asks when the host offers no check at all', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'make test' });
@@ -132,7 +132,7 @@ it('asks the terminal check only about the two shells pi runs', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'edit', { path: join(root, 'a.txt') });
@@ -152,7 +152,7 @@ it('keeps don\'t-ask\'s refusal for a command a rule would allow', async () => {
     settings: { permissionMode: 'dontAsk' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   // The rule narrows the questions and adds none, and this mode answers by
@@ -170,7 +170,7 @@ it('keeps bypass mode\'s answer, without asking the check', async () => {
     settings: { permissionMode: 'bypassPermissions' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   expect(await driveCall(pi, 'c1', 'bash', { command: 'make test' })).toBeUndefined();
@@ -188,7 +188,7 @@ it('still asks about a command whose input names none', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'bash', {} as Bag);
@@ -212,7 +212,7 @@ it('asks for a tool the operator\'s rule names, in default mode', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'make test' });
@@ -233,7 +233,7 @@ it('asks in bypass mode, where the call would otherwise run', async () => {
     settings: { permissionMode: 'bypassPermissions' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'edit', { path: join(root, 'a.txt') });
@@ -251,7 +251,7 @@ it('asks in plan mode, where the write would otherwise be refused', async () => 
     settings: { permissionMode: 'plan' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'edit', { path: join(root, 'a.txt') });
@@ -269,7 +269,7 @@ it('refuses a named tool in don\'t-ask mode, without a question', async () => {
     settings: { permissionMode: 'dontAsk' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   expect(await driveCall(pi, 'c1', 'bash', { command: 'make test' }))
@@ -285,7 +285,7 @@ it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', async ()
     settings: { permissionMode: 'bypassPermissions' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
 
   const waiting = driveCall(pi, 'c1', 'notify', {});

@@ -116,7 +116,7 @@ beforeEach(() => { sdk.reset(); });
 it('fails the turn of a CLI that never answers its handshake', async () => {
   sdk.answers = false;
   const { session, said } = opened({ handshakeTimeoutMs: BOUND });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await waited(BOUND * 3);
 
   expect(failureOf(said)).toBe(`Claude Code did not answer within ${BOUND / 1000} seconds`);
@@ -129,7 +129,7 @@ it('fails the turn of a CLI that never answers its handshake', async () => {
 
 it('keeps the turn of a CLI that answers in time', async () => {
   const { session, said } = opened({ handshakeTimeoutMs: BOUND });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await waited(BOUND * 3);
 
   expect(failureOf(said)).toBeUndefined();
@@ -151,7 +151,8 @@ it('fails nothing for a query this host replaced before the bound', async () => 
   // first turn's own pick and before the bound on the first is up: what the
   // first would have said is about a query nothing is reading any more.
   sdk.answers = true;
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await waited(BOUND * 3);
 
   expect(sdk.built).toBe(2);
@@ -175,7 +176,7 @@ it('takes the bound from the plugin option', async () => {
     settings: {},
     emit: (_channel: string, action: Bag) => { said.push(action); },
   } as never);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await waited(BOUND * 6);
 
   expect(failureOf(said)).toBe(`Claude Code did not answer within ${(BOUND * 2) / 1000} seconds`);

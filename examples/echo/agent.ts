@@ -310,14 +310,19 @@ export function echo(options: EchoOptions): Agent {
       }),
 
       /**
-       * The client says a turn has begun; making it true is this method.
+       * The host says a turn has begun; making it true is this method.
        *
-       * Note the order every backend has to keep: the turn is said back first,
-       * then a part is opened, and only then does text stream into it. A
+       * Note the order every backend has to keep: the turn is said first, then
+       * a part is opened, and only then does text stream into it. A
        * `chat/delta` naming a part nobody opened appends to nothing, and a
        * part naming a turn no client has is dropped.
        */
-      begin: (turnId, text, _model, from, attachments) => beginTurn(turnId, text, undefined, from, attachments),
+      sendMessage: (turnId, text, from, attachments) => beginTurn(turnId, text, undefined, from, attachments),
+
+      // An echo runs on no model and as no agent, so a pick of either is kept
+      // by nothing.
+      changeModel: () => {},
+      changeAgent: () => {},
 
       /**
        * Wait, then be the next turn.
@@ -385,7 +390,7 @@ export function echo(options: EchoOptions): Agent {
         startNext();
       },
 
-      cancel: (turnId) => {
+      abort: () => {
         // The chat's turn is the last one said; the turns it took the place of
         // stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
@@ -410,7 +415,7 @@ export function echo(options: EchoOptions): Agent {
         remember();
         start.emit('chat', {
           type: 'chat/turnCancelled',
-          turnId: turnId || String(turn.id),
+          turnId: String(turn.id),
           duration: turn.duration,
         });
       },

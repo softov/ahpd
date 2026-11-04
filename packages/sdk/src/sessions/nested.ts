@@ -23,7 +23,8 @@
  * What a `Start` carries that the proxy does not pass on:
  *
  * - `forkAt`, `rewindAt` and `context`: the proxy answers no `forkPoint` or
- *   `endPoint`, so the host never asks it to fork or rewind;
+ *   `endPoint`, so a fork of its chat begins a conversation of its own and a
+ *   truncation leaves the history inside as it is;
  * - `credentials`: the machine gets its keys as the agent's machine needs say,
  *   decision `cofold-config-reaches-a-machine-by-a-path-variable`;
  * - `tools`, `instructions` and `subagent`: seams of this host, and the host
@@ -55,7 +56,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SubagentChat, TurnOptions } from '../types/session.js';
+import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat, TurnOptions } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -468,6 +469,9 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   let turn: string | undefined;
   /** When the outer turn began, so a turn this proxy ends says how long it ran. */
   let turnBegan = Date.now();
+  /** The model a client picked, carried with the next send, and the agent, carried with each. */
+  let chosen: Chosen | undefined;
+  let picked: { uri: string } | undefined;
   /**
    * The folder this host named, and where it is inside the machine, as URIs.
    * Inside is the folder's machine path until the port says otherwise.
@@ -1514,7 +1518,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       };
     },
 
-    begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom): void => {
+    sendMessage: (turnId: string, text: string, from?: MessageFrom): void => {
       turn = turnId;
       turnBegan = Date.now();
       /*
@@ -1530,10 +1534,13 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       /*
        * Carried as a client of the host inside sends it, as VS Code's client
        * does: the time it starts and a message with its origin, a person's
-       * where the message names none. The host inside says it as it came.
+       * where the message names none, and the model and agent picked last.
+       * The host inside says it as it came.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L435-L442
        */
+      const model = chosen;
+      chosen = undefined;
       carry('chat', {
         type: 'chat/turnStarted',
         turnId,
@@ -1542,10 +1549,13 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
           text,
           origin: from?.origin ?? { kind: 'user' },
           ...(model === undefined ? {} : { model }),
+          ...(picked === undefined ? {} : { agent: picked }),
           ...(from?._meta === undefined ? {} : { _meta: from._meta }),
         },
       });
     },
+    changeModel: (model: Chosen): void => { chosen = model; },
+    changeAgent: (agent: { uri: string } | undefined): void => { picked = agent; },
     queue: (
       queueId: string,
       text: string,
@@ -1594,7 +1604,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       carry('chat', bit === 'read' ? { type: 'chat/isReadChanged', isRead: on } : { type: 'chat/isArchivedChanged', isArchived: on });
     },
     /* Taken only while the inner chat has a turn running. */
-    steer: (steerId: string, text: string, _attachments?: MessageAttachment[], from?: MessageFrom): boolean => {
+    sendSteeringMessage: ({ id: steerId, text, from }: SteeringMessage): boolean => {
       if (chat?.activeTurn === undefined) return false;
       carry('chat', {
         type: 'chat/pendingMessageSet',
@@ -1605,14 +1615,17 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return true;
     },
     /* Taken only for the inner chat's last turn, when it failed and nothing runs. */
-    resume: (turnId: string): boolean => {
+    resumeTurn: (turnId: string): void => {
       const last = chat?.turns.at(-1);
-      if (chat?.activeTurn !== undefined || last === undefined || last.id !== turnId || last.state !== 'error') return false;
+      if (chat?.activeTurn !== undefined || last === undefined || last.id !== turnId || last.state !== 'error') {
+        throw new Error(`${turnId} is not a turn ${provider} in computer://${id} can run again`);
+      }
       carry('chat', { type: 'chat/turnResume', turnId });
-      return true;
     },
-    /* With the time the turn ran, as VS Code's client sends a stop. */
-    cancel: (turnId: string): void => {
+    /* A stop of the inner chat's running turn, with the time it ran, as VS Code's client sends one. */
+    abort: (): void => {
+      const turnId = chat?.activeTurn?.id ?? turn;
+      if (turnId === undefined) return;
       const duration = turn === turnId ? Math.max(0, Date.now() - turnBegan) : 0;
       if (turn === turnId) turn = undefined;
       carry('chat', { type: 'chat/turnCancelled', turnId, duration });
@@ -1645,8 +1658,9 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     },
     /*
      * Taken for a key the inner session's schema declares and does not fix
-     * once the session runs; anything else is refused in a sentence, since the
-     * inner host would refuse it where no client could hear.
+     * once the session runs; anything else is answered in a sentence for the
+     * host's log, since the inner host would refuse it where no client could
+     * hear.
      */
     setConfig: (key: string, value: unknown): true | string => {
       const property = declared(key);

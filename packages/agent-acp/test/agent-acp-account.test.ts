@@ -61,7 +61,7 @@ function talking(flags: string[], options: Partial<AcpOptions> = {}): { session:
 
 /** One turn, run to its end, which is also what opens the connection. */
 async function turn(session: Session, actions: Bag[], text = 'hi'): Promise<void> {
-  session.begin('t1', text);
+  session.sendMessage('t1', text);
   await until(() => actions.some((action) => action.type === 'chat/turnComplete'
     || action.type === 'chat/turnCancelled'
     || action.type === 'chat/error'));

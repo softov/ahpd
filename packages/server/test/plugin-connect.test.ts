@@ -110,7 +110,7 @@ const reporting = (): Agent => {
       const held = base.create(start);
       return {
         ...held,
-        begin: (...args: Parameters<typeof held.begin>) => {
+        sendMessage: (...args: Parameters<typeof held.sendMessage>) => {
           const turnId = String(args[0]);
           const say = (action: Bag): void => { start.emit('chat', action); };
           say({ type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: args[1] } });

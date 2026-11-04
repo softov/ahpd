@@ -52,7 +52,7 @@ const spoken = async (agent: Agent, id: string, workingDirectory: string): Promi
     // said nothing is ten minutes.
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   });
-  session.begin('t1', `say ${id}`);
+  session.sendMessage('t1', `say ${id}`);
   await until(() => notes.some((one) => one.type === 'chat/turnComplete' || one.type === 'chat/turnCancelled'));
   session.close();
 };

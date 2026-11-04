@@ -69,7 +69,7 @@ const errored = (actions: Bag[]): Bag | undefined => {
 
 /** One turn, run to its end. */
 async function turn(session: Session, actions: Bag[], turnId: string, text: string): Promise<void> {
-  session.begin(turnId, text);
+  session.sendMessage(turnId, text);
   await until(() => actions.some((action) => action.type === 'chat/turnComplete'
     || action.type === 'chat/turnCancelled'
     || action.type === 'chat/error'));

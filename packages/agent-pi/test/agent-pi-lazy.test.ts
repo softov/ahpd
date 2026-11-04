@@ -119,7 +119,7 @@ it('applies without waiting for pi, imports it once for the first list and sessi
     schema: () => ({}),
     emit: (_channel: string, action: Bag) => { sent.push(action); },
   } as Start);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(listed).toBe(false);
   expect(sent.map((one) => one.type)).not.toContain('chat/turnComplete');

@@ -84,7 +84,7 @@ const failure = (actions: Bag[]): string | undefined => {
 it('refuses a folder nobody vouched for, rather than starting the agent in it', async () => {
   const { folder, log } = foldered();
   const { session, actions } = sessionIn({ workingDirectory: folder, trusted: () => false }, log);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => failure(actions) !== undefined);
   // The sentence names the folder and the way out of it, so a person reading
   // the failure knows which folder and which flag.
@@ -98,7 +98,7 @@ it('refuses a folder nobody vouched for, rather than starting the agent in it', 
 it('starts the agent in an untrusted folder when the preset says it honours trust', async () => {
   const { folder, log } = foldered();
   const { session } = sessionIn({ workingDirectory: folder, trusted: () => false }, log, true);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => existsSync(log));
   expect(existsSync(log)).toBe(true);
 });
@@ -106,7 +106,7 @@ it('starts the agent in an untrusted folder when the preset says it honours trus
 it('starts the agent in a folder the host vouched for', async () => {
   const { folder, log } = foldered();
   const { session } = sessionIn({ workingDirectory: folder, trusted: () => true }, log);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => existsSync(log));
   expect(existsSync(log)).toBe(true);
 });

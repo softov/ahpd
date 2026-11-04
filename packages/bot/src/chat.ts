@@ -938,6 +938,9 @@ export function botChatAgent(
      * of, the open one or one said before it, is answered on and ends in no
      * history.
      */
+    /** The model a client picked, taken by the next send. */
+    let chosen: Chosen | undefined;
+
     const hand = (
       turnId: string,
       text: string,
@@ -1106,19 +1109,25 @@ export function botChatAgent(
       }),
 
       /**
-       * The client says a turn has begun; making it true - and writing it down -
+       * The host says a turn has begun; making it true - and writing it down -
        * is this method.
        *
-       * One sent while another is open takes its place at once and is handed
-       * on once the open turn has ended: the chat answers one turn at a time.
+       * One sent while another is open is handed on once the open turn has
+       * ended: the chat answers one turn at a time.
        */
-      begin: (turnId, text, model, from, attachments) => {
+      sendMessage: (turnId, text, from, attachments) => {
+        const model = chosen;
+        chosen = undefined;
         if (open === undefined && handed.length === 0) {
           beginMessage(turnId, text, from, undefined, model, attachments);
           return;
         }
         hand(turnId, text, from, model, attachments);
       },
+
+      changeModel: (model) => { chosen = model; },
+      // A bot answers as itself, so an agent picked is kept by nothing.
+      changeAgent: () => {},
 
       /**
        * A message a client held for later.
@@ -1190,7 +1199,7 @@ export function botChatAgent(
        * False where there is no open turn to steer: the host runs such a
        * message as a turn of its own.
        */
-      steer: (pendingId, text, attachments, from) => {
+      sendSteeringMessage: ({ id: pendingId, text, attachments, from }) => {
         const held = open;
         if (held === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
@@ -1208,7 +1217,7 @@ export function botChatAgent(
        * There is nothing here to stop - the work is the bot's session, and
        * whether that hears the stop is the plugin's business - so the turn is
        * ended as a cancelled one, and a client watching the chat is told
-       * exactly that. The host names the open turn by its id.
+       * exactly that.
        */
       /*
        * A stop ends the turn and starts nothing behind it: the reference host
@@ -1219,19 +1228,15 @@ export function botChatAgent(
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1942
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
        */
-      cancel: (turnId) => {
+      abort: () => {
         /*
-         * A turn said while another was open ends here, the turns said with it
-         * go, and the open turn is stopped, as the reference stop aborts the
-         * work in flight and drops the turns waiting behind it.
+         * The turns said while another was open go, and the open turn is
+         * stopped, as the reference stop aborts the work in flight and drops
+         * the turns waiting behind it.
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
          */
         const held = open;
-        const shown = handed.at(-1)?.turn;
-        if (shown !== undefined && shown.id === turnId) {
-          for (const one of handed.splice(0)) finish(one.turn, 'cancelled', [], false);
-        }
-        else if (held === undefined || held.id !== turnId) return;
+        for (const one of handed.splice(0)) finish(one.turn, 'cancelled', [], false);
         if (held === undefined) return;
         finish(held, 'cancelled', [], false);
         handle.onStop?.(start.uri, held.id);

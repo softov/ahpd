@@ -104,9 +104,9 @@ function backend(failOn?: number) {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           began.push({ spawn, text });
-          session.begin(turnId, text, model, from);
+          return session.sendMessage(turnId, text, from);
         },
         setConfig: (key, value) => {
           set.push({ key, value });
@@ -406,7 +406,7 @@ it('applies a config change and a turn sent while the session starts again into 
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => { said.push(`${spawn}: begin ${text}`); session.begin(turnId, text, model, from); },
+        sendMessage: (turnId, text, from) => { said.push(`${spawn}: begin ${text}`); return session.sendMessage(turnId, text, from); },
         setConfig: (key, value) => { said.push(`${spawn}: ${key}=${String(value)}`); return true; },
       };
     },
@@ -468,10 +468,10 @@ const intoMachine = async (throws = false) => {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           said.push(`${spawn}: begin ${text}`);
           if (throws && spawn > 0) throw new Error('the backend fell over');
-          session.begin(turnId, text, model, from);
+          return session.sendMessage(turnId, text, from);
         },
       };
     },
@@ -539,6 +539,47 @@ it('sends nothing for a turn stopped while its session is started again', async 
   machine.made('m1');
   await settle();
   expect(said).toEqual([]);
+});
+
+/*
+ * A change to a key the schema declares is checked by the schema and said, and
+ * a value its backend could not take is the backend's to log, as VS Code's
+ * host says a config change its checks passed and then applies it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13679
+ */
+it('says a change to a key its backend declares, and keeps it when the backend would not take the value', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+    create: (start: Start): Session => ({ ...base.create(start), setConfig: () => 'the backend would not take it' }),
+  };
+  const store = memorySessions();
+  const host = createHost({ path: DIR, agents: [agent], sessions: store });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/kept' } });
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-session:/kept', clientSeq: 3, action: { type: 'session/configChanged', config: { mutable: 'b' } } } });
+  await settle();
+  const answered = actions(p, 'ahp-session:/kept').filter((note) => note.origin?.clientSeq === 3);
+  expect(answered.map((note) => [note.action.type, note.rejectionReason])).toEqual([['session/configChanged', undefined]]);
+  expect(store.config('kept')).toMatchObject({ mutable: 'b' });
+});
+
+/*
+ * A fixed key's change is said before the session starts again, and the
+ * restart is its side effect, as VS Code's host says a config change at once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13661
+ */
+it('says a change that starts the session again before the session is up', async () => {
+  const { p } = await intoMachine();
+  const said = actions(p, 'ahp-session:/boxed').filter((note) => note.action.type === 'session/configChanged' && note.origin !== undefined);
+  expect(said.map((note) => [(note.action.config as Bag).computer, note.rejectionReason])).toEqual([['disposable:box', undefined]]);
 });
 
 /** The action envelopes a peer was sent. */

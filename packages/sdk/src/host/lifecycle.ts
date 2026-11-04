@@ -16,7 +16,7 @@ import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
-import type { Session, MessageAttachment, MessageFrom } from '../types/session.js';
+import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { MessageChatAttachment } from '@microsoft/agent-host-protocol';
 import type { Owner } from '../types/usage.js';
 import type { Principal } from '../types/users.js';
@@ -154,6 +154,8 @@ export interface Lifecycle {
     said?: () => void,
     stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined>;
+  /** A turn this host begins itself, with no client's start behind it: said, then sent. */
+  startTurn(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined;
   /** A turn begun, refused or failed, from what `beginOrRun` answers when `begin` asks it, and what is still to come of it. */
   beginTurn(
     begin: () => string | undefined | Promise<string | undefined>,
@@ -965,7 +967,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     });
     const lead = byChat.get(chatUriFor(uri));
     const now = sessions.get(uri)?.workingDirectory ?? move.directory;
-    lead?.chat.begin(
+    if (lead === undefined) return;
+    void startTurn(
+      lead.chat,
       crypto.randomUUID(),
       `The workspace is now ${now}${move.isolation ? ', an isolated worktree' : ''}. Continue the task you were working on there.`,
       undefined,
@@ -977,8 +981,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           'vscode.chat.workspaceContinuation': true,
         },
       },
-      undefined,
-      ctx.turnInstructions(uri),
     );
   };
 
@@ -1290,6 +1292,107 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   });
 
   /**
+   * The start of a turn this host begins itself, said as the host's with the
+   * message it was given, as the reference host says the start of a turn of
+   * its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L174-L183
+   */
+  const sayStart = (session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): void => {
+    dispatch(session.chatUri, {
+      type: 'chat/turnStarted',
+      turnId,
+      startedAt: new Date().toISOString(),
+      message: {
+        text,
+        origin: from?.origin ?? { kind: 'user' },
+        ...(from?._meta === undefined ? {} : { _meta: from._meta }),
+        ...(attachments === undefined ? {} : { attachments }),
+        ...(model === undefined ? {} : { model }),
+        ...(from?.agent === undefined ? {} : { agent: from.agent }),
+      },
+    });
+  };
+
+  /**
+   * A turn whose start was said, handed to its backend, as the reference host
+   * sends one: the model it names where the chat's backend offers it, and its
+   * agent, then its prompt. A model the backend does not offer is logged and
+   * the chat keeps its own; a model the backend will not take ends the turn in
+   * a `modelSelectionFailed` error, an agent it will not take is logged, and a
+   * send that fails ends the turn in a `sendFailed` one. A turn `stopped`
+   * meanwhile is never sent. A backend that answers the model and the agent at
+   * once is sent the prompt in the same tick, which keeps the order its turns
+   * were said in; one that answers later is waited on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2224-L2346
+   */
+  const sendTurn = (
+    session: Session,
+    turnId: string,
+    text: string,
+    model: Chosen | undefined,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+    stopped?: () => boolean,
+  ): Promise<void> | undefined => {
+    const since = Date.now();
+    const ended = (errorType: string, error: unknown): void => {
+      if (stopped?.() === true) return;
+      dispatch(session.chatUri, {
+        type: 'chat/error',
+        turnId,
+        duration: Math.max(0, Date.now() - since),
+        part: { kind: 'error', error: { errorType, message: error instanceof Error ? error.message : String(error) } },
+      });
+    };
+    /*
+     * The model applies on the chat's own backend, and on a chat that runs on
+     * another one where that backend offers it or has said nothing of its models.
+     */
+    const held = sessions.get(session.uri);
+    const offered = session.models();
+    const applicable = model !== undefined && (held?.backends.has(session.chatUri) !== true || offered.length === 0 || offered.some((one) => one.id === model.id))
+      ? model
+      : undefined;
+    if (model !== undefined && applicable === undefined) log(`${session.chatUri} keeps its model: its backend does not offer ${model.id}`);
+    const { agent, ...sent } = from ?? {};
+    const unchanged = (error: unknown): void => {
+      log(`${session.chatUri}: the agent was not changed: ${error instanceof Error ? error.message : String(error)}`);
+    };
+    const send = (): Promise<void> | undefined => {
+      if (stopped?.() === true) return undefined;
+      let sending: void | Promise<void>;
+      try { sending = session.sendMessage(turnId, text, from === undefined ? undefined : sent, attachments, ctx.turnInstructions(session.uri)); }
+      catch (error) {
+        ended('sendFailed', error);
+        return undefined;
+      }
+      return sending instanceof Promise ? sending.catch((error: unknown) => { ended('sendFailed', error); }) : undefined;
+    };
+    let modelChanged: void | Promise<void>;
+    try { modelChanged = applicable === undefined ? undefined : session.changeModel(applicable); }
+    catch (error) {
+      ended('modelSelectionFailed', error);
+      return undefined;
+    }
+    let agentChanged: void | Promise<void> = undefined;
+    try { agentChanged = session.changeAgent(agent); }
+    catch (error) { unchanged(error); }
+    if (!(modelChanged instanceof Promise) && !(agentChanged instanceof Promise)) return send();
+    return Promise.all([modelChanged, agentChanged instanceof Promise ? agentChanged.catch(unchanged) : undefined])
+      .then(send, (error: unknown) => { ended('modelSelectionFailed', error); });
+  };
+
+  /**
+   * A turn this host begins itself, with no client's start behind it: said,
+   * then sent, as the reference host starts a turn of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L64-L68
+   */
+  const startTurn = (session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined => {
+    sayStart(session, turnId, text, model, from, attachments);
+    return sendTurn(session, turnId, text, model, from, attachments);
+  };
+
+  /**
    * A message's turn, whichever way it arrived.
    *
    * `!ls` is a command, and everything else is a question. Trimmed, and empty
@@ -1311,9 +1414,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `sender` is who asked, held against this turn for as long as it runs.
    *
-   * `said` says the client's action this turn came from, once the turn's
-   * checks have passed and before the backend is handed it: a client's action
-   * is said by this host itself, after its checks and before any side effect.
+   * `said` says what the turn came from, once the turn's checks have passed
+   * and before the backend is handed it: a client's queued message, or
+   * nothing for a client's start, whose echo was said already. Without it the
+   * turn is this host's own, and its start is said here as the host's. A
+   * client's action is said by this host itself, after its checks and before
+   * any side effect.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
    *
    * `stopped` answers whether a turn said already was stopped while it was
@@ -1415,9 +1521,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          * the same thing, and the only thing that decides it is what the
          * session holds at the moment the turn starts.
          */
-        said?.();
-        if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments, ctx.turnInstructions(session.uri));
-        else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
+        if (queuedAs !== undefined) {
+          said?.();
+          session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
+          return undefined;
+        }
+        if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
+        else said();
+        void sendTurn(session, turnId, text, model, from, attachments, stopped);
         return undefined;
       }
       if (!session.ran) {
@@ -1910,6 +2021,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
     chatAgent, chatConfig, isolated,
-    shelve, restore, beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
+    shelve, restore, beginOrRun, startTurn, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
   };
 }

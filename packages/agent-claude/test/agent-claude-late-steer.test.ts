@@ -167,9 +167,9 @@ const lastSent = (): string => String(sdk.handed.at(-1)?.uuid ?? '');
  * active turn, which is the host's rule in `packages/sdk/src/host/lifecycle.ts`,
  * and begun otherwise. Whether it was begun.
  */
-const hostSends = (session: { chatState: () => unknown; begin: (turnId: string, text: string) => void }, turnId: string, text: string): boolean => {
+const hostSends = (session: { chatState: () => unknown; sendMessage: (turnId: string, text: string) => unknown }, turnId: string, text: string): boolean => {
   if ((session.chatState() as Bag).activeTurn !== undefined) return false;
-  session.begin(turnId, text);
+  session.sendMessage(turnId, text);
   return true;
 };
 
@@ -221,11 +221,11 @@ const said = (one: Bag): unknown => (one.message as Bag).content;
 async function liveLate(id: string) {
   const live = await opened();
   const [first, rest] = late();
-  live.session.begin(FIRST, ALPHA_TEXT);
+  live.session.sendMessage(FIRST, ALPHA_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(live.session.steer?.(id, BETA_TEXT)).toBe(true);
+  expect(live.session.sendSteeringMessage?.({ id, text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(rest, LATE, steered));
@@ -237,11 +237,11 @@ async function liveLate(id: string) {
 async function liveFolded() {
   const live = await opened();
   const [first, rest] = folded();
-  live.session.begin(TOOL, DONE_TEXT);
+  live.session.sendMessage(TOOL, DONE_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(live.session.steer?.('s-folded', BETA2_TEXT)).toBe(true);
+  expect(live.session.sendSteeringMessage?.({ id: 's-folded', text: BETA2_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(rest, FOLDED, steered));
@@ -260,20 +260,20 @@ async function liveStop() {
   const [queued, afterStop] = splitAfter(rest, (frame) => frame.type === 'command_lifecycle' && frame.command_uuid === SURVIVOR);
   const [answered, third] = splitAfter(afterStop, (frame) => frame.type === 'result'
     && (frame.user_message_uuids as string[]).includes(SURVIVOR));
-  live.session.begin(STOPPED, COUNT_TEXT);
+  live.session.sendMessage(STOPPED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(live.session.steer?.('s-stop', BETA_TEXT)).toBe(true);
+  expect(live.session.sendSteeringMessage?.({ id: 's-stop', text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(queued, SURVIVOR, steered));
   await settle();
-  live.session.cancel(STOPPED);
+  live.session.abort();
   await settle();
   sdk.push(...renamed(answered, SURVIVOR, steered));
   await settle();
-  live.session.begin(GAMMA, GAMMA_TEXT);
+  live.session.sendMessage(GAMMA, GAMMA_TEXT);
   await settle();
   sdk.push(...renamed(third, SURVIVOR, steered));
   await settle();
@@ -326,11 +326,11 @@ it('begins a queued message only once the steering message the CLI still owed ha
   const { session, chat, before } = await opened();
   const [first, rest] = late();
   const [owed, after] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(FIRST, ALPHA_TEXT);
+  session.sendMessage(FIRST, ALPHA_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(session.steer?.('s1', BETA_TEXT)).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's1', text: BETA_TEXT })).toBe(true);
   session.queue('q1', 'second');
   await settle();
   const steered = String(sdk.handed[1]?.uuid ?? '');
@@ -411,16 +411,16 @@ it('opens the turn of a steering message the CLI holds as its turn is stopped, s
   const [queued, afterStop] = splitAfter(rest, (frame) => frame.type === 'command_lifecycle' && frame.command_uuid === SURVIVOR);
   const [answered, third] = splitAfter(afterStop, (frame) => frame.type === 'result'
     && (frame.user_message_uuids as string[]).includes(SURVIVOR));
-  session.begin(STOPPED, COUNT_TEXT);
+  session.sendMessage(STOPPED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(session.steer?.('s-stop', BETA_TEXT)).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's-stop', text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(queued, SURVIVOR, steered));
   await settle();
-  session.cancel(STOPPED);
+  session.abort();
   await settle();
 
   // The steering message's turn opens as the stopped turn ends, naming the message it answers.
@@ -451,19 +451,19 @@ it('ends a steering message\'s own turn for good when it is stopped before the C
   const [queued, afterStop] = splitAfter(rest, (frame) => frame.type === 'command_lifecycle' && frame.command_uuid === SURVIVOR);
   const [answered] = splitAfter(afterStop, (frame) => frame.type === 'result'
     && (frame.user_message_uuids as string[]).includes(SURVIVOR));
-  session.begin(STOPPED, COUNT_TEXT);
+  session.sendMessage(STOPPED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(session.steer?.('s-stop', BETA_TEXT)).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's-stop', text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(queued, SURVIVOR, steered));
   await settle();
-  session.cancel(STOPPED);
+  session.abort();
   await settle();
   // The message's own turn, stopped while the CLI still holds the message.
-  session.cancel(steered);
+  session.abort();
   await settle();
   sdk.push(...renamed(answered, SURVIVOR, steered));
   await settle();
@@ -480,11 +480,11 @@ it('ends a steering message\'s own turn for good when it is stopped before the C
 it('ends no turn sent after a stop at the stopped turn\'s result', async () => {
   const { session, chat, before } = await opened();
   const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
-  session.begin(HALTED, COUNT_TEXT);
+  session.sendMessage(HALTED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  session.cancel(HALTED);
+  session.abort();
   await settle();
   // Nothing was left with the CLI, so a turn sent now begins at once.
   expect(hostSends(session, AFTER, GAMMA_TEXT)).toBe(true);
@@ -509,13 +509,13 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   const { session, chat } = await opened();
   const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
   const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(HALTED, COUNT_TEXT);
+  session.sendMessage(HALTED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
   session.queue('waiting', BETA_TEXT);
   await settle();
-  session.cancel(HALTED);
+  session.abort();
   await settle();
   sdk.push(...stopped);
   await settle();
@@ -540,14 +540,14 @@ it.each([
   const { session, chat } = await opened();
   const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
   const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(HALTED, COUNT_TEXT);
+  session.sendMessage(HALTED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
   session.queue('waiting', BETA_TEXT);
   session.queue('later', GAMMA_TEXT);
   await settle();
-  session.cancel(HALTED);
+  session.abort();
   await settle();
   sdk.push(...stopped);
   await settle();
@@ -571,11 +571,11 @@ it('runs two idle steering messages in the order they were sent, ahead of what i
   const { session, chat } = await opened();
   const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
   const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(HALTED, COUNT_TEXT);
+  session.sendMessage(HALTED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  session.cancel(HALTED);
+  session.abort();
   await settle();
   // The CLI still owes the stopped turn's result, so these wait for it.
   session.queue('waiting', BETA_TEXT);
@@ -600,11 +600,11 @@ it('runs an idle steering !command ahead of what is queued, as a command', async
   const { session, chat } = await opened();
   const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
   const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(HALTED, COUNT_TEXT);
+  session.sendMessage(HALTED, COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  session.cancel(HALTED);
+  session.abort();
   await settle();
   session.queue('waiting', BETA_TEXT);
   session.ran?.('t-cmd', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }), 'c1', 'steering');
@@ -623,16 +623,16 @@ it('opens no turn for a steering message the CLI took in before the stop', async
   const { session, chat, before } = await opened();
   const [first, rest] = splitAfter(fixture('claude-folded-stop.jsonl'), isToolCall);
   const [taken, after] = splitAfter(rest, isDelta);
-  session.begin(FOLD_STOPPED, SLEEP_COUNT_TEXT);
+  session.sendMessage(FOLD_STOPPED, SLEEP_COUNT_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(session.steer?.('s-folded', BETA2_TEXT)).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's-folded', text: BETA2_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(taken, FOLD_STEER, steered));
   await settle();
-  session.cancel(FOLD_STOPPED);
+  session.abort();
   await settle();
 
   // The CLI had started the message inside the stopped turn, so no turn is left to answer it.
@@ -653,11 +653,11 @@ it('opens the turn of a steering message the CLI holds when its turn fails', asy
   // The probe sent the steering message as the tool's result arrived, which is the turn's last round.
   const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
   const [failed, answered] = splitAfter(rest, (frame) => frame.type === 'result');
-  session.begin(LIMITED, SLEEP_DONE_TEXT);
+  session.sendMessage(LIMITED, SLEEP_DONE_TEXT);
   await settle();
   sdk.push(...first);
   await settle();
-  expect(session.steer?.('s-limit', BETA_TEXT)).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's-limit', text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
   sdk.push(...renamed(failed, AFTER_LIMIT, steered));

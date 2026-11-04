@@ -25,7 +25,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { ComputerPort } from '../src/types/computers.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
+import type { MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /** A PNG's first bytes. Nothing here decodes it, so a header is a picture. */
@@ -104,10 +104,10 @@ const scripted = (said: Bag[], order: string[], dir: string): Agent => {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => {
+        sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[]) => {
           order.push('begun');
           said.push({ turnId, text, ...(attachments === undefined ? {} : { attachments }) });
-          session.begin(turnId, text, model, from, attachments);
+          return session.sendMessage(turnId, text, from, attachments);
         },
       };
     },

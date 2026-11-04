@@ -1410,6 +1410,9 @@ export function piSession(
     });
   };
 
+  /** The model a client picked, taken by the next send: pi keeps a model it took. */
+  let chosen: Chosen | undefined;
+
   return {
     uri: start.uri,
     chatUri: start.chatUri,
@@ -1486,14 +1489,20 @@ export function piSession(
       queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    // A turn sent while pi runs another is said now and run after it.
-    begin: (turnId, text, model, from, attachments) => {
+    // A turn sent while pi runs another is run after it.
+    sendMessage: (turnId, text, from, attachments) => {
+      const model = chosen;
+      chosen = undefined;
       if (active !== undefined || waiting.length > 0) {
         hand(turnId, text, { model, from, attachments });
         return;
       }
       begin(turnId, text, model, from, undefined, attachments);
     },
+
+    changeModel: (model) => { chosen = model; },
+    // pi runs as its own agent, so an agent picked is kept by nothing.
+    changeAgent: () => {},
 
     ran: (turnId, command, run, queuedAs, kind = 'queued') => {
       // A command sent as a turn while pi runs another is said now and run after it.
@@ -1529,7 +1538,7 @@ export function piSession(
      * once pi's queue no longer holds it, and at once when pi never queued
      * it: an extension handled it, or the steer failed.
      */
-    steer: (id, text, attachments, from) => {
+    sendSteeringMessage: ({ id, text, attachments, from }) => {
       const backend = live;
       if (active === undefined || backend === undefined) return false;
       const message: Bag = {
@@ -1583,12 +1592,13 @@ export function piSession(
      * `chat/turnResume` is said here, while the client's action is being
      * applied, so it goes out as that action's echo.
      */
-    resume: (turnId) => {
-      if (closed || active !== undefined || waiting.length > 0) return false;
+    resumeTurn: (turnId) => {
       const last = turns.at(-1);
-      if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
-      const part = (last.responseParts as Bag[] | undefined)?.at(-1);
-      if (part?.kind !== 'error' || part.resumable !== true) return false;
+      const part = (last?.responseParts as Bag[] | undefined)?.at(-1);
+      if (closed || active !== undefined || waiting.length > 0 || last === undefined || String(last.id) !== turnId
+        || last.state !== 'error' || part?.kind !== 'error' || part.resumable !== true) {
+        throw new Error(`${turnId} is not a turn this backend can run again`);
+      }
       turns.pop();
       delete last.state;
       delete last.duration;
@@ -1630,10 +1640,9 @@ export function piSession(
           finish('error', reason(error), true);
         }
       })();
-      return true;
     },
 
-    cancel: (turnId) => {
+    abort: () => {
       /*
        * A stop of a turn said while another ran: it ends now, the turns
        * waiting with it go, and the run in front of it is stopped, as the
@@ -1642,15 +1651,14 @@ export function piSession(
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
        */
       const shown = waiting.at(-1)?.said;
-      if (shown !== undefined && String(shown.id) === turnId) {
+      if (shown !== undefined) {
         waiting.length = 0;
         shown.state = 'cancelled';
         shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
         turns.push(shown);
-        emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
+        emit('chat', { type: 'chat/turnCancelled', turnId: String(shown.id), duration: shown.duration });
         touch();
       }
-      else if (active === undefined || String(bag(active).id) !== turnId) return;
       if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');

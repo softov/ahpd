@@ -1655,10 +1655,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      chat.begin(
-        firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-        undefined, turnInstructions(at),
-      );
+      void ctx.startTurn(chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
     }
     if (tree !== undefined) countUp(tree, 'chats');
     return { chat: chatUri };
@@ -1767,7 +1764,7 @@ export function createTooling(ctx: HostContext): Tooling {
         }
         const started = crypto.randomUUID();
         remember(chatUri, started);
-        found.chat.begin(started, text, undefined, from, undefined, turnInstructions(at));
+        void ctx.startTurn(found.chat, started, text, undefined, from);
         countUp(tree, 'messages');
         return 'sent';
       } finally {
@@ -1839,10 +1836,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      lead.chat.begin(
-        firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-        undefined, turnInstructions(made),
-      );
+      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
       countUp(tree, 'sessions');
       return { session: made, chat: chatUriFor(made) };
     },
@@ -2018,7 +2012,7 @@ export function createTooling(ctx: HostContext): Tooling {
           }
           const first = crypto.randomUUID();
           sent(first);
-          found.chat.begin(first, text, undefined, from, undefined, turnInstructions(at));
+          void ctx.startTurn(found.chat, first, text, undefined, from);
           return 'sent';
         } finally {
           release();
@@ -2047,10 +2041,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (lead === undefined) throw new Error(`${made} did not start`);
         const first = crypto.randomUUID();
         sent(first);
-        lead.chat.begin(
-          first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-          undefined, turnInstructions(made),
-        );
+        void ctx.startTurn(lead.chat, first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
         return { session: made, chat: chatUriFor(made) };
       },
       createChat: async (session, asked) => await openChat(session, asked),
