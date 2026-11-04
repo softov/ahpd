@@ -362,6 +362,17 @@ export function createShells(ctx: HostContext): HostShells {
         log,
       });
       ended?.();
+      /*
+       * A shell the host closed is not news for the agent.
+       *
+       * Closing the chat, the session or the host ends its shells, and waking
+       * the chat then would bring a closed session back from disk. Only a
+       * chat this manager still serves is woken.
+       */
+      if (ctx.closed || sessions.get(session)?.get(chat) !== self || ctx.byChat.get(chat) === undefined) {
+        log(`the command in ${shell.id} ended with its chat closed, so no turn reads it`);
+        return result;
+      }
       try {
         await ctx.beginWakeTurn(session, chat, endPrompt(command, result), sender);
       }
@@ -424,7 +435,7 @@ export function createShells(ctx: HostContext): HostShells {
       return true;
     };
 
-    return {
+    const self: Shells = {
       executable: () => executable,
       shellType: () => shellType,
       acquire,
@@ -446,6 +457,7 @@ export function createShells(ctx: HostContext): HostShells {
       },
       shutdown,
     };
+    return self;
   };
 
   return {

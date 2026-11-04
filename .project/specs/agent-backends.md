@@ -274,10 +274,13 @@ AND that shell stays busy until the command ends, so the next call opens another
 AND the command is a background row on the chat, with the command and the terminal it runs in
 AND `vscode/stopBackgroundWork` interrupts it, and the row goes once the command has really ended
 AND the end begins a turn that names the command, its exit code and the end of its output, as a wake's turn is begun
-AND that turn acts as the person whose turn started the command, queues behind a turn that is running, and leaves the chat's wake as it was.
+AND that turn acts as the person whose turn started the command
+AND that turn queues behind a turn that is running, and leaves the chat's wake as it was
+AND no turn begins when the host is closing, or when the chat or the session is closed.
 WHEN the mode is `sync` or absent
 THEN the call waits for the command and answers with its output, as it always has.
-The reason: the reference host's description promises `mode=async` and its own tool does not build it, and a client draws a command that outlives its call as background work.
+The reason: the reference host's description promises `mode=async`, and its own tool does not build it.
+A client draws a command that outlives its call as background work.
 
 ### `ask_user` reaches every backend but Claude
 
