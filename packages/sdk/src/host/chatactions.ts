@@ -1691,6 +1691,16 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
        */
       dispatch(session.chatUri, action, origin);
+      /*
+       * A queued message sent again under its id as steering, which is how a
+       * client turns a message that waits into a correction, as VS Code's
+       * "Send Immediately" does. The steering message takes its place, so the
+       * queued one is taken out, or it would run again as a turn of its own.
+       * https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2541-L2554
+       */
+      if (kind === 'steering' && (Array.isArray(chatHeld.queuedMessages) ? chatHeld.queuedMessages as Bag[] : []).some((one) => String(one.id ?? '') === id)) {
+        dispatch(session.chatUri, { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      }
       ctx.pendingSet(session.chatUri, id, connection, read.attachments);
       break;
     }
