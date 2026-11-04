@@ -252,13 +252,13 @@ it('keeps the side chat\'s carried prefix in the first block', async () => {
   ]]);
 });
 
-it('sends a queued message with its image when its turn comes', async () => {
+it('sends a turn handed while another runs with its image when its turn comes', async () => {
   const { session, said } = await open();
   session.sendMessage('t1', 'first');
   await settle();
-  session.queue('q1', 'second', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
+  session.sendMessage('t2', 'second', undefined, [written(smallImage, 'small.png', 'image/png')]);
   await settle();
-  // Waiting, so nothing of it has reached the CLI yet.
+  // Waiting for the turn in front of it, so nothing of it has reached the CLI yet.
   expect(said).toEqual(['first']);
 
   sdk.push(ended());
@@ -269,11 +269,11 @@ it('sends a queued message with its image when its turn comes', async () => {
   ]);
 });
 
-it('sends a queued message with no attachments as the string it always was', async () => {
+it('sends a turn handed while another runs with no attachments as the string it always was', async () => {
   const { session, said } = await open();
   session.sendMessage('t1', 'first');
   await settle();
-  session.queue('q1', 'second');
+  session.sendMessage('t2', 'second');
   await settle();
   sdk.push(ended());
   await settle();
@@ -291,18 +291,4 @@ it('sends a steering message with its pasted text into the turn that is running'
     'first',
     [textBlock('actually'), textBlock('note.txt (lines 1-2):\n```\none\ntwo\n```')],
   ]);
-});
-
-it('keeps a queued message\'s attachments where a client reads them waiting', async () => {
-  const { session } = await open();
-  session.sendMessage('t1', 'first');
-  await settle();
-  const one = written(smallImage, 'small.png', 'image/png');
-  session.queue('q1', 'second', undefined, undefined, [one]);
-  await settle();
-
-  // What `chat/pendingMessageSet` echoed, which is the chip a client draws
-  // while the message waits.
-  const held = (session.chatState().queuedMessages as Bag[])[0] as Bag;
-  expect((held.message as Bag).attachments).toEqual([one]);
 });

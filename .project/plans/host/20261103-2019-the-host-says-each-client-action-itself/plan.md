@@ -184,7 +184,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | [02 - The queue waits for prerequisites only](task-02-the-queue-waits-for-prerequisites.md) | done | 01 |
 | [03 - A turn is admitted after its echo](task-03-a-turn-is-admitted-after-its-echo.md) | done | 01 |
 | [04 - The Session contract follows IAgent](task-04-the-session-contract-follows-iagent.md) | done | 01 |
-| [05 - The host owns the queue and steering](task-05-the-host-owns-the-queue.md) | todo | 04 |
+| [05 - The host owns the queue and steering](task-05-the-host-owns-the-queue.md) | done | 04 |
 | [06 - A `!` command is the host's](task-06-a-command-is-the-hosts.md) | todo | 05 |
 | [07 - Claude follows](task-07-claude-follows.md) | todo | 04, 05 |
 | [08 - cofold, pi, ACP and the bot follow](task-08-the-other-backends-follow.md) | todo | 04, 05 |
@@ -204,8 +204,8 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 
 ## Resume state
 
-- **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`, and tasks 01 to 04.
-- **Next action:** [task-05-the-host-owns-the-queue.md](task-05-the-host-owns-the-queue.md).
+- **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`, and tasks 01 to 05.
+- **Next action:** [task-06-a-command-is-the-hosts.md](task-06-a-command-is-the-hosts.md).
 - **Answered:**
   1. The afternoon's turn branches this plan replaces are dropped, not merged.
   2. What of them the plan does not touch is rebuilt on top of it.

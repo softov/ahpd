@@ -194,13 +194,13 @@ it('steers the running turn with its pasted image', async () => {
     .toEqual({ kind: 'steer', text: 'actually', images: [image()] });
 });
 
-it('sends a queued message with its image when its turn comes', async () => {
+it('sends a turn handed while another runs with its image when its turn comes', async () => {
   const { session, pi } = opened();
   pi.hold();
   session.sendMessage('t1', 'first');
   await until(() => prompts(pi).length === 1);
-  session.queue('q1', 'second', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
-  // Waiting, so only the first turn has reached pi.
+  session.sendMessage('t2', 'second', undefined, [written(smallImage, 'small.png', 'image/png')]);
+  // Waiting for the turn in front of it, so only the first turn has reached pi.
   expect(prompts(pi).map((one) => one.text)).toEqual(['first']);
 
   pi.raise({ type: 'agent_settled', aborted: false });
@@ -209,20 +209,6 @@ it('sends a queued message with its image when its turn comes', async () => {
     { kind: 'prompt', text: 'first', images: [] },
     { kind: 'prompt', text: 'second', images: [image()] },
   ]);
-});
-
-it('keeps a queued message\'s attachments where a client reads them waiting', async () => {
-  const { session, pi } = opened();
-  pi.hold();
-  session.sendMessage('t1', 'first');
-  await until(() => prompts(pi).length === 1);
-  const one = written(smallImage, 'small.png', 'image/png');
-  session.queue('q1', 'second', undefined, undefined, [one]);
-
-  // What `chat/pendingMessageSet` echoed, which is the chip a client draws
-  // while the message waits.
-  const held = (session.chatState().queuedMessages as Bag[])[0] as Bag;
-  expect((held.message as Bag).attachments).toEqual([one]);
 });
 
 it('keeps a turn\'s attachments on the message the turn was accepted with', async () => {

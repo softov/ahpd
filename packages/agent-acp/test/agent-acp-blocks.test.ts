@@ -66,7 +66,7 @@ function backend(flags: string[] = []): { agent: Agent; log: string } {
   };
 }
 
-type Watcher = { emit: Emit; prose(): string; ended(): number; waiting(): Bag[] };
+type Watcher = { emit: Emit; prose(): string; ended(): number };
 
 /** A session's emitted actions, which is how a test knows a turn has settled. */
 function watcher(): Watcher {
@@ -78,10 +78,6 @@ function watcher(): Watcher {
       .map((one) => String(one.action.content))
       .join(''),
     ended: () => actions.filter((one) => ['chat/turnComplete', 'chat/turnCancelled', 'chat/error'].includes(String(one.action.type))).length,
-    // The messages a client was told are waiting, as the actions carried them.
-    waiting: () => actions
-      .filter((one) => one.action.type === 'chat/pendingMessageSet')
-      .map((one) => one.action.message as Bag),
   };
 }
 
@@ -292,15 +288,13 @@ const turn = async (session: Session, watch: Watcher, text: string): Promise<voi
   await until(() => watch.ended() > before);
 };
 
-it('sends a queued message with its attachments when its turn starts', async () => {
+it('sends a turn handed while another runs with its attachments when its turn starts', async () => {
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = start(agent, 'queued');
-  // Queued while the turn before it is still running, so it waits rather than
-  // being sent: what it becomes when its turn comes is its text and its
-  // attachments, which a client was already shown as waiting.
+  // Handed while the turn before it is still running, so it runs after that
+  // one: what it sends then is its text and its attachments.
   session.sendMessage('t1', 'hello');
-  session.queue('q1', 'what are these blocks?', undefined, undefined, [PICTURE]);
-  expect(watch.waiting()[0]?.attachments).toEqual([PICTURE]);
+  session.sendMessage('t2', 'what are these blocks?', undefined, [PICTURE]);
   await until(() => watch.prose().includes('blocks='));
   expect(watch.prose()).toContain('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
 });

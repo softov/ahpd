@@ -402,8 +402,8 @@ export interface MessageFrom {
   _meta?: Bag;
   /**
    * `Message.agent`, the protocol's `AgentSelection`: the agent this message
-   * picked, for a message the backend holds until its turn. A send's is handed
-   * with `changeAgent`.
+   * picked, on a steering message. A send's is handed with `changeAgent`
+   * before it.
    */
   agent?: { uri: string };
 }
@@ -604,18 +604,12 @@ export interface Session {
    * that leaves this out is one whose `!command` turn the host refuses, with
    * the reason, rather than one it silently turns into a question.
    *
-   * `queuedAs` is the queued message this command is, when it came through
-   * `chat/pendingMessageSet` rather than as a turn: it waits behind the
-   * running turn and anything already queued, the same id twice edits what
-   * is waiting, and the turn that runs it names it as `queuedMessageId` so a
-   * client takes it out of its queue - whether that turn starts now or later.
-   *
-   * `kind` is that message's, as `queue` takes it: a `steering` command waits
-   * as a steering message does, ahead of everything queued, and runs as a
-   * command, as the reference host runs a `!` command its drain admits.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L30-L44
+   * A queued `!` message is handed here once the host's queue drain admits it,
+   * under the turn the drain started for it, as the reference host runs a
+   * `!` command its drain admits.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
    */
-  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering'): void;
+  ran?(turnId: string, command: string, run: RunCommand): void;
 
   /**
    * Hand one steering message to the turn that is running.
@@ -624,9 +618,10 @@ export interface Session {
    * rather than waiting for it to finish doing the thing they are trying to
    * stop. The answer is one of three, as the reference host's agents answer:
    * `true` when the backend took it; `false` when it cannot yet, a turn still
-   * preparing its prompt among them, so the host keeps it pending; and a
-   * promise of `false` when the turn it was meant for ended first, handing it
-   * back unsent, so the host runs it as the next turn.
+   * preparing its prompt among them, so the host keeps it pending and hands it
+   * again on the turn's next action; and a promise of `false` when the turn it
+   * was meant for ended first, handing it back unsent, so the host steers the
+   * turn that runs then with it, or runs it as the next turn.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
    *
    * `message.attachments` are the message's own, as `sendMessage` takes them:
@@ -637,7 +632,9 @@ export interface Session {
    * user's.
    *
    * Optional. A backend that cannot take a message mid-turn leaves it out,
-   * and this host refuses steering for that backend with that as the reason.
+   * and this host refuses steering for that backend in the reference host's
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13526-L13529
    */
   sendSteeringMessage?(message: SteeringMessage): boolean | Promise<boolean>;
 
@@ -743,60 +740,12 @@ export interface Session {
   stopWorker?(toolCallId: string): void;
 
   /**
-   * Hold a message, and make it the next turn when the running one ends.
-   *
-   * The queue is the session's, not a client's: a client that held a message
-   * would be the only thing that could ever send it, and nothing in a client
-   * watches for a turn to end. The same `id` twice edits what is waiting.
-   *
-   * `attachments` are the message's own, as `sendMessage` takes them, and are
-   * held with it: a picture pasted into a message that waits its turn is still
-   * a picture when the turn comes. `model` is the turn's, and `from.agent` the
-   * agent it picked, both read when the turn comes.
-   *
-   * `options` is what the turn is given beside the message, held with it and
-   * read when the turn comes - which is later than this call, so the words
-   * are the ones true then rather than the ones true now.
-   *
-   * `kind` is the pending message's, `queued` when absent. A `steering` one is
-   * a steering message no turn was running to take, handed only to a backend
-   * with `sendSteeringMessage`: it runs ahead of every queued message, behind the steering
-   * messages already waiting, as the reference host runs steering that came
-   * too late to steer a turn, in the order its queue holds them. The chat
-   * shows the steering message set last, as the protocol's reducer holds one.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L899-L903
-   */
-  queue(
-    id: string,
-    text: string,
-    model?: Chosen,
-    from?: MessageFrom,
-    attachments?: MessageAttachment[],
-    options?: TurnOptions,
-    kind?: 'queued' | 'steering',
-  ): void;
-  /**
-   * Take one back, while it is still waiting, and say it gone with
-   * `chat/pendingMessageRemoved`.
-   *
-   * A queued message, or a steering message the agent has not been handed or
-   * has handed back. One the agent holds stays with it and nothing is said:
-   * the host refuses the removal while a turn runs, as the protocol has a host
-   * reject a removal it can no longer honor after the handoff.
-   * https://github.com/microsoft/agent-host-protocol/blob/ff7d6a1c7b4f5e47925d3ce1c3bcf685266a6d49/docs/specification/chat-channel.md#steering-messages
-   */
-  unqueue(id: string): void;
-  /**
    * What somebody is part-way through typing.
    *
    * Held by the session so two people on one chat see each other's - a client
    * that kept its own would need nothing from a host for this.
    */
   setDraft(draft: Bag | undefined): void;
-  /** Reorder what is waiting. Anything not named keeps its place behind what is. */
-  reorder(order: string[]): void;
   /**
    * A client's read or archived bit for the chat, once this host has said and
    * kept it, carried to the host that runs the chat.

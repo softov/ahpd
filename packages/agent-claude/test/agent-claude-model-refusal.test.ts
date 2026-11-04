@@ -163,7 +163,7 @@ it('runs on a model the CLI takes, and says which one, as before', async () => {
   expect(chat().filter((one) => one === 'chat/turnStarted' || one === 'chat/error')).toEqual(['chat/turnStarted']);
 });
 
-it('holds the queue behind a turn that is switching models, and sends the prompts in order', async () => {
+it('holds a turn handed behind a turn that is switching models, and sends the prompts in order', async () => {
   const { session, prompts } = await open();
   // Held until the case lets it go, rather than for a time: a count of ticks
   // on Windows can outlast any short wait.
@@ -172,15 +172,12 @@ it('holds the queue behind a turn that is switching models, and sends the prompt
 
   session.changeModel({ id: 'slow' });
   session.sendMessage('t1', 'first');
-  session.queue('q1', 'second');
+  session.sendMessage('t2', 'second');
   await settle(5);
 
-  // The turn is busy before it has an id the session can report, so the
-  // message behind it waits: nothing of the second turn has reached the CLI,
-  // and it is still a queued message rather than a turn.
+  // The turn is busy before its prompt is out, so the turn handed behind it
+  // waits: nothing of either turn has reached the CLI.
   expect(prompts).toEqual([]);
-  expect(session.chatState().activeTurn).toBeUndefined();
-  expect(session.chatState().queuedMessages).toMatchObject([{ id: 'q1' }]);
 
   release();
   await settle(60);

@@ -404,8 +404,8 @@ it('names who sent each turn, and a queued message keeps its sender when it runs
   await send(bo, chat, 'turn-b', 'and again');
   await wait(100);
   await send(bo, chat, 'turn-c', 'last one');
-  // And one that waited its turn, which the backend reports under the queued
-  // message's id rather than under a turn id the host never chose.
+  // And one that waited its turn, which this host starts under a turn id of
+  // its own once the chat is idle, the sender the one who queued it.
   await send(bo, chat, 'left-behind', 'and one more', 'chat/pendingMessageSet');
   await wait(200);
 

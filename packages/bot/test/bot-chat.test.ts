@@ -866,7 +866,6 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   // turn; the open turn is still the one being answered.
   expect(session.chatState().activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
   expect(session.chatState().turns).toEqual([]);
-  expect(session.chatState().queuedMessages).toEqual([]);
   expect(heard).toEqual(['t1']);
 
   // Handed on once the open turn is answered, under the id the client named,

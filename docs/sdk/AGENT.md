@@ -166,8 +166,8 @@ cofold stores a prompt under the turn's id, says nothing.
 
 **A turn is read back as it began.** The host records, in the session's folder
 under the chat, the transcript id each turn began under: its own id as it
-starts, whether a client sent it or your backend opened it with
-`queuedMessageId`, and what `onTurnRecorded` says. A read puts a turn your
+starts, whether a client sent it, the host took it up from the chat's queue, or
+your backend opened it with `queuedMessageId`, and what `onTurnRecorded` says. A read puts a turn your
 transcript holds and the record does not inside the turn before it, and so does
 a turn recorded as the same turn as the one before, which is that turn written
 down again: Claude's CLI writes a steering message it runs after the turn's last
@@ -191,7 +191,7 @@ session channel. A session never needs to know either URI to do it.
 | state for a snapshot | `sessionState()`, `chatState()`, `allTurns()`, `status()`, `activity()`, `title()`, `modifiedAt()`, `workingDirectories()`, `models()`, `customizations()` |
 | the turn | `sendMessage(turnId, text, from?, attachments?, options?)`, `changeModel(model)`, `changeAgent(agent?)`, `abort()`, `resumeTurn?(turnId)`, `stopWorker?(toolCallId)` |
 | steering | `sendSteeringMessage?(message)`, `withdrawSteeringMessage?(id)` |
-| the queue and the draft | `queue(id, text, model?)`, `unqueue(id)`, `reorder(order)`, `setDraft(text)` |
+| the draft | `setDraft(text)` |
 | being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
@@ -208,11 +208,19 @@ to `changeAgent` is logged and the turn is sent all the same, and a
 `sendMessage` that rejects ends it in a `sendFailed` error with your words. A
 turn stopped while the host prepared it is never sent.
 
+The chat's pending messages, queued and steering, are the host's, as VS Code's
+host holds them
+([queueDrainContribution.ts L29-L326](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L29-L326)):
+the host says them, starts the head of the queue as a turn it sends you with
+`sendMessage`, and hands you steering while a turn runs.
+
 `sendSteeringMessage` answers as VS Code's agents answer
 ([agent.ts L1943-L1955](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1955)):
-`true` when you took the message, `false` when you cannot take it yet, and a
-promise of `false` when the turn it was meant for ended first, handing it back.
-`withdrawSteeringMessage` takes back one you took that the model has not read.
+`true` when you took the message, `false` when you cannot take it yet, which
+has the host hand it again on the turn's next action, and a promise of `false`
+when the turn it was meant for ended first, handing it back, which has the host
+steer the turn that runs then with it or run it next. `withdrawSteeringMessage`
+takes back one you took that the model has not read, when a client removes it.
 
 ### Config keys
 
@@ -292,7 +300,7 @@ this repository a bug.
 
 | | |
 | --- | --- |
-| **Say a turn you start** | A turn handed with `sendMessage` was said by the host before it. A turn the session starts of its own accord, such as a queued message it takes up, is the session's to say before its first part: nothing in a client applies a turn nobody said, so response parts for it land nowhere until somebody reopens the session |
+| **Say a turn you start** | A turn handed with `sendMessage` was said by the host before it, a queued message the host takes up among them. A turn the session starts of its own accord is the session's to say before its first part: nothing in a client applies a turn nobody said, so response parts for it land nowhere until somebody reopens the session |
 | **A part exists before it streams** | `chat/responsePart` creates it, `chat/delta` appends to it. A delta naming a part nobody opened appends to nothing |
 | **The append action follows the part** | `chat/delta` is defined against a *markdown* part and `chat/reasoning` against a *reasoning* one, and a client's reducer returns the part unchanged when they do not match. Thinking sent as a `chat/delta` opens a part and never fills it |
 | **The running turn is `activeTurn`** | and is not in `turns`. It moves across when it completes. A client reading only the history shows an empty conversation for exactly as long as somebody is watching one happen |

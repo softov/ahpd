@@ -1504,26 +1504,10 @@ export function piSession(
     // pi runs as its own agent, so an agent picked is kept by nothing.
     changeAgent: () => {},
 
-    ran: (turnId, command, run, queuedAs, kind = 'queued') => {
-      // A command sent as a turn while pi runs another is said now and run after it.
-      if (queuedAs === undefined) {
-        if (active !== undefined || waiting.length > 0) hand(turnId, `!${command}`, { command: { text: command, run } });
-        else runCommand(turnId, command, run);
-        return;
-      }
-      const id = queuedAs;
-      const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-      // A steering command waits as steering, as a steering message does,
-      // and runs as a command.
-      const entry: Bag = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
-      const at = queued.findIndex((held) => String(held.id) === id);
-      if (kind === 'steering') for (const held of queued) delete held.shown;
-      if (at >= 0) queued[at] = entry; else queued.push(entry);
-      emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-      touch();
-      // At once when nothing runs, as a queued message is.
-      if (cancelled) askedSinceStop = true;
-      startNext();
+    // A command sent as a turn while pi runs another is said now and run after it.
+    ran: (turnId, command, run) => {
+      if (active !== undefined || waiting.length > 0) hand(turnId, `!${command}`, { command: { text: command, run } });
+      else runCommand(turnId, command, run);
     },
 
     /**
@@ -1678,63 +1662,9 @@ export function piSession(
       void live?.abort().catch(() => { finish('cancelled'); });
     },
 
-    queue: (id, text, model, from, attachments, _options, kind = 'queued') => {
-      const message: Bag = {
-        text,
-        origin: from?.origin ?? { kind: 'user' },
-        // Held with the message, so a picture pasted into one that waits is
-        // still a picture when its turn comes.
-        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      };
-      const at = queued.findIndex((held) => String(held.id) === id);
-      const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}), ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
-      // In the order things came; a steering message no turn was running to
-      // take runs ahead of what is queued, and the one set last is what the
-      // chat shows, as the protocol's reducer holds the latest.
-      if (kind === 'steering') for (const held of queued) delete held.shown;
-      if (at >= 0) queued[at] = entry; else queued.push(entry);
-      emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-      touch();
-      /*
-       * At once when nothing runs, a stopped turn pi still lets go included:
-       * "the server SHOULD immediately consume it", and the reference host
-       * starts an accepted queued message while its chat is idle.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
-       */
-      startNext();
-    },
-
-    /*
-     * A client taking a message back, or reordering what waits, runs the
-     * reference host's drain, so the head starts once nothing runs: a queue a
-     * stop or a failure left waiting starts from here as well.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-     */
-    unqueue: (id) => {
-      const at = queued.findIndex((held) => String(held.id) === id);
-      if (at < 0) return;
-      const [held] = queued.splice(at, 1);
-      emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
-      touch();
-      if (cancelled) askedSinceStop = true;
-      startNext();
-    },
-
     setDraft: (next) => {
       draft = next;
       emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
-
-    reorder: (order) => {
-      const moved: Bag[] = [];
-      for (const id of order) {
-        const at = queued.findIndex((held) => String(held.id) === id);
-        if (at >= 0) moved.push(...queued.splice(at, 1));
-      }
-      queued.unshift(...moved);
-      emit('chat', { type: 'chat/queuedMessagesReordered', order: queued.map((held) => String(held.id)) });
-      if (cancelled) askedSinceStop = true;
-      startNext();
     },
 
     /*

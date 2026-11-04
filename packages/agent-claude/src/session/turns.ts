@@ -31,20 +31,10 @@ export interface Turns {
     changeModel: (model: Chosen) => void;
     changeAgent: (agent: { uri: string } | undefined) => void;
     setTitle: (title: string) => void;
-    ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering') => void;
+    ran: (turnId: string, command: string, run: RunCommand) => void;
     sendSteeringMessage: (message: SteeringMessage) => boolean;
-    queue: (
-      id: string,
-      text: string,
-      model?: Chosen,
-      from?: MessageFrom,
-      attachments?: MessageAttachment[],
-      options?: TurnOptions,
-      kind?: 'queued' | 'steering',
-    ) => void;
+    withdrawSteeringMessage: (id: string) => void;
     setDraft: (draft: Bag | undefined) => void;
-    unqueue: (id: string) => void;
-    reorder: (order: string[]) => void;
     resumeTurn: (turnId: string) => void;
     abort: () => void;
   };
@@ -774,7 +764,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * they interrupted, rather than in a panel that closed. Nothing is pushed
      * to the CLI, which is the whole difference from `begin`.
      */
-    ran: (turnId, command, run, queuedAs, kind = 'queued') => {
+    ran: (turnId, command, run) => {
       /*
        * A command sent as a turn runs now, and takes the place of the turn
        * running, as the reference host runs a `!` command it is handed without
@@ -783,36 +773,8 @@ export function createTurns(ctx: SessionContext): Turns {
        * run once that turn is said.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L28-L41
        */
-      if (queuedAs === undefined) {
-        if (ctx.active === undefined && ctx.beginning !== undefined) handed.push({ turnId, text: `!${command}`, command: { text: command, run } });
-        else runCommand(turnId, command, run);
-        return;
-      }
-      /*
-       * A queued command waits its turn behind a running one, or finds the
-       * queue waiting.
-       *
-       * A shell command that jumped the queue would run against a tree the
-       * turn in front of it is still editing - and what waits is the command
-       * itself, not the text of it: when its turn comes `startNext` runs it
-       * rather than handing `!ping` to the CLI. A queued one set while nothing
-       * runs starts the head, as a queued message does. A steering one waits as
-       * steering, as a steering message does, and runs as a command.
-       */
-      if (busy() || ctx.queued.length > 0 || holdsTheQueue(ctx.turns.at(-1))) {
-        const id = queuedAs;
-        const message = { text: `!${command}`, origin: { kind: 'user' } };
-        const entry = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
-        const at = ctx.queued.findIndex((held) => String(held.id) === id);
-        if (kind === 'steering') for (const held of ctx.queued) delete held.shown;
-        if (at >= 0) ctx.queued[at] = entry;
-        else ctx.queued.push(entry);
-        ctx.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-        ctx.touch();
-        ctx.startNext();
-        return;
-      }
-      runCommand(turnId, command, run, queuedAs);
+      if (ctx.active === undefined && ctx.beginning !== undefined) handed.push({ turnId, text: `!${command}`, command: { text: command, run } });
+      else runCommand(turnId, command, run);
     },
 
     /**
@@ -856,47 +818,25 @@ export function createTurns(ctx: SessionContext): Turns {
       return true;
     },
 
-    /**
-     * Wait, then be the next turn.
-     *
-     * Idle *now* means this is not a queue at all, and the protocol says the
-     * host starts the head as soon as it can - so it is announced and then
-     * immediately started, which is a queue entry a client sees appear and
-     * leave rather than one that was never there.
+    /*
+     * A steering message the CLI was handed and has not taken in, taken back
+     * by a client: withdrawn, as the reference host has its provider withdraw
+     * a steering message a client removes after handing it over. One the CLI
+     * has not read leaves its input; one it holds is answered nowhere. Nothing
+     * is said: the host has said the removal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
      */
-    queue: (id, text, model, from, attachments, options, kind = 'queued') => {
-      const entry: Bag = {
-        id,
-        // Held with the message and read when its turn comes, which is what
-        // makes a turn's instruction follow the turn rather than the arrival.
-        ...(options !== undefined ? { options } : {}),
-        ...(kind === 'steering' ? { steering: true, shown: true } : {}),
-        message: {
-          text,
-          origin: from?.origin ?? { kind: 'user' },
-          ...(from?._meta ? { _meta: from._meta } : {}),
-          // Held with the message, and echoed in the action below: a client
-          // draws the chip from here while the message waits its turn.
-          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-          ...(model ? { model: { id: model.id, ...(model.config ? { config: model.config } : {}) } } : {}),
-          // The agent, kept with the message rather than applied now: this
-          // message waits for the turn in front of it, and the CLI it runs on is
-          // the one in place when its turn comes.
-          ...(from?.agent ? { agent: from.agent } : {}),
-        },
-      };
-      const at = ctx.queued.findIndex((held) => str(held.id) === id);
-      // The steering message set last is the one the chat shows, as the
-      // protocol's reducer holds the latest.
-      if (kind === 'steering') for (const held of ctx.queued) delete held.shown;
-      // The same id again edits what is waiting; a fresh one appends, in the
-      // order things came. That is the client's spelling for "change my mind"
-      // and it costs nothing here.
-      if (at >= 0) ctx.queued[at] = entry;
-      else ctx.queued.push(entry);
-      ctx.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message: entry.message });
-      ctx.touch();
-      ctx.startNext();
+    withdrawSteeringMessage: (id) => {
+      for (const [uuid, owed] of [...ctx.owed]) {
+        if (!owed.steering || owed.id !== id || owed.cli === 'started') continue;
+        const unread = ctx.waiting.findIndex((one) => one.uuid === uuid);
+        if (unread >= 0) {
+          ctx.waiting.splice(unread, 1);
+          ctx.owed.delete(uuid);
+        }
+        else owed.withdrawn = true;
+      }
+      if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
     },
 
     setDraft: (next) => {
@@ -908,63 +848,6 @@ export function createTurns(ctx: SessionContext): Turns {
       // The key is left off to clear it, which is what the action's
       // `undefined` means and the only way JSON can say it.
       ctx.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
-
-    /*
-     * A client taking a message back, or reordering what waits, runs the
-     * reference host's drain, so the head starts once nothing runs: a queue a
-     * stop or a failure left waiting starts from here as well.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-     */
-    unqueue: (id) => {
-      const at = ctx.queued.findIndex((held) => str(held.id) === id);
-      if (at < 0) {
-        /*
-         * A steering message the CLI was handed and has not taken in, taken back
-         * by a client: withdrawn, as the reference host has its provider
-         * withdraw a steering message a client removes after handing it over.
-         * One the CLI has not read leaves its input; one it holds is answered
-         * nowhere. Nothing is said, and the host answers the client.
-         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
-         */
-        for (const [uuid, owed] of [...ctx.owed]) {
-          if (!owed.steering || owed.id !== id || owed.cli === 'started') continue;
-          const unread = ctx.waiting.findIndex((one) => one.uuid === uuid);
-          if (unread >= 0) {
-            ctx.waiting.splice(unread, 1);
-            ctx.owed.delete(uuid);
-          }
-          else owed.withdrawn = true;
-        }
-        if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
-        return;
-      }
-      const [held] = ctx.queued.splice(at, 1);
-      ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
-      ctx.touch();
-      ctx.startNext();
-    },
-
-    reorder: (order) => {
-      const byId = new Map(ctx.queued.map((held) => [str(held.id) ?? '', held]));
-      const moved: Bag[] = [];
-      const seen = new Set<string>();
-      for (const id of order) {
-        const held = byId.get(id);
-        if (!held || seen.has(id)) continue;
-        seen.add(id);
-        moved.push(held);
-      }
-      // Anything the order did not mention keeps its place behind what did,
-      // rather than being dropped for not having been named.
-      for (const held of ctx.queued) {
-        if (!seen.has(str(held.id) ?? '')) moved.push(held);
-      }
-      ctx.queued.length = 0;
-      ctx.queued.push(...moved);
-      ctx.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => str(held.id) ?? '') });
-      ctx.touch();
-      ctx.startNext();
     },
 
     /*

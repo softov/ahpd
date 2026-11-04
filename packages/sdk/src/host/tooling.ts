@@ -1402,9 +1402,9 @@ export function createTooling(ctx: HostContext): Tooling {
    * Every operation here is one a client already has - a command, or an
    * action a client may dispatch - reached from a turn rather than a socket.
    * The catalogue is `allRows()`, which is what `listSessions` answers; a
-   * message is `begin` or `queue` on the chat, which is what `chat/turnStarted`
-   * and `chat/pendingMessageSet` come to; a session is `openSession`, which is
-   * what `createSession` comes to. Nothing is reachable from here that is not
+   * message is a turn this host starts, or a message it queues on the chat,
+   * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
+   * session is `openSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
    * reachable from a client, and the reverse is nearly true.
    */
   /**
@@ -1537,9 +1537,7 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Written before the turn begins and under the id it will carry, because the
    * backend is free to run the whole turn before the call that started it
-   * returns - and a tool inside that turn would find nobody had sent it. A
-   * queued message is moved across to the turn it becomes by the same hand
-   * that moves every queued message's sender.
+   * returns - and a tool inside that turn would find nobody had sent it.
    */
   const remember = (chatUri: string, turnId: string): void => {
     const turn = activeTurnOf(chatUri);
@@ -1752,13 +1750,14 @@ export function createTooling(ctx: HostContext): Tooling {
         const held = sessions.get(at);
         const found = held === undefined ? undefined : chatMeant(held, chatId);
         if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-        const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+        const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
         const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
           || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
         if (busy) {
-          const waiting = crypto.randomUUID();
-          remember(chatUri, waiting);
-          found.chat.queue(waiting, text, undefined, from, undefined, turnInstructions(at));
+          // The chat's queued message, sent by whoever sent the calling turn.
+          const calling = activeTurnOf(chatUri);
+          ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from,
+            calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) });
           countUp(tree, 'messages');
           return 'queued';
         }
@@ -2001,13 +2000,11 @@ export function createTooling(ctx: HostContext): Tooling {
           const held = sessions.get(at);
           const found = held === undefined ? undefined : chatMeant(held, chatId);
           if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-          const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+          const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
           const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
             || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
           if (busy) {
-            const waiting = crypto.randomUUID();
-            sent(waiting);
-            found.chat.queue(waiting, text, undefined, from, undefined, turnInstructions(at));
+            ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from, { owner: sender });
             return 'queued';
           }
           const first = crypto.randomUUID();

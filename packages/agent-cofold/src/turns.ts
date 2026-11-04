@@ -69,7 +69,7 @@ export interface Turns {
 
 export const createTurns = (
   ctx: SessionContext,
-): Turns & { methods: Pick<Session, 'ran' | 'queue' | 'unqueue' | 'reorder'> } => {
+): Turns & { methods: Pick<Session, 'ran'> } => {
   const { start, options, harness, sessionId, where, store, settings, turns, queued } = ctx;
 
   /**
@@ -837,132 +837,19 @@ export const createTurns = (
    *
    * `!command` means "run this", and the host owns the shell, so what comes
    * back is the same shape as any other turn: it opens, carries one tool
-   * call, and completes. What waits on a busy session is the command itself
-   * and not the text of it, so when its turn comes `startNext` runs it
-   * rather than handing `!ping` to a model. A queued one set while nothing
-   * runs starts the head, as a queued message does. A steering one waits as
-   * steering, as a steering message does, and runs as a command.
+   * call, and completes. One sent as a turn while a run holds another is said
+   * now and run once that one is over, as any turn handed then is; one sent
+   * while the lookup runs waits for it, as a turn does.
    */
-  const ran: Session['ran'] = (turnId, command, run, queuedAs, kind = 'queued') => {
-    /*
-     * A command sent as a turn while a run holds another is said now and run
-     * once that one is over, as any turn handed then is; one sent while the
-     * lookup runs waits for it, as a turn does.
-     */
-    if (queuedAs === undefined) {
-      const go = (): void => {
-        if (ctx.active !== undefined || ctx.waiting.length > 0) {
-          hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
-        }
-        else runCommand(turnId, command, run);
-      };
-      if (ctx.opening === undefined) go();
-      else void ctx.opening.then(go, go);
-      return;
-    }
-    if (ctx.active !== undefined || ctx.opening !== undefined || queued.length > 0 || holdsTheQueue(turns.at(-1))) {
-      const id = queuedAs;
-      const message = { text: `!${command}`, origin: { kind: 'user' } };
-      const entry = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
-      const at = queued.findIndex((held) => String(held.id) === id);
-      if (kind === 'steering') for (const held of queued) delete held.shown;
-      if (at >= 0) queued[at] = entry;
-      else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-      ctx.touch();
-      startNext();
-      return;
-    }
-    runCommand(turnId, command, run, queuedAs);
-  };
-
-  /*
-   * A steering message no turn was running to take runs ahead of what is
-   * queued, after the steering already waiting, as the reference host runs
-   * steering that came too late to steer a turn in the order its queue holds
-   * it. The one set last is what the chat shows, as the protocol's reducer
-   * holds the latest.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-   */
-  const queue: Session['queue'] = (id, text, model, from, attachments, _options, kind = 'queued') => {
-    const message: Bag = {
-      text,
-      ...(from?.origin !== undefined ? { origin: from.origin } : {}),
-      ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
-      // Held with the message, so a picture pasted into one that waits is
-      // still a picture when its turn comes - and so a client draws it while
-      // it waits rather than only after it runs.
-      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+  const ran: Session['ran'] = (turnId, command, run) => {
+    const go = (): void => {
+      if (ctx.active !== undefined || ctx.waiting.length > 0) {
+        hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
+      }
+      else runCommand(turnId, command, run);
     };
-    const entry: Bag = {
-      id,
-      message,
-      ...(model !== undefined ? { model } : {}),
-      ...(from !== undefined ? { from } : {}),
-      ...(kind === 'steering' ? { steering: true, shown: true } : {}),
-    };
-    const at = queued.findIndex((held) => held.id === id);
-    if (kind === 'steering') for (const held of queued) delete held.shown;
-    if (at >= 0) queued[at] = entry;
-    else queued.push(entry);
-    start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-    ctx.touch();
-    startNext();
-  };
-
-  /*
-   * A queued message, or a steering message the run handed back, which waits
-   * in `untaken` to be a turn of its own. A steer cofold's submit still holds
-   * is withdrawn: `RunHandle.submit` takes approve, deny, answer, steer and
-   * cancel, and none of them takes a steer back, so it is dropped when the run
-   * gives it back, nothing is said here, and the host answers the client.
-   *
-   * A client taking a message back, or reordering what waits, runs the
-   * reference host's drain, so the head starts once nothing runs: a queue a
-   * stop or a failure left waiting starts from here as well.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-   */
-  const unqueue: Session['unqueue'] = (id) => {
-    const left = ctx.untaken.findIndex((held) => held.id === id);
-    if (left >= 0) {
-      ctx.untaken.splice(left, 1);
-      if (ctx.steering?.id === id) ctx.steering = undefined;
-      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-      ctx.touch();
-      startNext();
-      return;
-    }
-    if (ctx.steering?.id === id) {
-      ctx.withdrawn.add(id);
-      ctx.steering = undefined;
-      ctx.touch();
-      return;
-    }
-    const at = queued.findIndex((held) => held.id === id);
-    if (at < 0) return;
-    const [held] = queued.splice(at, 1);
-    start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
-    ctx.touch();
-    startNext();
-  };
-
-  const reorder: Session['reorder'] = (order) => {
-    const byId = new Map(queued.map((held) => [String(held.id), held]));
-    const seen = new Set<string>();
-    const moved: Bag[] = [];
-    for (const id of order) {
-      const held = byId.get(id);
-      if (held === undefined || seen.has(id)) continue;
-      seen.add(id);
-      moved.push(held);
-    }
-    // Anything the order did not name keeps its place behind what it did.
-    for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-    queued.length = 0;
-    queued.push(...moved);
-    start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-    ctx.touch();
-    startNext();
+    if (ctx.opening === undefined) go();
+    else void ctx.opening.then(go, go);
   };
 
   return {
@@ -970,6 +857,6 @@ export const createTurns = (
     resumeTurn,
     startNext,
     takesImages: () => takesImages,
-    methods: { ran, queue, unqueue, reorder },
+    methods: { ran },
   };
 };

@@ -504,7 +504,13 @@ describe('a message typed while a turn is running', () => {
     expect(refused?.rejectionReason).toContain('nobody');
   });
 
-  it('refuses to take back a queued message as a steering one', async () => {
+  /*
+   * A removal naming a steering message the chat does not hold is said as the
+   * client sent it, and the reducer leaves the queued message under that id
+   * where it is, as the reference host applies any removal it does not refuse
+   * (agentService.ts L13520-L13537 at 6b68d3fe).
+   */
+  it('says a removal of a queued message as a steering one, and leaves the message queued', async () => {
     const { client, peer: p, chatUri } = await busy();
     queue(client, chatUri, 'q1', 'second');
     await settle();
@@ -513,8 +519,8 @@ describe('a message typed while a turn is running', () => {
       params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 'q1' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('q1 is not a steering message');
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageRemoved' && e.action.id === 'q1')).toBe(true);
     // Still queued, so it still becomes the next turn.
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
     expect(sdk.said).toEqual(['first', 'second']);

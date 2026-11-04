@@ -38,3 +38,7 @@ It declines steering until its prompt is out, and a stream that ends without a r
 
 ## Resume
 
+- **From 05:** Claude's queue is fed by nothing and goes here with the drain behind it; its steering withdrawal is `withdrawSteeringMessage`.
+- **From 05:** the `host-input` case on a steering message consumed as it arrives fails since 04.
+- **Its cause:** Claude's own `chat/pendingMessageSet` of a steering message the host said.
+

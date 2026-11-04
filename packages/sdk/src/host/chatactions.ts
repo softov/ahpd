@@ -758,8 +758,8 @@ export function chatAction(
       }
       // Its start is the client's, said above, so nothing more is said for it.
       beginTurn(
-        () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments,
-          undefined, () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
+        () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
+          () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
         (why) => { unsent(session.chatUri, 'rejected', why, since); },
         (why) => { unsent(session.chatUri, 'sendFailed', why, since); },
       );
@@ -1555,26 +1555,24 @@ export function chatAction(
         break;
       }
       /*
-       * A backend that takes no steering refuses it, a turn running or not, as
-       * the reference host refuses steering to a provider that cannot take it.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13513-L13516
+       * A backend that takes no steering refuses it, a turn running or not, in
+       * the reference host's words for a provider that cannot take it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13526-L13529
        */
       if (kind === 'steering' && !session.sendSteeringMessage) {
-        no('This backend cannot take a message mid-turn');
+        no('The session provider does not support steering messages.');
         break;
       }
       /*
-       * A pending message under the id of the steering message the running
-       * turn was handed.
+       * A pending message under the id of the steering message the chat holds
+       * while a turn runs, which is with the backend or about to be.
        *
-       * The backend holds it already, so the same steering message is answered
-       * and not handed over a second time, and a different one, or a queued
-       * message under its id, is refused, in the reference host's words:
-       * "Repeated identical upserts MUST NOT cause duplicate provider
-       * delivery", and "Hosts MUST reject edits ... that they can no longer
-       * honor after handoff".
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L190-L196
+       * Steering handed to the backend cannot be edited: the same steering
+       * message again is said and not handed a second time, and a different
+       * one, or a queued message under its id, is refused in the reference
+       * host's words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13530-L13537
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L193-L203
        */
       const holding = chatHeld.steeringMessage as Bag | undefined;
       if (activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
@@ -1592,61 +1590,15 @@ export function chatAction(
         break;
       }
       /*
-       * Into the running turn, rather than behind it, once the client's
-       * message is said.
-       *
-       * Somebody correcting an agent halfway is the most ordinary thing there
-       * is, and queueing it delivered the correction after the thing it was
-       * trying to stop. Only into a turn the chat holds as running: a backend
-       * still letting a stopped turn go has a run every client holds as over,
-       * and the reference host hands steering to its agent only while the chat
-       * has an active turn.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L193-L195
+       * Said, and then the queue drain's: steering is handed to the turn the
+       * chat runs, and the queue's head starts once the chat runs nothing,
+       * steering first, as the reference host drains a chat's pending
+       * messages. Its checks are the turn's own, run when the drain admits it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
        */
-      const steering = kind === 'steering' && activeHeld !== undefined;
-      if (steering) {
-        dispatch(session.chatUri, action, origin);
-        const sender = messageFrom(message);
-        const handed = session.sendSteeringMessage?.({
-          id,
-          text: String(message.text ?? ''),
-          ...(read.attachments === undefined ? {} : { attachments: read.attachments }),
-          ...(sender === undefined ? {} : { from: sender }),
-        });
-        if (handed === true || handed instanceof Promise) break;
-      }
-      /*
-       * A queued message, or a steering message with no turn running to steer.
-       *
-       * The second runs as a turn of its own, under its id and ahead of what
-       * waits, as the reference host runs steering that came too late to steer
-       * a turn, and the turn naming it takes it out of every client's state.
-       * The client's message is said once the turn's checks have passed, as a
-       * start is, and a check that has to wait holds its client's later
-       * dispatches until it answers.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
-       */
-      const model = (typeof message.model === 'object' && message.model !== null
-        ? message.model
-        : {}) as Record<string, unknown>;
-      const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-      return beginTurn(
-        () => beginOrRun(
-          session,
-          provider,
-          crypto.randomUUID(),
-          String(message.text ?? ''),
-          modelIn(model),
-          messageFrom(message),
-          connection,
-          id,
-          read.attachments,
-          kind,
-          steering ? undefined : () => { dispatch(session.chatUri, action, origin); },
-        ),
-        (why) => refuse(connection.peer, channel, action, origin, why),
-      );
+      dispatch(session.chatUri, action, origin);
+      ctx.pendingSet(session.chatUri, id, connection, read.attachments);
+      break;
     }
     /**
      * Turn a skill or an MCP server on or off.
@@ -1879,40 +1831,26 @@ export function chatAction(
       const id = String(action.id ?? '');
       const kind = action.kind === 'steering' ? 'steering' : 'queued';
       /*
-       * A removal of a message this chat does not hold SHOULD be rejected (the
-       * protocol's `chat/pendingMessageRemoved`), matched on its id and on its
-       * kind, an absent kind being `queued`. Read from the chat's held state,
-       * which is what every client was told it holds.
+       * A steering message the chat holds while a turn runs is with the
+       * backend, and its removal is refused in the reference host's words
+       * where the backend cannot withdraw it. Any other removal is said as
+       * the client sent it, one of a message the chat no longer holds
+       * included, which the reducer leaves as it was, and the queue drain
+       * then takes the message back.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13522-L13536
        */
-      const held = kind === 'steering'
-        ? (chatHeld.steeringMessage as Bag | undefined)?.id === id
-        : Array.isArray(chatHeld.queuedMessages) && chatHeld.queuedMessages.some((one) => (one as Bag | undefined)?.id === id);
-      if (!held) {
-        no(`${id} is not a ${kind} message this chat holds`);
-        break;
-      }
-      /*
-       * A steering message held while a turn runs stays with the agent it was
-       * handed to, and its removal is refused in the reference's words, as the
-       * reference host refuses one its agent cannot withdraw. Any other is
-       * said gone, and then taken back from the backend.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13530-L13537
-       */
-      if (kind === 'steering' && activeHeld !== undefined) {
+      if (kind === 'steering' && activeHeld !== undefined && (chatHeld.steeringMessage as Bag | undefined)?.id === id
+        && session.withdrawSteeringMessage === undefined) {
         no('Cannot change a steering message while it is being processed.');
         break;
       }
       dispatch(session.chatUri, action, origin);
-      session.unqueue(id);
-      // A queued message taken back never becomes a turn to let its sender go.
-      if (kind === 'queued') ctx.forgetSender(id);
+      ctx.pendingRemoved(session.chatUri, id, kind);
       break;
     }
     case 'chat/queuedMessagesReordered':
       dispatch(session.chatUri, action, origin);
-      session.reorder(Array.isArray(action.order)
-        ? action.order.filter((id): id is string => typeof id === 'string')
-        : []);
+      ctx.queueReordered(session.chatUri);
       break;
     case 'chat/toolCallConfirmed': {
       const toolCallId = String(action.toolCallId ?? '');

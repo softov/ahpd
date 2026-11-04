@@ -252,7 +252,12 @@ const BROKEN = {
   idleSteering: {
     breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."; this host runs one as a turn of its own under its id',
     row: 'A10',
-    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L266-L267 at a4e689ae)',
+    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L266-L267 at 6b68d3fe)',
+  },
+  idleQueue: {
+    breaks: 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."; this host starts the head of an idle chat\'s queue on any change to its pending messages, with the turn that names it alone',
+    row: 'H1-0025',
+    by: 'none, VS Code\'s host drains an idle chat\'s queue on every change to its pending messages and starts the head (queueDrainContribution.ts L71-L90 and L245-L326 at 6b68d3fe)',
   },
   removalUnserved: {
     breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
@@ -345,7 +350,12 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '039-set-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '043-remove-steering-message-is-no-op-for-mismatched-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.idleQueue }],
+  '048-remove-a-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '050-remove-queued-message-is-no-op-for-unknown-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '053-reorders-queued-messages': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
@@ -370,7 +380,10 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': [{ reduced: ['activity'], because: THINKING }],
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
+  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [
+    { reduced: ['activity'], because: THINKING },
+    { reduced: ['steeringMessage'], because: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."' },
+  ],
   '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
   '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
   '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
@@ -486,12 +499,6 @@ const REFUSALS: Record<string, {
     holds: (state, action) => !waitingOn(state, action.requestId),
   }],
   'chat/pendingMessageRemoved': [{
-    said: (action) => `${String(action.id)} is not a ${String(action.kind)} message this chat holds`,
-    source: 'chat-channel.md: "chat/pendingMessageRemoved | No pending message with matching id and kind | Server SHOULD reject the action"',
-    holds: (state, action) => (action.kind === 'steering'
-      ? (state.steeringMessage as { id?: unknown } | undefined)?.id !== action.id
-      : !((state.queuedMessages ?? []) as { id?: unknown }[]).some((one) => one.id === action.id)),
-  }, {
     said: () => 'Cannot change a steering message while it is being processed.',
     source: 'VS Code agentService.ts L13530-L13537 at 6b68d3fe: "Steering handed to the provider cannot be edited, and can be removed only if the provider can withdraw it."',
     holds: (state, action) => state.activeTurn !== undefined && state.activeTurn !== null

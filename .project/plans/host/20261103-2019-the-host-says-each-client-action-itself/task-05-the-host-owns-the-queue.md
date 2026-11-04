@@ -1,6 +1,6 @@
 ---
 title: The host owns the queue and the steering hand-off
-status: todo
+status: done
 depends: [task-04-the-session-contract-follows-iagent.md]
 layer: host
 refs:
@@ -40,4 +40,19 @@ It hands every pending steering message to the backend while a turn is active, a
 - Add a case for a queued message after a resumable failure: the host leaves it waiting.
 
 ## Resume
+
+- **Done:** steps 1 to 8, at the commit that closes this task, with a case for each validation item and one for a withdrawal.
+- **Contract:** `queue`, `unqueue` and `reorder` left the Session contract, and `ran` lost its queued form.
+- **Queues gone:** the bot's and the examples', since nothing else fed them.
+- **Moved to 07 and 08:** the internal queues of Claude, cofold, pi and ACP, which nothing feeds now.
+- **Withdrawal:** the part of Claude's and cofold's `unqueue` that took steering back is their `withdrawSteeringMessage`.
+- **Drain timing:** the head starts in a microtask after a turn's end, once the backend that said the end has returned.
+- **Interim, until 07 and 08:** a backend's own start of a drained turn is dropped.
+- **Interim bookkeeping:** that start's bookkeeping reads the queued message the drain admitted, so a plugin's `turn_start` names it.
+- **Refusal words:** steering to a backend without `sendSteeringMessage` is refused with "The session provider does not support steering messages."
+- **Sleep:** a chat holding a pending message, queued or steering, keeps its session awake, read from the host's state.
+- **Protocol cases, divergences:** 043 is idle steering; 046, 048, 050 and 053 are VS Code's drain starting an idle chat's head.
+- **Protocol cases, allowed:** 009 consumes steering when a turn becomes active, as the protocol's text allows.
+- **Failing since 04:** the `host-input` case on a steering message consumed as it arrives.
+- **Its cause:** Claude's own set of a steering message the host said, which 07 removes.
 

@@ -177,7 +177,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
     dispatch, log, described, links, resumedSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
-    fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, moveKeys, enteredIn, inMachine, bringBackOf,
+    fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
     learnAccount, movableMoved,
   } = ctx;
@@ -1160,31 +1160,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           }
         }
         const where = channel === 'chat' ? chatUri : uri;
-        /*
-         * Who sent this turn, and a queued one finding out which turn it became.
-         *
-         * The sender was recorded against the queued message's id, because that
-         * is the only id a queued message has; the backend names the turn it
-         * ran as, and the sender follows it there. Read before the dispatch
-         * below, because an action that goes out before the move is the action
-         * a client sees with nothing on it.
-         */
         const turn = String(action.turnId ?? '');
-        if (action.type === 'chat/turnStarted' && typeof action.queuedMessageId === 'string') {
-          const waiting = senders.get(action.queuedMessageId);
-          if (waiting !== undefined) senders.set(turn, waiting);
-          // The window follows it too, for the same reason and by the same
-          // hand: a move asked for in a queued message is asked about on the
-          // connection that queued it.
-          const queuedBy = sentBy.get(action.queuedMessageId);
-          if (queuedBy !== undefined) sentBy.set(turn, queuedBy);
-          // The queued id names nothing once its turn has one of its own -
-          // its sender and the keys its records are charged under both move.
-          moveKeys(action.queuedMessageId, turn);
-          if (action.queuedMessageId !== turn) forgetSender(action.queuedMessageId);
-          // And a command waiting its turn is a command turn once it runs.
-          if (ctx.commandTurns.delete(commandTurnKey(chatUri, action.queuedMessageId))) ctx.commandTurns.set(commandTurnKey(chatUri, turn), false);
-        }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);
@@ -1287,13 +1263,15 @@ export function createSpawn(ctx: HostContext): Spawn {
         // delta is not an event, because a plugin that wants the stream is a
         // client.
         if (action.type === 'chat/turnStarted') {
+          // The queued message the turn took up, which the queue drain admitted it for.
+          const queued = channel === 'chat' ? ctx.takenUp(chatUri, turn) : undefined;
           void fire({
             type: 'turn_start',
             session: uri,
             chat: chatUri,
             turn,
             ...(sender === undefined ? {} : { sender }),
-            ...(typeof action.queuedMessageId === 'string' ? { queuedMessageId: action.queuedMessageId } : {}),
+            ...(queued === undefined ? {} : { queuedMessageId: queued }),
           });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {

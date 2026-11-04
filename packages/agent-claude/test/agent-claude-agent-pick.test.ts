@@ -169,16 +169,17 @@ it('goes back to the default agent for a message that picked none, on the same c
   expect(sdk.open).toBe(1);
 });
 
-it('runs a queued message on the agent that message picked, when its turn comes', async () => {
+it('runs a turn handed while another runs on the agent picked for it, when its turn comes', async () => {
   const { session } = await open();
   session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
   session.sendMessage('t1', 'first');
   await settle();
-  session.queue('q1', 'and then this', undefined, { agent: { uri: 'claude-internal:/agent/Explore' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Explore' });
+  session.sendMessage('t2', 'and then this');
   await settle();
 
-  // Queued, so nothing has moved: the pick belongs to the message, not to the
-  // turn that is running.
+  // Handed behind the running turn, so nothing has moved: the pick belongs to
+  // the turn it was handed for, not to the turn that is running.
   expect(sdk.built).toHaveLength(2);
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   await settle(40);

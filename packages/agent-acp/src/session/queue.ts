@@ -3,14 +3,11 @@ import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunC
 import { bag, UNTITLED } from './common.js';
 import type { SessionContext, Waiting } from './context.js';
 
-/** What runs next: the host's own `!command` turn, and the queue behind it. */
+/** What runs next: the host's own `!command` turn, and the turns handed behind the one running. */
 export interface Queue {
   begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]): void;
   startNext(): void;
   ran: NonNullable<Session['ran']>;
-  queue: Session['queue'];
-  unqueue: Session['unqueue'];
-  reorder: Session['reorder'];
 }
 
 export function createQueue(ctx: SessionContext): Queue {
@@ -303,84 +300,15 @@ export function createQueue(ctx: SessionContext): Queue {
    *
    * An ACP server has no shell turn of its own, so this turn belongs to the
    * bridge: the host spawns the shell and this session opens the turn around
-   * it. A queued command waits its turn when one is already running, because
-   * a shell that jumped the queue would run against a tree the turn in front
-   * of it is still editing - and what waits is the command, not its text, so
-   * `startNext` runs it rather than asking the server about `!ping`. A queued
-   * one set while nothing runs starts the head, as a queued message does. One
-   * sent as a turn while another runs is said now and run once that one is
-   * over, as any turn handed then is.
+   * it. One sent as a turn while another runs is said now and run once that
+   * one is over, as any turn handed then is.
    */
-  const ran: NonNullable<Session['ran']> = (turnId, command, run, queuedAs) => {
-    if (queuedAs === undefined) {
-      if (ctx.active !== undefined || ctx.waiting.length > 0) {
-        hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
-      }
-      else runCommand(turnId, command, run);
-      return;
+  const ran: NonNullable<Session['ran']> = (turnId, command, run) => {
+    if (ctx.active !== undefined || ctx.waiting.length > 0) {
+      hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
     }
-    if (ctx.active !== undefined || queued.length > 0) {
-      const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-      const entry: Bag = { id: queuedAs, command: { text: command, run }, message };
-      const at = queued.findIndex((held) => held.id === queuedAs);
-      if (at >= 0) queued[at] = entry;
-      else queued.push(entry);
-      emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: queuedAs, message });
-      touch();
-      startNext();
-      return;
-    }
-    runCommand(turnId, command, run, queuedAs);
+    else runCommand(turnId, command, run);
   };
 
-  const queue: Session['queue'] = (id, text, model, from, attachments) => {
-    const entry: Bag = {
-      id,
-      message: { text, ...(attachments !== undefined ? { attachments } : {}) },
-      ...(model !== undefined ? { model } : {}),
-      ...(from !== undefined ? { from } : {}),
-    };
-    const at = queued.findIndex((held) => held.id === id);
-    if (at >= 0) queued[at] = entry;
-    else queued.push(entry);
-    emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
-    touch();
-    startNext();
-  };
-
-  /*
-   * A client taking a message back, or reordering what waits, runs the
-   * reference host's drain, so the head starts once nothing runs: a queue a
-   * stop or a failure left waiting starts from here as well.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-   */
-  const unqueue: Session['unqueue'] = (id) => {
-    const at = queued.findIndex((held) => held.id === id);
-    if (at < 0) return;
-    queued.splice(at, 1);
-    emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
-    touch();
-    startNext();
-  };
-
-  const reorder: Session['reorder'] = (order) => {
-    const byId = new Map(queued.map((held) => [String(held.id), held]));
-    const seen = new Set<string>();
-    const moved: Bag[] = [];
-    for (const id of order) {
-      const held = byId.get(id);
-      if (held === undefined || seen.has(id)) continue;
-      seen.add(id);
-      moved.push(held);
-    }
-    // Anything the order did not name keeps its place behind what it did.
-    for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-    queued.length = 0;
-    queued.push(...moved);
-    emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-    touch();
-    startNext();
-  };
-
-  return { begin, startNext, ran, queue, unqueue, reorder };
+  return { begin, startNext, ran };
 }

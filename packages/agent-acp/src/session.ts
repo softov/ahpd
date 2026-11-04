@@ -330,12 +330,6 @@ export function acpSession(
       }
     },
 
-    queue: ctx.queue,
-
-    unqueue: ctx.unqueue,
-
-    reorder: ctx.reorder,
-
     /*
      * The tools this session may offer, which the host replaces whole whenever
      * a client announces what it runs or stops being active.

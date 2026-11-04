@@ -190,10 +190,7 @@ function spawning(late = false): Agent {
           })();
         },
         abort: () => {},
-        queue: () => {},
-        unqueue: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         setCustomizationEnabled: async () => false,
@@ -474,10 +471,7 @@ function askingInWorker(stoppable = false): Agent {
           turns.push({ ...turn, state: 'cancelled', duration: 1 });
           start.emit('chat', { type: 'chat/turnCancelled', turnId: String(turn.id), duration: 1 });
         },
-        queue: () => {},
-        unqueue: () => {},
         setDraft: (draft) => { told.push({ what: 'draft', id: '', value: draft }); },
-        reorder: () => {},
         confirm: (toolCallId, approved, optionId) => { told.push({ what: 'confirm', id: toolCallId, value: approved, option: optionId }); return true; },
         answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); return true; },
         ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
@@ -827,10 +821,7 @@ function busy(stoppable = false): Agent {
           };
         },
         abort: () => {},
-        queue: () => {},
-        unqueue: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),

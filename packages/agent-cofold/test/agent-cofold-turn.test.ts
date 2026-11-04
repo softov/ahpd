@@ -686,7 +686,14 @@ it('takes the steering message a stopped run handed back out with the stop, and 
   expect(asked.join('\n')).not.toContain('one more thing');
 });
 
-it('refuses to take back a steering message the run holds, and the run still reads it', async () => {
+/*
+ * A steering message a client takes back is withdrawn from the backend that
+ * holds it, as the reference host has its provider withdraw one, and every
+ * client lets go of it at once. cofold's run has no command that gives a steer
+ * back, so the run still reads it, and says nothing more of it when it does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
+ */
+it('takes back a steering message the run holds, which the run still reads', async () => {
   const waiting: (() => void)[] = [];
   const tool: HostTool = {
     definition: {
@@ -709,14 +716,15 @@ it('refuses to take back a steering message the run holds, and the run still rea
 
   unsteer(client, chatUri, 10, 's1');
   await until(() => answer(p, chatUri, 10) !== undefined);
-  // cofold's run holds it, and the run has no command that gives it back.
-  expect(answer(p, chatUri, 10)?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(answer(p, chatUri, 10)?.rejectionReason).toBeUndefined();
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
-  expect(opened.snapshot.state.steeringMessage).toMatchObject({ id: 's1' });
+  expect(opened.snapshot.state.steeringMessage).toBeUndefined();
 
   waiting[0]?.();
   await until(() => ended(p, chatUri));
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+  // The client's removal is the one said.
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved')).toHaveLength(1);
 });
 
 it('names the cofold session id from the AHP URI in one place', () => {

@@ -106,7 +106,7 @@ The store and the switch are separate. A daemon that is switched off, or that ha
 | When | Checked | Refused with |
 | --- | --- | --- |
 | A session is created | `agent`, for the harness and the machine asked for; then `computer`, for that machine | The users gate's `-32009`, naming the policy |
-| A turn starts | `agent`, for the harness, the session's machine and the model the turn named; then the agent limits | A client's start is said, then ended in `chat/error` with the same words or the limit sentence below, as VS Code's host ends a turn its admission refuses; a queued message's set is refused with them |
+| A turn starts | `agent`, for the harness, the session's machine and the model the turn named; then the agent limits | A client's start is said, then ended in `chat/error` with the same words or the limit sentence below, as VS Code's host ends a turn its admission refuses; a queued message is said, and the turn the host starts for it is ended the same way |
 | A proxy call ([PROXY.md](../server/PROXY.md)) | `model`, for the name called and each provider entry that serves it, and the model limits; the first entry allowed is called | 403 in the caller's dialect, naming the row; a session's call is checked as the person it runs for unless `modelProxy.sessionCalls` is `skip` |
 
 The session's checks run **before** the machine is made, so a refused session leaves nothing behind.

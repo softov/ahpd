@@ -194,7 +194,6 @@ export function notes(options: NotesOptions): Agent {
     let modified = new Date().toISOString();
     let closed = false;
     let activity: string | undefined;
-    const queued: Bag[] = [];
     let draft: Bag | undefined;
     const id = start.resume ?? idOf(start.uri);
     const where = start.workingDirectory ?? dir;
@@ -456,7 +455,7 @@ export function notes(options: NotesOptions): Agent {
      * the active turn, and worked once that one is done; `said` is such a turn,
      * worked now as it was said. The turn it replaced runs on, in no history.
      */
-    const beginTurn = (turnId: string, text: string, queuedMessageId?: string, said?: Bag): void => {
+    const beginTurn = (turnId: string, text: string, said?: Bag): void => {
       if (said === undefined && title === 'Notes session' && text) {
         title = text.slice(0, 60);
         start.emit('session', { type: 'session/titleChanged', title });
@@ -471,15 +470,7 @@ export function notes(options: NotesOptions): Agent {
         return;
       }
       active = turn;
-      if (said === undefined) {
-        start.emit('chat', {
-          type: 'chat/turnStarted',
-          turnId,
-          startedAt,
-          message: { text },
-          ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-        });
-      }
+      if (said === undefined) start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
       doing('Reading what you asked');
       const began = Date.now();
 
@@ -558,18 +549,11 @@ export function notes(options: NotesOptions): Agent {
       await say(turn, ran ? `${file} is saved.` : `Left ${file} alone.`);
     };
 
+    /** The next turn said while another ran, worked as it was said once nothing runs. */
     const startNext = (): void => {
       if (active || closed) return;
-      // A turn said while another ran goes first, as it was said.
       const first = handed.shift();
-      if (first !== undefined) {
-        beginTurn(String(first.turn.id), first.text, undefined, first.turn);
-        return;
-      }
-      const next = queued.shift();
-      if (!next) return;
-      const message = (next.message ?? {}) as Bag;
-      beginTurn(crypto.randomUUID(), String(message.text ?? ''), String(next.id));
+      if (first !== undefined) beginTurn(String(first.turn.id), first.text, first.turn);
     };
 
     return {
@@ -616,7 +600,6 @@ export function notes(options: NotesOptions): Agent {
         ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
-        queuedMessages: [...queued],
       }),
 
       sendMessage: (turnId, text) => { beginTurn(turnId, text); },
@@ -625,47 +608,6 @@ export function notes(options: NotesOptions): Agent {
       // kept by nothing.
       changeModel: () => {},
       changeAgent: () => {},
-
-      queue: (id, text) => {
-        const entry: Bag = { id, message: { text } };
-        const at = queued.findIndex((held) => held.id === id);
-        if (at >= 0) queued[at] = entry;
-        else queued.push(entry);
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
-        touch();
-        startNext();
-      },
-
-      // A client taking a message back, or reordering what waits, starts the
-      // head once nothing runs, as VS Code's host drains a queue a stop left
-      // waiting.
-      // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-      unqueue: (id) => {
-        const at = queued.findIndex((held) => held.id === id);
-        if (at < 0) return;
-        queued.splice(at, 1);
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
-        touch();
-        startNext();
-      },
-
-      reorder: (order) => {
-        const byId = new Map(queued.map((held) => [String(held.id), held]));
-        const seen = new Set<string>();
-        const moved: Bag[] = [];
-        for (const one of order) {
-          const held = byId.get(one);
-          if (!held || seen.has(one)) continue;
-          seen.add(one);
-          moved.push(held);
-        }
-        for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-        queued.length = 0;
-        queued.push(...moved);
-        start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-        touch();
-        startNext();
-      },
 
       setDraft: (next) => {
         if (JSON.stringify(next) === JSON.stringify(draft)) return;

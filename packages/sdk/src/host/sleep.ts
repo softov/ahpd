@@ -157,10 +157,13 @@ export function createSleep(ctx: HostContext): Sleep {
     return false;
   };
 
-  /** Whether a chat has a message queued behind its turn. */
-  const queued = (chat: Session): boolean => {
-    const waiting = (chat.chatState() as Bag).queuedMessages;
-    return Array.isArray(waiting) && waiting.length > 0;
+  /**
+   * Whether a chat holds a pending message, queued or steering: the host's
+   * queue drain holds it in the chat's state, and a sleep would lose it.
+   */
+  const pending = (chatUri: string): boolean => {
+    const state = ctx.stateOf(chatUri);
+    return state?.steeringMessage !== undefined || (Array.isArray(state?.queuedMessages) && state.queuedMessages.length > 0);
   };
 
   /** Whether any connection is subscribed to the session or to a channel that keeps it resident. */
@@ -178,7 +181,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const id = idOf(uri);
     if (held === undefined || restarting.has(uri) || closing.has(id) || waking.has(id) || holds.has(id)) return false;
     for (const [chatUri, chat] of held.chats) {
-      if (running(chatUri) || queued(chat) || waitingOnPerson(chat)) return false;
+      if (running(chatUri) || pending(chatUri) || waitingOnPerson(chat)) return false;
       if (chat.resumable?.() === false || chat.busy?.() === true) return false;
       // A chat with no conversation yet has nothing to resume by.
       if (chat.agentId() === undefined || chat.allTurns().length === 0) return false;

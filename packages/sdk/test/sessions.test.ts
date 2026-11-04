@@ -218,9 +218,9 @@ const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agen
  *
  * The agent a person picked rides on the message rather than on the action, so
  * the record a test reads is what says the host passed the pick on rather than
- * picking for the person. Read on both `begin` and `queue`, because a message
- * that waited its turn was picked at the moment it was sent, not the moment it
- * ran.
+ * picking for the person. Read at the send, with the agent handed before it: a
+ * message that waited its turn carries the pick it was sent with until the
+ * host sends it.
  */
 const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
   ...agent,
@@ -237,10 +237,6 @@ const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
       sendMessage: (turnId, text, from, attachments) => {
         seen.push(picked === undefined ? from : { ...from, agent: picked });
         return session.sendMessage(turnId, text, from, attachments);
-      },
-      queue: (id, text, model, from) => {
-        seen.push(from);
-        session.queue(id, text, model, from);
       },
     };
   },

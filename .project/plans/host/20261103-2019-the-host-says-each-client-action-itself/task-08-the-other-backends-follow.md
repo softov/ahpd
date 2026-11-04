@@ -44,3 +44,7 @@ Each answers false to a steer while its turn prepares, and puts the turn's instr
 
 ## Resume
 
+- **From 05:** the bot's queue went whole in 05.
+- **Also from 05:** the queues of cofold, pi and ACP are fed by nothing and go here.
+- **Withdrawal:** cofold's is `withdrawSteeringMessage`.
+

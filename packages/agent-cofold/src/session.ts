@@ -456,6 +456,23 @@ export function cofoldSession(
       return true;
     },
 
+    /*
+     * A steering message a client took back after the host handed it here.
+     * One the run handed back is dropped from `untaken`, and one cofold's
+     * submit still holds is dropped when the run gives it back:
+     * `RunHandle.submit` takes approve, deny, answer, steer and cancel, and
+     * none of them takes a steer back. One the model read stays in its turn.
+     * The host has said the removal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
+     */
+    withdrawSteeringMessage: (id) => {
+      const left = ctx.untaken.findIndex((held) => held.id === id);
+      if (left >= 0) ctx.untaken.splice(left, 1);
+      else if (ctx.steering?.id === id) ctx.withdrawn.add(id);
+      if (ctx.steering?.id === id) ctx.steering = undefined;
+      ctx.touch();
+    },
+
     // Held by the session, so two people on one chat see each other's.
     setDraft: (next) => {
       if (JSON.stringify(next) === JSON.stringify(draft)) return;

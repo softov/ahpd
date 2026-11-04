@@ -86,6 +86,7 @@ import { createSnapshots } from './host/snapshots.js';
 import { createSleep } from './host/sleep.js';
 import { createMerged } from './host/merged.js';
 import { createWakes } from './host/wakes.js';
+import { createQueueDrain } from './host/queuedrain.js';
 import { createTelemetry } from './host/telemetry.js';
 import { createAuth } from './host/auth.js';
 import { createAdmission } from './host/admission.js';
@@ -922,6 +923,8 @@ export function createHost(options: HostOptions): Host {
       if (held?.kind === 'chat' && ((held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId
         || turns.some((turn) => turn.id === action.turnId))) return;
     }
+    // Whether this action ends the chat's active turn, which the reducer ends only when the ids match.
+    let ending = false;
     if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
       /*
        * A backend's end of a turn the chat does not hold as its turn is not
@@ -936,6 +939,7 @@ export function createHost(options: HostOptions): Host {
       const held = states.get(channel);
       if (origin === undefined && held?.kind === 'chat'
         && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
+      ending = held?.kind === 'chat' && (held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId;
       /*
        * A question a host tool asked in this turn has nobody left to answer
        * it: the turn it was asked in is over. Settled as cancelled before the
@@ -999,7 +1003,11 @@ export function createHost(options: HostOptions): Host {
       else action._meta = meta;
     }
     ctx.stirred(channel, action);
-    if (deltas.push(channel, action, origin)) return;
+    if (deltas.push(channel, action, origin)) {
+      // A streamed delta is an action of the turn, which hands the chat's pending steering on.
+      if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
+      return;
+    }
     emit(channel, action, origin, requestAudience(channel, action, origin));
     // What the chat's state moved, said on its session: a streamed delta moves
     // nothing a session reads, which is why only this road says it, and an
@@ -1009,22 +1017,9 @@ export function createHost(options: HostOptions): Host {
       ctx.askedLeft(channel);
       ctx.chatMoved(channel);
     }
-    /*
-     * A stop takes the chat's steering with it, once the backend has had the
-     * stop: the backend lets go of the steering message it holds, and one it
-     * says nothing of is taken out here, so nothing sent to steer the stopped
-     * turn runs after it.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
-     */
-    if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
-      queueMicrotask(() => {
-        const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
-        if (typeof steering !== 'string') return;
-        byChat.get(channel)?.chat.unqueue(steering);
-        if ((states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id !== steering) return;
-        dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
-      });
-    }
+    // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
+    if (ending) ctx.turnEnded(channel, action);
+    else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
      * so the list is said again when either moves it: the root's state holds
@@ -1233,6 +1228,7 @@ export function createHost(options: HostOptions): Host {
       }
       states.delete(one);
       ctx.cancelledTurns.delete(one);
+      ctx.forgetChatQueue(one);
     }
   };
 
@@ -1387,6 +1383,7 @@ export function createHost(options: HostOptions): Host {
     closeState: (channel: string) => {
       states.delete(channel);
       ctx.cancelledTurns.delete(channel);
+      ctx.forgetChatQueue(channel);
     },
     heldStates: states as ReadonlyMap<string, HeldState>,
     asks,
@@ -1435,6 +1432,7 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createSleep(ctx));
   Object.assign(ctx, createMerged(ctx));
   Object.assign(ctx, createWakes(ctx));
+  Object.assign(ctx, createQueueDrain(ctx));
   /*
    * Every subscription passes here - the command, and the two handshakes that
    * subscribe on their way in - so this is where a client that comes back is

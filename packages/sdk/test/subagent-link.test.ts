@@ -126,10 +126,7 @@ function linking(): Agent {
           });
         },
         abort: () => {},
-        queue: () => {},
-        unqueue: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         setCustomizationEnabled: async () => false,

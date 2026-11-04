@@ -10,7 +10,7 @@
  *
  * What is asserted is the message the backend was handed, because that is the
  * whole of what "applied" means here: the state a client reads is the
- * backend's own, built out of what `begin` was given. The scripted session
+ * backend's own, built out of what `sendMessage` was given. The scripted session
  * below is the stand-in for a real one and reports the attachments it was
  * handed alongside the turn, which is what a backend that keeps a chip in its
  * state does.
@@ -28,7 +28,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session, SteeringMessage } from '../src/types/session.js';
+import type { MessageAttachment, MessageFrom, Session, SteeringMessage } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /** The key the reference client looks for, and the shape it reads. */
@@ -87,12 +87,11 @@ const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
 /** What the scripted session was handed, kept so a case can read it. */
 interface Said {
   begun: { turnId: string; text: string; attachments?: unknown[] }[];
-  queued: { id: string; text: string; attachments?: unknown[] }[];
   steered: { id: string; text: string; attachments?: unknown[] }[];
   handed: Map<string, MessageAttachment[] | undefined>;
 }
 
-const saidNothing = (): Said => ({ begun: [], queued: [], steered: [], handed: new Map() });
+const saidNothing = (): Said => ({ begun: [], steered: [], handed: new Map() });
 
 /** The one a case waited for, which nothing hands back without one. */
 const first = <T>(list: T[]): T => list[0] as T;
@@ -105,8 +104,9 @@ const first = <T>(list: T[]): T => list[0] as T;
  * backend that dropped them would leave a client with the message and no
  * picture, which is the thing this is here to make impossible.
  *
- * `held` keeps a turn running for `steer` from its `begin` on, whenever the
- * echo ends it, so a case about order does not race the turn's own clock.
+ * `held` keeps a turn running for `sendSteeringMessage` from its `sendMessage`
+ * on, whenever the echo ends it, so a case about order does not race the
+ * turn's own clock.
  */
 const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
   const base = echo({ path: dir, pace });
@@ -126,22 +126,19 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
           said.handed.set(turnId, attachments);
           return session.sendMessage(turnId, text, from, attachments);
         },
-        queue: (id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => {
-          said.queued.push({ id, text, ...(attachments === undefined ? {} : { attachments }) });
-          said.handed.set(id, attachments);
-          session.queue(id, text, model, from, attachments);
-        },
         // The one backend method that is optional, and this is a session that
         // has it: a message mid-turn is the case task 02 is about. Answered
         // the way a real one does - a message with nothing running to take it
-        // is not taken - which is also what makes the order two dispatches
-        // were applied in something a case can see.
+        // is not taken, and one taken is read at once and said so - which is
+        // also what makes the order two dispatches were applied in something a
+        // case can see.
         sendSteeringMessage: (message: SteeringMessage) => {
           const { id, text, attachments } = message;
           const running = (session.chatState() as Bag).activeTurn !== undefined || (held && said.begun.length > 0);
           if (!running) return false;
           said.steered.push({ id, text, ...(attachments === undefined ? {} : { attachments }) });
-          return session.sendSteeringMessage?.(message) ?? true;
+          start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+          return true;
         },
         chatState: () => {
           const state = session.chatState() as Bag;
@@ -375,11 +372,14 @@ it('hands a queued and a steering message their attachments', async () => {
     kind: 'steering',
     message: { text: 'stop', origin: { kind: 'user' }, attachments: [png('now.png')] },
   });
-  await until(() => said.queued.length > 0 && said.steered.length > 0);
+  // The steering message goes into the running turn, and the queued one is
+  // the turn the host sends once that one is over.
+  await until(() => said.steered.length > 0 && said.begun.length > 1);
 
   const { folder, names } = written(dir);
   expect(names).toHaveLength(2);
-  const queued = first(sent(first(said.queued)));
+  expect(said.begun[1]?.text).toBe('later');
+  const queued = first(sent(said.begun[1] ?? {}));
   const steered = first(sent(first(said.steered)));
   // Both are files inside the session's own folder, and the only ones in it.
   expect(names.map((one) => uriOf(join(folder, one))).sort())

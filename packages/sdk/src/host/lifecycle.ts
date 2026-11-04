@@ -148,9 +148,7 @@ export interface Lifecycle {
     model: ReturnType<Lifecycle['modelIn']>,
     from: MessageFrom | undefined,
     sender?: Connection,
-    queuedAs?: string,
     attachments?: MessageAttachment[],
-    kind?: 'queued' | 'steering',
     said?: () => void,
     stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined>;
@@ -166,6 +164,8 @@ export interface Lifecycle {
   modelIn(value: unknown): { id: string; config?: Record<string, string | number | boolean | null> } | undefined;
   /** Who a message came from, read off the message itself, and what it picked. */
   messageFrom(message: Record<string, unknown>): MessageFrom | undefined;
+  /** A message in the protocol's spelling, as this host says one it was handed. */
+  messageOf(text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Record<string, unknown>;
   /**
    * What a client attached to its message, for the backend to read.
    *
@@ -257,8 +257,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.background.forgetSession(uri);
     const closing: Promise<void>[] = [];
     for (const [chatUri, chat] of held.chats) {
-      // The senders of what this chat still holds, because a closed backend
-      // ends no turn and runs nothing it had queued.
+      // The sender of the turn this chat still runs, because a closed backend
+      // ends no turn.
       forgetSendersIn(chat.chatState());
       // This is a removal, one of the two roads that dispose: a session that
       // is gone from here is gone inside its machine as well.
@@ -1292,6 +1292,20 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   });
 
   /**
+   * A message in the protocol's spelling, from what this host was handed: its
+   * words, who it is from, its files, its model and the agent it picked, an
+   * absent origin being the user's.
+   */
+  const messageOf = (text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Record<string, unknown> => ({
+    text,
+    origin: from?.origin ?? { kind: 'user' },
+    ...(from?._meta === undefined ? {} : { _meta: from._meta }),
+    ...(attachments === undefined ? {} : { attachments }),
+    ...(model === undefined ? {} : { model }),
+    ...(from?.agent === undefined ? {} : { agent: from.agent }),
+  });
+
+  /**
    * The start of a turn this host begins itself, said as the host's with the
    * message it was given, as the reference host says the start of a turn of
    * its own.
@@ -1302,14 +1316,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       type: 'chat/turnStarted',
       turnId,
       startedAt: new Date().toISOString(),
-      message: {
-        text,
-        origin: from?.origin ?? { kind: 'user' },
-        ...(from?._meta === undefined ? {} : { _meta: from._meta }),
-        ...(attachments === undefined ? {} : { attachments }),
-        ...(model === undefined ? {} : { model }),
-        ...(from?.agent === undefined ? {} : { agent: from.agent }),
-      },
+      message: messageOf(text, model, from, attachments),
     });
   };
 
@@ -1336,6 +1343,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   ): Promise<void> | undefined => {
     const since = Date.now();
     const ended = (errorType: string, error: unknown): void => {
+      // A turn its backend was never sent ends here, and what was held against it with it.
+      forgetSender(turnId);
+      forgetKeys(turnId);
       if (stopped?.() === true) return;
       dispatch(session.chatUri, {
         type: 'chat/error',
@@ -1399,14 +1409,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * means it was neither: a lone `!` is somebody typing an exclamation mark,
    * and it goes to the agent like any other text. A turn reaches a backend by
    * more than one road - a live session, one resumed from disk for it, a
-   * chat's first message, a message queued behind a running turn - and each
-   * takes this one, so none of them hands `!ping` to a model.
-   *
-   * `queuedAs` is the queued message's id when the text came through
-   * `chat/pendingMessageSet`: a question is queued under it, and a command
-   * is handed to `ran` under it, so it waits its turn as a command. `kind` is
-   * that message's, handed to both, and a steering one waits ahead of what is
-   * queued.
+   * chat's first message, a message the queue drain admits - and each takes
+   * this one, so none of them hands `!ping` to a model.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -1414,12 +1418,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `sender` is who asked, held against this turn for as long as it runs.
    *
-   * `said` says what the turn came from, once the turn's checks have passed
-   * and before the backend is handed it: a client's queued message, or
-   * nothing for a client's start, whose echo was said already. Without it the
-   * turn is this host's own, and its start is said here as the host's. A
-   * client's action is said by this host itself, after its checks and before
-   * any side effect.
+   * `said` stands for a turn whose start was said already, a client's echo or
+   * the queue drain's start. Without it the turn is this host's own, and its
+   * start is said here as the host's, once the turn's checks have passed and
+   * before the backend is handed it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
    *
    * `stopped` answers whether a turn said already was stopped while it was
@@ -1439,9 +1441,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     model: ReturnType<typeof modelIn>,
     from: MessageFrom | undefined,
     sender?: Connection,
-    queuedAs?: string,
     attachments?: MessageAttachment[],
-    kind?: 'queued' | 'steering',
     said?: () => void,
     stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined> => {
@@ -1484,15 +1484,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // A turn stopped while it was prepared is never handed to the backend.
       if (stopped?.() === true) return undefined;
       /*
-       * Who sent it, against the id this turn will be known by: the turn id when
-       * it starts now, and the queued message's id when it waits its turn. A
-       * queued message is one turn that has not been given an id yet, and the
-       * backend says which turn it became when it runs - so the sender is moved
-       * across there rather than looked for here under an id it will never
-       * carry again.
-       */
-      const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
-      /*
        * A turn asked for while one runs is begun all the same, a command's as
        * much as a question's, with no refusal in between: its start is said at
        * once, so it takes the running turn's place in every client's state, as
@@ -1504,14 +1495,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
        */
-      if (who !== undefined) senders.set(queuedAs ?? turnId, who);
+      const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
+      // Who sent it, against the turn's id.
+      if (who !== undefined) senders.set(turnId, who);
       // And the window itself, under the same id, for whatever has to ask it
       // something later - the move an agent asks for in this turn most of all.
-      if (sender !== undefined) sentBy.set(queuedAs ?? turnId, sender);
-      // What its records are charged under, under the same id for the same
-      // reason: a queued message becomes a turn the backend names later, and
-      // its keys are moved to that id beside its sender.
-      if (keys !== undefined) keepKeys(queuedAs ?? turnId, keys);
+      if (sender !== undefined) sentBy.set(turnId, sender);
+      // What its records are charged under, under the same id.
+      if (keys !== undefined) keepKeys(turnId, keys);
       if (command === '' || !options.terminals) {
         /*
          * With what this turn is told, decided by the backend when it begins.
@@ -1521,11 +1512,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          * the same thing, and the only thing that decides it is what the
          * session holds at the moment the turn starts.
          */
-        if (queuedAs !== undefined) {
-          said?.();
-          session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
-          return undefined;
-        }
         if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
         else said();
         void sendTurn(session, turnId, text, model, from, attachments, stopped);
@@ -1533,12 +1519,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
       if (!session.ran) {
         // Refused, so no turn will ever end under this id to let its sender go.
-        forgetSender(queuedAs ?? turnId);
-        forgetKeys(queuedAs ?? turnId);
+        forgetSender(turnId);
+        forgetKeys(turnId);
         return `${provider} cannot run a command in a turn; use a terminal instead`;
       }
       said?.();
-      ctx.commandTurns.set(commandTurnKey(session.chatUri, queuedAs ?? turnId), false);
+      ctx.commandTurns.set(commandTurnKey(session.chatUri, turnId), false);
       const first = session.workingDirectories()[0];
       const where = first === undefined ? options.path : localPath(first);
       session.ran(turnId, command, (toolCallId, opened) => ctx.commanded(command, where, {
@@ -1547,7 +1533,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         chat: session.chatUri,
         turnId,
         toolCallId,
-      }, opened), queuedAs, kind);
+      }, opened));
       return undefined;
     };
     /*
@@ -1560,18 +1546,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * port's call decides the rest, and a machine holding work the host has not
      * fetched is left as it is, and says so in the log.
      *
-     * A queued message is not handed it: the turn it becomes runs behind the one
-     * that is running, in a machine an agent is working in, and a hand-over
-     * writes the machine's own ref and index - not something to do to a machine
-     * between two commands of a turn. The fetch at the running turn's end is
-     * what puts that machine where the host is.
-     *
      * A session in no machine asks nothing and is begun here and now, which is
      * every turn of a session on this host.
      */
     const turn = (): string | undefined | Promise<string | undefined> => {
       if (stopped?.() === true) return undefined;
-      return queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run);
+      return enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run);
     };
     /*
      * The turn's own check, beside the one above.
@@ -2021,6 +2001,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
     chatAgent, chatConfig, isolated,
-    shelve, restore, beginOrRun, startTurn, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
+    shelve, restore, beginOrRun, startTurn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
   };
 }

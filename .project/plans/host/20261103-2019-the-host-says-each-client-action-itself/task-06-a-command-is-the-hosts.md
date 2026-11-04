@@ -38,3 +38,5 @@ Its call completes with the exit or the failure, and its turn completes.
 
 ## Resume
 
+- **From 05:** `ran` takes no queued form; a queued `!` message reaches it once the queue drain admits it, under the drain's turn.
+

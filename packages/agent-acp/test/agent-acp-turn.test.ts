@@ -751,8 +751,9 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 
 /*
  * A steering message to this backend is refused, a turn running or not: it
- * advertises no `steer`, and the reference host refuses steering to a provider
- * that cannot take it (agentService.ts L13513-L13516 at a4e689ae).
+ * has no `sendSteeringMessage`, and the reference host refuses steering to a
+ * provider that cannot take it, in its words (agentService.ts L13526-L13529
+ * at 6b68d3fe).
  */
 it('refuses a steering message with nothing running, as it cannot steer', async () => {
   const { client, peer: p, chatUri } = await talking();
@@ -764,7 +765,7 @@ it('refuses a steering message with nothing running, as it cannot steer', async 
 
   const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 8);
   expect(answers.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
-    .toEqual(['This backend cannot take a message mid-turn']);
+    .toEqual(['The session provider does not support steering messages.']);
   expect(types(p, chatUri)).not.toContain('chat/turnStarted');
 });
 

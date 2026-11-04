@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { shellTerminals } from '../src/machines/terminals.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Owners } from '../src/host/owners.js';
 import type { Agent } from '../src/types/agent.js';
@@ -126,15 +127,23 @@ describe('a turn lets go of its sender', () => {
     expect(held()).toEqual(EMPTY);
   });
 
+  /*
+   * Who sent a queued message is this host's record, kept beside the queue and
+   * handed to the turn the message becomes, as the reference host keeps a
+   * pending message's sender for the turn it admits
+   * (queueDrainContribution.ts L77-L83 and L288-L326 at 6b68d3fe).
+   */
   it('keeps the queued sender on the turn it becomes', async () => {
-    const { dispatch, peer: p, chat } = await signedIn();
+    const store = memorySessions();
+    const { dispatch, peer: p, chat } = await signedIn({ sessions: store });
     await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'hello there' } });
     await wait(100);
     const started = p.notes
       .filter((note) => note.method === 'action')
       .map((note) => note.params as { channel: string; action: Bag })
       .find((one) => one.channel === chat && one.action.type === 'chat/turnStarted')?.action;
-    expect(started).toMatchObject({ queuedMessageId: 'q1', _meta: { 'ahpd.sender': 'user:ana' } });
+    expect(started).toMatchObject({ queuedMessageId: 'q1' });
+    expect(store.sender('s', String(started?.turnId))).toBe('user:ana');
   });
 
   it('when the turn ends with chat/error', async () => {
@@ -148,7 +157,8 @@ describe('a turn lets go of its sender', () => {
     const { dispatch, held } = await signedIn({ agents: [echo({ path: DIR, pace: 20 })] });
     await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
     await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'later' } });
-    expect(held().sentBy).toContain('q1');
+    // The queued message's sender is the queue's, beside the turn's own.
+    expect(held().sentBy).toEqual(['t1']);
     await dispatch({ type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'q1' });
     await wait(150);
     expect(held()).toEqual(EMPTY);
@@ -169,7 +179,8 @@ describe('a turn lets go of its sender', () => {
     const { client, dispatch, held } = await signedIn({ agents: [echo({ path: DIR, pace: 1000 })] });
     await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three' } });
     await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'later' } });
-    expect(held().sentBy.sort()).toEqual(['q1', 't1']);
+    // The queued message's sender is the queue's, beside the turn's own.
+    expect(held().sentBy).toEqual(['t1']);
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/s' } });
     await wait(20);
     expect(held()).toEqual(EMPTY);

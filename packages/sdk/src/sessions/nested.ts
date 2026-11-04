@@ -56,7 +56,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat, TurnOptions } from '../types/session.js';
+import type { Chosen, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -1556,43 +1556,6 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     },
     changeModel: (model: Chosen): void => { chosen = model; },
     changeAgent: (agent: { uri: string } | undefined): void => { picked = agent; },
-    queue: (
-      queueId: string,
-      text: string,
-      model?: Chosen,
-      from?: MessageFrom,
-      _attachments?: MessageAttachment[],
-      _options?: TurnOptions,
-      kind: 'queued' | 'steering' = 'queued',
-    ): void => {
-      // A message queued on a session that stopped resumes it the way a turn
-      // does: it is a turn waiting, and the host inside is where it waits.
-      if (halted !== undefined && !closed) {
-        halted = undefined;
-        void reopen('');
-      }
-      // Under its own kind: a steering message with nothing running is the
-      // next turn of the host inside too.
-      carry('chat', {
-        type: 'chat/pendingMessageSet',
-        kind,
-        id: queueId,
-        message: {
-          text,
-          origin: from?.origin ?? { kind: 'user' },
-          ...(model === undefined ? {} : { model }),
-          ...(from?._meta === undefined ? {} : { _meta: from._meta }),
-        },
-      });
-    },
-    /* Under the kind the inner chat holds the message as, which the host inside matches it on. */
-    unqueue: (queueId: string): void => {
-      const kind = chat?.steeringMessage?.id === queueId ? 'steering' : 'queued';
-      carry('chat', { type: 'chat/pendingMessageRemoved', kind, id: queueId });
-    },
-    reorder: (order: string[]): void => {
-      carry('chat', { type: 'chat/queuedMessagesReordered', order });
-    },
     setDraft: (draft: Bag | undefined): void => {
       carry('chat', { type: 'chat/draftChanged', ...(draft === undefined ? {} : { draft }) });
     },

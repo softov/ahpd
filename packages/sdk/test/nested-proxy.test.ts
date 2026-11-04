@@ -317,7 +317,7 @@ const scriptedAgent = (
         told.confirmed.push({ id: toolCallId, approved, ...(optionId === undefined ? {} : { option: optionId }) });
       },
       answer: (requestId: string, accepted: boolean, answers: Bag) => { told.answered.push({ id: requestId, accepted, answers }); return true; },
-      abort: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
+      abort: () => {}, setDraft: () => {},
       setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}),
       // A backend that can background a startup answers by emitting, so this
