@@ -4,20 +4,21 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-The last release is `v0.14.0`, of 2026-10-26. Main is `c1b9b792`, the merge of #228, with 287 merges after that tag. Status at 2026-11-04.
+The last release is `v0.14.0`, of 2026-10-26. Main is `a7b0cfd7`, the merge of #231, which sets every package to `0.15.0-rc.1`. Status at 2026-11-04.
 
-A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and publishes every package. The tag comes last, and only on Softov's word.
+A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
-## Blockers
+## Left before the tag
 
-1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `c1b9b792` or later. It wires in #212 to #228.
-2. **The bump.** Set `0.15.0-rc.1` in every published `packages/*/package.json`. The workflow refuses a tag that differs from one package. The release goes to the npm `next` tag (#163), and `latest` stays on 0.14.0 until 0.15.0. Softov, 2026-11-03: "0.15.0 rc this time."
-3. **ahpw on the candidate.** ahpw updates with this release. Its range `^0.14.0` does not match `0.15.0-rc.1`, and `^0.15.0` does not match a pre-release either. Set `^0.15.0-rc.1`. Pack the candidate, and run ahpw's tests and typecheck against it.
-4. **A dry run.** Run the release workflow by hand with its dry-run input. It packs and checks, and publishes nothing. `npm stage publish --tag next` has not run yet, so the first rc shows whether npm takes it.
+1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `a7b0cfd7` or later. It wires in #212 to #228.
+2. **The tag.** On Softov's word: `git tag v0.15.0-rc.1 a7b0cfd7` and push it. The run stages each package under `next`. Approve each version on its npm page, `sdk` first. `npm stage publish --tag next` has not run yet, so this run shows whether npm takes it.
 
 ## Done
 
-- **The release notes.** [v0_15.md](../../docs/updates/v0_15.md) holds 0.15.0-rc.1, with the unreleased 0.14.1 section moved into it, and #149 to #229. Set its `date` to the day 0.15.0 is tagged.
+- **The bump.** #231 sets `0.15.0-rc.1` in every published package. The update test takes a pre-release version.
+- **A dry run.** Run 41876504603 on the bump branch: tests, build, pack and ranges pass, and the channel is `next`.
+- **ahpw on the candidate.** ahpw at `acdcdb1`, with the packed `@ahpd/sdk 0.15.0-rc.1`, passes its typecheck and 756 tests. Its own range is still `^0.14.0`. Set `^0.15.0-rc.1` in ahpw when it releases on the candidate.
+- **The release notes.** [v0_15.md](../../docs/updates/v0_15.md) holds 0.15.0-rc.1, with the unreleased 0.14.1 section moved into it, and #149 to #229. Date its section, and its `date`, on the day of the tag.
 - **The restart flag in ahpw.** ahpw #46, merged on 2026-11-04, reads `ahpd.restartNeeded` from the root config values.
 - **The seven open problems** of the reviews of 2026-11-03 and 2026-10-20, fixed in #225 to #228.
 
