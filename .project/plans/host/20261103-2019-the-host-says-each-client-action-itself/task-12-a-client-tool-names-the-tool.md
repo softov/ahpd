@@ -1,6 +1,6 @@
 ---
 title: A client tool's call names the tool
-status: todo
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -26,4 +26,7 @@ A call of a client's tool carries the tool's own name, so the client that owns i
 - Add to `packages/agent-claude/test/agent-claude-contributed-tools.test.ts`: the call a client runs names its own tool.
 
 ## Resume
+
+- **Done:** steps 1 and 2, at the commit that closes this task; the name is the client's own, its id taken off too.
+- **The case's file:** `agent-claude-stopped-call`, whose harness runs the CLI's call of a client's tool through the stream.
 

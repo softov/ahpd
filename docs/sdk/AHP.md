@@ -506,7 +506,10 @@ A client's own beats the server it is offered through, or every client would be
 told the call is nobody's to answer, including the one whose call it is.
 
 **A client's are named `<clientId>__<name>`.** Two clients in one session may
-both provide `openFile` and the model is offered one list.
+both provide `openFile` and the model is offered one list. The call a client
+runs names the tool as the client announced it, `openFile`, with the server's
+prefix and the client's id taken off, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638)
+takes the prefix off, so the client that owns it finds the tool to run.
 
 **Joining the call to the handler is this host's problem.** They arrive
 separately and neither carries the other's name: the assistant frame opens the

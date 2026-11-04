@@ -141,6 +141,24 @@ const heard = (answer: unknown): void => {
 };
 
 /*
+ * The CLI calls a client's tool under the client server's prefix, and the call
+ * names the tool by the name its client announced, so the client that owns it
+ * finds it, as VS Code's Claude takes the prefix off.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+ */
+it('names a client tool\'s call by the tool\'s own name', async () => {
+  const sent: Bag[] = [];
+  const { session } = await started((_channel, action) => { sent.push(action); });
+  expect(sent.find((one) => one.type === 'chat/toolCallStart')).toMatchObject({
+    toolCallId: 'toolu_post',
+    toolName: 'post_message',
+    displayName: 'post_message',
+    contributor: { kind: 'client', clientId: 'room' },
+  });
+  await session.close();
+});
+
+/*
  * The reference stop aborts its query, which fails every send it had not
  * answered; a question still waiting is answered here, so nothing waits on it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
