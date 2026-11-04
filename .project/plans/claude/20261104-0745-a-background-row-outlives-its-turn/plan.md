@@ -66,7 +66,7 @@ task_notification or background_tasks_changed -> dropTask / noteLive -> reconcil
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a background row outlives its turn](task-01-a-background-row-outlives-its-turn.md) | todo | - |
+| [01 - a background row outlives its turn](task-01-a-background-row-outlives-its-turn.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -74,12 +74,12 @@ task_notification or background_tasks_changed -> dropTask / noteLive -> reconcil
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-background-row-outlives-its-turn.md](task-01-a-background-row-outlives-its-turn.md).
-- **Watch out for:** `shellWork` also reads the command from the part, so a row built after the turn shows the label as its command. Pin both.
+- **Done so far:** task 01 is implemented on 2026-11-04. The two new cases fail without the change.
+- **Next action:** review, then the check by hand in [claude-0745-background-row-checks.md](../../../pending/claude-0745-background-row-checks.md).
+- **Watch out for:** nothing open.
 
 ## Final verification checklist
 
-- [ ] After a turn ends with two shells running, a stop of one removes only its row.
-- [ ] After a turn ends, a level that drops one shell removes only its row, and the other keeps its command.
+- [x] After a turn ends with two shells running, a stop of one removes only its row.
+- [x] After a turn ends, a level that drops one shell removes only its row, and the other keeps its command.
 - [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude and sdk tests pass.
