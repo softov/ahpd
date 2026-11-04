@@ -438,7 +438,14 @@ it('opens no turn for a steering message the CLI took in before the stop', async
  * for the message, and what the CLI answers it with goes nowhere.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
  */
-it('opens no turn for a steering message the CLI holds when its turn fails', async () => {
+/*
+ * A turn the CLI stopped at its turn limit is no failure, as VS Code's Claude
+ * mapper reads a result that is neither a failed success nor an error during
+ * execution, so the turn stays open for the steering message the CLI holds and
+ * ends with its answer.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
+ */
+it('opens no turn for a steering message the CLI holds when its turn stops at a limit', async () => {
   const { session, chat, before } = await opened();
   // The probe sent the steering message as the tool's result arrived, which is the turn's last round.
   const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
@@ -455,10 +462,11 @@ it('opens no turn for a steering message the CLI holds when its turn fails', asy
   sdk.push(...renamed(answered, AFTER_LIMIT, steered));
   await settle();
 
-  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([expect.objectContaining({ turnId: LIMITED })]);
+  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([LIMITED]);
   expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([LIMITED]);
   expect(history(replayed(before, chat).turns as Bag[])).toEqual([
-    [LIMITED, 'error', SLEEP_DONE_TEXT, 'user', []],
+    [LIMITED, 'complete', SLEEP_DONE_TEXT, 'user', ['BETA']],
   ]);
   // The CLI owes nothing once it has answered the message, so a turn sent now goes out.
   expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);

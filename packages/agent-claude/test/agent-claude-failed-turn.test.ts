@@ -441,3 +441,38 @@ it('refuses a turn that cannot be resumed', async () => {
   expect(() => gone.session.resumeTurn?.('t1')).toThrow();
 });
 
+/*
+ * A result fails its turn as VS Code's Claude mapper reads one: a `success`
+ * the CLI says failed and an `error_during_execution`; a turn or budget limit
+ * the CLI stopped at completes the turn. Its duration is the time from the
+ * send on this host's clock, as VS Code's pipeline completes a turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L684-L693
+ */
+it('completes a turn the CLI stopped at a limit, measured on this host', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  const sent = Date.now();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'), { ...result, subtype: 'error_max_turns', is_error: true, errors: [], duration_ms: 600000 });
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
+  const ended = chat.find((one) => one.type === 'chat/turnComplete' && one.turnId === 't1');
+  expect(Number(ended?.duration)).toBeLessThanOrEqual(Date.now() - sent);
+  expect(bag((session.chatState().turns as Bag[]).at(-1)).state).toBe('complete');
+});
+
+it('fails a turn whose result is an error during execution, typed by it, in its errors', async () => {
+  sdk.reset();
+  const { chat, session } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'), { ...result, subtype: 'error_during_execution', is_error: true, errors: ['API Error: 500', 'again'] });
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => bag(bag(one.part).error)))
+    .toEqual([{ errorType: 'error_during_execution', message: 'API Error: 500\nagain' }]);
+});
+

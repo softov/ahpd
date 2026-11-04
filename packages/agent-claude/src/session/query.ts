@@ -661,9 +661,6 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const ends = new Map<string, string>(endsOf(ctx.options.seed, ctx.options.seedEnds, ctx.options.rewindAt));
 
-  /** The turns a result left open for an answer the CLI still owed, by turn id. */
-  const spanning = new Set<string>();
-
   /**
    * Ask the CLI for a model, and say why it would not take it if it will not.
    *
@@ -964,17 +961,16 @@ export function createQuery(ctx: SessionContext): Query {
           /*
            * Read before the turn is pushed, because the reason goes inside it.
            * A failure of the turn's login that it did not show says its own
-           * words. `is_error` carries the CLI's words: a `success` that failed
-           * holds them in `result`, as a request the CLI gave up on does, and
-           * an error subtype in `errors`, as the reference reads them. A
-           * subtype that is not `success` is a turn that ended badly with none,
-           * and saying which is better than an error part that says only that
-           * there was one.
-           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L567-L575
+           * words. A result fails its turn as VS Code's Claude mapper reads
+           * one: a `success` the CLI says failed, in its `result`, and an
+           * `error_during_execution`, in its `errors`. Every other subtype, a
+           * turn or budget limit the CLI stopped at, completes the turn.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
            */
-          const words = str(message.subtype) === 'success'
-            ? str(message.result)
-            : list(message.errors).map(String).join('\n');
+          const subtype = str(message.subtype);
+          const errorText = subtype === 'success'
+            ? (message.is_error === true ? str(message.result) ?? '' : undefined)
+            : subtype === 'error_during_execution' ? list(message.errors).map(String).join('\n') : undefined;
           /*
            * A failure of the turn's login is kept apart from the result's own.
            *
@@ -983,11 +979,7 @@ export function createQuery(ctx: SessionContext): Query {
            * there is either nowhere left to go or a CLI already on it.
            */
           const ofLogin = ctx.failure();
-          const wrong = ofLogin ?? (message.is_error === true
-            ? (words || 'The turn failed')
-            : str(message.subtype) !== 'success'
-              ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
-              : undefined);
+          const wrong = ofLogin ?? errorText;
           if (wrong === undefined) ctx.answered();
           /*
            * The prompts this result answered, which the CLI no longer owes,
@@ -1021,10 +1013,7 @@ export function createQuery(ctx: SessionContext): Query {
            * only when its prompts are settled. A result that failed ends it.
            * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
            */
-          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) {
-            spanning.add(String(turn.id));
-            continue;
-          }
+          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) continue;
           if (turn) {
             /*
              * Every turn that ends says how it ended.
@@ -1037,12 +1026,12 @@ export function createQuery(ctx: SessionContext): Query {
              * reads the snapshot, and the snapshot is this.
              */
             turn.state = wrong !== undefined ? 'error' : 'complete';
-            // `duration_ms` is the CLI's last turn alone, so a turn that took
-            // more than one of them is measured from its own start.
-            const spanned = spanning.delete(String(turn.id));
-            const attempt = !spanned && typeof message.duration_ms === 'number'
-              ? message.duration_ms
-              : Date.now() - ctx.startedAt;
+            /*
+             * The time from the send, on this host's own clock, as VS Code's
+             * pipeline completes a turn with its stopwatch from the send.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L684-L693
+             */
+            const attempt = Date.now() - ctx.startedAt;
             // The turn holds its time and usage across a resume, and its
             // usage and ending say this run's.
             const resumedFrom = ctx.resumedFrom;
