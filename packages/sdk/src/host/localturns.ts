@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } 
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import { idOf } from '../sessions/catalog.js';
+import { steerQuote } from '../sessions/steer.js';
 import { readJsonObject, writeJsonAtomic } from '../utils/jsonfile.js';
 import { bag, isRecord, reason, str } from '../utils/values.js';
 import type { Agent, SessionAt } from '../types/agent.js';
@@ -182,7 +183,7 @@ const spentBoth = (first: Bag | undefined, then: Bag | undefined): Bag | undefin
  * A turn with another read back inside it, as one turn: the first's id, start
  * and message, both answers in the order they came, and the later one's end.
  */
-const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>): WireTurn<Turn> => {
+const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>, steered = false): WireTurn<Turn> => {
   const usage = spentBoth(first.usage as Bag | undefined, then.usage as Bag | undefined);
   const began = first.startedAt === undefined ? Number.NaN : Date.parse(first.startedAt);
   const ended = then.startedAt === undefined || then.duration === undefined
@@ -190,7 +191,16 @@ const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>): WireTurn<Turn>
     : Date.parse(then.startedAt) + then.duration;
   return {
     ...first,
-    responseParts: [...first.responseParts, ...then.responseParts],
+    /*
+     * A steer the backend wrote as a turn of its own keeps its words in the turn
+     * it steered, quoted before its answer, as the live turn showed it under the
+     * same id.
+     */
+    responseParts: [
+      ...first.responseParts,
+      ...(steered ? [steerQuote(String(then.id), String(then.message.text ?? '')) as WireTurn<Turn>['responseParts'][number]] : []),
+      ...then.responseParts,
+    ],
     state: then.state,
     usage: usage as WireTurn<Turn>['usage'],
     ...(Number.isNaN(began) || Number.isNaN(ended) ? {} : { duration: ended - began }),
@@ -388,7 +398,8 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       recorded ||= as !== undefined;
       const into = out.at(-1);
       if (into !== undefined && recorded && (as === undefined || as === last) && !isLocal(session, chat, id)) {
-        out[out.length - 1] = joinedTurn(into, turn);
+        // One the chat never began is a steer; one recorded again is the same turn.
+        out[out.length - 1] = joinedTurn(into, turn, as === undefined);
         joined.set(id, String(into.id));
         continue;
       }

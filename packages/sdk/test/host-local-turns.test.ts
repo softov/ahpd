@@ -328,7 +328,8 @@ describe('a host started again on the same store', () => {
     }, held);
     const turns = (await stateOf(ran.client, ran.chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual(['t1', 't2']);
-    expect((turns[0]?.responseParts as Bag[]).map((part) => part.content)).toEqual(['hello there', 'written as its own']);
+    // Its message stays, quoted before its answer, as a steer's does.
+    expect((turns[0]?.responseParts as Bag[]).map((part) => part.content)).toEqual(['hello there', '> written as its own', 'written as its own']);
     await ran.host.close();
 
     const never = await restarted(async () => {}, held);
@@ -729,7 +730,7 @@ describe('a Claude chat', () => {
     await stateOf(after.client, uri);
     const turns = (await stateOf(after.client, chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual([prompt]);
-    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content)).toEqual(['one', 'two']);
+    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content)).toEqual(['one', '> and then', 'two']);
     await after.host.close();
 
     // A store that kept no record of the chat reads it as its transcript gives
@@ -772,9 +773,10 @@ describe('a Claude chat', () => {
     await ended(before.p, chat, TOOL);
     expect(sdk.uuids).toEqual([FIRST, LATE, TOOL, FOLDED]);
     const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
+    // Each steer shows quoted in the turn it went into, before its answer.
     expect(live).toEqual([
-      [FIRST, 'complete', ALPHA, ['ALPHA', 'BETA']],
-      [TOOL, 'complete', SLEEP, ['DONE BETA2']],
+      [FIRST, 'complete', ALPHA, ['ALPHA', '> Reply with exactly the word BETA and nothing else.', 'BETA']],
+      [TOOL, 'complete', SLEEP, ['> Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
     ]);
     await before.host.close();
     expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual(live);

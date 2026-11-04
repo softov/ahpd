@@ -53,6 +53,7 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 | The quote part carries no `_meta`, and `steerQuote` in `@ahpd/sdk` builds it for both packages | (defaulted: a markdown part has no `_meta`, and the strict schema refuses an extra key) | 01, 02 |
 | A Claude steer shows live when the CLI says it started it, which is where the transcript records it | Softov, 2026-11-04, chose "When the CLI takes it in" | 02 |
 | The quote's id is `steer:<uuid>`, the uuid ahpd handed the steer to the CLI with, live and read back | (defaulted: the CLI names the steer by that uuid in its frames and its transcript) | 02 |
+| A turn the chat never began, which the host folds into the turn before it, keeps its message as a quote before its answer | (defaulted: Claude writes a steer it ran after the last answer as such a turn) | 02 |
 | The Claude reader puts a message the SDK marks `isQueuedCommand` inside an open turn back as the same quote | (defaulted: the SDK gives the `queued_command` frame as that message) | 02 |
 
 ## Proposed architecture
@@ -80,8 +81,6 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 - **Next action:** review, then the check by hand: steer Ember while it counts, and see the quote in both chats, live and after a reload.
 - **Watch out for:** a bot back session's steer carries the context block before the person's words.
   The Claude quote shows the prompt as the CLI got it.
-- **Not checked:** a steer the CLI ran after the turn's last answer is a prompt of its own in the transcript.
-  The host's turn record folds it back into the turn it steered, and no test reads the quote after that fold.
 
 ## Final verification checklist
 
