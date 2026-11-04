@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { Status, idOf, uriOf } from '@ahpd/sdk';
+import { Status, bag, idOf, steerQuote, str, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { BOTS_DIR, logsOf } from './names.js';
 import type { BotRecord } from './record.js';
@@ -371,6 +371,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
   /** Where each turn read so far sits, so the line that ends it can replace it. */
   const at = new Map<string, number>();
   let mark: Bag | undefined;
+  /** Each steering line read, by the turn it went into. */
+  const steered: { turn: string; id: string; words: string }[] = [];
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     let said: unknown;
@@ -390,6 +392,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
      */
     if (held['steering'] === true) {
       mark ??= markIn(held);
+      const words = str(bag(held['message'])['text']);
+      if (words !== undefined) steered.push({ turn: String(held['id'] ?? ''), id: str(held['steeringId']) ?? `${String(held['id'] ?? '')}:${String(steered.length)}`, words });
       continue;
     }
     const one = turnOf(held);
@@ -401,6 +405,18 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
       turns.push(one);
     }
     else turns[known] = one;
+  }
+  /*
+   * A steer shows as its quote in the turn it went into. The line that ends a
+   * turn holds the quote already, where it was said; a turn whose log was
+   * written before steers were quoted, or whose daemon died before it ended,
+   * gets it here, after what the turn holds.
+   */
+  for (const one of steered) {
+    const turn = turns[at.get(one.turn) ?? -1];
+    if (turn === undefined) continue;
+    const quote = steerQuote(one.id, one.words);
+    if (!turn.responseParts.some((part) => part['id'] === quote['id'])) turn.responseParts.push(quote);
   }
   return { turns, mark };
 };
@@ -1212,9 +1228,13 @@ export function botChatAgent(
         if (held === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
         start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message });
-        append(dir, id, { id: held.id, steering: true, message, _meta: mark });
+        append(dir, id, { id: held.id, steering: true, steeringId: pendingId, message, _meta: mark });
         handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steered: true });
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
+        // Out of the queue and into the turn it went into, where it stays.
+        const quote = steerQuote(pendingId, text);
+        held.responseParts.push(quote);
+        start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part: quote });
         touch();
         return true;
       },

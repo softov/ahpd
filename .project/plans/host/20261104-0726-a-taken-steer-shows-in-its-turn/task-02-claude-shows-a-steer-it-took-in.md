@@ -1,6 +1,6 @@
 ---
 title: Claude shows a steer it took in
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -14,19 +14,19 @@ A steer that Claude hands to the CLI shows as a quote in the turn it steered, li
 
 ## Files
 
-- `UPDATE: packages/agent-claude/src/session/query.ts:281-287` - after the steering message leaves the queue, add the quote to the turn it steered and say it with `chat/responsePart`.
-- `UPDATE: packages/agent-claude/src/transcript.ts:405-428` - an `attachment` frame of type `queued_command` inside an open turn adds the quote of its `prompt` to that turn.
-- `UPDATE: packages/agent-claude/test/agent-claude-late-steer.test.ts` - a case for the live quote.
-- `UPDATE: packages/agent-claude/test/` - a case for the read back, in the test file that reads transcripts.
+- `UPDATE: packages/agent-claude/src/session/query.ts:806-820` - when a `command_lifecycle` frame says the CLI started a steer, add the quote to the turn it steered.
+- `UPDATE: packages/agent-claude/src/transcript.ts:420-433` - a message the SDK marks `isQueuedCommand` inside an open turn adds the quote of its text to that turn.
+- `UPDATE: packages/sdk/src/host/localturns.ts:185-200` - `joinedTurn` quotes the message of a turn the chat never began.
+- `UPDATE: packages/agent-claude/test/agent-claude-late-steer.test.ts` - the live and read back cases now hold the quote.
+- `UPDATE: packages/sdk/test/host-local-turns.test.ts` - the folded turns hold the quote, and the capture of the real CLI reads back as it ran.
 
 ## Steps
 
-1. Write `quoteOf(id, text)` in agent-claude, the same shape as the bot chat's.
-2. Where the steering message leaves the queue, push the quote into the turn it steered, and emit `chat/responsePart` for it.
-3. In the reader, read a `queued_command` attachment frame in an open turn as a quote of its `prompt`.
-4. Give that quote the id `steer:<source_uuid>`.
-5. Add the live case: hand a steer to the CLI, and find the quote in the turn.
-6. Add the read back case: read a transcript with a `queued_command` frame, and find the quote in its turn.
+1. Import `steerQuote` from `@ahpd/sdk`.
+2. Add the quote to the main turn when a `command_lifecycle` frame says `started` for a steer.
+3. Give it the frame's `command_uuid` as its id.
+4. In the reader, read an `isQueuedCommand` message in an open turn as a quote with its `uuid`.
+5. Update the late-steer cases, live and read back, to hold the quote before the answer to the steer.
 
 ## Validation
 
@@ -34,3 +34,7 @@ A steer that Claude hands to the CLI shows as a quote in the turn it steered, li
 - `pnpm --filter @ahpd/agent-claude test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step. The SDK gives the `queued_command` frame as a user message marked `isQueuedCommand`, whose `uuid` is the frame's `source_uuid`.
+- **Found:** a steer the CLI ran after the turn's last answer is a turn of its own in the transcript.
+  The host folds it into the turn it steered, and the fold now quotes it, so a reload matches the live turn.
