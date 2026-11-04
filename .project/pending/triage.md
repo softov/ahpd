@@ -24,7 +24,7 @@ Restart the daemon on main first. Do them from the top down.
 - [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client.
 - [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
 - [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) - 30 min. Set the plugin's `connector` option to `devtunnel` first.
-- [plugin-view-checks.md](plugin-view-checks.md) - 15 min, after plugin-1122.
+- [plugin-view-checks.md](plugin-view-checks.md) - 15 min, after plugin-1122. Claude runs steps 1 to 3 on port 37537, by Softov's OK of 2026-11-04. Softov does step 4.
 - [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox.
 - [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
 - [vscode-checks.md](vscode-checks.md) - 40 min.
