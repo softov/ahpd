@@ -28,6 +28,8 @@ It says no client's action, keeps no queue, and refuses nothing the host has app
 5. Remove `clearSteering`, since the host removes pending steering itself (row 19).
 6. Remove `queue`, `unqueue`, `reorder` and `ran` (rows 15, 22).
 7. Turn the refusals of D-0024, D-0025 and D-0050 into reconciliations; D-0051 to D-0053 landed in 01.
+8. Say a config change at once, its restart a side effect a turn waits on (H1-0013, from 03).
+9. Hand a turn's model and agent before its send, logging one the backend does not take (row 9, from 03).
 
 ## Validation
 

@@ -158,10 +158,10 @@ describe('a turn lets go of its sender', () => {
     const { dispatch, held, peer: p } = await signedIn({ terminals: shellTerminals() });
     await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo must-not-run' } });
     await wait(50);
-    const refused = p.notes
-      .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
-      .find((reason): reason is string => typeof reason === 'string');
-    expect(refused).toContain('cannot run a command in a turn');
+    const ended = p.notes
+      .map((note) => note.params as { action?: { type?: string; part?: { error?: { message?: string } } } })
+      .find((params) => params.action?.type === 'chat/error');
+    expect(ended?.action?.part?.error?.message).toContain('cannot run a command in a turn');
     expect(held()).toEqual(EMPTY);
   });
 

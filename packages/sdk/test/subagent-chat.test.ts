@@ -279,7 +279,12 @@ it('announces a worker chat, opens its turn and links it from the call', async (
   expect((nested[0]?.content as Bag[])[0]).toMatchObject({ type: 'subagent', resource: inner });
 });
 
-it('answers a subscribe to the worker with its own state, and refuses a turn on it', async () => {
+/*
+ * A turn on a worker's read-only chat is said, and ended in the words VS
+ * Code's host ends a turn on a read-only chat with.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ */
+it('answers a subscribe to the worker with its own state, and ends a turn on it as read-only', async () => {
   const { ask, client, worker } = await running();
 
   const answer = await ask('subscribe', { channel: worker }) as { snapshot: { resource: string; state: Bag } };
@@ -295,10 +300,14 @@ it('answers a subscribe to the worker with its own state, and refuses a turn on 
     params: { channel: worker, action: { type: 'chat/turnStarted', turnId: 'nope', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
-  const refused = wire.filter((one) => one.method === 'action' && one.params.channel === worker
-    && typeof one.params.rejectionReason === 'string');
-  expect(refused).toHaveLength(1);
-  expect(String(refused[0]?.params.rejectionReason)).toContain('read-only');
+  const said = wire.filter((one) => one.method === 'action' && one.params.channel === worker)
+    .map((one) => ({ action: one.params.action as Bag, rejectionReason: one.params.rejectionReason }))
+    .filter((one) => one.action.turnId === 'nope');
+  expect(said.map((one) => [one.action.type, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'readOnly', message: 'This chat is read-only.' } });
 });
 
 it('names the worker chat that spawned a nested one as its parent', async () => {

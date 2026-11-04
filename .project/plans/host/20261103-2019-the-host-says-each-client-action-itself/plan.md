@@ -92,7 +92,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | 6 | A queued dispatch that fails is rejected with its own message | agentService.ts L12639-L12642: `this._stateManager.rejectClientAction(channel, action, { clientId, clientSeq }, toErrorMessage(err));` | 02 |
 | 7 | A relay's dispatches are sequenced per relay client id, and only for a relay connection | protocolServerHandler.ts L2794-L2797: `if (client.transport.relayClientId !== undefined && this._config.relayResourceRoots) { return this._relayClientDispatchSequencer.queue(client.clientId, () => this._dispatchClientActionNow(client, params, checkAuthorization)); }` | 02, 09 |
 | 8 | A start goes to the turn service after it is said; admission refuses with chat/error on the started turn | agentSideEffects.ts L1810-L1814: `case ActionType.ChatTurnStarted: { ... this._turnService.handleTurnStarted(channel, action, clientId, clientContext, credentials);`; agentHostTurnStarter.ts L95-L101: `if (disposition.kind === 'reject') { stateManager.dispatchServerAction(request.turnChannel, { type: ActionType.ChatError, ...` | 03 |
-| 9 | A turn's model and agent are applied before its send; a model the agent does not offer is logged and the chat keeps its model | agentSideEffects.ts L2228-L2231: `if (message.model && !model) { this._logService.info(... keeps its model ...` ; L2236-L2238: `changeAgent(...).catch(err => { this._logService.error('[AgentSideEffects] changeAgent failed', err); })` | 03, 07 |
+| 9 | A turn's model and agent are applied before its send; a model the agent does not offer is logged and the chat keeps its model | agentSideEffects.ts L2228-L2231: `if (message.model && !model) { this._logService.info(... keeps its model ...` ; L2236-L2238: `changeAgent(...).catch(err => { this._logService.error('[AgentSideEffects] changeAgent failed', err); })` | 04, 07 |
 | 10 | A turn cancelled while the host prepares it never reaches the agent | agentSideEffects.ts L2241-L2244 and L2307-L2310: `if (this._cancelledTurnIds.get(turnChannel)?.has(turnId)) { await this._discardPendingTurnStartCheckpoint(...); return; }`; L2316: `await agent.chats.sendMessage(chatUri, ...)` | 03 |
 | 11 | A cancel ends the turn, aborts the agent, and drains nothing | agentSideEffects.ts L1946-L1948: `agent.chats.abort(chat, ...)`; L1950-L1954: "Intentionally do NOT drain queued messages here: cancelling means \"stop\"" | 04, 05 |
 | 12 | The agent's contract is sendMessage, abort, changeModel, changeAgent, resumeTurn and the optional steering hooks | agent.ts L1311: `sendMessage(chat: URI, prompt: string, ...): Promise<void>;`; L1317: `abort(chat: URI, context: AgentChatOperationContext): Promise<void>;` | 04 |
@@ -131,7 +131,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | A message's attachments written before it is applied | `requiresKnownAttachmentRewrite` (row 5) | Kept | 02 |
 | A changeset's review state | `requiresReviewStateUpdate` (row 5) | Kept | 02 |
 | A draft for a session not running, applied outside the chain (H2-0013) | A chat action on a session not restored enters the queue (row 5) | Kept, inside the queue | 02 |
-| `restarting`: a config change that restarts the backend | None: the config is said at once and acted on in the turn's send (A-0051, H1-0013) | Gone; the restart runs as a side effect | 03 |
+| `restarting`: a config change that restarts the backend | None: the config is said at once and acted on in the turn's send (A-0051, H1-0013) | A turn said at once, the restart its preparation; the config's echo in 04 | 03, 04 |
 | A turn's policy check before its echo | Admission after the echo (row 8) | Gone; the check is admission | 03 |
 | A machine's catch-up before the echo | The turn's preparation after the echo, with cancel checks (rows 9, 10) | Gone; the catch-up is preparation | 03 |
 | The root config port write | The state's apply before the echo (agentHostStateManager.ts L2745-L2752): the port's file is where the daemon's keys are held | Kept | 02 |
@@ -182,7 +182,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | --- | --- | --- |
 | [01 - The host says the client's action](task-01-the-host-says-the-clients-action.md) | done | - |
 | [02 - The queue waits for prerequisites only](task-02-the-queue-waits-for-prerequisites.md) | done | 01 |
-| [03 - A turn is admitted after its echo](task-03-a-turn-is-admitted-after-its-echo.md) | todo | 01 |
+| [03 - A turn is admitted after its echo](task-03-a-turn-is-admitted-after-its-echo.md) | done | 01 |
 | [04 - The Session contract follows IAgent](task-04-the-session-contract-follows-iagent.md) | todo | 01 |
 | [05 - The host owns the queue and steering](task-05-the-host-owns-the-queue.md) | todo | 04 |
 | [06 - A `!` command is the host's](task-06-a-command-is-the-hosts.md) | todo | 05 |
@@ -204,8 +204,8 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 
 ## Resume state
 
-- **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`.
-- **Next action:** [task-03-a-turn-is-admitted-after-its-echo.md](task-03-a-turn-is-admitted-after-its-echo.md).
+- **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`, and tasks 01 to 03.
+- **Next action:** [task-04-the-session-contract-follows-iagent.md](task-04-the-session-contract-follows-iagent.md).
 - **Answered:**
   1. The afternoon's turn branches this plan replaces are dropped, not merged.
   2. What of them the plan does not touch is rebuilt on top of it.

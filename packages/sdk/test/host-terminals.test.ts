@@ -387,7 +387,7 @@ describe('a command typed into the conversation', () => {
     expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
   });
 
-  it('refuses a command when the backend cannot hold one, rather than asking it', async () => {
+  it('ends a command\'s turn in an error when the backend cannot hold one, rather than asking it', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
     const host = createHost({ path: tmpdir(), agents: [echo({ path: tmpdir(), pace: 0 })], ...machine() });
     const p = peer();
@@ -407,14 +407,14 @@ describe('a command typed into the conversation', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo must-not-run' } } },
     });
     await settle();
-    // Refused, not asked. `echo` implements no `ran`, and a host that handed
-    // `!echo must-not-run` to its model would answer with prose about the
-    // command - which is what the prefix exists to prevent. The refusal is
-    // also what tells the client to put its optimistic turn back.
-    const rejection = p.notes
-      .map((n) => (n.params as { rejectionReason?: string }).rejectionReason)
-      .find((reason): reason is string => typeof reason === 'string');
-    expect(rejection).toContain('cannot run a command in a turn');
+    // Said, and ended before anything is asked. `echo` implements no `ran`, and
+    // a host that handed `!echo must-not-run` to its model would answer with
+    // prose about the command - which is what the prefix exists to prevent.
+    // The turn ends in an error saying why, as VS Code's host ends a turn its
+    // admission refuses.
+    const ended = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action as
+      { part?: { error?: { message?: string } } } | undefined;
+    expect(ended?.part?.error?.message).toContain('cannot run a command in a turn');
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
   });
 });

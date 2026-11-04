@@ -317,6 +317,24 @@ export function chatAction(
     if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
     return;
   }
+  /**
+   * A client's start that this host will not send, said on `where` and ended
+   * there in an error carrying `errorType` and `message`, with the time since
+   * it was said at `since`: as the reference host's admission ends a request
+   * it refuses, and its send ends a turn whose preparation failed, with
+   * `chat/error` on the turn the request started.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L110
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2336
+   */
+  const unsent = (where: string, errorType: string, message: string, since = Date.now()): void => {
+    if (!ctx.answered(origin)) dispatch(where, action, origin);
+    dispatch(where, {
+      type: 'chat/error',
+      turnId: String(action.turnId ?? ''),
+      duration: Math.max(0, Date.now() - since),
+      part: { kind: 'error', error: { errorType, message } },
+    });
+  };
   /*
    * A worker's chat is read-only, whichever side of a restart it is on.
    *
@@ -324,11 +342,16 @@ export function chatAction(
    * inside somebody else's call. What a client may still send on one is
    * an answer to what the worker asked there and a stop, and those are
    * the lead chat's backend's to act on, since that backend runs the
-   * worker. Anything else is refused here rather than falling into the
-   * resume below, which would start an agent for a chat the client
-   * cannot write to anyway.
+   * worker. A start is ended in the reference host's words for a read-only
+   * chat, and anything else is refused here, before the resume below, which
+   * would start an agent for a chat the client cannot write to.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
   const worker = toolCallOfSubagentChat(channel) !== undefined;
+  if (worker && type === 'chat/turnStarted') {
+    unsent(channel, 'readOnly', 'This chat is read-only.');
+    return;
+  }
   if (worker && !WORKER_ACTIONS.has(type)) {
     refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
     return;
@@ -392,13 +415,38 @@ export function chatAction(
    * its client's later dispatches go behind it.
    */
   const running = restarting.get(sessionFor(channel));
+  /*
+   * Except a start, said at once, with the restart its preparation: the turn
+   * is handed to the session that comes up, ended in an error with the
+   * restart's failure, or left unsent once it is stopped, as the reference
+   * host shows a turn running while the work its send needs is done. Its stop
+   * is said at once too, and nothing has the turn to stop.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2180-L2350
+   */
+  if (running !== undefined && type === 'chat/turnStarted') {
+    const since = Date.now();
+    const turnId = String(action.turnId ?? '');
+    if (!ctx.answered(origin)) dispatch(channel, action, origin);
+    void running
+      .then((failure) => {
+        if (ctx.cancelledTurns.get(channel)?.has(turnId) === true) return undefined;
+        if (failure !== undefined) unsent(channel, 'sendFailed', failure, since);
+        else return conn.applyNow(params, origin);
+        return undefined;
+      })
+      .catch((error: unknown) => { unsent(channel, 'sendFailed', error instanceof Error ? error.message : String(error), since); });
+    return;
+  }
+  if (running !== undefined && type === 'chat/turnCancelled') {
+    dispatch(channel, action, origin);
+    return;
+  }
   if (running !== undefined) {
-    return running.then(
-      () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
-      (error: unknown) => {
-        refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
-      },
-    );
+    return running.then((failure) => {
+      if (failure !== undefined) refuse(connection.peer, channel, action, origin, failure);
+      else if (connections.has(connection)) return conn.applyNow(params, origin);
+      return undefined;
+    });
   }
   /*
    * Config for a session with no agent yet: remembered, not refused.
@@ -586,6 +634,12 @@ export function chatAction(
    * read it.
    */
   const over = session.ended?.();
+  if (over !== undefined && type === 'chat/turnStarted') {
+    // As the reference host ends a turn it finds no agent for.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L119-L136
+    unsent(session.chatUri, 'noAgent', over);
+    return;
+  }
   if (over !== undefined) {
     refuse(connection.peer, channel, action, origin, over);
     return;
@@ -642,6 +696,24 @@ export function chatAction(
         : {}) as Record<string, unknown>;
       const text = String(message.text ?? '');
       const turnId = String(action.turnId ?? '');
+      /*
+       * The client's start, said as it sent it once this host's own checks of
+       * it have passed, and then admitted: a turn this host will not run ends
+       * in `chat/error` on it, as the reference host's admission ends one. A
+       * session or a chat filed away is read-only, in the reference host's
+       * words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+       */
+      const since = Date.now();
+      if (!ctx.answered(origin)) dispatch(session.chatUri, action, origin);
+      if ((kept.flags(idOf(session.uri)) & Status.IsArchived) !== 0) {
+        unsent(session.chatUri, 'archived', 'This session is archived and read-only. Restore the session to continue the conversation.');
+        break;
+      }
+      if (session.chatUri !== sessions.get(session.uri)?.defaultChat && (kept.chatFlags(idOf(session.uri), session.chatUri) & Status.IsArchived) !== 0) {
+        unsent(session.chatUri, 'archived', 'This chat is archived and read-only. Restore the chat to continue the conversation.');
+        break;
+      }
       // Before it is started or queued, so a handler sees it once
       // whether or not the backend is free to run it this moment.
       void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
@@ -664,25 +736,27 @@ export function chatAction(
         live = owner.chats.get(session.chatUri) ?? session;
       }
       const provider = owner?.agent.provider ?? 'This provider';
-      // A chat attachment this host cannot hand over refuses the message the
-      // same way a backend that would not start does, and before anything is
-      // started: a turn whose agent never saw the chat it was pointed at is a
-      // turn the person has to be told about.
+      /*
+       * Its preparation before its prompt goes out: the chats it attaches read
+       * out, a policy check, and a machine set where this host's branch is. A
+       * check that refuses it ends it in an error in the check's words, a
+       * preparation or a send that throws ends it in a `sendFailed` one, and a
+       * turn stopped meanwhile is never handed to the backend, as the reference
+       * host prepares and sends a turn.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2241-L2346
+       */
       const attached = messageAttachments(message, connection);
       if (attached.refusal !== undefined) {
-        refuse(connection.peer, channel, action, origin, attached.refusal);
+        unsent(session.chatUri, 'sendFailed', attached.refusal, since);
         break;
       }
-      /*
-       * The client's start, said as it sent it once the turn's checks have
-       * passed and before the backend is handed it. A check that has to wait
-       * holds its client's later dispatches until it answers.
-       */
-      return beginTurn(
-        beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments,
-          undefined, () => { dispatch(session.chatUri, action, origin); }),
-        (why) => refuse(connection.peer, channel, action, origin, why),
+      beginTurn(
+        () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments,
+          undefined, undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
+        (why) => { unsent(session.chatUri, 'rejected', why, since); },
+        (why) => { unsent(session.chatUri, 'sendFailed', why, since); },
       );
+      break;
     }
     /**
      * One key, merged.
@@ -1180,7 +1254,8 @@ export function chatAction(
        * A turn can arrive in the window between the whole config
        * being pushed and the backend being ready - VS Code sends
        * both back to back - so `applyDispatch` waits on this
-       * promise before it touches the session. It is cleared before
+       * promise before it touches the session, and a turn said
+       * meanwhile waits on it before its send. It is cleared before
        * the promise settles to its consumers, so an action that
        * waited re-runs against the backend that is actually there.
        *
@@ -1209,10 +1284,10 @@ export function chatAction(
         await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection, undefined, conn.tokensFor);
         return undefined;
       })();
-      // The promise a close waits on, which is not the work's own: a refusal is
-      // answered to the client below, and a promise nobody reads must
-      // not carry the rejection a second time.
-      restarting.set(uri, work.then(() => undefined, () => undefined));
+      // The promise a close and a turn's send wait on, made from the work's: a
+      // refusal is answered to the client below, so a failure is carried here
+      // as its words, and its rejection reaches nobody twice.
+      restarting.set(uri, work.then(() => undefined, (error: unknown) => (error instanceof Error ? error.message : String(error))));
       const held = restarting.get(uri);
       const clear = (): void => {
         if (restarting.get(uri) === held) restarting.delete(uri);
@@ -1493,7 +1568,7 @@ export function chatAction(
         : {}) as Record<string, unknown>;
       const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
       return beginTurn(
-        beginOrRun(
+        () => beginOrRun(
           session,
           provider,
           crypto.randomUUID(),
@@ -1953,7 +2028,11 @@ export function chatAction(
           if (failed !== undefined) throw failed;
           log(`started ${chatUri} over`);
         })();
-        restarting.set(uri, work.then(() => undefined, () => undefined));
+        // A delete that failed leaves the chat started again on the conversation
+        // it had, so only a chat that did not come back is a start that failed.
+        restarting.set(uri, work.then(() => undefined, (error: unknown) => (byChat.has(chatUri)
+          ? undefined
+          : error instanceof Error ? error.message : String(error))));
         const held = restarting.get(uri);
         void work.then(
           () => { if (restarting.get(uri) === held) restarting.delete(uri); },

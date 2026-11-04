@@ -290,13 +290,23 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   lives: Map<string, object>;
   /** A session's token in `lives`, made when it has none. */
   lifeOf: (uri: string) => object;
-  /** The sessions being restarted now, by their own uri. */
-  restarting: Map<string, Promise<void>>;
+  /**
+   * The sessions being restarted now, by their own uri, each settling once its
+   * start has: with the failure's words when the start failed.
+   */
+  restarting: Map<string, Promise<string | undefined>>;
   /**
    * The turns a client resumed that run now, by their chat and their id: the
    * time each ran before and when it ran again, which its stop is said with.
    */
   resumedTurns: Map<string, { duration: number; since: number }>;
+  /**
+   * The turns stopped on each chat whose state this host holds, by the chat's
+   * URI: a turn's send asks it before each step of its preparation and before
+   * its prompt goes out, as the reference host keeps each chat's cancelled turns.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486
+   */
+  cancelledTurns: Map<string, Set<string>>;
   /** What this host has learned about each backend, by the id clients name it by. */
   learned: Map<string, Learned>;
   /** The lead chat of a held session, when it has one. */
@@ -350,6 +360,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * echo. With none, it is this host's own action, whatever produced it.
    */
   dispatch: (channel: string, given: Record<string, unknown>, origin?: Origin | undefined) => void;
+  /** Whether a client's dispatch was answered already, by its echo or its refusal. */
+  answered: (origin: Origin) => boolean;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *

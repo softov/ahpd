@@ -186,6 +186,67 @@ it('gives a turn its origin when the machine it runs in is set to the host first
   await host.close();
 });
 
+/*
+ * A turn is said, then prepared: a machine is set where the host's branch is
+ * before its prompt goes out, and a turn stopped meanwhile never reaches the
+ * backend, as VS Code's host checks for a cancel before it sends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
+ */
+it('sends nothing for a turn stopped while its machine is set where the host\'s branch is', async () => {
+  let followed: () => void = () => {};
+  const computers = { how: async () => undefined, follow: () => new Promise<void>((done) => { followed = done; }) };
+  const begun: string[] = [];
+  const base = echo({ path: dir, pace: 0 });
+  const counting: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return { ...session, begin: (...args: Parameters<Session['begin']>) => { begun.push(args[0]); session.begin(...args); } };
+    },
+  };
+  const { host, p, client, dispatch } = await serving(counting, { computers } as Partial<HostOptions>, { computer: 'computer://box' });
+  p.heard.length = 0;
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
+  await settle();
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  followed();
+  await settle();
+
+  expect(begun).toEqual([]);
+  expect(p.heard.filter((one) => one.channel === CHAT).map((one) => [one.action.type, one.origin?.clientSeq])).toEqual([
+    ['chat/turnStarted', 1],
+    ['chat/turnCancelled', 2],
+  ]);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { turns: { id: string; state: string }[] } };
+  }).snapshot.state;
+  expect(held.turns.map((one) => [one.id, one.state])).toEqual([['t1', 'cancelled']]);
+  await host.close();
+});
+
+/*
+ * A turn on a session filed away is said, and ended in the words VS Code's
+ * host ends one on an archived session with.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ */
+it('ends a turn on an archived session in an error, as read-only', async () => {
+  const { host, p, client, dispatch } = await serving(echo({ path: dir, pace: 0 }));
+  await client.handle({ method: 'dispatchAction', params: { channel: SESSION, clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+  await settle();
+  p.heard.length = 0;
+  await dispatch(2, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+
+  const said = p.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1');
+  expect(said.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', 2, undefined],
+    ['chat/error', undefined, undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'archived' } });
+  await host.close();
+});
+
 it('gives a stop its origin when its backend lets the turn go after an await', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 50 })));
   await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });

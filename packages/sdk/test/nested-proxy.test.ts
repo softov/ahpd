@@ -894,11 +894,13 @@ it('says a customization switch on a nested session to the clients outside once'
 }, 30_000);
 
 /*
- * A turn the host outside said, which the host inside would not start, ends
- * out here in an error with the inside's reason, as a send that fails ends its
- * own turn, and the session ending later fails no turn a second time.
+ * A turn the host inside will not run is ended out here as that host ends it,
+ * in its words: a turn it refuses after its echo ends in `chat/error`, as the
+ * reference host's admission ends one. The session ending later fails no turn
+ * a second time.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
  */
-it('ends a turn the host inside would not start in an error out here', async () => {
+it('ends a turn the host inside would not run as the host inside ends it', async () => {
   const inner = innerHost(backend());
   inner.host.refuseTurns('The host inside is stopping');
   const { host, dispatch, told } = await outside(inner);
@@ -907,7 +909,7 @@ it('ends a turn the host inside would not start in an error out here', async () 
   expect(told('session/creationFailed')).toEqual([]);
   expect(told('chat/turnStarted').map((one) => [one.origin, one.rejectionReason])).toEqual([[{ clientId: 'window', clientSeq: 8 }, undefined]]);
   expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([
-    ['t1', { errorType: 'turnFailed', message: 'The host inside is stopping' }],
+    ['t1', { errorType: 'rejected', message: 'The host inside is stopping' }],
   ]);
   inner.crash();
   await until(() => told('session/creationFailed').length > 0);

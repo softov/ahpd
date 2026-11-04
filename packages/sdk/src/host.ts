@@ -566,9 +566,10 @@ export function createHost(options: HostOptions): Host {
    * first send pushes the whole config and then the first turn back to back -
    * so the turn can arrive while the restart is still running. An action that
    * reaches such a session waits here rather than being applied to the
-   * backend that is on its way out.
+   * backend that is on its way out, and a turn's send waits here too. Each
+   * settles with the failure's words when the start failed.
    */
-  const restarting = new Map<string, Promise<void>>();
+  const restarting = new Map<string, Promise<string | undefined>>();
   /**
    * Each client's dispatches that wait, by its id, in the order it sent them,
    * across every connection it has, as the reference host queues a client's.
@@ -944,6 +945,10 @@ export function createHost(options: HostOptions): Host {
       asks.cancelTurn(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
+      // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
+      if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
+        ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
+      }
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1227,6 +1232,7 @@ export function createHost(options: HostOptions): Host {
         lapsed.set(client, channels.add(one));
       }
       states.delete(one);
+      ctx.cancelledTurns.delete(one);
     }
   };
 
@@ -1355,7 +1361,7 @@ export function createHost(options: HostOptions): Host {
     ],
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
-    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, resumedTurns: new Map(), learned, starting,
+    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
@@ -1368,6 +1374,7 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
+    answered: (origin: Origin) => said.has(origin),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
@@ -1377,7 +1384,10 @@ export function createHost(options: HostOptions): Host {
       states.set(channel, { kind, state, baselines: new Set() });
       return state;
     },
-    closeState: (channel: string) => { states.delete(channel); },
+    closeState: (channel: string) => {
+      states.delete(channel);
+      ctx.cancelledTurns.delete(channel);
+    },
     heldStates: states as ReadonlyMap<string, HeldState>,
     asks,
     letStateGo,

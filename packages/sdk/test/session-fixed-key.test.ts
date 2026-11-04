@@ -40,7 +40,7 @@ const settle = async (times = 40): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-type Note = { channel: string; action: Record<string, unknown>; rejectionReason?: string };
+type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number }; rejectionReason?: string };
 
 const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
   .filter((n) => n.method === 'action')
@@ -165,22 +165,32 @@ it('starts the session again for a fixed key, and the first turn lands there', a
   expect(began).toEqual([{ spawn: 1, text: 'go' }]);
 });
 
-it('answers the turn that waited on a restart with the failure', async () => {
+/*
+ * The restart is the turn's preparation, so a restart that fails ends the turn
+ * said meanwhile in an error in its words, as VS Code's host ends a turn whose
+ * preparation failed.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends the turn that waited on a restart in an error with the failure', async () => {
   const { client, p, uri, chatUri, began } = await opened(undefined, 1);
   void change(client, uri, { fixed: 'two' });
   void turn(client, chatUri);
   await settle();
 
-  // The backend never started, so no turn ran - and the turn that waited is
-  // refused with the reason rather than left waiting on a session that is
-  // not there. The refusal is looked for across the channels because the
-  // host answers a chat under the name it holds it by, not the client's.
+  // The backend never started, so no turn ran, and the turn that waited is
+  // ended with the reason, since the session it was meant for is not there.
+  // It is looked for across the channels because the host answers a chat under
+  // the name it holds it by.
   expect(began).toEqual([]);
-  const refused = p.notes
+  const said = p.notes
     .filter((one) => one.method === 'action')
     .map((one) => one.params as Note)
-    .find((one) => one.rejectionReason === 'the backend would not start');
-  expect(refused).toBeDefined();
+    .filter((one) => one.action.turnId === 't1');
+  expect(said.map((one) => [one.action.type, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
 });
 
 it('does not start anything again for a value that did not move', async () => {
@@ -488,6 +498,49 @@ const intoMachine = async (throws = false) => {
   return { host, p, client, said, machine };
 };
 
+/*
+ * A turn sent while its session is started again is said at once, and handed
+ * to the session that comes up: the restart is the turn's preparation, as VS
+ * Code's host shows a turn running while the work its send needs is done.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2241-L2316
+ */
+it('says a turn sent while its session is started again at once, and begins it once the session is up', async () => {
+  const { p, client, said, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
+  await settle();
+  expect(actions(p, chat).filter((note) => note.action.type === 'chat/turnStarted').map((note) => note.origin?.clientSeq)).toEqual([7]);
+  expect(said).toEqual([]);
+  machine.made('m1');
+  await settle();
+  expect(said).toEqual(['1: begin go']);
+  expect(actions(p, chat).filter((note) => note.action.type === 'chat/turnStarted').map((note) => note.origin?.clientSeq)).toEqual([7]);
+});
+
+/*
+ * A turn stopped while its session is started again is never handed to the
+ * session that comes up, as VS Code's host sends nothing for a turn cancelled
+ * while its send is prepared.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
+ */
+it('sends nothing for a turn stopped while its session is started again', async () => {
+  const { p, client, said, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
+  await settle();
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 8, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } } });
+  await settle();
+  expect(actions(p, chat).map((note) => [note.action.type, note.origin?.clientSeq])).toEqual([
+    ['chat/turnStarted', 7],
+    ['chat/turnCancelled', 8],
+  ]);
+  machine.made('m1');
+  await settle();
+  expect(said).toEqual([]);
+});
+
 /** The action envelopes a peer was sent. */
 const notesOf = (r: ReturnType<typeof peer>): Note[] => r.notes.filter((n) => n.method === 'action').map((n) => n.params as Note);
 
@@ -498,7 +551,7 @@ const notesOf = (r: ReturnType<typeof peer>): Note[] => r.notes.filter((n) => n.
  */
 it('holds a dispatch behind its client\'s waiting one, sent on another connection of that client', async () => {
   const { host, client, machine } = await intoMachine();
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  void client.handle({ method: 'dispatchAction', params: { channel: chatUriFor('ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
   await settle();
   const q = peer();
   const again = host.accept(q);
@@ -512,27 +565,42 @@ it('holds a dispatch behind its client\'s waiting one, sent on another connectio
 });
 
 
-it('drops a turn that waited on a restart when its connection left', async () => {
+/*
+ * A turn said is the chat's, so it is sent once its session is up whether or
+ * not the connection that sent it is still there, as VS Code's host sends a
+ * turn it said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+ */
+it('begins a turn that waited on a restart after its connection left', async () => {
   const { client, said, machine } = await intoMachine();
   void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   await settle();
   client.close();
   machine.made('m1');
   await settle();
-  expect(said).toEqual([]);
+  expect(said).toEqual(['1: begin go']);
 });
 
-it('refuses a waiting turn the backend throws on, to the client that sent it', async () => {
+/*
+ * A backend that throws as it is handed the turn ends the turn in an error in
+ * its words, as VS Code's host ends a turn whose send throws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends a waiting turn the backend throws on in an error', async () => {
   const { p, client, said, machine } = await intoMachine(true);
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'first');
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'second');
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void turn(client, chat, 'first');
   await settle();
   machine.made('m1');
   await settle();
-  expect(said).toContain('1: begin first');
-  const refused = p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note)
-    .filter((note) => note.action.type === 'chat/turnStarted' && note.rejectionReason !== undefined);
-  expect(refused.map((note) => note.rejectionReason)).toContain('the backend fell over');
+  expect(said).toEqual(['1: begin first']);
+  const ended = actions(p, chat).filter((note) => note.action.turnId === 't1');
+  expect(ended.map((note) => [note.action.type, note.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(ended[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend fell over' } });
 });
 
 /*
@@ -542,22 +610,27 @@ it('refuses a waiting turn the backend throws on, to the client that sent it', a
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
  */
 it('applies a dispatch that waited on a restart however long it took, and the next behind it', async () => {
-  const { p, client, said, machine } = await intoMachine();
+  const { p, client, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
-    void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
     void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
     await vi.advanceTimersByTimeAsync(61_000);
   }
   finally { vi.useRealTimers(); }
   await settle();
-  const notes = (): Note[] => p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note);
-  expect(notes().filter((note) => note.rejectionReason !== undefined)).toEqual([]);
-  expect(notes().some((note) => note.action.type === 'root/configChanged')).toBe(false);
+  // The answers to the client's own two dispatches, which carry its origin.
+  const notes = (): Note[] => p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note)
+    .filter((note) => note.origin !== undefined && (note.action.type === 'chat/draftChanged' || note.action.type === 'root/configChanged'));
+  expect(notes()).toEqual([]);
   machine.made('m1');
   await settle();
-  expect(said).toEqual(['1: begin go']);
-  expect(notes().filter((note) => note.action.type === 'root/configChanged').map((note) => note.rejectionReason)).toEqual([undefined]);
+  expect(notes().map((note) => [note.action.type, note.rejectionReason])).toEqual([
+    ['chat/draftChanged', undefined],
+    ['root/configChanged', undefined],
+  ]);
 });
 
 it('answers a config change that waited on the catalogue however long it took', async () => {

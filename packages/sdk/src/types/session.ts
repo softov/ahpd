@@ -938,7 +938,8 @@ export interface Session {
    *
    * A session whose agent has gone for good - a host inside a machine that
    * died - answers it, and the host refuses every later client action on its
-   * session and chat channels with it, a new turn included.
+   * session and chat channels with it, and ends a new turn on them in an
+   * error with it.
    *
    * Optional. A backend that is either running or closed leaves it out.
    */

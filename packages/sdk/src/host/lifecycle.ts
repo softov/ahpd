@@ -152,11 +152,13 @@ export interface Lifecycle {
     attachments?: MessageAttachment[],
     kind?: 'queued' | 'steering',
     said?: () => void,
+    stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined>;
-  /** A turn begun, or a turn refused, from what `beginOrRun` answered, and what is still to come of it. */
+  /** A turn begun, refused or failed, from what `beginOrRun` answers when `begin` asks it, and what is still to come of it. */
   beginTurn(
-    begun: string | undefined | Promise<string | undefined>,
+    begin: () => string | undefined | Promise<string | undefined>,
     refused: (why: string) => void,
+    failed?: (why: string) => void,
   ): Promise<void> | undefined;
   /** The model a message names, or nothing when it names none. */
   modelIn(value: unknown): { id: string; config?: Record<string, string | number | boolean | null> } | undefined;
@@ -1314,6 +1316,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * is said by this host itself, after its checks and before any side effect.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
    *
+   * `stopped` answers whether a turn said already was stopped while it was
+   * prepared, which leaves it unsent, as the reference host checks for a
+   * cancel after each step of a turn's preparation.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
+   *
    * A promise only for a turn that had to be asked about, or one in a machine:
    * everything else is answered here and now, which is what keeps the actions of
    * a turn in the order they were already written in.
@@ -1330,6 +1337,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     attachments?: MessageAttachment[],
     kind?: 'queued' | 'steering',
     said?: () => void,
+    stopped?: () => boolean,
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out.
@@ -1367,6 +1375,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     let keys: string[] | undefined;
     const run = (): string | undefined => {
+      // A turn stopped while it was prepared is never handed to the backend.
+      if (stopped?.() === true) return undefined;
       /*
        * Who sent it, against the id this turn will be known by: the turn id when
        * it starts now, and the queued message's id when it waits its turn. A
@@ -1448,8 +1458,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * A session in no machine asks nothing and is begun here and now, which is
      * every turn of a session on this host.
      */
-    const turn = (): string | undefined | Promise<string | undefined> =>
-      (queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run));
+    const turn = (): string | undefined | Promise<string | undefined> => {
+      if (stopped?.() === true) return undefined;
+      return queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run);
+    };
     /*
      * The turn's own check, beside the one above.
      *
@@ -1490,30 +1502,38 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
-   * A turn begun, or a turn refused, from what `beginOrRun` answered.
+   * A turn begun, refused or failed, from what `beginOrRun` answers when
+   * `begin` asks it.
    *
    * For the two call sites that stand in a `switch`. An answer that came
    * already is taken at once; one that is still to come is taken when it
    * comes, and a turn nothing refused is begun then as well. What is still to
-   * come is returned, so the connection that asked holds its later dispatches
-   * until the turn's client action is said or refused.
+   * come is returned, for a caller whose client's later dispatches wait on it.
    *
-   * A promise that rejects is a refusal too, in the thrown error's own words: an
-   * answer later than the tick it was asked in comes from a backend, a machine
-   * or a policy check, and a backend that throws while the turn is begun - a CLI
-   * that is gone, a machine that will not take a command - is a turn the client
-   * asked for and is not getting. Left unhandled it is a rejection nobody reads
-   * and a client waiting for an answer that never comes.
+   * A throw, in the tick it was asked in or later, is `failed`, in the thrown
+   * error's own words, and a refusal where no `failed` is given: an answer
+   * later than the tick it was asked in comes from a backend, a machine or a
+   * policy check, and a backend that throws while the turn is begun - a CLI
+   * that is gone, a machine that will not take a command - is a turn the
+   * client asked for and is not getting. Left unhandled it is a rejection
+   * nobody reads and a client waiting for an answer that never comes.
    */
   const beginTurn = (
-    begun: string | undefined | Promise<string | undefined>,
+    begin: () => string | undefined | Promise<string | undefined>,
     refused: (why: string) => void,
+    failed: (why: string) => void = refused,
   ): Promise<void> | undefined => {
+    let begun: string | undefined | Promise<string | undefined>;
+    try { begun = begin(); }
+    catch (error) {
+      failed(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
     if (typeof begun === 'string') refused(begun);
     else if (begun !== undefined) {
       return begun.then(
         (why) => { if (why !== undefined) refused(why); },
-        (error: unknown) => { refused(error instanceof Error ? error.message : String(error)); },
+        (error: unknown) => { failed(error instanceof Error ? error.message : String(error)); },
       );
     }
     return undefined;

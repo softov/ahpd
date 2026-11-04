@@ -221,6 +221,20 @@ const rejection = (said: ReturnType<typeof noted>): string | undefined => said.n
   .filter((one): one is string => one !== undefined)
   .pop();
 
+/**
+ * The words a started turn was ended with, once its start was said, or
+ * nothing when it was not ended so: VS Code's host ends a turn its admission
+ * refuses with `chat/error` on it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L110
+ */
+const endedWith = (said: ReturnType<typeof noted>): string | undefined => {
+  const actions = said.notes.filter((note) => note.method === 'action')
+    .map((note) => note.params as { action: { type?: string; part?: { error?: { message?: string } } }; rejectionReason?: string });
+  const started = actions.some((one) => one.action.type === 'chat/turnStarted' && one.rejectionReason === undefined);
+  const error = actions.find((one) => one.action.type === 'chat/error');
+  return started ? error?.action.part?.error?.message : undefined;
+};
+
 /** A connected client, which is all `turnOn` ever calls. */
 interface Caller {
   handle(frame: { method: string; params: unknown }): Promise<unknown>;
@@ -402,12 +416,13 @@ describe('a turn, with the switch on', () => {
     expect(carrying[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 12 });
   });
 
-  it('refuses example 21: A5 refuses bob\'s turn on fable-5, naming the row', async () => {
+  it('ends bob\'s turn on fable-5 in an error naming the row, example 21', async () => {
     const { client, said } = await signedIn(await host(true), 'bob');
     // The same row that let his session through, because this turn did name the
     // model the deny names.
     await turnOn(client, said, 'bob', 'claude', 'kvm-shared', 'anthropic/fable-5');
-    expect(rejection(said)).toBe('A5 refuses agent claude with model anthropic/fable-5 on kvm-shared');
+    expect(rejection(said)).toBeUndefined();
+    expect(endedWith(said)).toBe('A5 refuses agent claude with model anthropic/fable-5 on kvm-shared');
   });
 
   it('leaves the model alone when the turn names none', async () => {
@@ -428,7 +443,7 @@ describe('a turn at a limit', () => {
     return made;
   };
 
-  it('refuses the turn at the amount, and leaves the session standing', async () => {
+  it('ends the turn at the amount in an error, and leaves the session standing', async () => {
     const usage = keeping({ 'policy:A3/usd': { usd: 100 } });
     const { client, said } = await signedIn(
       await host(true, true, await held(100, 'A3'), { usage, agents: [reporting('claude')] }),
@@ -436,7 +451,8 @@ describe('a turn at a limit', () => {
     );
     // The session was created; the turn is what the row has no room for.
     await turnOn(client, said, 'spent', 'claude', 'sandbox-alice', 'anthropic/sonnet-5');
-    expect(rejection(said)).toBe('A3 has no room: 100 / 100 usd this week');
+    expect(rejection(said)).toBeUndefined();
+    expect(endedWith(said)).toBe('A3 has no room: 100 / 100 usd this week');
     expect(usage.entries).toEqual([]);
   });
 
