@@ -23,8 +23,9 @@ The host holds automations in memory.
 
 ## Verified
 
-- `packages/sdk/test/demo.test.ts` has seven cases, for the root agent's models, the session's provider and customizations, and a created automation.
-- The same file covers a `slow` turn that runs and ends, a cancelled `slow` turn, a `fail` turn, and `read` asking which note.
+- `packages/sdk/test/demo.test.ts` has eight cases, for the root agent's models, the session's provider and customizations, and a created automation.
+- The same file covers a `slow` turn that runs and ends, a cancelled `slow` turn, and a `fail` turn.
+- It also covers the title of a session that starts with `fail`, and `read` asking which note.
 - `pnpm typecheck` passed, and `pnpm test` passed 8587 tests in 518 files.
 - `pnpm demo` on a scratch port answered `ahpc agents` with `demo  Demo  3 model(s)`, and `ahpc session list` with `No sessions.`
 
