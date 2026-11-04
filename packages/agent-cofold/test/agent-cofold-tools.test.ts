@@ -15,6 +15,7 @@ import {
   toolsOf,
 } from '../src/index.js';
 import type { CofoldOptions, ToolsConfig } from '../src/index.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * The four capabilities a cofold session runs itself.
@@ -129,7 +130,7 @@ async function open(args: {
   const agent = cofoldAgent(options);
   const v = view(args.trace, args.onEmit);
   const edits: Edit[] = [];
-  const session: Session = agent.create({
+  const session: Session = startedNow(agent.create({
     uri: 'ahp-session:/tools',
     chatUri: 'ahp-chat:/tools',
     settings: { ...agent.defaults(), ...(args.settings ?? {}) },
@@ -141,7 +142,7 @@ async function open(args: {
       edits.push({ turnId, path, phase });
       args.trace?.push(`edit:${phase}`);
     },
-  } as unknown as Start);
+  } as unknown as Start));
   return { model, session, v, edits };
 }
 

@@ -7,6 +7,7 @@ import { bag } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { cofoldAgent } from '../src/index.js';
 import { ruleName } from '../src/tools.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * A shell command the owner's rules already allow.
@@ -91,7 +92,7 @@ async function open(args: {
   const agent = cofoldAgent({ adapter: model, memory: true });
   const notes: Note[] = [];
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-cofold-autoapproval-'));
-  const session: Session = agent.create({
+  const session: Session = startedNow(agent.create({
     uri: 'ahp-session:/autoapproval',
     chatUri: 'ahp-chat:/autoapproval',
     settings: { ...agent.defaults(), ...(args.settings ?? {}) },
@@ -99,7 +100,7 @@ async function open(args: {
     schema: () => agent.schema(),
     emit: (channel: Note['channel'], action: Bag) => { notes.push({ channel, action }); },
     ...(args.check === undefined ? {} : { getAutoApproval: args.check }),
-  } as unknown as Start);
+  } as unknown as Start));
   return { session, model, notes, dir };
 }
 

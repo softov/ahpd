@@ -11,6 +11,7 @@ import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
 
 /**
@@ -131,7 +132,7 @@ function open(
   onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Bag) => void,
 ) {
   const view = channels(onEmit);
-  const session = agent.create({
+  const session = startedNow(agent.create({
     uri: `ahp-session:/${id}`,
     chatUri: `ahp-chat:/${id}`,
     settings: agent.defaults(),
@@ -142,7 +143,7 @@ function open(
     // said nothing is ten minutes.
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     ...extra,
-  });
+  }));
   return { session, view, uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` };
 }
 
@@ -352,14 +353,14 @@ it('works in a scratch folder of its own when the client gave it none', () => {
     const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
     const agent = backend(root, model, allowAll());
     const view = channels();
-    const session = agent.create({
+    const session = startedNow(agent.create({
       uri: 'ahp-session:/scratched',
       chatUri: 'ahp-chat:/scratched',
       settings: agent.defaults(),
       schema: () => agent.schema(),
       emit: view.emit,
       clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
-    });
+    }));
     const folder = join(home, '.copilot', 'chats', 'scratched');
     expect(session.workingDirectories()).toEqual([uriOf(folder)]);
     expect(existsSync(folder)).toBe(true);

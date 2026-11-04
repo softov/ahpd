@@ -93,7 +93,7 @@ export interface Spawn {
     sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
-  ): Session;
+  ): Promise<Session>;
   /**
    * Set every plugin plan's `changed` on the entry it closes over.
    *
@@ -683,7 +683,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
   wirePlan();
 
-  const spawn = (
+  const spawn = async (
     agent: Agent,
     uri: string,
     chatUri: string,
@@ -696,7 +696,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
-  ): Session => {
+  ): Promise<Session> => {
     /*
      * The backend that actually runs this session.
      *
@@ -1586,7 +1586,14 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     const existing = sessions.get(uri);
     const foreign = existing !== undefined ? agent !== existing.agent : own !== undefined && agent !== own.agent;
-    const session = used.create(wired);
+    /*
+     * A backend answers its session at once, and the rest of this start runs in
+     * the same tick it was asked in; or it answers a promise, for a step to
+     * make first, and the session is held once that step is made, the start's
+     * failure being the failure of whatever asked for it.
+     */
+    const made = used.create(wired);
+    const session = made instanceof Promise ? await made : made;
     titled = session;
     const held = existing ?? {
       agent: own?.agent ?? agent,

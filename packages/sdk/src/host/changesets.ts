@@ -268,7 +268,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     let watching: ReturnType<typeof watchTurn> | undefined;
     try {
       ctx.bareSessions.add(uri);
-      ctx.openSession(uri, provider, {}, uriOf(dir));
+      await ctx.openSession(uri, provider, {}, uriOf(dir));
       const held = sessions.get(uri);
       const lead = held === undefined ? undefined : leadOf(held);
       if (lead === undefined) return undefined;
@@ -325,7 +325,7 @@ export function createChangesets(ctx: HostContext): Changesets {
       });
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
-      const chat = ctx.spawn(
+      const chat = await ctx.spawn(
         held.agent, uri, chatUri, idOf(chatUri), ctx.backendsOwn(held.config),
         { context: typeof message.text === 'string' ? message.text : '' },
         held.workingDirectory, undefined, held.additional,

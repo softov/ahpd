@@ -812,7 +812,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.trusted === true && wanted.workingDirectory !== undefined) {
       kept.setTrustedFolder?.(idOf(uri), localPath(wanted.workingDirectory));
     }
-    openSession(
+    await openSession(
       uri,
       provider,
       config,

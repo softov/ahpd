@@ -8,6 +8,7 @@ import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { acpAgent, watchedRows, watchSession } from '../src/index.js';
@@ -113,7 +114,7 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
 /** One session of a backend, watched and remembered for cleanup. */
 function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
   const watch = watcher();
-  const session = agent.create(opening(id, { ...over, emit: watch.emit }));
+  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
   started.push(session);
   return { session, watch };
 }

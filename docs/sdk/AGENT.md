@@ -75,7 +75,7 @@ const host = createHost({ path, agents: [shout()] });
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
 | `schema()`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
-| `create(start)` | Start one. Returns a `Session` | required |
+| `create(start)` | Start one. Returns a `Session`, or a promise of one where a step comes first (a fork's copy or a truncation's cut of the conversation it resumes): the request that asked is answered when it settles, and a rejection is that request's failure | required |
 | `description` | One line about what this backend is | optional |
 | `probe()` | What you offer, asked once at startup: the models, the commands, and the account your harness bills to | optional |
 | `probeChanged(onChange)` | Call `onChange` when what `probe()` answers may have changed. The host probes again, and stops the calls when it closes or a fold removes you | optional |

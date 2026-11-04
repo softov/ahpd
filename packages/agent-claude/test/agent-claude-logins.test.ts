@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, AgentView, Bag, Connector, ConnectorOwner, Engine, MessageAttachment, PluginHost, Start } from '@ahpd/sdk';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * One Claude agent on several logins, as the model proxy routes a name over
@@ -910,7 +911,7 @@ describe('the plugin', () => {
       emit: () => {},
       workingDirectory: host.paths[0] as string,
     };
-    const session = engine.open(view).create(start);
+    const session = startedNow(engine.open(view).create(start));
     await settle();
     expect(tokenOf()).toBe('token-work');
     await turn(session, 't1', 'one');

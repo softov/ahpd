@@ -9,6 +9,7 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { posix } from '../../../tools/posix.js';
 import { name } from '../src/plugin.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { keyVariablesOf, presets as shipped } from '../src/presets.js';
 
 /*
@@ -98,7 +99,7 @@ const sessionOf = (
   label: string,
   extra: Record<string, unknown> = {},
 ): Session => {
-  const session = kind.open(viewOf(id, held)).create(startOf(label, extra));
+  const session = startedNow(kind.open(viewOf(id, held)).create(startOf(label, extra)));
   started.push(session);
   return session;
 };
@@ -418,11 +419,11 @@ it('keeps a row\'s modes on the agent, and the modes a session hears on that ses
   expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
 
   const ended: string[] = [];
-  const session = agent.create(startOf('heard', {
+  const session = startedNow(agent.create(startOf('heard', {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/turnComplete' || action.type === 'chat/error') ended.push(String(action.type));
     },
-  }));
+  })));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });

@@ -3,6 +3,7 @@ import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
+import { startedNow } from './support/started.js';
 
 /*
  * Who else is in this session.
@@ -45,7 +46,7 @@ const watched = (pace = 0, backend?: Agent) => {
     ...base,
     create: (start) => {
       spawned.push(start.chatUri);
-      const chat = base.create(start);
+      const chat = startedNow(base.create(start));
       // What the backend is handed at creation: a tool the creator brought has
       // to be here for it to reach the first turn. Recorded only once the
       // backend has actually started, so a create it refused is not one here.

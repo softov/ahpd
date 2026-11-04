@@ -7,7 +7,6 @@ import type { SessionContext } from './context.js';
 
 /** What reading and reopening a run offers the other areas. */
 export interface Runs {
-  cut: () => Promise<void>;
   status: () => number;
   apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
   read: (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough?: number) => void;
@@ -17,34 +16,7 @@ export interface Runs {
 }
 
 export const createRuns = (ctx: SessionContext): Runs => {
-  const { start, provider, store, sessionId, turns, pending, points } = ctx;
-
-  /**
-   * The cut this session was asked for, made before it runs a turn.
-   *
-   * AHP gives a fork and a rewind the same job - the conversation the host
-   * named, ending at the point it named - and the difference is only where the
-   * result lives: a fork copies it into this session's new id and leaves the
-   * source whole, a rewind drops what followed the point in place. Both are
-   * one store call, and both are refused when the store cannot make the cut,
-   * because a fork that quietly continued would append to the conversation it
-   * was told to preserve and a rewind that did nothing would keep the turns it
-   * was told to drop.
-   */
-  const cut = async (): Promise<void> => {
-    if (start.forkAt !== undefined && start.rewindAt !== undefined) {
-      throw new Error(`${provider}: a session cannot fork and rewind at once`);
-    }
-    if (start.forkAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a fork needs the conversation it copies`);
-      await store.sessions.fork({ fromSessionId: start.resume, throughMessageId: start.forkAt, sessionId });
-      return;
-    }
-    if (start.rewindAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a rewind needs the conversation it cuts`);
-      await store.sessions.truncate({ sessionId, throughMessageId: start.rewindAt });
-    }
-  };
+  const { start, store, sessionId, turns, pending, points } = ctx;
 
   /**
    * Move the running turn into the history, once the stream has ended.
@@ -96,13 +68,14 @@ export const createRuns = (ctx: SessionContext): Runs => {
   };
 
   /**
-   * Keep where this turn ended, for the two cut methods.
+   * Keep where this turn ended, for `forkPoint` and `endPoint`.
    *
    * Read from the run record rather than from the events, because the last
    * thing a run wrote is a message no event names - a tool result, a steer, the
-   * marker a cancel leaves - and a cut at a guessed point would drop a turn's
-   * log for a point it did not really have. The store advances the run's
-   * `lastMessageId` with every message it appends, so the record is exact.
+   * marker a cancel leaves - and a fork or a truncation at a guessed point
+   * would drop a turn's log for a point it did not really have. The store
+   * advances the run's `lastMessageId` with every message it appends, so the
+   * record is exact.
    */
   const rememberPoints = async (turnId: string, runId: string): Promise<void> => {
     const record = await store.runs.get({ sessionId, runId });
@@ -281,7 +254,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
   };
 
   return {
-    cut, apply, read, findPaused, resumePaused, dropPaused,
+    apply, read, findPaused, resumePaused, dropPaused,
     /** A request nobody has answered yet is the session waiting on somebody. */
     status: (): number => statusOf({
       waiting: pending.size > 0,

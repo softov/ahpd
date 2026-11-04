@@ -89,20 +89,13 @@ export function cofoldSession(
 ): Session {
   const provider = options.provider ?? 'cofold';
   /**
-   * The cofold session this chat reads and writes.
-   *
-   * A fresh session and a plain resume are the id the host named - the chat's
-   * own where it has one, and the session's otherwise - or the one the URI
-   * spells. A rewind is that same id: AHP keeps the session and drops a tail.
-   * A fork is the one case that does not continue what it was resumed with -
-   * AHP forks a *chat* into another chat of the same session, so
-   * `start.resume` names the conversation to copy from and the target has to
-   * be a new one, or the fork would append to the conversation it was told to
-   * preserve.
+   * The cofold session this chat reads and writes: the conversation it
+   * resumes, a fork's copy or a truncated conversation included, which the
+   * agent's `create` made in the store first; otherwise the id the host named,
+   * the chat's own where it has one and the session's otherwise, or the one
+   * the URI spells.
    */
-  const sessionId = start.forkAt !== undefined
-    ? crypto.randomUUID()
-    : start.resume ?? start.chatId ?? sessionIdOf(start.uri);
+  const sessionId = start.resume ?? start.chatId ?? sessionIdOf(start.uri);
   /**
    * The directory the agent works in: the host's when it named one, and a
    * scratch folder of the session's own otherwise, as VS Code's agents run a
@@ -179,16 +172,12 @@ export function cofoldSession(
    * not, so the id is read once when a watched turn ends - before the client
    * is told it ended - and kept here for the two methods to answer from. A turn
    * the session opens with takes the point the backend's read of the store
-   * named for it, through the turn a fork or a rewind cuts at. A turn with no
-   * entry is one nobody named a point for, which makes the host offer no cut
-   * at it: a point nobody can name is worse than none.
+   * named for it; the seed holds the turns a fork or a rewind kept. A turn
+   * with no entry is one nobody named a point for, which makes the host offer
+   * no cut at it: a point nobody can name is worse than none.
    */
-  const points = new Map<string, string>();
   const seeded = new Set((start.seed ?? []).map((turn) => String(turn.id)));
-  for (const [turnId, point] of seedEnds ?? []) {
-    if (seeded.has(turnId)) points.set(turnId, point);
-    if (point === (start.forkAt ?? start.rewindAt)) break;
-  }
+  const points = new Map<string, string>([...seedEnds ?? []].filter(([turnId]) => seeded.has(turnId)));
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
@@ -239,7 +228,6 @@ export function cofoldSession(
     opening: undefined,
     paused: undefined,
     resumedFrom: undefined,
-    refused: undefined,
     steering: undefined,
   } as SessionContext;
 
@@ -252,24 +240,16 @@ export function cofoldSession(
   Object.assign(ctx, pauses);
 
   /*
-   * A resumed conversation may hold a paused run, and a fork or a rewind has a
-   * cut to make, and both have to be known before the first turn reads the
-   * session. Nothing else in the session reads the store first, so this is the
-   * one deferral for all three.
+   * A resumed conversation may hold a paused run, which has to be known before
+   * the first turn reads the session. Nothing else in the session reads the
+   * store first, so this is the one deferral. A lookup the store fails runs
+   * the turns all the same, on the conversation as the store holds it.
    */
-  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.disposed) {
-    const pending = (async (): Promise<void> => {
-      await ctx.cut();
-      if (start.resume !== undefined) await ctx.findPaused();
-    })();
+  if (start.resume !== undefined && !ctx.disposed) {
+    const pending = ctx.findPaused();
     ctx.opening = pending;
     const settledOpening = (): void => { if (ctx.opening === pending) ctx.opening = undefined; };
-    void pending.then(settledOpening, (why: unknown) => {
-      // The refusal is kept rather than thrown into an unhandled rejection:
-      // the turn paths read it and answer the client with it.
-      ctx.refused = why instanceof Error ? why : new Error(String(why));
-      settledOpening();
-    });
+    void pending.then(settledOpening, settledOpening);
   }
 
   /** The model a client picked, taken by the next send: cofold keeps a model it took. */

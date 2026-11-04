@@ -11,6 +11,7 @@ import { metaKeys } from '../../../tools/wire.mjs';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
 import type { Session } from '../../sdk/src/types/session.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * What a cofold turn says it used, as the steps of that turn go by.
@@ -362,7 +363,7 @@ async function holding(model: ModelAdapter, tools: HostTool[] = []) {
   const made: Session[] = [];
   const watched = await watching(createHost({
     path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-usage-')),
-    agents: [{ ...agent, create: (start) => { const session = agent.create(start); made.push(session); return session; } }],
+    agents: [{ ...agent, create: (start) => { const session = startedNow(agent.create(start)); made.push(session); return session; } }],
     ...(tools.length > 0 ? { tools } : {}),
   }));
   return { ...watched, made };

@@ -436,7 +436,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * backend. Left to the chat, the session would come back as that one's and
      * the provider a client reads would move with it.
      */
-    const session = spawn(
+    const session = await spawn(
       other?.agent ?? owner,
       named,
       lead?.one.uri ?? chatUriFor(named),
@@ -465,7 +465,7 @@ export function createSleep(ctx: HostContext): Sleep {
       if (one.default === true) continue;
       const own = await ctx.transcriptOf(agent, one.backendId, at, named, one.uri);
       if (ctx.closed) throw new Error(CLOSING);
-      spawn(
+      await spawn(
         agent,
         named,
         one.uri,

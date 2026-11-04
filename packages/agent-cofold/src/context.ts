@@ -119,13 +119,10 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   /** Whether the session was disposed, after which no turn starts. */
   disposed: boolean;
   /**
-   * Whether the session's cut, and the lookup of a run a restart left paused,
-   * are still being made.
+   * Whether the lookup of a run a restart left paused is still being made.
    *
-   * A fork's or a rewind's cut has to land before the first turn reads the
-   * session, and a turn that began before the paused run was found would not
-   * know to let that run go first. Everything that would begin a turn waits on
-   * this.
+   * A turn that began before the paused run was found would not know to let
+   * that run go first. Everything that would begin a turn waits on this.
    */
   opening: Promise<void> | undefined;
   /**
@@ -139,13 +136,4 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    * when it ran again, so the turn holds its time and usage across both runs.
    */
   resumedFrom: { duration: number; at: number; usage: Bag | undefined } | undefined;
-  /**
-   * Why the cut this session was asked for did not happen.
-   *
-   * A session whose fork or rewind failed does not fall back to an ordinary
-   * continue: every turn it is asked for is answered with this, so a client
-   * sees the cut it asked for not happen rather than a conversation quietly
-   * carrying on from the wrong place.
-   */
-  refused: Error | undefined;
 }

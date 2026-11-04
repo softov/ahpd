@@ -12,7 +12,7 @@
  * catalogue is `catalog.ts`.
  */
 
-import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Offered, Session } from '@ahpd/sdk';
 import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
@@ -55,7 +55,7 @@ const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineN
  * with two commands are two backends, which is how one package serves Copilot
  * and Codex at once.
  */
-export function acpAgent(options: AcpOptions): Agent {
+export function acpAgent(options: AcpOptions): Agent<Session> {
   const provider = options.provider ?? 'acp';
   const displayName = options.displayName ?? 'ACP';
 

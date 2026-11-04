@@ -186,7 +186,7 @@ export interface NestedOptions {
  * A provider string is accepted too, for a caller that only wants the seam;
  * it answers an empty schema and no defaults, and is not a variant.
  */
-export const nestedAgent = (provider: Agent | string, options: NestedOptions): Agent => {
+export const nestedAgent = (provider: Agent | string, options: NestedOptions): Agent<Session> => {
   const real: Agent | undefined = typeof provider === 'string' ? undefined : provider;
   const name = typeof provider === 'string' ? provider : provider.provider;
   const create = (start: Start): Session => nestedSession(name, real?.variant === true, start, options);

@@ -1644,7 +1644,7 @@ export function createTooling(ctx: HostContext): Tooling {
      */
     startsRead(ctx, at, chatUri);
     if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
-    const chat = spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
+    const chat = await spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
     if (asked.title !== undefined) keepTitle(at, chatUri, asked.title);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
@@ -1820,7 +1820,7 @@ export function createTooling(ctx: HostContext): Tooling {
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
       // it ends up running in.
-      openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
+      await openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
         forWhom(kept.owner(idOf(uri))));
       /*
        * The session this one was made inside, kept with its record.
@@ -2032,7 +2032,7 @@ export function createTooling(ctx: HostContext): Tooling {
         };
         const where = await isolated(made, config, asked.workingDirectory);
         await settle(made, asked.workingDirectory, config);
-        openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
+        await openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         const lead = byChat.get(chatUriFor(made));
         if (lead === undefined) throw new Error(`${made} did not start`);

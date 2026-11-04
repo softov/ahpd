@@ -6,6 +6,7 @@ import type { BackendOptions, OpenPi } from '../src/index.js';
 import { apply } from '../src/plugin.js';
 import { PI_KEY_VARIABLES } from '../src/machine.js';
 import { fakePi, root } from './fake-pi.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * The `pi` engine: one record per pi agent.
@@ -84,7 +85,7 @@ function opened(agent: ReturnType<Engine['open']>): { session: Session; sent: Ba
     emit: (_channel: string, action: Bag) => { sent.push(action); },
     trusted: () => true,
   } as Start;
-  const session = agent.create(start);
+  const session = startedNow(agent.create(start));
   started.push(session);
   return { session, sent };
 }

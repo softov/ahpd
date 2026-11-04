@@ -391,8 +391,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * nothing can settle. The failure goes through the mapping like every other
    * ending, so a client draws the same `chat/error` a failed run produces.
    *
-   * This is the path a session whose fork or rewind could not be cut takes: the
-   * honest answer to "carry on from there" is that there is no there.
+   * This is the path a turn takes whose record can no longer be used.
    */
   const failTurn = (
     turnId: string,
@@ -404,7 +403,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
   ): void => {
     const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
-    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
+    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'record_refused', why));
   };
 
   /**
@@ -511,8 +510,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
         else await store.sessions.truncate({ sessionId, throughMessageId: point });
       }
       catch (error) {
-        // The store would not make the cut, so there is nothing to run on. The
-        // turn ends with the reason, the way a cut refused before it started.
+        // The store would not truncate the conversation, so there is nothing
+        // to run on, and the resumed turn ends with the reason.
         await ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', error));
         return;
       }
@@ -559,16 +558,10 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * second run would fight the paused one for the session's writer claim and
    * fail `writer_busy`. Waiting for the lookup is what tells the two apart,
    * and it costs an ordinary session nothing: `opening` is only set when the
-   * host named a conversation to continue and when a fork or a rewind is being
-   * cut.
-   *
-   * A chain that ended in a refusal - a cut the store would not make - leaves
-   * every turn on the failure path rather than on the ordinary one: the client
-   * asked to carry on from a point, and carrying on from somewhere else
-   * without saying so is the one answer that is worse than an error.
+   * host named a conversation to continue.
    */
   const sendNext = (): void => {
-    if (ctx.refused === undefined && ctx.opening !== undefined) {
+    if (ctx.opening !== undefined) {
       void ctx.opening.then(sendNext, sendNext);
       return;
     }
@@ -576,10 +569,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const next = ctx.pendingTurns.shift();
     if (next === undefined) return;
     const { turnId, text, model, from, attachments, options } = next;
-    if (ctx.refused !== undefined) {
-      failTurn(turnId, text, model, from, attachments, ctx.refused);
-      return;
-    }
     /*
      * The record first, so this turn runs on what it says now.
      *

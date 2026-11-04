@@ -25,6 +25,7 @@ import type { SessionStore } from '../src/types/sessions.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 import type { MessageAttachment, MessageFrom } from '../src/types/session.js';
+import { startedNow } from './support/started.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
@@ -167,7 +168,7 @@ const senderOn = (turn: Bag | undefined): unknown =>
 const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agent => ({
   ...agent,
   create: (start) => {
-    const session = agent.create(start);
+    const session = startedNow(agent.create(start));
     return {
       ...session,
       sendMessage: (turnId, text, from, attachments) => {
@@ -190,7 +191,7 @@ const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agen
 const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
   ...agent,
   create: (start) => {
-    const session = agent.create(start);
+    const session = startedNow(agent.create(start));
     // The agent a send picked, handed before it, read with the send's sender.
     let picked: { uri: string } | undefined;
     return {

@@ -195,7 +195,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     claims.set(chatUri, { kind: 'chat', of: into });
     let chat: Session;
     try {
-      chat = spawn(agent, into, chatUri, chatIdOf(into, chatUri, own), backendsOwn(config), talking,
+      chat = await spawn(agent, into, chatUri, chatIdOf(into, chatUri, own), backendsOwn(config), talking,
         held.workingDirectory, conn.tokensFor(agent.provider), folders, connection);
     }
     catch (error) {
@@ -231,7 +231,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ctx.forgetSent(into);
       }
       try {
-        spawn(held.agent, found.uri, chatUri, chatIdOf(found.uri, chatUri, own), backendsOwn(held.config),
+        await spawn(held.agent, found.uri, chatUri, chatIdOf(found.uri, chatUri, own), backendsOwn(held.config),
           talking, held.workingDirectory, conn.tokensFor(held.agent.provider), folders, connection);
       }
       catch (back) {
@@ -1075,7 +1075,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // so a scope change before the first turn is resolved against who
         // owns the work rather than against whoever sent it.
         try {
-          openSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
+          await openSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
             { ...forWhom(ownerFor(connection), connection.principal), sender: connection });
         }
         catch (error) {
@@ -1289,7 +1289,24 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
-      const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
+      /*
+       * The chat is answered once its backend holds it: a fork whose copy its
+       * backend could not make is this request's failure, as VS Code's agent
+       * provisions a fork inside the `createChat` that asked for it, and what
+       * was kept for the chat ahead of it goes.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7132-L7132
+       */
+      let chat: Session;
+      try {
+        chat = await spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
+      }
+      catch (error) {
+        madeFrom.delete(chatUri);
+        if (asked.length > 0) beside.delete(chatUri);
+        if (fromChat !== undefined && made?.seed !== undefined) ctx.forgetLocalTurns(uri, chatUri, made.seed);
+        kept.setChatFlags(idOf(uri), chatUri, 0);
+        throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
+      }
       log(`opened ${chatUri} in ${uri}`);
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
       // and a chat named any other way arrives as a TypeError inside it.

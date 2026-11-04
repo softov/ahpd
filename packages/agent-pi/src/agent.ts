@@ -15,7 +15,7 @@
  * the catalogue is `catalog.ts`.
  */
 
-import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, Offered, Session } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
 import { catalogue, findSession, forgetSession, stateFile, watchedSession } from './catalog.js';
@@ -41,7 +41,7 @@ export function piAgent(
   options: PiOptions,
   directories: readonly string[],
   models: RuntimeModels = runtimeModels,
-): Agent {
+): Agent<Session> {
   const provider = options.provider ?? 'pi';
   const displayName = options.displayName ?? 'pi';
   const paths = [...directories];

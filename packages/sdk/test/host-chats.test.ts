@@ -12,6 +12,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { idOf, Status } from '../src/sessions/catalog.js';
 import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
+import { startedNow } from './support/started.js';
 import type { Agent, Bag, HostOptions, Session, Start } from '@ahpd/sdk';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -832,7 +833,7 @@ describe('more than one chat in a session', () => {
   /** The same backend, answering that it cannot take a conversation back. */
   const unresumable = (starts: Start[]): Agent => {
     const base = backend(starts);
-    return { ...base, create: (start: Start): Session => ({ ...base.create(start), resumable: () => false }) };
+    return { ...base, create: (start: Start): Session => ({ ...startedNow(base.create(start)), resumable: () => false }) };
   };
 
   /** Every `movable` a chat's own channel said, in the order it said them. */
@@ -1799,7 +1800,7 @@ describe('more than one chat in a session', () => {
         create: (start: Start): Session => {
           if (start.chatUri === PEER && start.uri === 'ahp-session:/two')
             throw new Error('this backend will not work there');
-          return base.create(start);
+          return startedNow(base.create(start));
         },
       };
       const { client, p } = await apart(join(root, 'sessions'), refusing);

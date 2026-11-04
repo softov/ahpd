@@ -44,7 +44,7 @@ const scratch = (): string => {
 };
 
 /** A backend on the scripted server, with the flags a case needs. */
-const backend = (flags: string[]): Agent => acpAgent({
+const backend = (flags: string[]): Agent<Session> => acpAgent({
   command: process.execPath,
   args: [FIXTURE, ...flags],
   provider: 'acp',
@@ -132,7 +132,7 @@ it('works in a scratch folder of its own when the client gave it none', () => {
  * A session whose server has spoken: one turn run to its end, which is what
  * spawns the server and shakes hands with it.
  */
-const spoken = async (agent: Agent, id: string): Promise<Session> => {
+const spoken = async (agent: Agent<Session>, id: string): Promise<Session> => {
   let ended = (): void => {};
   const done = new Promise<void>((resolve) => { ended = resolve; });
   const session = agent.create({

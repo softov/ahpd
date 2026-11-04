@@ -14,7 +14,7 @@ import { isAbsolute, join } from 'node:path';
 import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, Spawned } from './spawn.js';
-import type { Agent, Bag, Listed, MachineNeed, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Session, Start } from '@ahpd/sdk';
 
 /**
  * The host's Claude Code CLI, as the installer leaves it.
@@ -193,7 +193,7 @@ export interface ClaudeOptions {
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
-export function claude(options: ClaudeOptions): Agent {
+export function claude(options: ClaudeOptions): Agent<Session> {
   const dirs = options.paths;
   const executable = options.computerExecutable ?? 'claude';
   const configDir = options.computerConfigDir === undefined ? `/ahpd/${options.provider ?? 'claude'}` : options.computerConfigDir;

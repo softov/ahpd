@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -196,7 +197,7 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   let held: Bag = { thinking: 'disabled' };
   sdk.reset();
   const agent = engine.open(viewOf('claude-live', () => held));
-  const session = agent.create(startOf('live'));
+  const session = startedNow(agent.create(startOf('live')));
   await settle();
   expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
 
