@@ -65,4 +65,4 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a hub refuses a node older than 0.14.1, and main is 0.14.0. Step 3's `ahpd restart` also fails on a hub that runs in the foreground: stop it with Ctrl+C and start it again.
 - [update-checks.md](update-checks.md) - needs a published version newer than 0.14.0. A release candidate goes to `next`, so use `ahpd update --version <rc>`.
 - [host-100-p2-review.md](host-100-p2-review.md) - fails until the problem `a-claude-session-from-vs-code-has-no-owner` is fixed.
-- [release.md](release.md) - its facts are from before #213 to #221, and it waits on the checks it names.
+- [release.md](release.md) - the bump, ahpw on the candidate and a dry run, then the tag on Softov's word.
