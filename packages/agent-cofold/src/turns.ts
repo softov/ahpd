@@ -915,9 +915,11 @@ export const createTurns = (
   /*
    * A queued message, or a steering message the run handed back, which waits
    * in `untaken` to be a turn of its own. A steer cofold's submit still holds
-   * is withdrawn: `RunHandle.submit` takes approve, deny, answer, steer and
-   * cancel, and none of them takes a steer back, so it is dropped when the run
-   * gives it back, nothing is said here, and the host answers the client.
+   * reaches here only once the chat holds no running turn, since the host
+   * refuses its removal while one runs: `RunHandle.submit` takes approve, deny,
+   * answer, steer and cancel, and none of them takes a steer back, so this
+   * backend has no `withdraw`. Such a steer is dropped when the run gives it
+   * back, nothing is said here, and the host answers the client.
    *
    * A client taking a message back, or reordering what waits, runs the
    * reference host's drain, so the head starts once nothing runs: a queue a

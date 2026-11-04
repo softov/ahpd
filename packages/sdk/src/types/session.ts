@@ -742,13 +742,27 @@ export interface Session {
    * Take one back, while it is still waiting, and say it gone with
    * `chat/pendingMessageRemoved`.
    *
-   * A queued message, or a steering message the agent has not been handed or
-   * has handed back. One the agent holds stays with it and nothing is said:
-   * the host refuses the removal while a turn runs, as the protocol has a host
-   * reject a removal it can no longer honor after the handoff.
+   * A queued message, or a steering message while the chat holds no running
+   * turn: one the agent has not been handed, has handed back, or holds for a
+   * turn that is over, which the backend takes back as far as it can. A
+   * steering message while a turn runs goes to `withdraw` instead.
    * https://github.com/microsoft/agent-host-protocol/blob/ff7d6a1c7b4f5e47925d3ce1c3bcf685266a6d49/docs/specification/chat-channel.md#steering-messages
    */
   unqueue(id: string): void;
+  /**
+   * Take back the steering message the running turn was handed, and say it
+   * gone with `chat/pendingMessageRemoved`.
+   *
+   * Optional. The reference host lets a client remove steering handed to its
+   * provider only where the provider can withdraw it, and refuses the removal
+   * otherwise before the provider hears of it. So a backend that cannot take a
+   * steering message back from its agent leaves this out, and the host refuses
+   * the removal while the chat holds a running turn, in the reference's words.
+   * A backend that runs its chat on another host carries the removal there,
+   * where that host decides.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
+   */
+  withdraw?(id: string): void;
   /**
    * What somebody is part-way through typing.
    *

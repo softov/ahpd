@@ -889,7 +889,7 @@ it('refuses to the client outside an action the host inside refused, and changes
  * A steering message a client outside takes back is carried inside as the
  * steering message the inner chat holds, and the host inside's answer reaches
  * the client outside under the clientSeq it sent. The backend inside holds the
- * message until it is taken back.
+ * message until it is taken back, which its `withdraw` does while the turn runs.
  */
 it('takes back a steering message on a nested session through the host inside', async () => {
   const { agent } = scriptedAgent(() => {});
@@ -906,7 +906,7 @@ it('takes back a steering message on a nested session through the host inside', 
           session.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } });
           return true;
         },
-        unqueue: (id: string) => {
+        withdraw: (id: string) => {
           if (held?.id !== id) return;
           held = undefined;
           session.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });

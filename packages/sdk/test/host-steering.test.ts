@@ -40,10 +40,15 @@ const envelopes = (p: ReturnType<typeof peer>, channel: string): Note[] => p.not
   .map((n) => n.params as Note)
   .filter((e) => e.channel === channel);
 
-/** The example, slow enough that its turn is still running, holding each steering message it is handed. */
-function backend() {
+/**
+ * The example, slow enough that its turn is still running, holding each
+ * steering message it is handed. `withdraws` gives it a `withdraw` that takes
+ * one back and says so; `unqueued` is every id its `unqueue` was asked for.
+ */
+function backend(withdraws = false) {
   const base = echo({ path: DIR, pace: 10_000 });
   const steers: { id: string; text: string }[] = [];
+  const unqueued: string[] = [];
   const agent: Agent = {
     ...base,
     provider: 'steady',
@@ -58,14 +63,24 @@ function backend() {
           start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text, origin: { kind: 'user' } } });
           return true;
         },
+        unqueue: (id) => {
+          unqueued.push(id);
+          session.unqueue(id);
+        },
+        ...(withdraws ? {
+          withdraw: (id: string) => {
+            steers.splice(steers.findIndex((one) => one.id === id), 1);
+            start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+          },
+        } : {}),
       };
     },
   };
-  return { agent, steers };
+  return { agent, steers, unqueued };
 }
 
-async function running() {
-  const { agent, steers } = backend();
+async function running(withdraws = false) {
+  const { agent, steers, unqueued } = backend(withdraws);
   const p = peer();
   const host = createHost({ path: DIR, agents: [agent] });
   const client = host.accept(p);
@@ -89,8 +104,45 @@ async function running() {
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 's1', message: { text, origin: { kind: 'user' } } } },
   });
-  return { p, chatUri, steers, steer, queue };
+  // A client taking `steer`'s message back.
+  const unsteer = (clientSeq: number) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' } },
+  });
+  return { p, chatUri, steers, unqueued, steer, queue, unsteer };
 }
+
+/*
+ * "Steering handed to the provider cannot be edited, and can be removed only if
+ * the provider can withdraw it": the reference host asks the provider's
+ * capability before the provider hears of the removal (agentService.ts
+ * L13517-L13524 at a4e689ae). A backend with no `withdraw` keeps what it was
+ * handed, so it is never asked to let go of it.
+ */
+it('refuses taking back the running turn\'s steering message before a backend that cannot withdraw hears of it', async () => {
+  const { p, chatUri, steers, unqueued, steer, unsteer } = await running();
+  await steer(2, 'stop that');
+  await settle();
+  await unsteer(3);
+  await settle();
+  const answer = envelopes(p, chatUri).find((e) => e.origin?.clientSeq === 3);
+  expect(answer?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(unqueued).toEqual([]);
+  expect(steers.map((one) => one.id)).toEqual(['s1']);
+});
+
+it('takes back the running turn\'s steering message from a backend that can withdraw it', async () => {
+  const { p, chatUri, steers, unqueued, steer, unsteer } = await running(true);
+  await steer(2, 'stop that');
+  await settle();
+  await unsteer(3);
+  await settle();
+  const answer = envelopes(p, chatUri).find((e) => e.origin?.clientSeq === 3);
+  expect(answer?.rejectionReason).toBeUndefined();
+  expect(answer?.action).toMatchObject({ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
+  expect(unqueued).toEqual([]);
+  expect(steers).toEqual([]);
+});
 
 /*
  * "Repeated identical upserts MUST NOT cause duplicate provider delivery": the
