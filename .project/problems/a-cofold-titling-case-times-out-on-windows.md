@@ -4,7 +4,7 @@ status: open
 date: 2026-11-04
 severity: minor
 refs:
-  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L704-L735](../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L704-L735) - \"titles a row by the subject cofold sent rather than the model spelling\""
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L704-L733](../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L704-L733) - \"titles a row by the subject cofold sent rather than the model spelling\""
   - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L35-L41](../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L35-L41) - `when`, which waits 5000 ms of wall-clock time"
 ---
 
