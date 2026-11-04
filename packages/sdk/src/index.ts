@@ -144,7 +144,7 @@ export { githubIssuer, isIssuerUrl, issuerFrom, issuerKind, oidcIssuer } from '.
 export type { Fetcher, GitHubIssuerOptions, IssuerKind, OidcIssuerOptions } from './access/issuers.js';
 export type { Issuer, IssuerAnswer } from './types/users.js';
 export type { CreatedBy, NestedRecord, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from './types/sessions.js';
-export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom, holdsTheQueue } from './sessions/catalog.js';
+export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom, holdsTheQueue, endedParts } from './sessions/catalog.js';
 export { ensureWorkspacelessScratchDir } from './sessions/scratch.js';
 export type { Activity, StatusBits } from './sessions/catalog.js';
 export { tail, older, PAGE } from './sessions/paging.js';

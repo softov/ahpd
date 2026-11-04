@@ -1,6 +1,6 @@
 import { resume, textOf } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { bag, statusOf, str } from '@ahpd/sdk';
+import { bag, endedParts, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
@@ -67,6 +67,9 @@ export const createRuns = (ctx: SessionContext): Runs => {
     if (ending === 'error' && part !== undefined && Array.isArray(turn.responseParts)) {
       turn.responseParts.push(part);
     }
+    // Held as the reducer holds it once the ending is reduced, so a chat first
+    // opened after this turn draws what one that watched it end does.
+    turn.responseParts = endedParts(Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []);
     turn.state = ending;
     turn.duration = Date.now() - Date.parse(String(turn.startedAt));
     if (!gone) turns.push(turn);

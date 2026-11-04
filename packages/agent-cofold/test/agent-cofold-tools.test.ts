@@ -847,6 +847,27 @@ it('sends the after for an edit still waiting when the turn is cancelled', async
 });
 
 // A bash command line; on Windows cofold runs PowerShell.
+it.skipIf(!posix)('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('shell_exec', { command: 'sleep 30' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.sendMessage('t1', 'run it');
+  await when(() => v.of('chat', 'chat/toolCallReady').length > 0);
+
+  session.abort();
+  await when(() => ended(v));
+  // The chat a client opens now holds the call as one that watched the turn
+  // end holds it: cancelled, as skipped.
+  const held = (session.allTurns().at(-1)?.responseParts as Bag[]).find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined;
+  expect(held).toMatchObject({ toolCallId: 'c1', status: 'cancelled', reason: 'skipped' });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// A bash command line; on Windows cofold runs PowerShell.
 it.skipIf(!posix)('kills a cancelled shell command and the child it started', async () => {
   const dir = place();
   const { session, v } = await open({

@@ -140,6 +140,38 @@ export const holdsTheQueue = (turn: Bag | undefined): boolean => {
   return turn?.state === 'error' && last?.kind === 'error' && last.resumable === true;
 };
 
+/**
+ * A finished turn's parts as the protocol's reducer holds them once the
+ * turn's ending is reduced.
+ *
+ * One rule for every backend's history, so a chat first opened after a turn
+ * is seeded with what a client that watched the turn end holds: a tool call
+ * in no terminal state is cancelled, `skipped`, keeping its id, its names, its
+ * intention, its contributor and its `_meta`, its invocation message, and its
+ * input unless it was still streaming.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+ */
+export const endedParts = (parts: Bag[]): Bag[] => parts.map((part) => {
+  const call = part.kind === 'toolCall' && typeof part.toolCall === 'object' && part.toolCall !== null ? part.toolCall as Bag : undefined;
+  if (call === undefined || call.status === 'completed' || call.status === 'cancelled') return part;
+  const streaming = call.status === 'streaming';
+  return {
+    kind: 'toolCall',
+    toolCall: {
+      status: 'cancelled',
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      displayName: call.displayName,
+      ...(call.intention === undefined ? {} : { intention: call.intention }),
+      ...(call.contributor === undefined ? {} : { contributor: call.contributor }),
+      ...(call._meta === undefined ? {} : { _meta: call._meta }),
+      invocationMessage: call.invocationMessage ?? '',
+      ...(streaming || call.toolInput === undefined ? {} : { toolInput: call.toolInput }),
+      reason: 'skipped',
+    },
+  };
+});
+
 /** The scheme a channel URI names, or nothing where it names none. */
 export const schemeOf = (uri: string): string | undefined => {
   const said = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];

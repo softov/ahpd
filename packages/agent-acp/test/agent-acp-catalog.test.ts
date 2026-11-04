@@ -651,6 +651,19 @@ it('sends the mode again when the server is opened after a death', async () => {
   expect(configOf(session).values.permissionMode).toBe('code');
 });
 
+it('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'outlived');
+  await runTurn(session, watch, 't1', 'client cstatus=pending ctitle=Lookup');
+
+  // The server ended the turn with its call never started: the chat a client
+  // opens now holds that call as one that watched the turn end holds it,
+  // cancelled as skipped, with no input for a call still being written.
+  const held = (session.allTurns()[0]?.responseParts as Bag[]).find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined;
+  expect(held).toMatchObject({ toolCallId: 'call-client-1', status: 'cancelled', reason: 'skipped' });
+  expect(held?.toolInput).toBeUndefined();
+});
+
 it('reports a command the server advertises as a built-in skill', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'commands');

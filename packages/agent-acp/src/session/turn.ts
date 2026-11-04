@@ -1,6 +1,6 @@
 import type { ContentBlock, StopReason, Usage } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
-import { partsOf, titleFrom } from '@ahpd/sdk';
+import { endedParts, partsOf, titleFrom } from '@ahpd/sdk';
 import type { AcpConnection } from '../types.js';
 import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
@@ -149,6 +149,9 @@ export function createTurn(ctx: SessionContext): Turn {
     // A terminal still running when the turn ends is background work, which
     // the turn's end names.
     if (ctx.mapping !== undefined) ctx.settleTerminals();
+    // Held as the reducer holds it once the ending is reduced, so a chat first
+    // opened after this turn draws what one that watched it end does.
+    turn.responseParts = endedParts(Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []);
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
     ctx.active = undefined;
