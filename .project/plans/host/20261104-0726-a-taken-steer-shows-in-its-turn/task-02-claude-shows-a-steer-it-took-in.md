@@ -1,6 +1,6 @@
 ---
 title: Claude shows a steer it took in
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The bot chat shows a steer
-status: implemented
+status: done
 depends: []
 layer: bot
 refs:
