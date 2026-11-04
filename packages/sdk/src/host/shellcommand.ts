@@ -168,7 +168,17 @@ export interface ShellCommandAsk {
   terminal: Terminal;
   shellType: ShellType;
   command: string;
-  timeoutMs: number;
+  /** How long the command is waited for. Absent for one that runs until it ends. */
+  timeoutMs?: number;
+  /**
+   * Whether only the command's own end ends it: its mark, its sentinel or the
+   * shell's exit, and not the alternate screen or a claim a client narrowed.
+   *
+   * Those two end a call that is waiting for an answer, because the command
+   * outlives it. A command started in the background is not answered, so
+   * neither is anything to end: it runs until it is over or its shell goes.
+   */
+  untilItEnds?: boolean;
   /** Hear each action the terminal sends, and answer the stop. */
   listen(onAction: (action: Bag) => void): () => void;
   log(message: string): void;
@@ -308,6 +318,7 @@ export async function executeShellCommand(asked: ShellCommandAsk): Promise<Shell
           return;
         }
         case 'terminal/claimed': {
+          if (asked.untilItEnds === true) return;
           const claim = action.claim as Bag | undefined;
           if (claim?.kind === 'session' && claim.toolCallId === undefined) {
             log(`the command in ${terminal.uri} goes on in the background`);
@@ -318,11 +329,13 @@ export async function executeShellCommand(asked: ShellCommandAsk): Promise<Shell
         default:
       }
     }));
-    const timer = setTimeout(() => {
-      log(`the command in ${terminal.uri} ran past ${String(asked.timeoutMs)} ms`);
-      finish({ status: 'timeout', output: partial(commandId) });
-    }, asked.timeoutMs);
-    stops.push(() => { clearTimeout(timer); });
+    if (asked.timeoutMs !== undefined) {
+      const timer = setTimeout(() => {
+        log(`the command in ${terminal.uri} ran past ${String(asked.timeoutMs)} ms`);
+        finish({ status: 'timeout', output: partial(commandId) });
+      }, asked.timeoutMs);
+      stops.push(() => { clearTimeout(timer); });
+    }
     /*
      * The reference's `registerAltBufferHandler`, which settles at once on a
      * screen already showing the alternate one.
@@ -333,7 +346,7 @@ export async function executeShellCommand(asked: ShellCommandAsk): Promise<Shell
      * A screenful terminal that resolves the wait is on it, and one that was
      * disposed while the call ran is not.
      */
-    void terminal.whenAltBuffer().then(() => {
+    if (asked.untilItEnds !== true) void terminal.whenAltBuffer().then(() => {
       if (done || !terminal.isInAltBuffer()) return;
       log(`the command in ${terminal.uri} entered the alternate screen`);
       finish({ status: 'altBuffer', output: '' });

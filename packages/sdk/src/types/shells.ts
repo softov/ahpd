@@ -71,6 +71,15 @@ export interface Shells {
   acquire(claim: ShellClaim): Promise<HeldShell>;
   /** Write one command, and answer how it ended. */
   run(shell: ManagedShell, command: string, timeoutMs: number): Promise<ShellCommandResult>;
+  /**
+   * Start one command, and answer once it has really ended.
+   *
+   * No timeout and no early end: the command runs until its own mark, its
+   * sentinel, or the shell exits. The caller answers its own call at once and
+   * keeps its hold on the shell until this settles, so the next command opens
+   * another shell rather than interleaving with this one.
+   */
+  start(shell: ManagedShell, command: string): Promise<ShellCommandResult>;
   /** Keep a shell busy until the command in it ends, after its call let go. */
   hold(shell: ManagedShell): void;
   /** One by the id a call names, or nothing. */
