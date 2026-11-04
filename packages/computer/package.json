@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/computer",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Disposable Docker machines for the ahpd daemon: a computer: resource provider and the tools that make, use and release one",
   "keywords": [
