@@ -1616,6 +1616,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     reorder: (order: string[]): void => {
       carry('chat', { type: 'chat/queuedMessagesReordered', order });
     },
+    /*
+     * The host inside lets go of its chat's steering at the stop it is carried,
+     * and its removals come back as every action of the chat does.
+     */
+    clearSteering: (): void => {},
     setDraft: (draft: Bag | undefined): void => {
       carry('chat', { type: 'chat/draftChanged', ...(draft === undefined ? {} : { draft }) });
     },

@@ -31,6 +31,7 @@ export interface Turns {
     setTitle: (title: string) => void;
     ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering') => void;
     steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
+    clearSteering: () => void;
     queue: (
       id: string,
       text: string,
@@ -865,6 +866,31 @@ export function createTurns(ctx: SessionContext): Turns {
       const into = handed.some((one) => one.said === ctx.active) ? prompted?.turn ?? String(ctx.active.id) : String(ctx.active.id);
       void push(text, attachments, UUID.test(id) ? id : crypto.randomUUID(), { message, steering: true, turn: into, id, cli: 'sent' });
       return true;
+    },
+
+    /*
+     * Every steering message the CLI has not taken in, let go of once a turn
+     * ends cancelled, and nothing started: those waiting to be turns of their
+     * own, and those handed to the CLI that it has not read, which leave its
+     * input. One the CLI has read is its own, and is answered in a turn of its
+     * own if the CLI runs it.
+     */
+    clearSteering: () => {
+      const gone: string[] = [];
+      for (const held of ctx.queued.filter((one) => one.steering === true)) {
+        ctx.queued.splice(ctx.queued.indexOf(held), 1);
+        gone.push(str(held.id) ?? '');
+      }
+      for (const [uuid, owed] of [...ctx.owed]) {
+        const unread = ctx.waiting.findIndex((one) => one.uuid === uuid);
+        if (!owed.steering || owed.id === undefined || unread < 0) continue;
+        ctx.waiting.splice(unread, 1);
+        ctx.owed.delete(uuid);
+        gone.push(owed.id);
+      }
+      ctx.steering = undefined;
+      for (const id of gone) ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+      if (gone.length > 0) ctx.touch();
     },
 
     /**
