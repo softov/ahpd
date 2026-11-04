@@ -733,6 +733,24 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     later();
   };
 
+  /**
+   * Move a file this version cannot read to `<file>.unreadable-<time>`.
+   *
+   * The name does not end in `.json`, so a later load does not read it again,
+   * and the UTC time keeps two moves of one id apart. A move that fails leaves
+   * the file where it is, and says so.
+   */
+  const setAside = (file: string): void => {
+    const aside = `${file}.unreadable-${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')}`;
+    try {
+      renameSync(file, aside);
+      told(`Moved ${file} to ${aside}.`);
+    }
+    catch (error) {
+      told(`Could not move ${file} aside, so the next write for it replaces it: ${(error as NodeJS.ErrnoException).code ?? 'failed'}`);
+    }
+  };
+
   const load = (): void => {
     let names: string[];
     try { names = readdirSync(dir); }
@@ -747,15 +765,22 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       const read = readJson(file);
       let row: Saved | undefined;
       if (!read.ok) {
-        told(`Could not read ${file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
+        // The parser's error quotes what it choked on, so a file that is not
+        // JSON is said to be that and no more.
+        if (read.kind === 'missing') continue;
+        told(`Could not read ${file}: ${read.kind === 'unreadable' ? read.code ?? 'unreadable' : 'it is not JSON'}`);
       }
       else if ((read.value as Partial<Saved>).version === 1 && typeof (read.value as Partial<Saved>).id === 'string') {
         row = read.value as Saved;
       }
       else told(`Ignoring ${file}: it is not a session store this version can read.`);
       // One file this version cannot read is one session it does not know, and
-      // the rest of the folder still does.
-      if (row === undefined) continue;
+      // the rest of the folder still does. It is moved aside, because the next
+      // write for its id would put what memory holds in its place.
+      if (row === undefined) {
+        setAside(file);
+        continue;
+      }
       heard.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)) inner.setConfig(row.id, row.config);

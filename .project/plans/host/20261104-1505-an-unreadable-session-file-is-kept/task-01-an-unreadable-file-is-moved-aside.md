@@ -1,6 +1,6 @@
 ---
 title: An unreadable file is moved aside
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -30,3 +30,6 @@ refs:
 - `pnpm --filter @ahpd/sdk test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step.
+- **Found:** the old log line for a file that is not JSON quoted the parser's error, which quotes the file. It now says only that the file is not JSON.
