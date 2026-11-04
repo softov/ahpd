@@ -440,7 +440,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         ...(edits !== undefined ? { edits } : {}),
       });
 
-      if (scope === ctx.mainScope) ctx.doing(`Waiting on you: ${displayName}`);
       // `chat` and `turnId` are both required on a tool confirmation and
       // neither was sent.
       const entry: Bag = { id, chat: where, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };

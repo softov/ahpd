@@ -1,6 +1,6 @@
 ---
 title: No agent says waiting on you
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude, agent-pi, agent-acp, agent-cofold, examples"
 refs:
@@ -29,8 +29,7 @@ The activity keeps the value it had before the wait, and the `InputNeeded` statu
 - `UPDATE: examples/notes/agent.ts:356` - remove `doing(\`Waiting on you: ${tool.displayName}\`)` on a confirmation.
 - `UPDATE: packages/agent-claude/test/agent-claude-autoapproval.test.ts` - add a case: the activity while a confirmation waits.
 - `UPDATE: packages/agent-pi/test/agent-pi-asking.test.ts` - add a case: the activity while a confirmation waits.
-- `UPDATE: packages/agent-acp/test/agent-acp.test.ts` - add a case: the activity while a confirmation waits.
-- `UPDATE: packages/agent-acp/test/agent-acp-ports.test.ts` - add a case: the activity while a question waits.
+- `UPDATE: packages/agent-acp/test/agent-acp-ports.test.ts` - add two cases: the activity while a confirmation waits, and while a question waits.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-plugin.test.ts` - add a case: no `Waiting on you` after `reopen` of a paused run.
 
 ## Steps
@@ -50,3 +49,6 @@ The activity keeps the value it had before the wait, and the `InputNeeded` statu
 - `pnpm --filter @ahpd/agent-claude test`, `pnpm --filter @ahpd/agent-pi test`, `pnpm --filter @ahpd/agent-acp test` and `pnpm --filter @ahpd/agent-cofold test` pass, one at a time, from the repository root.
 
 ## Resume
+
+- **Done so far:** every step. The ACP confirmation case is in `agent-acp-ports.test.ts`, because `agent-acp.test.ts` has no harness that raises a confirmation.
+- **Watch out for:** pi says `Running bash` when a call starts, before it asks, so that is the activity that stays.

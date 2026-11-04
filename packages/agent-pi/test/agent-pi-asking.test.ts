@@ -54,6 +54,21 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
   expect(session.status()).toBe(Status.InProgress);
 });
 
+it('leaves the activity as it was while a confirmation waits', async () => {
+  const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  expect(session.activity()).toBe('Thinking');
+
+  void driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  await settled();
+  expect(session.status()).toBe(Status.InputNeeded);
+  // The status says a person is needed; the activity keeps the line the call
+  // set when it started rather than naming the wait a second time.
+  expect(session.activity()).toBe('Running bash');
+});
+
 it('answers what it is waiting on in its state, so a client that connects late sees the question', async () => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();

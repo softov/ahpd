@@ -634,7 +634,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       type: 'session/inputNeededSet',
       request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
     });
-    doing('Waiting on you');
     touch();
     return answered;
   };
@@ -774,7 +773,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       doing('Thinking');
       touch();
     }, { once: true });
-    doing('Waiting on you');
     touch();
     return answered;
   };
