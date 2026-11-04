@@ -39,6 +39,8 @@ export interface Stream {
   pastLines: Map<string, StringOrMarkdown>;
   /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
   contributorOf: (toolName: string) => Contributor | undefined;
+  /** Every file an edit call began changing, recorded as it is now: a stop closes the CLI that would have ended the call. */
+  editsStopped: () => void;
 }
 
 /** A call's contributor, in the protocol's two kinds. */
@@ -674,5 +676,9 @@ export function createStream(ctx: SessionContext): Stream {
     }
   };
 
-  return { streamed, assistant, results, rounds, pastLines, contributorOf };
+  const editsStopped = (): void => {
+    for (const id of [...editing.keys()]) edited(id);
+  };
+
+  return { streamed, assistant, results, rounds, pastLines, contributorOf, editsStopped };
 }

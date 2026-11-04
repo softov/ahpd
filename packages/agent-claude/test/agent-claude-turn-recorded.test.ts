@@ -191,13 +191,12 @@ it('writes a failed turn sent again under a new id, and reports it', async () =>
 });
 
 /*
- * A turn begun while one runs takes its place, said at once, as the reducer
- * replaces the active turn, and its prompt goes to the CLI once the CLI has
- * answered the one in front of it, as the reference Claude agent sends one
- * prompt after another.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+ * A turn handed while one runs is a send of its own, and its prompt goes to
+ * the CLI once the CLI has answered the one in front of it, as the reference
+ * Claude agent runs each send after the one before it. The host said its start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L408-L436
  */
-it('says a turn begun while one runs at once, and sends its prompt once the one before it is answered', async () => {
+it('sends a turn handed while one runs once the one before it is answered', async () => {
   const { session, main } = await replay();
 
   session.sendMessage('t1', 'the first thing');
@@ -207,18 +206,17 @@ it('says a turn begun while one runs at once, and sends its prompt once the one 
   session.sendMessage('t2', 'a second thing');
   await settle();
 
-  const after = session.chatState() as { activeTurn?: { id?: string; message?: { text?: string } }; turns?: Bag[] };
-  expect(after.activeTurn?.id).toBe('t2');
-  expect(after.activeTurn?.message?.text).toBe('a second thing');
-  expect(after.turns ?? []).toEqual([]);
-  const started = main.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.turnId);
-  expect(started).toEqual(['t1', 't2']);
+  // Waiting behind the first: nothing of it reaches the CLI, and nothing of it is said.
+  expect((session.chatState() as { activeTurn?: { id?: string } }).activeTurn?.id).toBe('t1');
+  expect(main.filter((one) => one.action.type === 'chat/turnStarted')).toEqual([]);
   expect(sdk.sent).toHaveLength(1);
 
-  // The first prompt's answer ends no turn, and the second prompt goes then.
+  // The first prompt's answer ends the first turn, and the second prompt goes then.
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5, user_message_uuids: [String(sdk.sent[0]?.uuid)] });
   await settle();
   expect(sdk.sent).toHaveLength(2);
-  expect((session.chatState() as { activeTurn?: { id?: string } }).activeTurn?.id).toBe('t2');
-  expect((session.chatState() as { turns?: Bag[] }).turns ?? []).toEqual([]);
+  const after = session.chatState() as { activeTurn?: { id?: string; message?: { text?: string } }; turns?: Bag[] };
+  expect(after.activeTurn?.id).toBe('t2');
+  expect(after.activeTurn?.message?.text).toBe('a second thing');
+  expect((after.turns ?? []).map((turn) => turn.id)).toEqual(['t1']);
 });

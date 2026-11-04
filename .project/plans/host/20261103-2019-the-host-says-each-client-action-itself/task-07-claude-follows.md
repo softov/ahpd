@@ -1,6 +1,6 @@
 ---
 title: Claude follows the contract
-status: todo
+status: done
 depends: [task-04-the-session-contract-follows-iagent.md, task-05-the-host-owns-the-queue.md]
 layer: agent-claude
 refs:
@@ -41,4 +41,12 @@ It declines steering until its prompt is out, and a stream that ends without a r
 - **From 05:** Claude's queue is fed by nothing and goes here with the drain behind it; its steering withdrawal is `withdrawSteeringMessage`.
 - **From 05:** the `host-input` case on a steering message consumed as it arrives fails since 04.
 - **Its cause:** Claude's own `chat/pendingMessageSet` of a steering message the host said.
+- **Done:** steps 1 to 8, at the commit that closes this task, with a case for each validation item.
+- **Booking:** with no backend start, the host says a turn's start on the chat's road as it hands the turn over.
+- **Booked once:** the road drops a backend's start of a turn the chat holds, so 08's backends are not booked twice.
+- **Ends:** a backend still reports a turn's end, a stop's included, and the road books it from that report.
+- **Stop:** `abort` closes the CLI with its workers and tasks, and the next send starts one that resumes.
+- **Stream end:** a stream with no result fails its turn in VS Code's words, and the next send resumes.
+- **A thrown error:** still ends the session; VS Code's catch at L710-L718 rebinds it as well.
+- **Item 2's case:** in `agent-claude-model-refusal`, whose fake refuses a model; a refused model is logged now.
 

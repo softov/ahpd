@@ -1,31 +1,24 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { holdsTheQueue, titleFrom } from '@ahpd/sdk';
+import { titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, SteeringMessage, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
-import { bag, list, str, UUID } from './common.js';
+import { bag, str, UUID } from './common.js';
 import { EFFORTS } from './config.js';
 import type { Owed, SessionContext } from './context.js';
 
 /** What this area offers the rest of the session. */
 export interface Turns {
-  /** The messages waiting for a turn, in the order they will be sent. */
-  queued: Bag[];
-  /** Start the head of the queue, once there is nothing running. */
-  startNext: () => void;
+  /** Begin the next prompt handed while another ran, once the CLI owes nothing in front of it. */
+  sendNext: () => void;
   /**
    * What a turn sent a CLI that was put away, sent to the one that took its
    * place: the running turn's prompt, as it went out the first time, and then
    * `steers`, the steering messages the CLI put away still owed an answer to.
    *
    * Each under a new uuid, the prompt's told to the host, because the first may
-   * already be written under the old one. With no turn running, the steering
-   * messages go alone, and are answered in a turn of their own.
+   * already be written under the old one.
    */
   again: (steers: readonly Owed[]) => Promise<void>;
-  /** Open the turn that answers the steering messages a turn that ended left with the CLI, when the CLI holds one. */
-  handOver: (turnId: string) => void;
-  /** Open the turn that answers the steering message sent under `uuid`, with the others its turn left. */
-  present: (uuid: string) => void;
   methods: {
     sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
     changeModel: (model: Chosen) => void;
@@ -43,10 +36,7 @@ export interface Turns {
 const attachedTo = (message: Bag): MessageAttachment[] | undefined =>
   Array.isArray(message.attachments) ? message.attachments as MessageAttachment[] : undefined;
 
-/**
- * A turn a client sent while another ran: what `sendMessage` was handed, and
- * the turn as it was said once it was.
- */
+/** A turn a client sent: what `sendMessage` was handed. */
 interface Handed {
   turnId: string;
   text: string;
@@ -54,62 +44,36 @@ interface Handed {
   from?: MessageFrom | undefined;
   attachments?: MessageAttachment[] | undefined;
   options?: TurnOptions | undefined;
-  said?: Bag;
 }
 
 export function createTurns(ctx: SessionContext): Turns {
   /**
-   * Messages waiting for the running turn to end.
+   * The turns a client sent, in the order they came, until each is begun.
    *
-   * The host's, not a client's. A client that held them would be the only
-   * thing that could ever send them, and would not - nothing in a client is
-   * watching for a turn to end - and a second client watching the same chat
-   * would not see them at all.
-   */
-  const queued: Bag[] = [];
-
-  /**
-   * The turns a client sent while another ran, in the order they came.
-   *
-   * Each is said as the chat's turn when it comes, so it takes the place of
-   * the one before it in every client's state, as the protocol's reducer
-   * replaces the active turn, and its prompt goes to the CLI once the CLI has
-   * answered every prompt sent before it. The reference host applies a
-   * client's start at once and hands it to its agent, and the reference Claude
-   * agent sends a prompt once the one before it is answered. The turn it
-   * replaced runs on, and its answer goes nowhere, as a stopped turn's does.
-   * One handed while the turn in front of it is still beginning is said once
-   * that turn is.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L408-L434
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   * Each is begun once the CLI has answered every prompt sent before it, as
+   * the reference agent runs each send it is handed after the one before it,
+   * each its own entry settled by its own result. The host said each start
+   * when it came, so the turn a later one took the place of runs on here, and
+   * its answer goes nowhere.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L408-L436
    */
   const handed: Handed[] = [];
 
-  /** Whether a turn of this session is running, or is part-way into becoming one, or waits to. */
-  const busy = (): boolean => ctx.active !== undefined || ctx.beginning !== undefined || handed.length > 0;
+  /** How many stops this session has taken, which a turn still preparing reads to know it was stopped. */
+  let stops = 0;
 
-  /**
-   * Start a turn, whoever asked for it.
-   *
-   * `queuedMessageId` names the waiting message this turn came from, and the
-   * client's reducer takes it out of the queue on that word - which is what
-   * makes the queue empty as its turns start rather than needing a second
-   * action to say so.
-   */
   /** Context for the first prompt only, which never reaches the wire. */
   let carried = ctx.options.context;
 
   /**
    * A message onto the CLI's own input stream, as what it is.
    *
-   * Where a turn beginning, a message steering one, and a message taken off the
-   * queue all reach the CLI: the wake and the touch happen in one place, and a
-   * message's attachments become the blocks the CLI takes whichever way it
-   * arrived. A message with none is the string it always was. `uuid` is the id
-   * the CLI writes the prompt under and names its answer by, and `owed` is the
-   * answer that is to come, held until a result names the uuid.
+   * Where a turn beginning and a message steering one reach the CLI: the wake
+   * and the touch happen in one place, and a message's attachments become the
+   * blocks the CLI takes whichever way it arrived. A message with none is the
+   * string it always was. `uuid` is the id the CLI writes the prompt under and
+   * names its answer by, and `owed` is the answer that is to come, held until
+   * a result names the uuid.
    */
   const push = async (
     text: string,
@@ -159,8 +123,8 @@ export function createTurns(ctx: SessionContext): Turns {
    *
    * The text a side chat's first prompt carries is not the message's text, and
    * a message's attachments are blocks of their own, so a prompt sent again is
-   * this rather than the turn's message. A turn opened for a steering message
-   * has that message as its prompt.
+   * this rather than the turn's message. A turn whose prompt is out is the one
+   * steering goes into.
    */
   let prompted: { turn: string; text: string; attachments?: MessageAttachment[] } | undefined;
 
@@ -177,29 +141,24 @@ export function createTurns(ctx: SessionContext): Turns {
   };
 
   /**
-   * A turn that never reaches the CLI, recorded as one that started and failed.
+   * A turn that never reaches the CLI, ended as one that failed for `why`.
    *
-   * The ordinary lifecycle compressed. Both events rather than the error alone,
-   * because `queuedMessageId` rides on the first: a turn taken from the queue
-   * has to clear its waiting row, and a client that is only told about the
-   * failure keeps showing a message it already sent.
-   *
-   * `said` is a turn handed while another ran, which was said when it came, so
-   * only its error is said. One a later turn took the place of is in no
-   * history, as the reducer keeps none of it.
+   * The host said its start, so its end is all that is said: `chat/error`, as
+   * the reference host ends a send that failed. A turn handed behind it is a
+   * send of its own and goes on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2336
    */
   const refuseTurn = (
     turnId: string,
     text: string,
     why: string,
-    queuedMessageId?: string,
+    began: number,
     from?: MessageFrom,
     attachments?: MessageAttachment[],
-    said?: Bag,
   ): void => {
-    const turn = said ?? {
+    const turn = {
       id: turnId,
-      startedAt: new Date().toISOString(),
+      startedAt: new Date(began).toISOString(),
       message: {
         text,
         origin: from?.origin ?? { kind: 'user' },
@@ -212,152 +171,88 @@ export function createTurns(ctx: SessionContext): Turns {
     } as unknown as Bag;
     const part = ctx.addFailure(turn, why);
     turn.state = 'error';
-    turn.duration = said === undefined ? 0 : Math.max(0, Date.now() - Date.parse(String(said.startedAt)));
-    if (said === undefined || said === ctx.active) ctx.turns.push(turn);
-    if (said !== undefined && said === ctx.active) ctx.active = undefined;
+    turn.duration = Math.max(0, Date.now() - began);
+    ctx.turns.push(turn);
     ctx.failed = why;
-    if (said === undefined) {
-      ctx.emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt: turn.startedAt,
-        message: turn.message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
-    }
     ctx.emit('chat', { type: 'chat/error', turnId, duration: turn.duration, part });
-    if (ctx.active === undefined) ctx.doing(undefined);
+    ctx.doing(undefined);
     ctx.touch();
+    sendNext();
   };
 
   /**
-   * The turns handed while another ran that are not said yet, said as the
-   * chat's turn, each taking the place of the one before it.
+   * One turn's prompt to the CLI, once the CLI owes nothing in front of it.
+   *
+   * Prepared first, named in `beginning` so a turn handed meanwhile waits and
+   * steering is declined: a CLI the last stop or a stream that ended put away
+   * is started again on the conversation, as the reference rebinds its query at
+   * the next send; the tools the session was handed land; the agent and the
+   * model the turn picked are taken, and one the CLI will not take is logged
+   * while the turn runs on the one it has, as the reference logs a model or an
+   * agent that would not change. A stop while it prepares sends nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L415-L421
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L351-L360
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2238
    */
-  const sayHanded = (): void => {
-    if (ctx.active === undefined) return;
-    for (const one of [...handed]) {
-      if (one.said !== undefined) continue;
-      const model = one.model?.id ?? ctx.chosen;
-      const turn = {
-        id: one.turnId,
-        startedAt: new Date().toISOString(),
-        message: {
-          text: one.text,
-          origin: one.from?.origin ?? { kind: 'user' },
-          ...(one.from?._meta ? { _meta: one.from._meta } : {}),
-          ...(one.attachments !== undefined && one.attachments.length > 0 ? { attachments: one.attachments } : {}),
-          ...(model ? { model: { id: model, ...(one.model?.config ? { config: one.model.config } : {}) } } : {}),
-        },
-        responseParts: [],
-        usage: undefined,
-      } satisfies WireTurn<ActiveTurn> as Bag;
-      one.said = turn;
-      ctx.active = turn;
-      ctx.startedAt = Date.now();
-      ctx.failed = undefined;
-      ctx.emit('chat', { type: 'chat/turnStarted', turnId: one.turnId, startedAt: turn.startedAt, message: turn.message });
-      if (ctx.title === 'New session' && one.text) ctx.retitle(titleFrom(one.text, 'New session'));
-      ctx.doing('Thinking');
-    }
-    ctx.touch();
-  };
-
   const beginTurn = async (
     turnId: string,
     text: string,
     model?: Chosen,
-    queuedMessageId?: string,
     from?: MessageFrom,
     attachments?: MessageAttachment[],
     options?: TurnOptions,
-    handedTurn?: Handed,
   ): Promise<void> => {
-    /*
-     * One prompt at a time to the CLI.
-     *
-     * A turn begun while another runs is handed: said at once, and begun here
-     * as `handedTurn` once the CLI has answered the prompts in front of it.
-     * Anything else begins only when nothing runs, and the queue takes its
-     * next message once nothing does; `beginning` counts as running, which is
-     * a turn switching its model.
-     */
-    if (handedTurn === undefined ? busy() : handed[0] !== handedTurn) return;
-    /*
-     * A handed turn a stop dropped while it waited on the tools or a model
-     * switch begins nothing: the stop ended it in every client's state.
-     */
-    const dropped = (): boolean => handedTurn !== undefined && handed[0] !== handedTurn;
+    const began = Date.now();
+    const stopped = stops;
+    ctx.beginning = turnId;
+    if (ctx.rebind !== undefined) {
+      ctx.rebind = undefined;
+      ctx.gone = undefined;
+      ctx.handle = ctx.startQuery(ctx.running, false);
+      void ctx.consume();
+    }
     /*
      * The tools the session was handed before this turn, landed first.
      *
      * A change of tools reaches the CLI as `setMcpServers`, which the CLI
      * answers once it has the servers, and the host hands it over without
      * waiting; a turn that comes after it is a turn of a session that has
-     * those tools. Named in `beginning` while it waits, as a model switch is,
-     * so a message queued behind it waits too.
+     * those tools.
      */
-    if (ctx.retooling !== undefined) {
-      ctx.beginning = turnId;
-      await ctx.retooling;
-      ctx.beginning = undefined;
-      if (ctx.closed || dropped()) return;
-    }
+    if (ctx.retooling !== undefined) await ctx.retooling;
+    if (ctx.closed || stops !== stopped) return;
     /*
      * A session whose CLI has exited answers at once, and says why.
      *
      * The turn is recorded as one that failed rather than refused, because a
-     * person typed it and it belongs in the transcript beside the reason. The
-     * alternative is what this replaces: `active` set on a session with
-     * nothing left to answer it, which reads as thinking for ever and never
-     * says the CLI never started.
+     * person typed it and it belongs in the transcript beside the reason.
      */
     if (ctx.gone !== undefined) {
-      if (handedTurn !== undefined) handed.shift();
-      refuseTurn(turnId, text, ctx.gone, queuedMessageId, from, attachments, handedTurn?.said);
-      return;
-    }
-    /*
-     * The agent this message picked, taken before the model and before the
-     * prompt, because it is what decides which CLI the model is switched on.
-     *
-     * The record is read first: a session started from an agent record is one
-     * somebody may edit while it runs, and the edit reaches the CLI here - on
-     * the turn after it, with the conversation resumed onto the new CLI.
-     *
-     * Named in `beginning` for as long as it takes, so a message queued behind
-     * this one waits rather than reaching the CLI beside the one being built.
-     */
-    ctx.beginning = turnId;
-    const refused = ctx.refreshPreset() ?? ctx.switchAgent(from?.agent?.uri);
-    ctx.beginning = undefined;
-    // A failed turn, which leaves the queue behind it waiting.
-    if (refused !== undefined) {
-      if (handedTurn !== undefined) handed.shift();
-      refuseTurn(turnId, text, refused, queuedMessageId, from, attachments, handedTurn?.said);
-      return;
-    }
-    /*
-     * The model this turn names, taken before the prompt goes out and before
-     * the turn is credited to it.
-     *
-     * The turn is busy for as long as this takes - named in `beginning` from
-     * here, so a message queued behind it waits rather than reaching the CLI
-     * first - and the marker comes off again whichever way the switch went,
-     * because a turn that ends is a turn the next one may start behind.
-     */
-    if (model !== undefined && model.id !== ctx.chosen) {
-      ctx.beginning = turnId;
-      const refused = await ctx.take(model.id);
       ctx.beginning = undefined;
-      // The CLI is on the model it took, whatever became of the turn.
-      if (refused === undefined) ctx.chosen = model.id;
-      if (dropped()) return;
-      if (refused !== undefined) {
-        if (handedTurn !== undefined) handed.shift();
-        refuseTurn(turnId, text, refused, queuedMessageId, from, attachments, handedTurn?.said);
-        return;
-      }
+      refuseTurn(turnId, text, ctx.gone, began, from, attachments);
+      return;
+    }
+    /*
+     * The record read again first: a session started from an agent record is
+     * one somebody may edit while it runs, and the edit reaches the CLI here,
+     * on the turn after it, with the conversation resumed onto the new CLI.
+     * A record that cannot be run fails the turn.
+     */
+    const unrunnable = ctx.refreshPreset();
+    if (unrunnable !== undefined) {
+      ctx.beginning = undefined;
+      refuseTurn(turnId, text, unrunnable, began, from, attachments);
+      return;
+    }
+    // The agent this message picked, which decides which CLI the model is switched on.
+    const unswitched = ctx.switchAgent(from?.agent?.uri);
+    if (unswitched !== undefined) console.warn(`@ahpd/agent-claude: ${unswitched}; the turn runs on the agent it has`);
+    // The model this turn names, before the prompt goes out and before the turn is credited to it.
+    if (model !== undefined && model.id !== ctx.chosen) {
+      const unmoved = await ctx.take(model.id);
+      if (unmoved === undefined) ctx.chosen = model.id;
+      else console.warn(`@ahpd/agent-claude: ${unmoved}; the turn runs on ${ctx.chosen ?? 'the default model'}`);
+      if (ctx.closed || stops !== stopped) return;
     }
     /*
      * The form the model came with, which is one key here.
@@ -381,15 +276,11 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.turnEffort = undefined;
       if (sessions !== undefined) void ctx.handle.applyFlagSettings({ effortLevel: sessions }).catch(() => {});
     }
-    /*
-     * The turn, as it was said when it was handed, or as it starts now. A
-     * handed turn a later one took the place of is still sent, as the
-     * reference agent sends every prompt it was handed, and its answer goes
-     * nowhere.
-     */
-    const turn = handedTurn?.said ?? {
+    ctx.beginning = undefined;
+    // The turn this session runs from now, as the host said it.
+    const turn = {
       id: turnId,
-      startedAt: new Date().toISOString(),
+      startedAt: new Date(began).toISOString(),
       message: {
         text,
         origin: from?.origin ?? { kind: 'user' },
@@ -400,7 +291,7 @@ export function createTurns(ctx: SessionContext): Turns {
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
-    if (handedTurn === undefined) ctx.active = turn;
+    ctx.active = turn;
     /*
      * What the host has to say on this turn, asked now that the turn exists.
      *
@@ -409,31 +300,17 @@ export function createTurns(ctx: SessionContext): Turns {
      * the client that can report back may have joined, or left, in between.
      */
     ctx.hostInstructions = { turn, said: options?.instructions?.() ?? [] };
-    if (turn === ctx.active) ctx.newTurn();
-    if (handedTurn === undefined) {
-      ctx.startedAt = Date.now();
-      ctx.failed = undefined;
-      // Said back, including to the client that started it. A host that only
-      // reduced this privately would go on to emit `chat/responsePart` for a
-      // turn no client has - so the parts land nowhere and the conversation
-      // appears only when somebody reopens it and gets a fresh snapshot.
-      ctx.emit('chat', {
-        type: 'chat/turnStarted',
-        turnId: turn.id,
-        startedAt: turn.startedAt,
-        message: turn.message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
-      /*
-       * The first message titles a session nobody has named.
-       *
-       * A message of nothing but blanks answers the fallback, which is the title
-       * already held - so nothing moves and nothing is said about it.
-       */
-      if (ctx.title === 'New session' && text) ctx.retitle(titleFrom(text, 'New session'));
-      ctx.doing('Thinking');
-    }
-    else handed.shift();
+    ctx.newTurn();
+    ctx.startedAt = Date.now();
+    ctx.failed = undefined;
+    /*
+     * The first message titles a session nobody has named.
+     *
+     * A message of nothing but blanks answers the fallback, which is the title
+     * already held - so nothing moves and nothing is said about it.
+     */
+    if (ctx.title === 'New session' && text) ctx.retitle(titleFrom(text, 'New session'));
+    ctx.doing('Thinking');
     /*
      * What the model is given, which is not always what the transcript shows.
      *
@@ -444,122 +321,19 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     const sent = carried === undefined ? text : `${carried}\n\n${text}`;
     carried = undefined;
-    prompted = { turn: String(turn.id), text: sent, ...(attachments === undefined ? {} : { attachments }) };
-    const uuid = writtenAs(String(turn.id), false);
-    const pushing = push(sent, attachments, uuid, { message: bag(turn.message), steering: false, turn: String(turn.id), cli: 'sent' });
-    // A turn handed while this one was beginning takes its place now that it is said.
-    sayHanded();
-    await pushing;
+    prompted = { turn: turnId, text: sent, ...(attachments === undefined ? {} : { attachments }) };
+    await push(sent, attachments, writtenAs(turnId, false), { message: bag(turn.message), steering: false, turn: turnId, cli: 'sent' });
   };
 
   /**
-   * The head of the queue, once there is nothing running.
-   *
-   * Called where a turn completes or a command's turn ends, and where a client
-   * queues, takes back or reorders a message: the reference host's drain runs
-   * at those, and a stopped or failed turn leaves the queue waiting for one of
-   * them. A turn still switching its model is running as far as this is
-   * concerned.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
-   *
-   * A turn handed while another ran goes first, once it is said and the CLI
-   * owes nothing in front of it: the queue is behind the chat's turn, and that
-   * turn is the last one handed.
+   * The first turn handed and not yet begun, begun once nothing runs, nothing
+   * prepares and the CLI owes nothing: called where a turn is handed and where
+   * one ends, however it ended, since each send is its own.
    */
-  const startNext = (): void => {
-    if (ctx.closed) return;
-    const first = handed[0];
-    if (first !== undefined) {
-      if (first.said !== undefined && ctx.owed.size === 0 && ctx.beginning === undefined) {
-        void beginTurn(first.turnId, first.text, first.model, undefined, first.from, first.attachments, first.options, first);
-      }
-      return;
-    }
-    if (busy())
-      return;
-    // Nor while the CLI owes an answer: a prompt handed to it now is read after
-    // the one it owes, and that answer would be taken for this one's. The start
-    // is made once that answer comes.
-    if (ctx.owed.size > 0) {
-      ctx.deferred = true;
-      return;
-    }
-    ctx.deferred = false;
-    // Nor behind a failure a client can resume, which waits to be resumed.
-    if (holdsTheQueue(ctx.turns.at(-1))) return;
-    /*
-     * The first steering message waiting, in the order they came, and then the
-     * head: the reference host's drain runs steering that came too late to
-     * steer a turn ahead of queued messages.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-     */
-    const [next] = ctx.queued.splice(Math.max(0, ctx.queued.findIndex((held) => held.steering === true)), 1);
-    if (!next)
-      return;
-    const message = bag(next.message);
-    // Read back, not re-parsed: `queue` wrote this entry from a `Chosen` and
-    // the values in it are the ones it kept.
-    const named = bag(message.model);
-    const id = str(named.id);
-    let model: Chosen | undefined;
-    if (id !== undefined)
-      model = named.config ? { id, config: named.config as NonNullable<Chosen['config']> } : { id };
-    // With whose it was: a message an agent queued is still an agent's when
-    // its turn comes.
-    const from: MessageFrom = {};
-    if (message.origin !== undefined) from.origin = bag(message.origin) as NonNullable<MessageFrom['origin']>;
-    if (message._meta !== undefined) from._meta = bag(message._meta);
-    const picked = bag(message.agent);
-    if (typeof picked.uri === 'string') from.agent = { uri: str(picked.uri) as string };
-    // What the message was holding while it waited, which is what it is still.
-    const attachments = attachedTo(message);
-    void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from, attachments,
-      next.options as TurnOptions | undefined);
-  };
-
-  /**
-   * The turn that answers a steering message whose own turn ended, which the
-   * steering messages that turn left with the CLI join.
-   *
-   * It carries the message, under the uuid the message went to the CLI with,
-   * which is where the CLI writes it, and names it in `queuedMessageId`, as
-   * AHP 1.1.0 shows a steering message taken in by a turn of its own. A
-   * message the CLI took in inside the turn that ended stays with that turn.
-   * The message is the new turn's prompt from then on, and ends with it: a
-   * stop of that turn stops it, and the CLI's answer to it goes nowhere after.
-   * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
-   */
-  const present = (uuid: string): void => {
-    const owed = ctx.owed.get(uuid);
-    if (owed === undefined || owed.withdrawn === true || ctx.active !== undefined) return;
-    const ended = owed.turn;
-    for (const one of ctx.owed.values()) {
-      if (one.steering && one.turn === ended && one.cli !== 'started') one.turn = uuid;
-    }
-    owed.turn = uuid;
-    owed.steering = false;
-    const attachments = attachedTo(owed.message);
-    prompted = { turn: uuid, text: str(owed.message.text) ?? '', ...(attachments === undefined ? {} : { attachments }) };
-    ctx.openTurn(ctx.mainScope, { id: uuid, message: owed.message, ...(owed.id === undefined ? {} : { queuedMessageId: owed.id }) });
-    ctx.doing('Thinking');
-    ctx.touch();
-  };
-
-  /**
-   * The steering messages a turn that was stopped or failed left with the CLI,
-   * answered in a turn of their own that opens now.
-   *
-   * The CLI runs a steering message it holds once the turn it steered ends.
-   * Opened now, the turn that answers it is the chat's running turn from that
-   * moment, so a turn sent meanwhile waits behind it as behind any other:
-   * a prompt that reached the CLI first would be run with the message, as one
-   * turn with one answer. A message the CLI has not said it holds yet opens
-   * its turn when its answer comes.
-   */
-  const handOver = (turnId: string): void => {
-    const left = [...ctx.owed.entries()].filter(([, owed]) => owed.steering && owed.withdrawn !== true && owed.turn === turnId && owed.cli !== 'started');
-    const first = left[0];
-    if (first !== undefined && left.some(([, owed]) => owed.cli === 'queued')) present(first[0]);
+  const sendNext = (): void => {
+    if (ctx.closed || ctx.active !== undefined || ctx.beginning !== undefined || ctx.owed.size > 0) return;
+    const next = handed.shift();
+    if (next !== undefined) void beginTurn(next.turnId, next.text, next.model, next.from, next.attachments, next.options);
   };
 
   /**
@@ -577,26 +351,14 @@ export function createTurns(ctx: SessionContext): Turns {
      * The SDK has no per-turn model, so honouring a turn's model means
      * `setModel` before its prompt - and setting it back afterwards would
      * race the next turn onto whichever call landed last. Leaving it is the
-     * behaviour that can be explained; silently ignoring the pick is the one
-     * that cannot, because the transcript would then credit a turn to a model
-     * that never ran it. The switch is awaited rather than fired, so a turn
-     * on a model the CLI will not take fails with its reason instead of being
-     * labelled with it and answered by another one.
+     * behaviour that can be explained.
      */
     sendMessage: (turnId, text, from, attachments, options) => {
       const sent = picked === undefined ? from : { ...from, agent: picked };
       const model = wanted;
       wanted = undefined;
-      /*
-       * A turn sent while another runs or begins is begun once the CLI has
-       * answered what is in front of it.
-       */
-      if (busy()) {
-        handed.push({ turnId, text, model, from: sent, attachments, options });
-        sayHanded();
-        return;
-      }
-      void beginTurn(turnId, text, model, undefined, sent, attachments, options);
+      handed.push({ turnId, text, model, from: sent, attachments, options });
+      sendNext();
     },
     changeModel: (model) => { wanted = model; },
     changeAgent: (agent) => { picked = agent; },
@@ -605,41 +367,37 @@ export function createTurns(ctx: SessionContext): Turns {
     /**
      * Into the turn that is already running, rather than after it.
      *
-     * The same door `sendMessage` and the queue go through: the prompt handed to the
-     * CLI is a generator that stays open for the life of the session, so a
-     * message pushed while a turn runs reaches the CLI while that turn runs.
-     * The CLI folds it into the turn at the turn's next tool call. Once the
-     * model is writing its last answer there is no next tool call, and the CLI
-     * runs it after that answer's result, as a turn of its own. Either way the
-     * answer is this turn's, as the reference keeps it: it goes under a uuid,
-     * which the frames and the result answering it name, and the turn stays
-     * open until a result has named it.
+     * The same door a turn's prompt goes through: the prompt handed to the CLI
+     * is a generator that stays open for the life of the session, so a message
+     * pushed while a turn runs reaches the CLI while that turn runs. The CLI
+     * folds it into the turn at the turn's next tool call. Once the model is
+     * writing its last answer there is no next tool call, and the CLI runs it
+     * after that answer's result, as a turn of its own. Either way the answer is
+     * this turn's, as the reference keeps it: it goes under a uuid, which the
+     * frames and the result answering it name, and the turn stays open until a
+     * result has named it.
      * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1595-L1609
+     *
+     * Declined until the turn's prompt is out, as the reference agent takes
+     * steering only into a send in flight; the host hands it again on the
+     * turn's next action. It goes into the turn whose prompt the CLI was handed
+     * last, which is the turn this session runs.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2494-L2498
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
      *
      * The uuid is the steering message's own id when that is a UUID, as a
      * turn's prompt goes under its turn's id, and a new one otherwise.
      */
     sendSteeringMessage: ({ id, text, attachments }) => {
-      if (!ctx.active) return false;
+      if (ctx.active === undefined || prompted?.turn !== String(ctx.active.id)) return false;
       const message = {
         text,
         origin: { kind: 'user' },
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
-      // Held in the state as well as announced, and taken out again where the
-      // CLI reads it rather than here: a client that only read the state saw
-      // nothing waiting, because the announcement and its removal used to
-      // happen in one tick.
+      // Held until the CLI reads it, which is when its removal is said.
       ctx.steering = { id, message };
-      ctx.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
-      /*
-       * Into the work the CLI is doing, which is the turn whose prompt it was
-       * handed last while the chat's turn is one handed and not sent yet: the
-       * reference agent steers the prompt in flight.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L448-L474
-       */
-      const into = handed.some((one) => one.said === ctx.active) ? prompted?.turn ?? String(ctx.active.id) : String(ctx.active.id);
-      void push(text, attachments, UUID.test(id) ? id : crypto.randomUUID(), { message, steering: true, turn: into, id, cli: 'sent' });
+      void push(text, attachments, UUID.test(id) ? id : crypto.randomUUID(), { message, steering: true, turn: String(ctx.active.id), id, cli: 'sent' });
       return true;
     },
 
@@ -664,16 +422,10 @@ export function createTurns(ctx: SessionContext): Turns {
       if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
     },
 
-    setDraft: (next) => {
-      if (JSON.stringify(next) === JSON.stringify(ctx.draft))
-        return;
-      ctx.draft = next;
-      // Not `touch()`: typing is not a change to the conversation, and a
-      // catalogue that reordered itself on every keystroke would be unusable.
-      // The key is left off to clear it, which is what the action's
-      // `undefined` means and the only way JSON can say it.
-      ctx.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
+    // The draft the host said, held for the chat's state. Not `touch()`: typing
+    // is not a change to the conversation, and a catalogue that reordered
+    // itself on every keystroke would be unusable.
+    setDraft: (next) => { ctx.draft = next; },
 
     /*
      * The same turn, run again.
@@ -683,7 +435,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * intact rather than replaced by a new one. So the turn moves back to
      * `active` as it was, and its text goes to a new CLI again - which is what
      * makes a failed turn retryable without somebody having to type it a second
-     * time.
+     * time. The host said the client's resume.
      *
      * A CLI cannot take the prompt without its own copy of the failed prompt
      * still in the conversation, so the new one resumes cut at the end of the
@@ -691,13 +443,10 @@ export function createTurns(ctx: SessionContext): Turns {
      * whose first turn this is has no turn to cut back to and starts over
      * under its id. Either way the calls the failed turn ran are run again,
      * because the cut drops them with the prompt.
-     *
-     * `chat/turnResume` is said here, while the client's action is being
-     * applied, so it goes out as that action's echo.
      */
     resumeTurn: (turnId) => {
       const unrunnable = new Error(`${turnId} is not a turn this backend can run again`);
-      if (busy()) throw unrunnable;
+      if (ctx.active !== undefined || ctx.beginning !== undefined || handed.length > 0) throw unrunnable;
       const last = ctx.turns.at(-1);
       if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') throw unrunnable;
       const end = bag((last.responseParts as Bag[] | undefined)?.at(-1));
@@ -727,7 +476,6 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.active = again as unknown as NonNullable<typeof ctx.active>;
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
-      ctx.emit('chat', { type: 'chat/turnResume', turnId });
       ctx.doing('Thinking');
       ctx.touch();
       const login = ctx.login;
@@ -738,37 +486,28 @@ export function createTurns(ctx: SessionContext): Turns {
           await ctx.again([]);
           return;
         }
-        // A failed turn, which leaves the queue behind it waiting.
         ctx.failTurn(`The conversation could not start over: ${restarted.failed}`);
       })();
     },
 
+    /*
+     * A stop, which closes the CLI, as the reference stop aborts its query:
+     * every prompt and steering message the CLI has not answered goes with it,
+     * the turns handed behind the one running are sent to nobody, and the next
+     * send starts a CLI that resumes the conversation. The turn ends cancelled
+     * in this session's record and in what it says, which the host, having
+     * said the stop already, keeps the turn's end by.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+     */
     abort: () => {
-      /*
-       * The turns handed while another ran go with the stop: the chat's turn
-       * ends below, and the ones it took the place of are sent to nobody. The
-       * interrupt below stops what the CLI runs, as the reference stop aborts
-       * the agent's work in flight and drops the turns waiting behind it.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
-       */
+      stops += 1;
       handed.length = 0;
-      // Every call still open in the turn, before any of them is answered.
-      const open = (list(ctx.active?.responseParts) as Bag[])
-        .filter((part) => part.kind === 'toolCall')
-        .map((part) => bag(part.toolCall))
-        .filter((call) => call.status !== 'completed' && call.status !== 'cancelled')
-        .map((call) => str(call.toolCallId))
-        .filter((id): id is string => id !== undefined);
-      const answered = new Set<string>();
       // A turn blocked on a person is stopped by answering no, not by leaving
-      // a promise nobody will settle - the subprocess would sit there for ever.
-      // All of them, not the last one: a turn stopped while two questions
-      // were open used to leave the other tool waiting for ever.
+      // a promise nobody will settle. All of them, not the last one.
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
         ctx.inputNeededRemoved(one.id);
-        answered.add(one.id);
       }
       // And the previews those questions were carrying. A call that will never
       // run leaves no file to show, so the text the host was holding goes with
@@ -776,50 +515,32 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.settleEdits();
       // And the calls a client is running for us, for the same reason: a
       // promise settled by somebody else is one a stopped turn still waits on.
-      for (const id of open) if (ctx.calls.owner(id) !== undefined) answered.add(id);
       ctx.releaseCalls('The turn was stopped');
       /*
-       * The interrupt, once the CLI has recorded every answer above.
-       *
-       * The CLI keeps an answer only once it has recorded the call's result,
-       * and an interrupt that reaches it first has it write its own text for
-       * the call instead: "The user doesn't want to proceed with this tool use
-       * ... STOP what you are doing and wait for the user to tell you how to
-       * proceed". The model then takes a stop for a person refusing the call,
-       * where the protocol closes it as skipped. So the reader sends the
-       * interrupt once the CLI reports those results. A call the CLI runs
-       * itself is stopped only by the interrupt, and is told that text by
-       * whichever interrupt reaches it, so with one open the interrupt goes now.
-       */
-      if (answered.size === 0 || open.some((id) => !answered.has(id))) void ctx.handle.interrupt().catch(() => {});
-      else ctx.stopAnswers = answered;
-      /*
-       * And the workers that turn spawned, foreground or background.
-       *
-       * A worker's turn is a turn of its own, and a main turn stopped halfway
-       * leaves the workers it spawned with nothing left to answer them. A
-       * background worker spawned by an earlier turn is not this turn's, keeps
-       * running and ends on its own `task_notification`. A worker whose call
-       * was never seen has no turn on record and is ended with this one.
-       */
-      /*
-       * A worker still waiting to be told what it is.
-       *
-       * It has a chat to open either way, and a chat that opens five seconds
-       * after the turn that spawned it was stopped is a chat nobody asked for.
-       * So it is opened here, with whatever the record said by now - the
-       * fallback title and no prompt if nothing did - and the loop below ends it
-       * with the workers this turn already ends.
+       * And every worker and task the CLI runs, foreground or background,
+       * since they go with the CLI the stop closes, as a background task ends
+       * with the reference's abort. A worker still waiting to be told what it
+       * is is opened first, with whatever the record said by now, so the loop
+       * below ends it with the rest.
        */
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.waiting !== undefined) ctx.releaseHeld(scope.parent);
       }
-      const cancelling = str(ctx.active?.id);
       for (const scope of [...ctx.scopes.values()]) {
-        if (scope.parent === '' || scope.chat === undefined) continue;
-        const made = ctx.spawning.get(scope.parent)?.turn;
-        if (made === undefined || made === cancelling) ctx.endWorker(scope.parent, 'cancelled');
+        if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
       }
+      ctx.noteLive({ tasks: [] });
+      // The files the turn's edit calls began changing, as the stop leaves them.
+      ctx.editsStopped();
+      const was = ctx.handle;
+      ctx.rebind = was;
+      try { was.close(); }
+      catch { /* A CLI already closing is stopped all the same. */ }
+      ctx.waiting.length = 0;
+      ctx.owed.clear();
+      ctx.answering = undefined;
+      ctx.steering = undefined;
+      ctx.beginning = undefined;
       const turn = ctx.active;
       if (turn) {
         turn.state = 'cancelled';
@@ -827,18 +548,12 @@ export function createTurns(ctx: SessionContext): Turns {
         ctx.settleOpen(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
-        ctx.interrupted = true;
         ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
       }
       ctx.doing(undefined);
       ctx.touch();
-      // Deliberately not `startNext`: somebody stopping a turn is stopping
-      // this conversation, and starting the one behind it is the opposite of
-      // what they asked for. What the CLI still runs after the stop is the
-      // steering messages it holds, which are answered in a turn of their own.
-      if (turn) handOver(String(turn.id));
     },
   };
 
-  return { queued, startNext, again, handOver, present, methods };
+  return { sendNext, again, methods };
 }

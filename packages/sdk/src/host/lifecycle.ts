@@ -1372,6 +1372,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     };
     const send = (): Promise<void> | undefined => {
       if (stopped?.() === true) return undefined;
+      /*
+       * The turn booked as its backend is handed it: its start, as the chat
+       * holds it, said again on the chat's road, which keeps what a turn is
+       * kept with and drops the start the chat holds already. A turn a later
+       * one took the place of is in no state, and nothing is booked for it.
+       */
+      const held = ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined;
+      if (held !== undefined && String(held.id ?? '') === turnId) {
+        byChat.get(session.chatUri)?.say({ type: 'chat/turnStarted', turnId, startedAt: held.startedAt, message: held.message });
+      }
       let sending: void | Promise<void>;
       try { sending = session.sendMessage(turnId, text, from === undefined ? undefined : sent, attachments, ctx.turnInstructions(session.uri)); }
       catch (error) {

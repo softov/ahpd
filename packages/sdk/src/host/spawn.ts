@@ -985,6 +985,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     let titled: Session | undefined;
     const terminalOutputs = ctx.outputsFor(uri, chatUri);
+    /**
+     * Whether this host is saying an action on the chat's road itself, which is
+     * how a turn it handed the backend, or ran as a local command, is booked:
+     * once, when the host says its start there.
+     */
+    let booking = false;
     const wired: Start = {
       uri,
       chatUri,
@@ -1161,6 +1167,17 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         const where = channel === 'chat' ? chatUri : uri;
         const turn = String(action.turnId ?? '');
+        /*
+         * A backend's start of a turn the chat holds is neither said nor
+         * booked again: the host said the turn's start, and booked it on this
+         * road when it handed the turn over. A turn the backend opens itself
+         * is the chat's from its start, said and booked here.
+         */
+        if (channel === 'chat' && action.type === 'chat/turnStarted' && !booking) {
+          const held = ctx.stateOf(chatUri);
+          const turns = Array.isArray(held?.turns) ? held.turns as Bag[] : [];
+          if (String((held?.activeTurn as Bag | undefined)?.id ?? '') === turn || turns.some((one) => String(one.id ?? '') === turn)) return;
+        }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);
@@ -1680,7 +1697,15 @@ export function createSpawn(ctx: HostContext): Spawn {
     // The name it is held under, which is the session's own and not its
     // provider's. Recorded so every other answer about it uses that same string.
     names.set(idOf(uri), uri);
-    byChat.set(chatUri, { uri, chat: session, say: (action) => { wired.emit('chat', action); } });
+    byChat.set(chatUri, {
+      uri,
+      chat: session,
+      say: (action) => {
+        booking = true;
+        try { wired.emit('chat', action); }
+        finally { booking = false; }
+      },
+    });
     /*
      * The answer this chat is born with, written down and not said.
      *

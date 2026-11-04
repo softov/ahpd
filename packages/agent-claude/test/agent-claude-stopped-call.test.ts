@@ -5,22 +5,18 @@ import { expect, it, vi } from 'vitest';
 import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /*
- * A call a stop catches is told the turn was stopped, before the turn stops.
+ * A call a stop catches is told the turn was stopped, and the CLI is closed.
  *
  * A stop ends the turn, and the protocol's reducer closes a call still open
  * then as cancelled and skipped, never denied. This backend holds two kinds of
  * call: one waiting on a person's confirmation, answered in `canUseTool`, and
  * one a client is running, answered through the SDK server's handler. A stop
- * answers both with what happened, and the model reads that answer only if it
- * reaches the CLI before the interrupt does.
+ * answers both with what happened, so no promise is left waiting, and closes
+ * the CLI, as the reference stop aborts its query; the next turn goes to a CLI
+ * that resumes the conversation.
  *
- * The SDK writes an answer to the CLI once the promise it awaited settles, and
- * writes an interrupt the moment it is asked for one, so the cases model it
- * the same way: an answer is heard when its promise settles, an interrupt when
- * it is called. Heard the other way round, the CLI records its own text for
- * the call, "The user doesn't want to proceed with this tool use ... STOP what
- * you are doing and wait for the user to tell you how to proceed", and the
- * model takes the stop for a person refusing the call.
+ * The cases hear an answer when its promise settles and a close when it is
+ * called.
  */
 
 const sdk = vi.hoisted(() => {
@@ -67,7 +63,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     reloadPlugins: async () => ({ plugins: [] }),
     supportedModels: async () => [],
     streamInput: async () => {},
-    close: () => {},
+    close: () => { sdk.heard.push('close'); },
   }),
 }));
 
@@ -144,7 +140,12 @@ const heard = (answer: unknown): void => {
   sdk.push(reported(said(answer)));
 };
 
-it('tells a call waiting on a person that the turn was stopped, before anything stops the turn', async () => {
+/*
+ * The reference stop aborts its query, which fails every send it had not
+ * answered; a question still waiting is answered here, so nothing waits on it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ */
+it('tells a call waiting on a person that the turn was stopped, and closes the CLI', async () => {
   const { session } = await started();
   void sdk.canUseTool!(CALLED, { text: 'hello' }, { toolUseID: 'toolu_post', signal: new AbortController().signal, suggestions: [] })
     .then(heard);
@@ -153,13 +154,14 @@ it('tells a call waiting on a person that the turn was stopped, before anything 
   session.abort();
   await settle();
 
-  const [first, ...after] = sdk.heard;
-  expect(first).toMatchObject({ behavior: 'deny' });
-  expect(said(first)).toBe('The turn was stopped');
-  expect(after).toContain('interrupt');
+  const answered = sdk.heard.filter((one) => one !== 'close');
+  expect(answered).toEqual([expect.objectContaining({ behavior: 'deny' })]);
+  expect(said(answered[0])).toBe('The turn was stopped');
+  expect(sdk.heard).toContain('close');
+  expect(sdk.heard).not.toContain('interrupt');
 });
 
-it('tells a call a client is running that the turn was stopped, before anything stops the turn', async () => {
+it('tells a call a client is running that the turn was stopped, and closes the CLI', async () => {
   const { session } = await started();
   const asking = sdk.canUseTool!(CALLED, { text: 'hello' }, { toolUseID: 'toolu_post', signal: new AbortController().signal, suggestions: [] });
   await settle();
@@ -171,10 +173,11 @@ it('tells a call a client is running that the turn was stopped, before anything 
   session.abort();
   await settle();
 
-  const [first, ...after] = sdk.heard;
-  expect(first).not.toBe('interrupt');
-  expect(said(first)).toContain('The turn was stopped');
-  expect(after).toContain('interrupt');
+  const answered = sdk.heard.filter((one) => one !== 'close');
+  expect(answered).toHaveLength(1);
+  expect(said(answered[0])).toContain('The turn was stopped');
+  expect(sdk.heard).toContain('close');
+  expect(sdk.heard).not.toContain('interrupt');
 });
 
 /*
@@ -204,7 +207,7 @@ it('says the questions and the turn it held ended, when it is stopped to start a
   expect(sent.filter((one) => one.action.type === 'chat/turnCancelled').map((one) => one.action.turnId)).toEqual(['t1']);
 });
 
-it('interrupts at once a turn whose open call the CLI runs itself', async () => {
+it('closes the CLI at once at a stop of a turn whose open call the CLI runs itself', async () => {
   const { session } = await started();
   sdk.push({
     type: 'assistant', parent_tool_use_id: null, uuid: 'a2',
@@ -217,6 +220,6 @@ it('interrupts at once a turn whose open call the CLI runs itself', async () => 
 
   session.abort();
 
-  // Nothing of the CLI's own is answered here, and only the interrupt stops it.
-  expect(sdk.heard).toEqual(['interrupt']);
+  // Nothing of the CLI's own is answered here, and the close stops it.
+  expect(sdk.heard).toEqual(['close']);
 });

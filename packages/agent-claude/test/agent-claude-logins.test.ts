@@ -566,7 +566,8 @@ describe('a failed login', () => {
     sdk.push(...answeredFor(String(steered?.uuid), 'answer three'));
     await settle();
     expect(ofTurn(chat, 'chat/turnComplete', 't2')).toHaveLength(1);
-    expect(chat.filter((action) => action.type === 'chat/turnStarted').map((action) => action.turnId)).toEqual(['t1', 't2']);
+    // The host says each turn's start, and the session none.
+    expect(chat.filter((action) => action.type === 'chat/turnStarted')).toEqual([]);
     const t2 = JSON.stringify(chat.filter((action) => action.turnId === 't2'));
     expect(t2).toContain('answer two');
     expect(t2).toContain('answer three');
@@ -595,49 +596,6 @@ describe('a failed login', () => {
     expect(sent[0]).toMatchObject({ content: 'two' });
     expect(JSON.stringify(sent[1]?.content)).toContain('and three');
     expect(sdk.said.filter((one) => one.query === 0)).toHaveLength(2);
-  });
-
-  it('runs a turn opened for a steering message again on the next login, with the message as its prompt', async () => {
-    const recorded: [string, string][] = [];
-    const { session, chat } = await answeredOnce(twoLogins(), ['work', 'personal'], {
-      onTurnRecorded: (turnId: string, transcriptId: string) => { recorded.push([turnId, transcriptId]); },
-    });
-    session.sendMessage('t2', 'two');
-    await settle();
-    const prompt = String(sdk.said.at(-1)?.uuid);
-    sdk.push({
-      type: 'assistant', parent_tool_use_id: null, uuid: 'part-t2', session_id: 'cli-1', user_message_uuid: prompt,
-      message: { id: 'msg-t2', role: 'assistant', model: 'claude-x', content: [{ type: 'text', text: 'partly' }] },
-    });
-    await settle();
-    expect(session.sendSteeringMessage?.({ id: 's1', text: 'and three' })).toBe(true);
-    await settle();
-    const held = String(sdk.said.at(-1)?.uuid);
-    sdk.push({ type: 'command_lifecycle', command_uuid: held, state: 'queued', session_id: 'cli-1' });
-    await settle();
-    // Stopped with the message held, which opens the message's own turn.
-    session.abort();
-    await settle();
-    expect(chat.filter((action) => action.type === 'chat/turnStarted').at(-1)).toMatchObject({ turnId: held, queuedMessageId: 's1' });
-    sdk.push({ type: 'result', subtype: 'success', is_error: false, session_id: 'cli-1', duration_ms: 5, user_message_uuids: [prompt] });
-    // The CLI's attempt at the message, refused.
-    sdk.push(...failure('rate_limit', SPENT, inAnHour())
-      .map((frame) => (frame.type === 'assistant' ? { ...frame, user_message_uuid: held } : frame)));
-    await settle();
-
-    // The message goes again as the turn's prompt, cut back to the end of the turn before it.
-    const sent = sdk.said.filter((one) => one.query === 1);
-    expect(sent.map((one) => one.content)).toEqual(['and three']);
-    expect(sent[0]?.uuid).not.toBe(held);
-    expect(sdk.queries.at(-1)?.options.resumeSessionAt).toBe('part-t2');
-    // The turn is written under the uuid it went again under, which the host is told.
-    expect(recorded).toContainEqual([held, sent[0]?.uuid]);
-
-    sdk.push(...answeredFor(String(sent[0]?.uuid), 'answer three'));
-    await settle();
-    expect(ofTurn(chat, 'chat/turnComplete', held)).toHaveLength(1);
-    expect(JSON.stringify(chat.filter((action) => action.turnId === held))).toContain('answer three');
-    expect(shown(chat)).toBe(false);
   });
 
   it('ends a turn that failed after it showed a part with the failure, and runs nothing again', async () => {
@@ -751,7 +709,13 @@ describe('a failed login', () => {
     }
   });
 
-  it('sends a steering message the failed attempt held to the CLI after it, when the turn ends with the failure', async () => {
+  /*
+   * A steering message is answered only in the turn it steered, as the
+   * reference steering entry takes the in-flight send's turn: a turn that ends
+   * with the failure takes the message it held with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
+   */
+  it('sends no steering message the failed attempt held to the CLI after it, when the turn ends with the failure', async () => {
     const id = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d';
     const before = process.env.CLAUDE_CONFIG_DIR;
     const home = mkdtempSync(join(tmpdir(), 'ahpd-logins-home-'));
@@ -766,23 +730,14 @@ describe('a failed login', () => {
       await settle();
       expect(session.sendSteeringMessage?.({ id: 's1', text: 'and two' })).toBe(true);
       await settle();
-      const held = sdk.said.at(-1);
       sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
-      await until(() => sdk.said.some((one) => one.query === 1));
-
-      // The prompt is in the conversation already; the message is not, and goes on its own.
-      expect(ofTurn(chat, 'chat/error', 't1')).toHaveLength(1);
-      const sent = sdk.said.filter((one) => one.query === 1);
-      expect(sent.map((one) => one.content)).toEqual(['and two']);
-      expect(sent[0]?.uuid).not.toBe(held?.uuid);
-
-      // Answered, it is a turn of its own, as a failed turn's steering message is.
-      sdk.push(...answeredFor(String(sent[0]?.uuid), 'answer two').map((frame) => ({ ...frame, session_id: id })));
+      await until(() => sdk.queries.length === 2);
       await settle();
-      expect(chat.filter((action) => action.type === 'chat/turnStarted').at(-1)).toMatchObject({
-        turnId: sent[0]?.uuid, queuedMessageId: 's1', message: { text: 'and two' },
-      });
-      expect(ofTurn(chat, 'chat/turnComplete', String(sent[0]?.uuid))).toHaveLength(1);
+
+      // The turn ends with the failure, and the CLI after it is sent nothing of it.
+      expect(ofTurn(chat, 'chat/error', 't1')).toHaveLength(1);
+      expect(sdk.said.filter((one) => one.query === 1)).toEqual([]);
+      expect(chat.filter((action) => action.type === 'chat/turnStarted')).toEqual([]);
     }
     finally {
       if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;

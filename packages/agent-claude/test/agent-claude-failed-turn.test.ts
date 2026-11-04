@@ -25,12 +25,15 @@ const sdk = vi.hoisted(() => {
     /** Every prompt the CLIs were handed, and the uuid it carried. */
     said: [] as unknown[],
     uuids: [] as (string | undefined)[],
+    /** What the CLI's stream throws once it has nothing left to read, as a CLI that died. */
+    failing: undefined as Error | undefined,
     reset() {
       state.held = [];
       state.wake = undefined;
       state.queries = [];
       state.said = [];
       state.uuids = [];
+      state.failing = undefined;
     },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
@@ -66,6 +69,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       async *[Symbol.asyncIterator]() {
         for (;;) {
           while (sdk.held.length > 0) yield sdk.held.shift() as Record<string, unknown>;
+          if (sdk.failing !== undefined) throw sdk.failing;
           if (closed) return;
           await new Promise<void>((resolve) => { sdk.wake = resolve; });
         }
@@ -156,6 +160,8 @@ it("ends a turn the CLI failed with the CLI's own words, said once", async () =>
   });
   await settle();
   const before = session.chatState();
+  // The client's start, which the host says before it hands the session the turn.
+  chat.push({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'Reply with the single word: ok', origin: { kind: 'user' } } });
   session.sendMessage('t1', 'Reply with the single word: ok');
   await settle();
   sdk.push(notice, result);
@@ -190,16 +196,46 @@ it('does not mark a turn refused before the CLI resumable', async () => {
   sdk.reset();
   const { session, chat } = live();
   await settle();
-  // The CLI ends, so the next turn is one that never reaches one.
+  // The CLI dies, so the next turn is one that never reaches one.
+  sdk.failing = new Error('the CLI went away');
   sdk.queries.at(-1)?.close();
   await settle();
   session.sendMessage('t1', 'one');
   await settle();
 
   const part = chat.find((one) => one.type === 'chat/error')?.part as Bag;
-  expect(String(bag(part.error).message)).toContain('stopped');
+  expect(String(bag(part.error).message)).toContain('the CLI went away');
   expect(part.resumable).toBeUndefined();
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+/*
+ * A stream that ends with no result fails the turn it was answering, as the
+ * reference pipeline fails every send it had not answered, and the next turn
+ * goes to a CLI that resumes the conversation.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
+ */
+it('fails a turn whose CLI ended without a result, and sends the next to a CLI that resumes the conversation', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'));
+  await settle();
+  sdk.queries.at(-1)?.close();
+  await settle();
+
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => [one.turnId, bag(bag(one.part).error).message]))
+    .toEqual([['t1', 'Claude SDK stream ended without a result message']]);
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(sdk.queries).toHaveLength(2);
+  expect(sdk.queries.at(-1)?.options.resume).toBe(SESSION);
+  expect(sdk.said).toEqual(['one', 'two']);
+  sdk.push(worked);
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual(['t2']);
 });
 
 it('does not mark a turn whose login was refused resumable', async () => {
@@ -259,14 +295,12 @@ it('resumes a failed turn at the end of the turn before, and sends its prompt ag
   const clis = sdk.queries.length;
   const prompts = sdk.said.length;
 
+  const said = chat.length;
   expect(() => session.resumeTurn?.('t2')).not.toThrow();
-  // Said while the client's action is applied, so the host echoes it - and
-  // before anything of the new run is said.
-  const at = chat.findIndex((one) => one.type === 'chat/turnResume');
-  expect(chat[at]).toEqual({ type: 'chat/turnResume', turnId: 't2' });
-  expect(chat.slice(at).some((one) => one.type === 'chat/error')).toBe(false);
 
   await settle();
+  // The client's resume is the host's to say, and nothing of the new run fails.
+  expect(chat.slice(said).some((one) => one.type === 'chat/turnResume' || one.type === 'chat/error')).toBe(false);
   // A new CLI, cut at the end of the turn before - not at this turn's own last
   // entry, which holds the prompt that failed.
   expect(sdk.queries).toHaveLength(clis + 1);
