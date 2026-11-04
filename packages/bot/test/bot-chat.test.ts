@@ -507,7 +507,7 @@ it('steers a message into the open turn, which goes on', async () => {
   ]);
   expect(heard).toEqual([
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steered: true },
   ]);
 
   chat.reply('done');

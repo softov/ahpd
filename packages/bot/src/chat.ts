@@ -118,6 +118,8 @@ export interface ChatMessage {
   turnId: string;
   /** What was said. */
   text: string;
+  /** True for a message steered into the open turn, rather than one that began a turn. */
+  steered?: boolean;
 }
 
 /**
@@ -1048,7 +1050,7 @@ export function botChatAgent(
         if (held === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
         append(dir, id, { id: held.id, steering: true, message, _meta: mark });
-        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text });
+        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steered: true });
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
         touch();
         return true;

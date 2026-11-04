@@ -357,9 +357,10 @@ it('hands the back session the words as an agent\'s queued message that names th
 });
 
 /*
- * A steer of the main turn is sent the same way, and waits in the back session
- * behind its running turn: the main turn is answered by the turn the last
- * message becomes, not by the one in front of it.
+ * A second message into the main turn that the person did not steer is sent
+ * the same way, and waits in the back session behind its running turn: the
+ * main turn is answered by the turn the last message becomes, not by the one
+ * in front of it.
  */
 it('answers the main turn with the turn its last message became', async () => {
   const one = await sitting();
@@ -383,6 +384,53 @@ it('answers the main turn with the turn its last message became', async () => {
   one.wake.finished('ahp-session:/1', 'the second answer');
   expect(said.replies).toEqual(['the second answer']);
   expect(said.notices).toEqual([]);
+});
+
+/*
+ * A message the person steered into the main turn steers the back turn that
+ * answers it, as the person chose to steer: it is no turn of its own, so the
+ * main turn is answered when that back turn ends.
+ */
+it('steers the back turn with a message steered into the main turn', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'count to 30'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+
+  await one.wake.woken({ ...message('t1', 'stop at 10'), steered: true }, said.handle);
+  expect(one.sent[1]?.action).toMatchObject({
+    type: 'chat/pendingMessageSet',
+    kind: 'steering',
+    message: {
+      text: carrying('stop at 10'),
+      origin: { kind: 'agent' },
+      _meta: { 'vscode.chat.delegation': { sourceSession: CHAT, sourceChat: MAIN } },
+    },
+  });
+
+  one.wake.finished('ahp-session:/1', 'stopped at 10');
+  expect(said.replies).toEqual(['stopped at 10']);
+  expect(said.notices).toEqual([]);
+});
+
+/*
+ * A steer the host refuses ends no main turn: the back turn it was meant for
+ * still runs and still answers, and the operator is told.
+ */
+it('keeps the main turn when the host refuses a steer', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'count to 30'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+
+  one.refuseSend('no turn takes a steer here');
+  await one.wake.woken({ ...message('t1', 'stop at 10'), steered: true }, said.handle);
+  expect(said.notices).toEqual([]);
+  expect(one.problems.at(-1)).toContain('was refused: no turn takes a steer here');
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
+
+  one.wake.finished('ahp-session:/1', 'the answer');
+  expect(said.replies).toEqual(['the answer']);
 });
 
 /*
