@@ -1,6 +1,6 @@
 ---
 title: A shell to sit in runs the integration
-status: implemented
+status: done
 depends:
   - task-01-the-store-reads-vscodes-marks.md
 layer: "@ahpd/sdk machines, @ahpd/server"

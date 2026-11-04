@@ -1,6 +1,6 @@
 ---
 title: The six tools behind the switch
-status: implemented
+status: done
 depends:
   - task-01-a-host-tool-knows-its-call.md
   - task-02-an-agents-shells-run-its-commands.md

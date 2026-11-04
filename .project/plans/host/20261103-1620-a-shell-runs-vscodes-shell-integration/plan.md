@@ -1,7 +1,7 @@
 ---
 title: A shell opened to sit in runs VS Code's shell integration
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -94,9 +94,9 @@ pty data -> screen port (alternate screen, paste mode, cursor answer) -> read: O
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the store reads VS Code's marks](task-01-the-store-reads-vscodes-marks.md) | implemented | - |
-| [02 - a shell to sit in runs the integration](task-02-a-shell-to-sit-in-runs-the-integration.md) | implemented | 01 |
-| [03 - each terminal has a screen](task-03-each-terminal-has-a-screen.md) | implemented | 01 |
+| [01 - the store reads VS Code's marks](task-01-the-store-reads-vscodes-marks.md) | done | - |
+| [02 - a shell to sit in runs the integration](task-02-a-shell-to-sit-in-runs-the-integration.md) | done | 01 |
+| [03 - each terminal has a screen](task-03-each-terminal-has-a-screen.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -106,14 +106,12 @@ pty data -> screen port (alternate screen, paste mode, cursor answer) -> read: O
 
 ## Resume state
 
-- **Done so far:** [task-01](task-01-the-store-reads-vscodes-marks.md), [task-02](task-02-a-shell-to-sit-in-runs-the-integration.md), [task-03](task-03-each-terminal-has-a-screen.md).
-- **Next action:** none: every task is implemented, and the plan awaits its final verification on a test daemon.
-- **Open questions:** none.
-- **Watch out for:** do not merge the fork branch. Take its files and fit them to main, where marks are stripped and a command is a `command` part.
+- **Done so far:** built in #209, and Softov checked it by hand on Linux on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** the check on Windows and macOS in [host-1620-terminal-tool-checks.md](../../../pending/host-1620-terminal-tool-checks.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass, one at a time.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
+- [x] `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass, one at a time.
 - [ ] A client terminal on a test daemon shows each command as a `command` part with its exit code, under node-pty and under Bun.
-- [ ] `vim` in a client terminal makes `isInAltBuffer` true.
+- [x] `vim` in a client terminal makes `isInAltBuffer` true.
