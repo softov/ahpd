@@ -1,7 +1,7 @@
 ---
 title: The agent terminal tool
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -104,9 +104,9 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | implemented | - |
-| [02 - an agent's shells run its commands](task-02-an-agents-shells-run-its-commands.md) | implemented | 01 |
-| [03 - the six tools behind the switch](task-03-the-six-tools-behind-the-switch.md) | implemented | 01, 02 |
+| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | done | - |
+| [02 - an agent's shells run its commands](task-02-an-agents-shells-run-its-commands.md) | done | 01 |
+| [03 - the six tools behind the switch](task-03-the-six-tools-behind-the-switch.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -117,26 +117,11 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03, on `host/20261103-1620-the-agent-terminal-tool`.
-  - A host tool's `run` gets its call id and an `opened` callback.
-  - Claude, pi and cofold put the terminal on the call, and keep it in the completion.
-  - A marked `bash` replaces the own shell of Claude and pi. Claude reads `mcp__ahp__bash` lines by the terminal rules.
-  - Each chat has a shell manager. It reuses an idle shell, skips a busy one and drops an exited one.
-  - A new shell opens through the one open block that `commanded` and `heldTerminals` use.
-  - A command ends at its `D` mark, the sentinel, the alternate screen, the shell's exit or its timeout.
-  - The output is the `command` part, cut to 60 KB.
-  - A shell for a session in a machine runs through `computers.how`.
-  - The six tools are offered behind `enableCustomTerminalTool`, never on Windows and never without a terminal store.
-  - Each tool checks the grant of the client terminal method it matches.
-  - `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md` describe the tools.
-- **Next action:** none in this plan. No gate covers the daemon run of the final checklist: a Claude session that runs `bash` with the switch on.
-- **Open questions:** none.
-- **Watch out for:**
-  - Do not merge the fork branch. Its `shells.ts` counts output, and main reads a `command` part.
-  - A store with no screen answers `whenAltBuffer` at once. So the execution reads `isInAltBuffer()` when that wait settles.
+- **Done so far:** built in #211, and Softov checked it by hand on Linux on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** the check on Windows and macOS in [host-1620-terminal-tool-checks.md](../../../pending/host-1620-terminal-tool-checks.md).
 
 ## Final verification checklist
 
 - [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
 - [x] The sdk, server, agent-claude, agent-pi, agent-cofold and agent-acp suites pass, one at a time.
-- [ ] On a test daemon with `enableCustomTerminalTool` on, a Claude session runs `bash`, and the call shows the terminal while the command runs.
+- [x] On a test daemon with `enableCustomTerminalTool` on, a Claude session runs `bash`, and the call shows the terminal while the command runs.

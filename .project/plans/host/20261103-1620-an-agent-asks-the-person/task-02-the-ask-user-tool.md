@@ -1,6 +1,6 @@
 ---
 title: The ask_user tool
-status: implemented
+status: done
 depends:
   - task-01-a-host-tool-asks-the-person.md
 layer: "@ahpd/sdk tools, @ahpd/agent-claude"

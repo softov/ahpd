@@ -1,6 +1,6 @@
 ---
 title: A host tool knows its call
-status: implemented
+status: done
 depends: []
 layer: "@ahpd/sdk, @ahpd/agent-claude, @ahpd/agent-pi, @ahpd/agent-cofold"
 refs:

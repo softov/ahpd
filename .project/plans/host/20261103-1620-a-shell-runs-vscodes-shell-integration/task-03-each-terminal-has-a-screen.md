@@ -1,6 +1,6 @@
 ---
 title: Each terminal has a screen
-status: implemented
+status: done
 depends:
   - task-01-the-store-reads-vscodes-marks.md
 layer: "@ahpd/sdk machines, @ahpd/server"

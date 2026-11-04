@@ -12,7 +12,6 @@ Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e
 
 Restart the daemon on main first. Do them from the top down.
 
-- [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - 20 min, three host/20261103-1620 plans.
 - [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
 - [session-picker-checks.md](session-picker-checks.md) - 10 min.
@@ -55,6 +54,7 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [windows-machine-paths-checks.md](windows-machine-paths-checks.md) - the Windows 10 VM with Docker Desktop, 30 min.
 - [daemon-41-windows-checks.md](daemon-41-windows-checks.md) - Windows with Bun 1.3.14 and 1.3.13, 45 min.
 - [devcontainer-checks.md](devcontainer-checks.md) - VS Code on Windows, 45 min.
+- [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - Windows and a Mac, 20 min each. It passed on Linux.
 - [daemon-31-service-checks.md](daemon-31-service-checks.md) - a Mac, the launchd sections, 25 min.
 - [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.

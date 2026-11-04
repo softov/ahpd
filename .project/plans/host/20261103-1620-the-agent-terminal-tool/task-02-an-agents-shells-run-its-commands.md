@@ -1,6 +1,6 @@
 ---
 title: An agent's shells run its commands
-status: implemented
+status: done
 depends:
   - task-01-a-host-tool-knows-its-call.md
 layer: "@ahpd/sdk host"
