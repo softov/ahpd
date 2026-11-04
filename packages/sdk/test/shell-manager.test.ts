@@ -75,7 +75,7 @@ interface FakePty {
   exit(exitCode?: number): void;
   /** Everything a client typed, in the order it was typed. */
   typed: string[];
-  started: { shell: string; args: string[] | string; env: Record<string, string | undefined> }[];
+  started: { shell: string; args: string[] | string; env: Record<string, string | undefined>; cwd?: string }[];
 }
 
 const fakePty = (): FakePty => {
@@ -85,7 +85,7 @@ const fakePty = (): FakePty => {
   const started: FakePty['started'] = [];
   const spawn: SpawnPty = (shell, args, options) => {
     const at = started.length;
-    started.push({ shell, args, env: options.env });
+    started.push({ shell, args, env: options.env, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     return {
       onData: (to) => { listen[at] = to; },
       onExit: (to) => { ended[at] = to; },
@@ -149,7 +149,7 @@ const host = (over: { computers?: ComputerPort; sessions?: Map<string, unknown>;
   } as unknown as HostContext;
   Object.assign(ctx, createTerminals(ctx));
   ctx.shells = createShells(ctx);
-  const shells = ctx.shells.of(SESSION);
+  const shells = ctx.shells.of(SESSION, CHAT);
   if (shells === undefined) throw new Error('no shells');
   return { ctx, shells, pty, screens, actions, kept };
 };
@@ -193,6 +193,26 @@ describe('a session\'s shells', () => {
     expect(second.shell.terminalUri).toBe(first.shell.terminalUri);
     // One shell was started: the second call reused it.
     expect(made.pty.started).toHaveLength(1);
+  });
+
+  it('keeps each chat\'s shells apart, and starts each in its own chat\'s directory', async () => {
+    const other = 'ahp-chat:/shells-2';
+    const there = (path: string) => ({ workingDirectories: () => [`file://${path}`] });
+    const sessions = new Map<string, unknown>([[SESSION, {
+      defaultChat: CHAT,
+      chats: new Map([[CHAT, there('/work/one')], [other, there('/work/two')]]),
+      config: {},
+    }]]);
+    const made = host({ sessions });
+    const first = await made.shells.acquire({ chat: CHAT, toolCallId: 'call-1' });
+    first.release();
+    const theirs = made.ctx.shells.of(SESSION, other);
+    if (theirs === undefined) throw new Error('no shells');
+    const second = await theirs.acquire({ chat: other, toolCallId: 'call-2' });
+    // The first chat's idle shell is not handed to the second chat.
+    expect(second.shell.id).not.toBe(first.shell.id);
+    expect(theirs.list().map((one) => one.id)).toEqual([second.shell.id]);
+    expect(made.pty.started.map((one) => one.cwd)).toEqual(['/work/one', '/work/two']);
   });
 
   it('gives two calls at once two shells', async () => {

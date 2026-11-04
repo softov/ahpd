@@ -1930,7 +1930,7 @@ export function createTooling(ctx: HostContext): Tooling {
       cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
       running: held.exitCode() === undefined,
     })),
-    shells: () => ctx.shells.of(uri),
+    shells: () => ctx.shells.of(uri, chatUri),
     read: async (asked) => {
       // The client that published it, if one did - that is the only thing
       // that can read it - and this host's own store otherwise.

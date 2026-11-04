@@ -1,5 +1,5 @@
 /**
- * The shells an agent runs commands in, one set per session.
+ * The shells an agent runs commands in, one set per chat.
  *
  * The reference host's `ShellManager`
  * (https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L55-L302),
@@ -77,10 +77,16 @@ interface Entry extends Heard {
   command?: { commandId?: string; sentinel?: string };
 }
 
-/** Every session's shells, made the first time a session's agent asks for one. */
+/**
+ * Every chat's shells, made the first time a chat's agent asks for one.
+ *
+ * One set a chat, as the reference makes one `ShellManager` for each chat it
+ * runs: a chat's agent works in its own directory, so a shell another chat
+ * opened, and moved about in, is never handed to it.
+ */
 export interface HostShells {
-  /** One session's shells, or nothing where this host has no terminal store. */
-  of(session: string): Shells | undefined;
+  /** One chat's shells, or nothing where this host has no terminal store. */
+  of(session: string, chat: string): Shells | undefined;
   /** Forget a session's shells. Its terminals are closed with the session. */
   forgetSession(uri: string): void;
 }
@@ -97,22 +103,24 @@ const observe = (kept: Heard, action: Bag): void => {
 
 export function createShells(ctx: HostContext): HostShells {
   const { options, terminals, dispatch, log } = ctx;
-  const sessions = new Map<string, Shells>();
+  /** Each session's chats, and each chat's shells. */
+  const sessions = new Map<string, Map<string, Shells>>();
 
   /**
-   * The directory a new shell starts in: the session's first working
-   * directory, which is where a `!` command runs, or the host's own.
+   * The directory a new shell starts in: the chat's first working directory,
+   * or the session's lead chat's while the chat is not yet held, or the
+   * host's own.
    */
-  const whereOf = (session: string): string => {
+  const whereOf = (session: string, chat: string): string => {
     const held = ctx.sessions.get(session);
-    const first = held?.chats.get(held.defaultChat)?.workingDirectories()[0];
+    const first = (held?.chats.get(chat) ?? held?.chats.get(held.defaultChat))?.workingDirectories()[0];
     return first === undefined ? options.path : localPath(first);
   };
 
   /** The machine a session was told to run in, as its id, or nothing. */
   const machineOf = (session: string): string | undefined => computerId(ctx.sessions.get(session)?.config.computer);
 
-  const sessionShells = (session: string): Shells => {
+  const chatShells = (session: string, chat: string): Shells => {
     const entries = new Map<string, Entry>();
     /** The shells running a command, which no other command may use. */
     const busy = new Set<string>();
@@ -228,7 +236,7 @@ export function createShells(ctx: HostContext): HostShells {
       const machine = machineOf(session);
       let asked: HeldShellOptions = {
         uri: retainedTerminalUri(claim.chat, key),
-        cwd: whereOf(session),
+        cwd: whereOf(session, chat),
         claim: wanted,
         name: shellDisplayName(shellType),
         nonInteractive: true,
@@ -376,12 +384,17 @@ export function createShells(ctx: HostContext): HostShells {
   };
 
   return {
-    of: (session) => {
+    of: (session, chat) => {
       if (options.terminals === undefined) return undefined;
-      let found = sessions.get(session);
+      let chats = sessions.get(session);
+      if (chats === undefined) {
+        chats = new Map();
+        sessions.set(session, chats);
+      }
+      let found = chats.get(chat);
       if (found === undefined) {
-        found = sessionShells(session);
-        sessions.set(session, found);
+        found = chatShells(session, chat);
+        chats.set(chat, found);
       }
       return found;
     },
