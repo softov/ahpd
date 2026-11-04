@@ -244,6 +244,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
        */
       if (typeof said === 'string' && said !== '' && !ctx.renamed && said !== ctx.title) {
         ctx.title = said;
+        ctx.provisional = false;
         if (ctx.record !== undefined) ctx.record.title = said;
         emit('session', { type: 'session/titleChanged', title: said });
         touch();

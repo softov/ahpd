@@ -1051,6 +1051,20 @@ it('titles a session after the first line of what was said', async () => {
   expect(title.last).toBe('Fix the build');
 });
 
+it('titles a session a command opened with the command, until its first message replaces it', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', '!echo acp-ran-it');
+  await until(() => finished(p, chatUri, 1));
+  // A provisional title, as VS Code's host seeds one from a local command.
+  expect((await named(client, p, uri)).last).toBe('echo acp-ran-it');
+
+  begin(client, chatUri, 't2', 'Fix the build');
+  await until(() => finished(p, chatUri, 2));
+  const title = await named(client, p, uri);
+  expect(title.said).toEqual(['echo acp-ran-it', 'Fix the build']);
+  expect(title.last).toBe('Fix the build');
+});
+
 it('keeps a one-line message of seventy characters whole', async () => {
   const line = 'a'.repeat(70);
   const { client, peer: p, uri, chatUri } = await talking();

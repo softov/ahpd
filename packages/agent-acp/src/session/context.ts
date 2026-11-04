@@ -189,6 +189,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * is read as nothing to do.
    */
   renamed: boolean;
+  /** Whether the title is one a local command suggested, which the first real message replaces. */
+  provisional: boolean;
   /** The catalogue's record of this session, once the server has named it. */
   record: WatchedSession | undefined;
   /** The turn being watched, while one runs. Kept for the transcript. */

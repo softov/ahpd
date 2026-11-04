@@ -106,6 +106,8 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   /** What the last turn failed with, or nothing. Cleared when a turn starts. */
   failed: string | undefined;
   title: string;
+  /** Whether the title is one a local command suggested, which the first real message replaces. */
+  provisional: boolean;
   modified: string;
   closed: boolean;
   /**

@@ -216,6 +216,7 @@ export function cofoldSession(
     cancelRequested: false,
     failed: undefined,
     title: 'Cofold session',
+    provisional: false,
     modified: new Date().toISOString(),
     closed: false,
     opening: undefined,
@@ -293,6 +294,18 @@ export function cofoldSession(
     status: ctx.status,
     activity: () => ctx.activity.current(),
     title: () => ctx.title,
+    /*
+     * A title a local command suggests, taken while the session has none of its
+     * own or holds an earlier one of these, and said, as VS Code's host seeds
+     * one; the first real message's title replaces it.
+     */
+    seedTitle: (said) => {
+      if (said === '' || (ctx.title !== 'Cofold session' && !ctx.provisional) || said === ctx.title) return;
+      ctx.title = said;
+      ctx.provisional = true;
+      start.emit('session', { type: 'session/titleChanged', title: said });
+      ctx.touch();
+    },
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(where)],
 

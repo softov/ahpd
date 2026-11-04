@@ -30,14 +30,18 @@ export function createTurn(ctx: SessionContext): Turn {
   const { emit, provider, start, inside, turns, doing, touch } = ctx;
 
   /**
-   * The first message titles a session nobody has named.
+   * The first message titles a session nobody has named, and replaces a title
+   * a local command suggested, as VS Code's title controller seeds one.
    *
-   * A message of nothing but blanks answers the fallback, which is the title
-   * already held - so nothing moves and nothing is said about it.
+   * A message of nothing but blanks names nothing, so the title held stays
+   * and nothing is said about it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L229
    */
   const titled = (text: string): void => {
-    if (ctx.title !== UNTITLED || text === '') return;
-    const said = titleFrom(text, UNTITLED);
+    if (ctx.title !== UNTITLED && !ctx.provisional) return;
+    const said = titleFrom(text, '');
+    if (said === '') return;
+    ctx.provisional = false;
     if (said === ctx.title) return;
     ctx.title = said;
     if (ctx.record !== undefined) ctx.record.title = said;

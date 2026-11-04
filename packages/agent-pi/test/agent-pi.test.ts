@@ -63,6 +63,18 @@ it('reports the folder it works in as a URI a host reads back as that folder', (
   }
 });
 
+it('holds a title a command suggests until the first message replaces it', async () => {
+  const { session, sent } = opened();
+  // The host's seed for a `!` command, taken while the session has no title.
+  session.seedTitle?.('ls -la');
+  expect(session.title()).toBe('ls -la');
+  session.sendMessage('t1', 'Fix the build');
+  await settled();
+  expect(session.title()).toBe('Fix the build');
+  expect(sent.filter((one) => one.action.type === 'session/titleChanged').map((one) => one.action.title))
+    .toEqual(['ls -la', 'Fix the build']);
+});
+
 it('works in a scratch folder of its own when the client gave it none', () => {
   // The home the folder is made under is this case's own, so nothing is made
   // in the person's.

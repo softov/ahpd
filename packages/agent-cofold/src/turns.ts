@@ -134,13 +134,18 @@ export const createTurns = (ctx: SessionContext): Turns => {
   });
 
   /**
-   * Title a session nobody has named from the first thing said in it.
+   * Title a session nobody has named from the first thing said in it, which
+   * replaces a title a local command suggested, as VS Code's title controller
+   * seeds one. A message of nothing but blanks names nothing.
    *
    * Said, because a client that opened the session holds the old one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L229
    */
   const retitle = (text: string): void => {
-    if (ctx.title !== 'Cofold session' || text === '') return;
-    const said = titleFrom(text, 'Cofold session');
+    if (ctx.title !== 'Cofold session' && !ctx.provisional) return;
+    const said = titleFrom(text, '');
+    if (said === '') return;
+    ctx.provisional = false;
     if (said === ctx.title) return;
     ctx.title = said;
     start.emit('session', { type: 'session/titleChanged', title: said });

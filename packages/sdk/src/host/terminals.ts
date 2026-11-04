@@ -183,6 +183,16 @@ export function createTerminals(ctx: HostContext): Terminals {
    * as this host's actions, kept as a local turn here and its sender let go.
    */
   const bang = (session: Session, chat: string, turnId: string, command: string): void => {
+    /*
+     * The command as a provisional title, collapsed to one line and cut at the
+     * length VS Code gives a title its active agent falls back on, which a
+     * session takes while it has none of its own and replaces with its first
+     * real message's, as VS Code's host seeds one from a local command.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L36-L38
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L232-L255
+     */
+    const suggested = Array.from(command.trim().replace(/\s+/g, ' ')).slice(0, 40).join('').trim();
+    if (suggested !== '') session.seedTitle?.(suggested);
     const road = byChat.get(chat);
     const say = (action: Bag): void => {
       if (road === undefined) dispatch(chat, action);

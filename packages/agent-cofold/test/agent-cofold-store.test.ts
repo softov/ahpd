@@ -271,6 +271,23 @@ it('reports the folder a session works in as a URI a host reads back as that fol
   one.session.close();
 });
 
+it('holds a title a command suggests until the first message replaces it', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'provisional', sweep);
+
+  // The host's seed for a `!` command, taken while the session has no title.
+  one.session.seedTitle?.('ls -la');
+  expect(one.session.title()).toBe('ls -la');
+  one.session.sendMessage('t1', 'Fix the build');
+  await until(() => ended(one.view));
+  expect(one.session.title()).toBe('Fix the build');
+  expect(one.view.notes.filter((note) => note.action.type === 'session/titleChanged').map((note) => note.action.title))
+    .toEqual(['ls -la', 'Fix the build']);
+  one.session.close();
+});
+
 it('works in a scratch folder of its own when the client gave it none', () => {
   // The home the folder is made under is this case's own, so nothing is made
   // in the person's.

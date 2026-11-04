@@ -147,6 +147,7 @@ export function acpSession(
     failed: undefined,
     title: UNTITLED,
     renamed: false,
+    provisional: false,
     record: undefined,
     watchedTurn: undefined,
     permissions: new Map(),
@@ -216,7 +217,21 @@ export function acpSession(
       if (said === '') return;
       ctx.title = said;
       ctx.renamed = true;
+      ctx.provisional = false;
       if (ctx.record !== undefined) ctx.record.title = said;
+      touch();
+    },
+    /*
+     * A title a local command suggests, taken while the session has none of its
+     * own or holds an earlier one of these, and said, as VS Code's host seeds
+     * one; the first real message's title replaces it.
+     */
+    seedTitle: (said) => {
+      if (said === '' || ctx.renamed || (ctx.title !== UNTITLED && !ctx.provisional) || said === ctx.title) return;
+      ctx.title = said;
+      ctx.provisional = true;
+      if (ctx.record !== undefined) ctx.record.title = said;
+      emit('session', { type: 'session/titleChanged', title: said });
       touch();
     },
     modifiedAt: () => modified,

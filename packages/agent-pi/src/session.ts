@@ -219,6 +219,8 @@ export function piSession(
    * replaces a title derived from the first message, and never a person's.
    */
   let renamed = false;
+  /** Whether the title is one a local command suggested, which the first real message replaces. */
+  let provisional = false;
   let modified = new Date().toISOString();
   /** What a turn failed with, or nothing. Cleared when a turn starts. */
   let failed: string | undefined;
@@ -856,6 +858,7 @@ export function piSession(
         // not the agent's to replace, which is where ACP's `renamed` guard sits.
         if (named === undefined || named === '' || named === title || renamed) return;
         title = named;
+        provisional = false;
         if (record !== undefined) record.title = named;
         emit('session', { type: 'session/titleChanged', title });
         touch();
@@ -1075,14 +1078,18 @@ export function piSession(
   };
 
   /**
-   * The first message titles a session nobody has named.
+   * The first message titles a session nobody has named, and replaces a title
+   * a local command suggested, as VS Code's title controller seeds one.
    *
-   * A message of nothing but blanks answers the fallback, which is the title
-   * already held - so nothing moves and nothing is said about it.
+   * A message of nothing but blanks names nothing, so the title held stays
+   * and nothing is said about it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L229
    */
   const titled = (text: string): void => {
-    if (title !== UNTITLED) return;
-    const said = titleFrom(text, UNTITLED);
+    if (title !== UNTITLED && !provisional) return;
+    const said = titleFrom(text, '');
+    if (said === '') return;
+    provisional = false;
     if (said === title) return;
     title = said;
     if (record !== undefined) record.title = title;
@@ -1251,11 +1258,26 @@ export function piSession(
     title: () => title,
     setTitle: (next) => {
       renamed = true;
+      provisional = false;
       title = next;
       if (record !== undefined) record.title = next;
       // pi keeps a name of its own, so the title survives outside this host -
       // a session renamed here is renamed in `pi` too.
       live?.rename(next);
+      touch();
+    },
+    /*
+     * A title a local command suggests, taken while the session has none of its
+     * own or holds an earlier one of these, and said, as VS Code's host seeds
+     * one; the first real message's title replaces it. pi's own name is left
+     * alone, since this one holds only until somebody says something.
+     */
+    seedTitle: (said) => {
+      if (said === '' || renamed || (title !== UNTITLED && !provisional) || said === title) return;
+      title = said;
+      provisional = true;
+      if (record !== undefined) record.title = said;
+      emit('session', { type: 'session/titleChanged', title });
       touch();
     },
     modifiedAt: () => modified,

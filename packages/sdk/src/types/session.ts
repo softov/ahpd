@@ -512,6 +512,17 @@ export interface Session {
    * keeps whatever title it derives.
    */
   setTitle?(title: string): void;
+  /**
+   * A title a local command suggests, held provisionally.
+   *
+   * Taken while the session has no title of its own, or still holds an earlier
+   * provisional one, and said as the session's title; the first real message's
+   * title replaces it, as VS Code's title controller seeds the title a `!`
+   * command suggests. Optional; a backend without it keeps the title it
+   * derives.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L231-L248
+   */
+  seedTitle?(title: string): void;
   /** ISO 8601 timestamp of the last change. */
   modifiedAt(): string;
   /**
