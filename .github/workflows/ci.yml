@@ -165,7 +165,7 @@ jobs:
       - name: The write fixture matches ahpc's copy
         run: |
           set -u
-          url=https://raw.githubusercontent.com/softov/ahpc/main/test/fixtures/resource-write.json
+          url=https://raw.githubusercontent.com/ahpio/ahpc/main/test/fixtures/resource-write.json
           code=$(curl -sS -o "$RUNNER_TEMP/theirs.json" -w '%{http_code}' "$url")
           if [ "$code" = "404" ]; then
             # Not landed over there yet. Said rather than failed, because the

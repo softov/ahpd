@@ -125,7 +125,7 @@ describe('the filters list_sessions takes', () => {
       workingDirectories: ['file:///github/ahpc'],
       project: { uri: 'file:///github/ahpc', displayName: 'ahpc' },
       changes: { files: 1 },
-      _meta: { github: { pullRequestUrls: ['https://github.com/softov/ahpc/pull/1'] } },
+      _meta: { github: { pullRequestUrls: ['https://github.com/ahpio/ahpc/pull/1'] } },
     }),
   ];
   const names = (args: Record<string, unknown>) => filterSessions(rows, args).map((one) => one.resource.slice('ahp-session:/'.length));
