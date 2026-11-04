@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -6,6 +6,7 @@ import { sessionReducer } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
 import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
@@ -59,6 +60,33 @@ it('reports the folder it works in as a URI a host reads back as that folder', (
     expect((session.sessionState() as Bag).workingDirectories).toEqual([uriOf(where)]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('works in a scratch folder of its own when the client gave it none', () => {
+  // The home the folder is made under is this case's own, so nothing is made
+  // in the person's.
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const start: Start = {
+      uri: 'ahp-session:/scratched',
+      chatUri: 'ahp-chat:/scratched',
+      settings: {},
+      schema: () => ({}),
+      emit: () => {},
+      clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    };
+    const session = piSession({}, start, fakePi().open, async () => undefined);
+    const folder = join(home, '.copilot', 'chats', 'scratched');
+    expect(session.workingDirectories()).toEqual([uriOf(folder)]);
+    expect(existsSync(folder)).toBe(true);
+  }
+  finally {
+    if (was === undefined) delete process.env.HOME;
+    else process.env.HOME = was;
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

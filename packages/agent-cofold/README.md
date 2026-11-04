@@ -142,7 +142,7 @@ The workspace check resolves symlinks with cofold's own resolver, including a li
 
 A write or an edit needs the file to have been read in this session, and cofold refuses one it has not seen. A file that changed since it was read is refused too. What a session read is held in the process, so a restart means reading it again. `"files": { "requireRead": false }` turns the rule off for the session, and the rule stays on when the key is absent.
 
-Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in the daemon's current directory. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
+Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in a scratch folder of its own, `~/.copilot/chats/<session id>`, as VS Code's agents run a session with no workspace. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
 
 `tools` turns one off by naming it `false`, and gives `web_search` its providers:
 

@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { activityOf, bag, idOf, reason, str, uriOf } from '@ahpd/sdk';
+import { activityOf, bag, ensureWorkspacelessScratchDir, idOf, reason, str, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -98,8 +98,13 @@ export function cofoldSession(
   const sessionId = start.forkAt !== undefined
     ? crypto.randomUUID()
     : start.resume ?? start.chatId ?? sessionIdOf(start.uri);
-  /** The directory the agent works in; the host's when it named one. */
-  const where = start.workingDirectory ?? process.cwd();
+  /**
+   * The directory the agent works in: the host's when it named one, and a
+   * scratch folder of the session's own otherwise, as VS Code's agents run a
+   * session with no workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
+   */
+  const where = start.workingDirectory ?? ensureWorkspacelessScratchDir(start.uri);
   /**
    * The store every turn of this session shares.
    *

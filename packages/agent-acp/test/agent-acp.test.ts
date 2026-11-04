@@ -1,10 +1,11 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { uriOf } from '@ahpd/sdk';
 import type { Agent, Session, Start, StartTerminals } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { acpAgent } from '../src/index.js';
@@ -103,6 +104,25 @@ it('will not take two backends that call themselves the same thing', () => {
     path: process.cwd(),
     agents: [acpAgent({ command: 'node' }), acpAgent({ command: 'node' })],
   })).toThrow(/acp/);
+});
+
+it('works in a scratch folder of its own when the client gave it none', () => {
+  // The home the folder is made under is this case's own, so nothing is made
+  // in the person's.
+  const home = scratch();
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const session = backend([]).create(opening('scratched'));
+    started.push(session);
+    const folder = join(home, '.copilot', 'chats', 'scratched');
+    expect(session.workingDirectories()).toEqual([uriOf(folder)]);
+    expect(existsSync(folder)).toBe(true);
+  }
+  finally {
+    if (was === undefined) delete process.env.HOME;
+    else process.env.HOME = was;
+  }
 });
 
 /**

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -269,6 +269,36 @@ it('reports the folder a session works in as a URI a host reads back as that fol
   expect(one.session.workingDirectories()).toEqual(asked);
   expect((one.session.sessionState() as { workingDirectories: string[] }).workingDirectories).toEqual(asked);
   one.session.close();
+});
+
+it('works in a scratch folder of its own when the client gave it none', () => {
+  // The home the folder is made under is this case's own, so nothing is made
+  // in the person's.
+  const { root } = place();
+  const home = join(root, 'home');
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+    const agent = backend(root, model, allowAll());
+    const view = channels();
+    const session = agent.create({
+      uri: 'ahp-session:/scratched',
+      chatUri: 'ahp-chat:/scratched',
+      settings: agent.defaults(),
+      schema: () => agent.schema(),
+      emit: view.emit,
+      clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    });
+    const folder = join(home, '.copilot', 'chats', 'scratched');
+    expect(session.workingDirectories()).toEqual([uriOf(folder)]);
+    expect(existsSync(folder)).toBe(true);
+    session.close();
+  }
+  finally {
+    if (was === undefined) delete process.env.HOME;
+    else process.env.HOME = was;
+  }
 });
 
 /** One model step as a script gives it: the deltas it streams, then the reply they add up to. */

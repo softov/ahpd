@@ -63,7 +63,7 @@ The shipped rows are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, 
 | `command` | the row's | The program to spawn as the ACP server. Required for a record that names no row and no `base`. **Host records only** |
 | `args` | the row's | The arguments to give it, replacing the row's own. **Host records only** |
 | `env` | none | Environment variables merged over the daemon's own for the child, by variable name. A value written `{ "$secret": "host:<name>" }` is read from the vault |
-| `cwd` | the session's working directory | The directory the server runs in. **Host records only** |
+| `cwd` | the session's working directory, else a scratch folder of the session's own | The directory the server runs in. **Host records only** |
 | `authenticate` | the row's | `{ "methodId": "<id>" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
 | `hostTools` | the plugin-wide `hostTools` | Whether this agent's sessions are offered the host's own tools |
 | `honoursTrust` | the row's, else `false` | Whether this agent asks before it loads a project's own settings and hooks. Absent, a session in a folder the host did not vouch for is refused, because ACP carries no trust field |

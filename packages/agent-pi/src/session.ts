@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, createClientCalls, idFor, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
+import { activityOf, bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
@@ -123,7 +123,13 @@ export function piSession(
 ): Session {
   const provider = options.provider ?? 'pi';
   const emit = start.emit;
-  const where = start.workingDirectory ?? process.cwd();
+  /*
+   * The folder pi opens in: the host's when it named one, and a scratch folder
+   * of the session's own otherwise, as VS Code's agents run a session with no
+   * workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
+   */
+  const where = start.workingDirectory ?? ensureWorkspacelessScratchDir(start.uri);
 
   /**
    * Read the record again, when this backend was opened for one.

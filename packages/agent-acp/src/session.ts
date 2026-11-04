@@ -24,7 +24,7 @@
  */
 
 import { resolve, sep } from 'node:path';
-import { activityOf, statusOf, uriOf } from '@ahpd/sdk';
+import { activityOf, ensureWorkspacelessScratchDir, statusOf, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
@@ -64,11 +64,14 @@ export function acpSession(
   /*
    * The directory the server works in.
    *
-   * The client's choice wins, then the package's, then the daemon's own: a
-   * session resumed or continued in another directory is where the client said
-   * it is, and a server that was pointed somewhere says so on `session/new`.
+   * The client's choice wins, then the package's: a session resumed or
+   * continued in another directory is where the client said it is, and a
+   * server that was pointed somewhere says so on `session/new`. A session
+   * given neither works in a scratch folder of its own, as VS Code's agents
+   * run a session with no workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
    */
-  const where = start.workingDirectory ?? options.cwd ?? process.cwd();
+  const where = start.workingDirectory ?? options.cwd ?? ensureWorkspacelessScratchDir(start.uri);
 
   /**
    * Whether a path is one this session was given to work in.
