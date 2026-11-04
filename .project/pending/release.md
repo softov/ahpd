@@ -11,8 +11,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 ## Left
 
 1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `a7b0cfd7` or later. It wires in #212 to #228.
-2. **The notes' date.** Date the 0.15.0-rc.1 section of [v0_15.md](../../docs/updates/v0_15.md) 2026-11-04. Set the page's `date` when 0.15.0 is tagged.
-3. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
+2. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
 
 ## Done
 
@@ -21,7 +20,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 - **The bump.** #231 sets `0.15.0-rc.1` in every published package. The update test takes a pre-release version.
 - **A dry run.** Run 41876504603 on the bump branch: tests, build, pack and ranges pass, and the channel is `next`.
 - **ahpw on the candidate.** ahpw at `acdcdb1`, with the packed `@ahpd/sdk 0.15.0-rc.1`, passes its typecheck and 756 tests. Its own range is still `^0.14.0`. Set `^0.15.0-rc.1` in ahpw when it releases on the candidate.
-- **The release notes.** [v0_15.md](../../docs/updates/v0_15.md) holds 0.15.0-rc.1, with the unreleased 0.14.1 section moved into it, and #149 to #229. Date its section, and its `date`, on the day of the tag.
+- **The release notes.** [v0_15.md](../../docs/updates/v0_15.md) holds 0.15.0-rc.1, dated 2026-11-04 in #233, with the unreleased 0.14.1 section moved into it, and #149 to #229. Set the page's `date` when 0.15.0 is tagged.
 - **The restart flag in ahpw.** ahpw #46, merged on 2026-11-04, reads `ahpd.restartNeeded` from the root config values.
 - **The seven open problems** of the reviews of 2026-11-03 and 2026-10-20, fixed in #225 to #228.
 
