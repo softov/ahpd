@@ -256,8 +256,8 @@ export function piSession(
   const handed: string[] = [];
   const answers = new Map<string, (taken: boolean) => void>();
   let draft: Bag | undefined;
-  /** The models pi reported, once it has been asked. */
-  let models: { id: string; name: string }[] = [];
+  /** The models pi reported, once it has been asked, as the spec's model info. */
+  let models: ReturnType<typeof listed>[] = [];
   /**
    * The turns this process watched, after those a resumed session read from
    * pi's file, kept by reference.
@@ -1013,7 +1013,7 @@ export function piSession(
     // The model list is held for `Session.models()`, which the host reads for
     // a client; pi only knows it once its runtime exists.
     const available = await backend.models();
-    models = available.map(listed);
+    models = available.map((model) => listed(model, backend.levels(model)));
     if (first) {
       /*
        * The model the configuration names, when nobody has chosen one.

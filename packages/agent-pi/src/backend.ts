@@ -324,12 +324,13 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
 }
 
 /**
- * How the models pi's own runtime has are read, before any session exists.
+ * How the models pi's own runtime has are read, before any session exists,
+ * each with the thinking levels pi's own rule gives it.
  *
  * The default reads pi's agent directory; a caller may pass its own, as a
  * session may pass its own `open`.
  */
-export type RuntimeModels = () => Promise<PiModel[]>;
+export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[] }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
@@ -346,7 +347,10 @@ export const runtimeModels: RuntimeModels = async () => {
     modelsPath: join(agentDir, 'models.json'),
   });
   const available = await runtime.getAvailable();
-  return available as unknown as PiModel[];
+  return (available as unknown as PiModel[]).map((model) => ({
+    model,
+    levels: sdk.getSupportedThinkingLevels(model as never) as string[],
+  }));
 };
 
 /**

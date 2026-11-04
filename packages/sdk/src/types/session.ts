@@ -421,10 +421,20 @@ export interface Session {
   /**
    * Models this session can run a turn on. Empty until the agent has answered.
    *
-   * The two limits are the ones the backend published, and are absent for a
-   * model nothing is known about rather than zero.
+   * Each in the spec's `SessionModelInfo` fields, the provider left for the
+   * host to add: the limits are the ones the backend published, absent for a
+   * model nothing is known about rather than zero, and `configSchema` is what
+   * the model can be told to do differently.
    */
-  models(): { id: string; name: string; maxContextWindow?: number; maxOutputTokens?: number }[];
+  models(): {
+    id: string;
+    name: string;
+    maxContextWindow?: number;
+    maxOutputTokens?: number;
+    maxPromptTokens?: number;
+    supportsVision?: boolean;
+    configSchema?: Record<string, unknown>;
+  }[];
   /**
    * The id the agent gave this session, if it has said one yet.
    *

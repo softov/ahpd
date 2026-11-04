@@ -44,13 +44,16 @@ export interface Offered {
    * `maxContextWindow` and `maxOutputTokens` are what the harness knows the
    * model can hold and answer, when it knows: a client sizes a conversation
    * against the first and caps a request with the second. Absent means nothing
-   * was published, which is not the same as a limit of zero.
+   * was published, which is not the same as a limit of zero. `supportsVision`
+   * says whether the model takes an image, as the spec's model info does.
    */
   models: {
     id: string;
     name: string;
     maxContextWindow?: number;
     maxOutputTokens?: number;
+    maxPromptTokens?: number;
+    supportsVision?: boolean;
     configSchema?: Record<string, unknown>;
   }[];
   /**

@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
-import { uriOf } from '@ahpd/sdk';
+import { bag, uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
-import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
+import { idOf, listed, modelFor, THINKING_KEY } from '../src/models.js';
 import { optionsOf } from '../src/plugin.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
@@ -142,19 +142,42 @@ it('resolves a qualified id, and a bare one only when it is unambiguous', () => 
 });
 
 it('offers the thinking form only for a model with more than one level', () => {
-  const many = offered({ provider: 'anthropic', id: 'claude-opus-5' }, ['off', 'high']);
-  expect((many.configSchema as Bag)).toBeDefined();
+  const many = listed({ provider: 'anthropic', id: 'claude-opus-5' }, ['off', 'high']);
+  expect(many.configSchema).toBeDefined();
   // A form with one answer is a control nobody can use.
-  expect(offered({ provider: 'openai', id: 'gpt-5' }, ['off']).configSchema).toBeUndefined();
+  expect(listed({ provider: 'openai', id: 'gpt-5' }, ['off']).configSchema).toBeUndefined();
 });
 
 it('says a model context window and output limit when pi knows them', () => {
-  const known = offered({ provider: 'anthropic', id: 'claude-opus-5', contextWindow: 200000, maxTokens: 64000 }, ['off']);
+  const known = listed({ provider: 'anthropic', id: 'claude-opus-5', contextWindow: 200000, maxTokens: 64000 }, ['off']);
   expect(known.maxContextWindow).toBe(200000);
   expect(known.maxOutputTokens).toBe(64000);
-  const bare = offered({ provider: 'openai', id: 'gpt-5' }, ['off']);
+  const bare = listed({ provider: 'openai', id: 'gpt-5' }, ['off']);
   expect(bare.maxContextWindow).toBeUndefined();
   expect(bare.maxOutputTokens).toBeUndefined();
+});
+
+/*
+ * Each model listed in the spec's model info fields from pi's own: the limits,
+ * whether it takes an image, and its thinking levels as its form, as VS Code's
+ * agents list each model, and nothing the spec's model info does not declare.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L120-L144
+ */
+it('lists a session\'s models with their limits, their vision and their thinking levels', async () => {
+  const { session } = opened();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const fields = new Set(['id', 'name', 'maxContextWindow', 'maxOutputTokens', 'maxPromptTokens', 'supportsVision', 'configSchema', 'policyState', '_meta']);
+  const models = session.models();
+  expect(models.length).toBeGreaterThan(0);
+  expect(models.flatMap((one) => Object.keys(one)).filter((key) => !fields.has(key))).toEqual([]);
+  // The fake's Opus has three levels and its limits; its GPT has one level.
+  const opus = models.find((one) => one.id === 'anthropic/claude-opus-5');
+  expect(opus).toMatchObject({ maxContextWindow: 200000, maxOutputTokens: 64000 });
+  expect(bag(bag(opus?.configSchema).properties)[THINKING_KEY]).toMatchObject({ enum: ['off', 'medium', 'high'] });
+  expect(models.find((one) => one.id === 'openai/gpt-5')?.configSchema).toBeUndefined();
+  expect(listed({ provider: 'anthropic', id: 'claude-opus-5', input: ['text', 'image'] }, ['off']).supportsVision).toBe(true);
+  expect(listed({ provider: 'openai', id: 'gpt-5', input: ['text'] }, ['off']).supportsVision).toBe(false);
 });
 
 it('offers each model the context window pi reports', async () => {
@@ -929,7 +952,7 @@ it('offers pi models before a session exists, as a session offers them', async (
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello');
   await settled();
-  const agent = piAgent({}, [root], pi.backend.models);
+  const agent = piAgent({}, [root], async () => (await pi.backend.models()).map((model) => ({ model, levels: pi.backend.levels(model) })));
   const probed = await agent.probe?.();
   expect(probed).toEqual({ models: session.models(), customizations: [], commands: [] });
   expect(probed?.models.map((one) => one.id)).toEqual(['anthropic/claude-opus-5', 'openai/gpt-5']);
