@@ -159,6 +159,16 @@ it('leaves a session idle when its turn was stopped, whatever its closed CLI say
   expect(session.chatState().status).toBe(1);
 });
 
+it('says no activity for a running turn, whose work is in its own parts', async () => {
+  const { session, sent } = await started();
+  sdk.push(running);
+  await settle();
+  // A chat's activity is a wait before its turn can run, as VS Code's host
+  // says one: a turn thinking and running a tool says none.
+  expect(sent.filter((one) => (one.type === 'chat/activityChanged' || one.type === 'session/activityChanged') && one.activity !== undefined)).toEqual([]);
+  expect(session.activity()).toBeUndefined();
+});
+
 it('holds the chat\'s modified time where the reducer moves it, a turn\'s start and then its end', async () => {
   const { session } = await started();
   const startedAt = String((session.chatState().activeTurn as Bag).startedAt);

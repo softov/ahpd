@@ -1250,7 +1250,7 @@ describe('a summary that did not change', () => {
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
   });
 
-  it('sends again for a title that moved, and for an activity that moved', async () => {
+  it('sends again for a title that moved, and for a turn that started', async () => {
     const { client, peer: p, chatUri } = await running();
     await settle();
     const opened = rowsMoved(p, 'ahp-session:/live').length;
@@ -1272,7 +1272,7 @@ describe('a summary that did not change', () => {
     await settle();
     const busy = rowsMoved(p, 'ahp-session:/live');
     expect(busy.length).toBeGreaterThan(said);
-    expect(busy.at(-1)?.activity).toEqual(expect.any(String));
+    expect(Number(busy.at(-1)?.status ?? 0) & Status.InProgress).toBe(Status.InProgress);
   });
 
   /**

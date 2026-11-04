@@ -438,7 +438,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         ...(edits !== undefined ? { edits } : {}),
       });
 
-      if (scope === ctx.mainScope) ctx.doing(`Waiting on you: ${displayName}`);
       // `chat` and `turnId` are both required on a tool confirmation and
       // neither was sent.
       const entry: Bag = { id, chat: where, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
@@ -696,7 +695,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         if (approved) ctx.stampStart(call);
         else ctx.untimed(call);
       }
-      if (scope === ctx.mainScope) ctx.doing(approved ? ctx.busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       /*
        * A call of a client's, which is the client's to run now and only now.
        *

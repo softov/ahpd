@@ -347,15 +347,15 @@ const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROK
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '001-root-agentschanged': rootPerConnection,
   '002-root-activesessionschanged': rootPerConnection,
-  '039-set-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
-  '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
-  '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
-  '043-remove-steering-message-is-no-op-for-mismatched-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '039-set-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '043-remove-steering-message-is-no-op-for-mismatched-id': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
   '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.idleQueue }],
-  '048-remove-a-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
-  '050-remove-queued-message-is-no-op-for-unknown-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '048-remove-a-queued-message': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '050-remove-queued-message-is-no-op-for-unknown-id': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
-  '053-reorders-queued-messages': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '053-reorders-queued-messages': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
@@ -365,7 +365,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
 };
 
-const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
@@ -376,21 +375,9 @@ const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then r
  * do on its own: each with the sentence that says so.
  */
 const ALLOWED: Record<string, (Differs & { because: string })[]> = {
-  '005-session-turnstarted': [{ reduced: ['activity'], because: THINKING }],
-  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': [{ reduced: ['activity'], because: THINKING }],
-  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [
-    { reduced: ['activity'], because: THINKING },
     { reduced: ['steeringMessage'], because: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."' },
   ],
-  '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
-  '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
-  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
-  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activity'], because: THINKING }],
-  '070-full-turn-flow-with-tool-calls-and-re-confirmation': [{ reduced: ['activity'], because: THINKING }],
-  '075-turnstarted-clears-isread': [{ reduced: ['activity'], because: THINKING }],
-  '105-session-input-full-draft-and-complete-flow': [{ reduced: ['activity'], because: THINKING }],
   '135-session-metachanged-sets-meta': [{
     start: ['_meta'],
     because: 'types/channels-session/state.ts, SessionState._meta: "Additional provider-specific metadata for this session."; the host says its own once the session is read',
@@ -399,7 +386,6 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
     start: ['changesets'],
     because: 'types/channels-session/state.ts, SessionState.changesets: "Catalogue of changesets the server can produce for this session."; the host says the ones its folder has once the session is read',
   }],
-  '161-chat-turn-lifecycle-on-chat': [{ reduced: ['activity'], because: THINKING }],
   '232-chat-turnsloaded-prepends-older-turns': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],

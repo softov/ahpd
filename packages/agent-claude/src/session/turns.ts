@@ -175,7 +175,6 @@ export function createTurns(ctx: SessionContext): Turns {
     ctx.failed = why;
     ctx.endedAt(turn);
     ctx.emit('chat', { type: 'chat/error', turnId, duration: turn.duration, part });
-    ctx.doing(undefined);
     sendNext();
   };
 
@@ -310,7 +309,6 @@ export function createTurns(ctx: SessionContext): Turns {
      * already held - so nothing moves and nothing is said about it.
      */
     if (ctx.title === 'New session' && text) ctx.retitle(titleFrom(text, 'New session'));
-    ctx.doing('Thinking');
     /*
      * What the model is given, which is not always what the transcript shows.
      *
@@ -474,7 +472,6 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.active = again as unknown as NonNullable<typeof ctx.active>;
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
-      ctx.doing('Thinking');
       const login = ctx.login;
       void (async () => {
         const restarted = await ctx.restartAt(turnId, cut, login);
@@ -549,7 +546,6 @@ export function createTurns(ctx: SessionContext): Turns {
         ctx.endedAt(turn);
         ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
       }
-      ctx.doing(undefined);
     },
   };
 

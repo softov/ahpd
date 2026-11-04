@@ -204,7 +204,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
      * so nothing moves and nothing is said about it.
      */
     retitle(text);
-    ctx.doing('Thinking');
 
     const mapping = mappingOn(turnId, ctx.active.responseParts as Bag[], began, reference);
     ctx.activeMapping = mapping;
@@ -463,7 +462,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const began = Date.now();
     const mapping = mappingOn(turnId, kept, began, reference);
     ctx.activeMapping = mapping;
-    ctx.doing('Thinking');
     /*
      * A record that can no longer be used cannot run the turn either, and the
      * turn is open again by now: the sentence ends it rather than leaving a

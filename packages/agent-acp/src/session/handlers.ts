@@ -91,7 +91,7 @@ const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
   options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
 
 export function createHandlers(ctx: SessionContext): Handlers {
-  const { emit, provider, start, where, doing, seeds, replay, permissions, terminals, elicitations } = ctx;
+  const { emit, provider, start, where, seeds, replay, permissions, terminals, elicitations } = ctx;
 
   /**
    * One command the server offers, as the skill a client draws.
@@ -656,7 +656,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       type: 'session/inputNeededSet',
       request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
     });
-    doing('Waiting on you');
     return answered;
   };
 
@@ -817,9 +816,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       if (open === undefined) return;
       elicitations.delete(id);
       open.settle({ action: 'cancel' });
-      doing('Thinking');
     }, { once: true });
-    doing('Waiting on you');
     return answered;
   };
 
@@ -856,7 +853,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     open.settle(accepted
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
       : { action: response === 'cancel' ? 'cancel' : 'decline' });
-    doing('Thinking');
     return true;
   };
 
@@ -956,7 +952,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     }
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
-    doing(approved ? 'Running' : 'Thinking');
     return true;
   };
 

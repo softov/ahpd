@@ -304,7 +304,6 @@ export function createQuery(ctx: SessionContext): Query {
       ctx.endedAt(turn);
       ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
     }
-    ctx.doing(undefined);
   };
 
   /**
@@ -1008,7 +1007,6 @@ export function createQuery(ctx: SessionContext): Query {
            * handed behind them is begun once the CLI owes nothing in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
-            if (turn === undefined) ctx.doing(undefined);
             ctx.sendNext();
             continue;
           }
@@ -1106,7 +1104,6 @@ export function createQuery(ctx: SessionContext): Query {
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
           if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
-          ctx.doing(undefined);
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed

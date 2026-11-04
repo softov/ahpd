@@ -1,5 +1,5 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Activity, BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
+import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
 import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
@@ -203,8 +203,6 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   active: Bag | undefined;
   title: string;
   modified: string;
-  /** What the session is doing: the one handle that says it, and holds it. */
-  activity: Activity;
   /** When the running turn started, in milliseconds. */
   startedAt: number;
   /**

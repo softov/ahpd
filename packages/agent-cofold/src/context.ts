@@ -1,5 +1,5 @@
 import type { Store, RunHandle } from '@cofold/agents';
-import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Start, TurnOptions } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Start, TurnOptions } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
@@ -135,6 +135,4 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    * carrying on from the wrong place.
    */
   refused: Error | undefined;
-  /** What it is doing: the one handle that says it, and holds it. */
-  activity: Activity;
 }

@@ -3,7 +3,6 @@ import { statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
 import { bag } from './common.js';
 import type { Scope, SessionContext } from './context.js';
-import { summarize } from '../input.js';
 
 /** What this area offers the rest of the session. */
 export interface Parts {
@@ -15,10 +14,6 @@ export interface Parts {
   setModifiedAt: (at: string) => void;
   /** Set the chat's `modifiedAt` to where an ended turn leaves it, its start plus its duration. */
   endedAt: (turn: Bag) => void;
-  /** Say what the session is doing, if that has changed. */
-  doing: (said: string | undefined) => void;
-  /** One line for a tool that is running. */
-  busyWith: (name: string, input: Bag) => string;
   /** Rename the session, and say so. */
   retitle: (said: string) => void;
   /** The SDK's token counts, in the protocol's spelling. */
@@ -66,12 +61,6 @@ export function createParts(ctx: SessionContext): Parts {
   const setModifiedAt = (at: string): void => { ctx.modified = at; };
   const endedAt = (turn: Bag): void => {
     setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + Number(turn.duration ?? 0)).toISOString());
-  };
-
-  /** One line for a tool that is running. The name alone says too little. */
-  const busyWith = (name: string, input: Bag): string => {
-    const what = summarize(name, input);
-    return (what ? `${name} ${what}` : name).replace(/\s+/g, ' ').slice(0, 80);
   };
 
   /** Retitle, and say so: a client that opened the session holds the old one. */
@@ -349,11 +338,9 @@ export function createParts(ctx: SessionContext): Parts {
   };
 
   return {
-    setModifiedAt, endedAt, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
+    setModifiedAt, endedAt, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
     newConversation, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
     stampStart, stampEnd, untimed, addFailure,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: ctx.activity.say,
     /*
      * `pending` is a question a client or a person is being asked, and a turn is
      * `active` from the moment it begins.

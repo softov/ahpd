@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { activityOf, bag, ensureWorkspacelessScratchDir, idOf, reason, str, uriOf } from '@ahpd/sdk';
+import { bag, ensureWorkspacelessScratchDir, idOf, reason, str, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -227,7 +227,6 @@ export function cofoldSession(
     opening: undefined,
     refused: undefined,
     steering: undefined,
-    activity: activityOf(start.emit),
   } as SessionContext;
 
   const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
@@ -297,7 +296,13 @@ export function cofoldSession(
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
     status: ctx.status,
-    activity: () => ctx.activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => ctx.title,
     /*
      * A title a local command suggests, taken while the session has none of its
@@ -324,7 +329,6 @@ export function cofoldSession(
       chats: [{ resource: start.chatUri, title: ctx.title }],
       workingDirectories: [uriOf(where)],
       customizations: start.seedCustomizations ?? [],
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       /*
        * What a client is being asked - the person's questions and the calls a
        * client has to run - so a session channel a client subscribed to
@@ -345,7 +349,6 @@ export function cofoldSession(
       modifiedAt: ctx.modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 

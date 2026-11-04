@@ -271,6 +271,21 @@ it('reports the folder a session works in as a URI a host reads back as that fol
   one.session.close();
 });
 
+it('says no activity while a turn runs, whose work is in its own parts', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'quiet', sweep);
+  one.session.sendMessage('t1', 'hello');
+  await until(() => ended(one.view));
+
+  // A chat's activity is a wait before its turn can run, as VS Code's host
+  // says one: a turn thinking and answering says none.
+  expect(one.view.notes.filter((note) => (note.action.type === 'chat/activityChanged' || note.action.type === 'session/activityChanged')
+    && note.action.activity !== undefined)).toEqual([]);
+  one.session.close();
+});
+
 it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });

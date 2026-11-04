@@ -472,8 +472,6 @@ export function createClientTools(ctx: SessionContext): ClientTools {
      * transport failure and the model is never told what happened.
      */
     if ('refused' in joined) return { answer: refusedAnswer(joined.refused), callId: named ?? '' };
-    const owner = tool.owner ?? '';
-    ctx.doing(`Waiting on ${owner}: ${tool.definition.title ?? tool.definition.name}`);
     return { answer: await calls.wait(joined.id), callId: joined.id };
   };
 

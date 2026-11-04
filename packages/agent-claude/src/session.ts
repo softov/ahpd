@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { optionDefaults, storedSandbox } from './options.js';
-import { activityOf, titleFrom, uriOf } from '@ahpd/sdk';
+import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
@@ -72,7 +72,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
-    activity: activityOf(emit),
     startedAt: 0,
     failed: undefined as string | undefined,
     rebind: undefined as unknown,
@@ -198,7 +197,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
     customizations: () => ctx.customizations,
     allTurns: () => ctx.turns,
-    activity: () => ctx.activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
@@ -214,9 +219,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       chats: [{ resource: chatUri, title: ctx.title }],
       workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
       customizations: ctx.customizations,
-      // What it is doing, only while it is doing something. The protocol has
-      // a session mirror its default chat's, which is where this is set.
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       /*
        * The schema *and* what is in force.
        *
@@ -262,7 +264,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // hundreds of them, and the host cuts the window a subscribe asks for.
       turns: ctx.turns,
       ...(ctx.active ? { activeTurn: ctx.active } : {}),
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(ctx.draft !== undefined ? { draft: ctx.draft } : {}),
       // Said rather than left to a default: `Full` is what a client assumes
       // when the field is absent, and assuming it is not the same as being

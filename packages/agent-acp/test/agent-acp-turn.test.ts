@@ -728,14 +728,15 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 
   /*
    * The stop is said when it is taken. The fixture holds the prompt open
-   * until `session/cancel` arrives, so the backend letting its turn go - its
-   * activity cleared - is what proves the notification reached the server,
-   * and the turn it ended is not ended twice.
+   * until `session/cancel` arrives, and a turn handed after the stop runs only
+   * once the backend has let the stopped one go, so its end is what proves the
+   * notification reached the server, and the turn it ended is not ended twice.
    */
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
-  const said = types(p, chatUri);
-  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
-  expect(said).not.toContain('chat/turnComplete');
+  begin(client, chatUri, 't2', 'hi');
+  await until(() => actions(p, chatUri).slice(before).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
+  const said = actions(p, chatUri);
+  expect(said.filter((e) => e.action.type === 'chat/turnCancelled').map((e) => e.action.turnId)).toEqual(['t1']);
+  expect(said.filter((e) => e.action.type === 'chat/turnComplete').map((e) => e.action.turnId)).toEqual(['t2']);
 });
 
 /*
@@ -775,10 +776,24 @@ it('stops nothing on a cancel that names no turn', async () => {
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
+  // A turn handed after the stop runs once the backend has let the stopped one go.
+  begin(client, chatUri, 't2', 'hi');
+  await until(() => actions(p, chatUri).slice(before).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
 
   const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
   expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
+});
+
+it('says no activity while a turn thinks, runs a tool and answers', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'think then tool');
+  await until(() => ended(p, chatUri));
+
+  // A chat's activity is a wait before its turn can run, as VS Code's host
+  // says one; this turn's work is in its own parts.
+  const said = [...actions(p, chatUri), ...actions(p, uri)]
+    .filter((e) => (e.action.type === 'chat/activityChanged' || e.action.type === 'session/activityChanged') && e.action.activity !== undefined);
+  expect(said).toEqual([]);
 });
 
 it("runs a !command in the host's shell rather than asking the server", async () => {

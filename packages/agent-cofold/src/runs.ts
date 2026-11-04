@@ -9,7 +9,6 @@ import type { SessionContext } from './context.js';
 /** What reading and reopening a run offers the other areas. */
 export interface Runs {
   cut: () => Promise<void>;
-  doing: (said: string | undefined) => void;
   status: () => number;
   apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
   read: (live: RunHandle, mapping: TurnMapping, turnId: string) => void;
@@ -108,7 +107,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * first time rather than by a second path written for the replay.
    */
   const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent): Promise<void> => {
-    if (event.type === 'run.finished') ctx.activity.say(undefined);
     /*
      * A call that will never have a result still owes its `after`.
      *
@@ -292,13 +290,10 @@ export const createRuns = (ctx: SessionContext): Runs => {
     }
     ctx.handle = live;
     read(live, mapping, turnId);
-    ctx.activity.say('Waiting on you');
   };
 
   return {
     cut, apply, read, reopen,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: ctx.activity.say,
     /** A request nobody has answered yet is the session waiting on somebody. */
     status: (): number => statusOf({
       waiting: pending.size > 0,

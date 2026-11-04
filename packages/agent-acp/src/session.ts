@@ -24,7 +24,7 @@
  */
 
 import { resolve, sep } from 'node:path';
-import { activityOf, ensureWorkspacelessScratchDir, statusOf, uriOf } from '@ahpd/sdk';
+import { ensureWorkspacelessScratchDir, statusOf, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
@@ -82,8 +82,6 @@ export function acpSession(
     return directories.some((dir) => full === dir || full.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`));
   };
 
-  /** What it is doing, and the one handle that says it. */
-  const activity = activityOf(emit);
   let modified = new Date().toISOString();
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
@@ -113,8 +111,6 @@ export function acpSession(
     where,
     inside,
     setModifiedAt,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: activity.say,
     /*
      * A permission the server is blocked on is the session waiting for
      * somebody, which is what a client draws the input request from, and a
@@ -211,7 +207,13 @@ export function acpSession(
       return last !== undefined && String(last.id ?? '') === turnId ? turnId : undefined;
     },
     status: () => ctx.status(),
-    activity: () => activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => ctx.title,
     /*
      * A person's rename, which the host announces and this only keeps. The
@@ -262,7 +264,6 @@ export function acpSession(
        * sometimes empty is not a thing a client has to guess about.
        */
       ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits. The schema carries the server's modes once they
@@ -277,7 +278,6 @@ export function acpSession(
       modifiedAt: modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 
@@ -319,7 +319,6 @@ export function acpSession(
       ctx.settlePermissions();
       ctx.settleElicitations();
       ctx.calls.release('The turn was stopped');
-      ctx.doing('Cancelling');
       const connection = ctx.live;
       if (connection !== undefined && ctx.acpSessionId !== undefined) {
         // Fire and forget: the prompt's own resolution is what ends the turn.

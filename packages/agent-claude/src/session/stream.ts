@@ -432,7 +432,6 @@ export function createStream(ctx: SessionContext): Stream {
           if (input !== undefined) call.toolInput = input;
           if (spawned !== undefined) call._meta = { ...bag(call._meta), ...described };
         }
-        if (scope === ctx.mainScope) ctx.doing(ctx.busyWith(name, bag(block.input)));
         /*
          * The file as it is *now*, before the tool has run.
          *
@@ -584,9 +583,6 @@ export function createStream(ctx: SessionContext): Stream {
       // its completion carries no times.
       const ran = call.status !== 'cancelled';
       call.status = 'completed';
-      // Back to thinking. Leaving the last tool's name up makes a session look
-      // busy with something that finished.
-      if (scope === ctx.mainScope) ctx.doing('Thinking');
       /*
        * The result, as one object, because that is the only part of the action
        * a client reads.

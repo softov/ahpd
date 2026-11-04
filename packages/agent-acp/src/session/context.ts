@@ -83,8 +83,6 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * start as it starts, and to its start plus its duration as it ends.
    */
   setModifiedAt: (at: string) => void;
-  /** Say what it is doing, on both channels, the way a session mirrors its chat. */
-  doing: (said: string | undefined) => void;
   /** `SessionStatus`: 8 is in progress, 4 waits on a person and 1 is idle. */
   status: () => number;
   /** The config in force, by key. `session/configChanged` merges into this. */

@@ -27,7 +27,7 @@ export interface Turn {
 }
 
 export function createTurn(ctx: SessionContext): Turn {
-  const { emit, provider, start, inside, turns, doing } = ctx;
+  const { emit, provider, start, inside, turns } = ctx;
 
   /**
    * The first message titles a session nobody has named, and replaces a title
@@ -72,7 +72,6 @@ export function createTurn(ctx: SessionContext): Turn {
       state: 'complete',
       updates: [],
     };
-    doing('Thinking');
   };
 
   /**
@@ -126,7 +125,6 @@ export function createTurn(ctx: SessionContext): Turn {
   ): void => {
     const turn = ctx.active;
     if (turn === undefined || String(turn.id) !== turnId) return;
-    doing(undefined);
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
     turn.duration = duration;
