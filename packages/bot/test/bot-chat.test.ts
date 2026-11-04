@@ -509,17 +509,25 @@ it('steers a message into the open turn, which goes on', async () => {
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steered: true },
   ]);
+  // The steer stays in the turn it went into, quoted.
+  const quote = { id: 'steer:s1', kind: 'markdown', content: '> stop that' };
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/responsePart'))
+    .toEqual([{ type: 'chat/responsePart', turnId: 't1', part: quote }]);
+
+  // Read back while the turn is still open, as after a daemon that died in it.
+  const early = await (await backend(configDir, records)).transcript?.('one');
+  expect(early?.[0]?.responseParts).toEqual([quote]);
 
   chat.reply('done');
   const state = await stateOf(client);
-  expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [{ kind: 'markdown', content: 'done' }] }]);
+  expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [quote, { kind: 'markdown', content: 'done' }] }]);
   expect(state['steeringMessage']).toBeUndefined();
 
   // Read back, the chat shows the turn the steer went into, as it does live.
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
-  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+  expect(read?.[0]?.responseParts).toEqual([quote, { id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
 it('answers a steer to the client that sent it', async () => {
@@ -711,7 +719,12 @@ it('reads a steering line back in the turn it went into', async () => {
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
-  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+  // A line written before steers were quoted names no steering id, and its
+  // quote goes after what the turn holds.
+  expect(read?.[0]?.responseParts).toEqual([
+    { id: 't1:reply', kind: 'markdown', content: 'done' },
+    { id: 'steer:t1:0', kind: 'markdown', content: '> stop that' },
+  ]);
 });
 
 it('waits a queued message out, and starts it when the turn in front ends', async () => {
@@ -1126,7 +1139,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
       _meta: { toolKind: 'subagent', subagentChatUri: back },
     },
-  }]);
+  }, { id: 'steer:s1', kind: 'markdown', content: '> and this' }]);
   const started = actions(notes, CHAT).filter((one) => ['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallContentChanged'].includes(String(one['type'])));
   expect(started.map((one) => one['type'])).toEqual([
     'chat/toolCallStart',
@@ -1144,7 +1157,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   const idle = await stateOf(client);
   const turn = (idle['turns'] as Bag[])[0] as Bag;
   const parts = turn['responseParts'] as Bag[];
-  expect(parts).toHaveLength(2);
+  expect(parts).toHaveLength(3);
   expect(parts[0]).toMatchObject({
     kind: 'toolCall',
     toolCall: {
@@ -1153,15 +1166,17 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
     },
   });
-  expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'done' });
+  expect(parts[1]).toEqual({ id: 'steer:s1', kind: 'markdown', content: '> and this' });
+  expect(parts[2]).toMatchObject({ kind: 'markdown', content: 'done' });
   const kinds = actions(notes, CHAT).map((one) => one['type']);
   expect(kinds.slice(-3)).toEqual([
     'chat/toolCallComplete',
     'chat/responsePart',
     'chat/turnComplete',
   ]);
-  expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
-  // And the line a restart reads holds the same two parts, as JSON writes
+  // The steer's quote and the reply; the call is said by its own actions.
+  expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(2);
+  // And the line a restart reads holds the same three parts, as JSON writes
   // them: a key whose value is undefined is left out of a line and of a frame.
   expect(lines(configDir, 'one').at(-1))
     .toMatchObject({ id: turn['id'], state: 'complete', responseParts: JSON.parse(JSON.stringify(parts)) as Bag[] });

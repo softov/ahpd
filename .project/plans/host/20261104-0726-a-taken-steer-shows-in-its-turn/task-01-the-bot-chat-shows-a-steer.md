@@ -1,6 +1,6 @@
 ---
 title: The bot chat shows a steer
-status: todo
+status: implemented
 depends: []
 layer: bot
 refs:
@@ -14,14 +14,16 @@ A steer into the bot chat's open turn adds a quote part to that turn, which ever
 
 ## Files
 
-- `UPDATE: packages/bot/src/chat.ts:1195-1205` - `steer` adds the quote part to the open turn and says it with `chat/responsePart`.
+- `CREATE: packages/sdk/src/sessions/steer.ts` - `steerQuote`, the quote part both packages build.
+- `UPDATE: packages/sdk/src/index.ts` - export `steerQuote`.
+- `UPDATE: packages/bot/src/chat.ts:1195-1205` - `steer` adds the quote part to the open turn, says it with `chat/responsePart`, and logs `steeringId`.
 - `UPDATE: packages/bot/src/chat.ts:380-392` - the reader adds the quote to the turn a steering line names, when that turn has no part with the quote's id.
 - `UPDATE: packages/bot/test/bot-chat.test.ts` - a case for the live quote, and a case for the read back.
 - `DELETE: .project/problems/a-bot-steer-shows-differently-after-a-reload.md` - bots/20261103-0650 covered it.
 
 ## Steps
 
-1. Write `quoteOf(id, text)`, which returns a markdown part with id `steer:<id>` and `> ` before each line of the text.
+1. Add `steerQuote(id, text)` to `@ahpd/sdk`, which returns a markdown part with id `steer:<id>` and `> ` before each line of the text.
 2. In `steer`, push the quote into the open turn's `responseParts`, and emit `chat/responsePart` for it.
 3. In the reader, add the quote to the turn a steering line names, if it has none.
 4. Add the live case: the open turn holds the quote after a steer, and a client got `chat/responsePart`.
@@ -33,3 +35,5 @@ A steer into the bot chat's open turn adds a quote part to that turn, which ever
 - `pnpm --filter @ahpd/bot test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step. A log line written before this change names no `steeringId`, so its quote gets the id `steer:<turn id>:<n>` and goes after what the turn holds.
