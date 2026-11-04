@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/server",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "The ahpd daemon: an Agent Host Protocol server on Node, Bun or Deno, with agents loaded as plugins",
   "keywords": [

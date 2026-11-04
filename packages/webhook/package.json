@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/webhook",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Webhooks for the ahpd daemon: a URL that talks to a bot by thread or fires an automation, with a secret per endpoint",
   "keywords": [

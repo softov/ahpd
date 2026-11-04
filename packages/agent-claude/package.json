@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-claude",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Claude Code as an Agent Host Protocol backend: a plugin for the ahpd daemon and an Agent for @ahpd/sdk",
   "keywords": [

@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/bot",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Bots for the ahpd daemon: a bot: resource provider, where a bot is a record with a workspace and a session",
   "keywords": [

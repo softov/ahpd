@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/tasks",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Tasks and plans for the ahpd daemon: one list every agent reads and writes through host tools",
   "keywords": [
