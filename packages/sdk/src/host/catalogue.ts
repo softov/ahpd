@@ -120,6 +120,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   } = ctx;
 
   /**
+   * What started a session, from the map this host reads or, for one it is not
+   * holding, from the store that outlives it.
+   *
+   * A session a run made keeps its origin with the rest of its record, so a
+   * recap after a restart answers as it did before one. What the store says is
+   * put back into `origins`, so every later read here - a row, a chat's origin -
+   * answers the same.
+   */
+  const originOf = (session: string): { kind: 'automation'; automation: string; run: string } | undefined => {
+    const held = origins.get(session);
+    if (held !== undefined) return held;
+    const stored = kept.automationOrigin?.(idFor(session));
+    if (stored !== undefined) origins.set(session, stored);
+    return stored;
+  };
+  /**
    * How a chat came to exist.
    *
    * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool`. A
@@ -132,7 +148,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const startedBy = (session: string, chat?: string): Bag => {
     const made = chat === undefined ? undefined : madeFrom.get(chat);
     if (made !== undefined) return { origin: made };
-    return origins.has(session) ? {} : { origin: { kind: 'user' } };
+    return originOf(session) !== undefined ? {} : { origin: { kind: 'user' } };
   };
   /**
    * One chat, as its session's catalogue lists it: the summary fields of the
@@ -1257,7 +1273,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const lead = leadOf(held);
       if (!lead)
         continue;
-      const started = origins.get(uri);
+      const started = originOf(uri);
       live.unshift({
         resource: uri,
         provider: held.agent.provider,
@@ -1316,19 +1332,23 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * the list it was holding would disagree with the notification that told it
    * about the change.
    */
-  const hereNow = (row: Summary): Summary => ({
-    resource: row.resource,
-    provider: row.provider,
-    title: row.title,
-    createdAt: row.createdAt,
-    modifiedAt: row.modifiedAt,
-    workingDirectories: row.workingDirectories,
-    // Nothing this host started is running yet, so activity is idle and the
-    // only bits set are this host's own and the client's.
-    status: Status.Idle | kept.flags(idFor(row.resource)),
-    ...changesOf(row.resource),
-    ...ctx.describes(row.resource),
-  });
+  const hereNow = (row: Summary): Summary => {
+    const started = originOf(row.resource);
+    return {
+      resource: row.resource,
+      provider: row.provider,
+      title: row.title,
+      createdAt: row.createdAt,
+      modifiedAt: row.modifiedAt,
+      workingDirectories: row.workingDirectories,
+      // Nothing this host started is running yet, so activity is idle and the
+      // only bits set are this host's own and the client's.
+      status: Status.Idle | kept.flags(idFor(row.resource)),
+      ...(started === undefined ? {} : { origin: started }),
+      ...changesOf(row.resource),
+      ...ctx.describes(row.resource),
+    };
+  };
 
   /**
    * What a refresh found, told to every client.

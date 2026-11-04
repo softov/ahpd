@@ -1,6 +1,6 @@
 ---
 title: The store keeps the automation origin
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -40,4 +40,12 @@ After a restart, the summary of that session names the automation and the run.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk tests pass.
 
 ## Resume
+
+- **Done so far:** the store keeps `automationOrigin` on a session row, writes it, and reads it back at start.
+The host writes it where `origins` gets an origin, clears it where a disposed session loses one, and the catalogue reads the store for a session `origins` does not hold.
+- **Next action:** [task-02-a-turn-keeps-its-origin.md](task-02-a-turn-keeps-its-origin.md).
+- **Open questions:** none.
+- **Watch out for:** the failed-open path at [code://packages/sdk/src/host/lifecycle.ts#L1865](../../../../packages/sdk/src/host/lifecycle.ts#L1865) clears `origins` and then forgets the whole row, so the stored origin goes with it and needs no second clear.
+
+Files changed by this task: `packages/sdk/src/index.ts`, `packages/sdk/src/types/sessions.ts`, `packages/sdk/src/sessions/sessions.ts`, `packages/sdk/src/host/lifecycle.ts`, `packages/sdk/src/host/automations.ts`, `packages/sdk/src/host/catalogue.ts`, `packages/sdk/test/host-automation-origin.test.ts`.
 
