@@ -70,7 +70,7 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 | --- | --- | --- |
 | [01 - the bot chat shows a steer](task-01-the-bot-chat-shows-a-steer.md) | implemented | - |
 | [02 - Claude shows a steer it took in](task-02-claude-shows-a-steer-it-took-in.md) | implemented | - |
-| [03 - a steer is a system notification](task-03-a-steer-is-a-system-notification.md) | todo | 01, 02 |
+| [03 - a steer is a system notification](task-03-a-steer-is-a-system-notification.md) | implemented | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -79,8 +79,8 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 are implemented on 2026-11-04, as a markdown quote. The changed tests fail without the change.
-- **Next action:** build task 03, then do the check by hand in `pending/bot-steer-checks.md`.
+- **Done so far:** tasks 01, 02 and 03 are implemented on 2026-11-04. The changed tests fail without the change.
+- **Next action:** review, then do the check by hand in `pending/bot-steer-checks.md`.
 - **Watch out for:** a bot back session's steer carries the context block before the person's words.
   The Claude quote shows the prompt as the CLI got it.
 
@@ -88,5 +88,5 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 - [x] A bot chat steer shows in the open turn, live and after a reload.
 - [x] A Claude steer shows in its turn when the CLI takes it in, and again when the transcript is read back.
-- [ ] Every steer part is a `systemNotification` with `_meta['ahpd.steer']`.
+- [x] Every steer part is a `systemNotification` with `_meta['ahpd.steer']`.
 - [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the bot and agent-claude tests pass.
