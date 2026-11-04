@@ -74,9 +74,9 @@ a person edits bots/<slug>.md -> collection watch -> botStore reloads one -> kep
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The bot store is a collection](task-01-the-bot-store-is-a-collection.md) | implemented | - |
-| [02 - A bot edited by hand reaches the provider](task-02-a-hand-edit-reaches-the-provider.md) | implemented | 01 |
-| [03 - The docs describe the bot file](task-03-the-docs-describe-the-bot-file.md) | implemented | 02 |
+| [01 - The bot store is a collection](task-01-the-bot-store-is-a-collection.md) | done | - |
+| [02 - A bot edited by hand reaches the provider](task-02-a-hand-edit-reaches-the-provider.md) | done | 01 |
+| [03 - The docs describe the bot file](task-03-the-docs-describe-the-bot-file.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -86,10 +86,8 @@ a person edits bots/<slug>.md -> collection watch -> botStore reloads one -> kep
 
 ## Resume state
 
-- **Done so far:** all three tasks are implemented, committed as `6d951a8` and `cd1fbb9`, and released in 0.11.0. See [implemented.md](implemented.md).
-- **Next action:** Softov reviews the tasks; then each task is `done`.
-- **Open questions:** none.
-- **Watch out for:** `gone` and `get` are read in one check at `provider.ts:376-378`, so both must come from the same cache. And the checklist's copy of `~/.config/ahpd/bots` is the one item no test covers.
+- **Done so far:** all three tasks are done, committed as `6d951a8` and `cd1fbb9`, and released in 0.11.0. Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none. The owner of a bot edited by hand stays an open problem: [a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md](../../../problems/a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md).
 
 ## Final verification checklist
 
