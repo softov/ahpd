@@ -1,6 +1,6 @@
 ---
 title: A folder is walked once
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -27,7 +27,10 @@ refs:
 
 ## Validation
 
-- The loop case times out without the change and passes with it.
+- The loop case fails without the change and passes with it.
 - `pnpm --filter @ahpd/agent-claude test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step.
+- **Found:** without the change the loop case does not hang. The walk finds the rule again through each link until `RULE_MOST` stops it, and the case fails on the duplicates.
