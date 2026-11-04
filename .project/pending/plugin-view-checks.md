@@ -6,7 +6,7 @@ plans:
 
 # Check that the Dev Tunnel plugin shows its state
 
-plugin/20261031-1200 is on main (#175). The Dev Tunnel plugin's row carries `views.main` with the tunnel's state. Since 184ca4c8 the plugin runs on the Dev Tunnels SDK, with no `devtunnel` CLI. Do [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) first, so a tunnel runs.
+plugin/20261031-1200 is on main (#175). The Dev Tunnel plugin's row carries `views.main` with the tunnel's state. Since 184ca4c8 the plugin runs on the Dev Tunnels SDK, with no `devtunnel` CLI. The tunnel checks of plugin/20261102-1122 passed on 2026-11-04.
 
 ## Set up
 

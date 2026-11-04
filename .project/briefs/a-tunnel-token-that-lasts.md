@@ -96,6 +96,6 @@ Whichever path is chosen, the refresh closes the gaps in *How the refresh runs*:
 
 - Whether the service accepts a GitHub personal access token under the `github` scheme. This needs one call to the management API with a real token.
 - Whether the service accepts an Entra service principal token, and which audience it asks for.
-- Whether the gaps in *How the refresh runs* stopped a real tunnel. No tunnel was seen to stop yet, and the check by hand is in [plugin-1122-tunnel-checks.md](../pending/plugin-1122-tunnel-checks.md).
+- Whether the gaps in *How the refresh runs* stopped a real tunnel. No tunnel was seen to stop yet.
 - Whether the clock of the event loop stops while a Linux machine sleeps. This needs a check on a real machine.
 - Whether a relay host that is connected needs a valid token, or only a new connection needs one.

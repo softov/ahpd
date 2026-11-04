@@ -10,7 +10,7 @@ container/02 waits on this run. VS Code on Windows connects to your daemon throu
 
 ## Set up
 
-1. Do [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) first. The `devtunnel` connector must be signed in with the GitHub account that VS Code on Windows uses.
+1. The tunnel checks of plugin/20261102-1122 passed on 2026-11-04. The `devtunnel` connector must be signed in with the GitHub account that VS Code on Windows uses.
 2. On this host, check the tools. `devcontainer` and `docker` are installed here:
 
 ```bash

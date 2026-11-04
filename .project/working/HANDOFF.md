@@ -58,7 +58,7 @@ Current progress and pending items only, as of 2026-11-04.
   - plugin/20261103-0158 merged in #199 and has one task `todo`.
   - plugin/20261103-1044 is `planned`, but #203 replaced its PR #201.
 - [problems/a-refused-back-turn-stays-working-in-another-window.md](../problems/a-refused-back-turn-stays-working-in-another-window.md): check after the daemon restart.
-- plugin/20261102-1122, the host keeps the tunnels: checks by hand in [pending/plugin-1122-tunnel-checks.md](../pending/plugin-1122-tunnel-checks.md). The Dev Tunnels sign-in they need passed its check on 2026-11-04. A brief, [briefs/a-tunnel-token-that-lasts.md](../briefs/a-tunnel-token-that-lasts.md), finds the long-lived token Dev Tunnels accepts.
+- plugin/20261102-1122, the host keeps the tunnels: its checks by hand passed on 2026-11-04. A brief, [briefs/a-tunnel-token-that-lasts.md](../briefs/a-tunnel-token-that-lasts.md), finds the long-lived token Dev Tunnels accepts.
 - host/20261102-1347, the host serves its tools at `/mcp`: checks by hand in [pending/host-1347-mcp-checks.md](../pending/host-1347-mcp-checks.md).
 - [briefs/a-connector-shows-a-view.md](../briefs/a-connector-shows-a-view.md): a plan only when he says plan it.
 - Two comments in `packages/sdk/src/host/tooling.ts`, at lines 412 and 669, still name `heldAs`, which #191 removed. They are MayCXC's to fix on `union`.

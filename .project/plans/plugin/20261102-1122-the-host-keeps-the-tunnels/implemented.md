@@ -35,7 +35,9 @@ No `devtunnel` process runs.
 - `packages/server/test/tunnels.test.ts` runs a real daemon with a fake kind plugin, 5 cases. The SIGTERM case is skipped on Windows, because SIGTERM is a kill there.
 - `tunnel-devtunnel-kind.test.ts`, `tunnel-devtunnel.test.ts` and `tunnel-devtunnel-view.test.ts` cover the kind against a fake Dev Tunnels service.
 - ahpd #189 passed its 11 CI checks, Windows included, after MayCXC's union was merged in.
-- A real Dev Tunnel and a client that connected before the upgrade are not verified. They are in [plugin-1122-tunnel-checks.md](../../../pending/plugin-1122-tunnel-checks.md).
+- On 2026-11-04 Softov ran `plugin-1122-tunnel-checks.md` on a real Dev Tunnel, and the tunnels worked.
+- ahpc reached the daemon through a person tunnel on port 37537 only after that port got anonymous access. A private port needs a Dev Tunnels token, which ahpc cannot send yet: see ahpc's brief `ahpc-connects-through-a-private-dev-tunnel.md`.
+- The system tunnel failed at the daemon's start with 401, and ran after a disable and an enable: see [the problem](../../../problems/a-system-tunnel-that-fails-at-start-is-not-retried.md).
 
 ## Departures from the plan
 
