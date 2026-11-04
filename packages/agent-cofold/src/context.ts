@@ -132,10 +132,10 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   paused: { turnId: string; runId: string; requestId: string } | undefined;
   /**
-   * The running turn's earlier time when a client resumed it, and when it ran
-   * again, so the turn holds its time across both runs once it ends.
+   * The running turn's earlier time and usage when a client resumed it, and
+   * when it ran again, so the turn holds its time and usage across both runs.
    */
-  resumedFrom: { duration: number; at: number } | undefined;
+  resumedFrom: { duration: number; at: number; usage: Bag | undefined } | undefined;
   /**
    * Why the cut this session was asked for did not happen.
    *

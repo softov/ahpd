@@ -1,6 +1,6 @@
 import { resume } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { bag, endedParts, statusOf, str } from '@ahpd/sdk';
+import { bag, endedParts, mergeLogicalTurnUsage, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { TurnMapping } from './mapping.js';
 import type { SessionContext } from './context.js';
@@ -157,6 +157,16 @@ export const createRuns = (ctx: SessionContext): Runs => {
             : undefined;
       const why = ending === 'error' ? str(bag(bag(action.part).error).message) : undefined;
       const part = ending === 'error' ? bag(action.part) : undefined;
+      /*
+       * The turn holds the usage it says, as the protocol's reducer holds each
+       * `chat/usage` on the active turn, so a chat opened after it holds what
+       * a client that watched it was told: a resumed turn's, this run's merged
+       * over the run before's, as the host says it.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L772-L779
+       */
+      if (type === 'chat/usage' && ctx.active !== undefined && String(ctx.active.id) === str(action.turnId)) {
+        ctx.active.usage = mergeLogicalTurnUsage(ctx.resumedFrom?.usage, bag(action.usage)) ?? action.usage;
+      }
       const ended = ending !== undefined && settleTurn(ending, why, part);
       /*
        * A pause lives on the session channel and a turn on the chat channel;

@@ -429,6 +429,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
     const end = kept.at(-1);
     if (end === undefined || end.kind !== 'error' || end.resumable !== true) return false;
+    // What the turn took and used before, which it holds with what this run adds.
+    const resumedFrom = {
+      duration: typeof last.duration === 'number' ? last.duration : 0,
+      at: Date.now(),
+      usage: typeof last.usage === 'object' && last.usage !== null ? last.usage as Bag : undefined,
+    };
     /*
      * The turn of the run a restart left paused: reopened as it was, as the
      * reducer reopens it, and the run itself continued on its question.
@@ -439,7 +445,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       delete reopened.state;
       delete reopened.duration;
       ctx.active = reopened;
-      ctx.resumedFrom = { duration: typeof last.duration === 'number' ? last.duration : 0, at: Date.now() };
+      ctx.resumedFrom = resumedFrom;
       ctx.cancelRequested = false;
       ctx.failed = undefined;
       const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
@@ -474,7 +480,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     delete again.state;
     delete again.duration;
     ctx.active = again;
-    ctx.resumedFrom = { duration: typeof last.duration === 'number' ? last.duration : 0, at: Date.now() };
+    ctx.resumedFrom = resumedFrom;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     const message = bag(again.message);
