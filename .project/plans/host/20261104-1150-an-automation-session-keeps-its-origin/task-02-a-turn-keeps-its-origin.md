@@ -44,7 +44,8 @@ A read after a restart gives each recorded turn that origin back.
 ## Resume
 
 - **Done so far:** a `Recorded` file holds an optional `origin`, kept only when it is an object with a string `kind`.
-`turnRecordedAs` writes it, spawn passes a started message's origin when its kind is not `user`, and `onTurnRecorded` carries the origin to the record under the backend's id.
+`turnRecordedAs` writes it, and spawn passes a started message's origin when its kind is not `user`.
+`onTurnRecorded` carries the origin to the record under the backend's id.
 `transcriptOf` sets each recorded origin on its transcript turn before `asBegun` folds them.
 - **Next action:** none; `implemented.md` records what was verified.
 - **Open questions:** none.
