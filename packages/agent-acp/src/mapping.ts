@@ -711,11 +711,13 @@ const questionOf = (key: string, schema: Bag, required: boolean): Bag => {
      * "something else", and its ACP adapter carries it on the field's own
      * `_meta`, under the vendor prefix a `_meta` is namespaced by. A question
      * asked that way takes a typed answer beside its options, which is what
-     * `allowFreeformInput` says; one without the flag is a question the server
-     * wrote a closed set of answers for, and a box offered over it would be
-     * this bridge deciding what that server accepts.
+     * `allowFreeformInput` says. One without the flag is a question the server
+     * wrote a closed set of answers for, and says so with the flag `false`: a
+     * client reads an absent one as open and draws a box whose words go
+     * nowhere, so VS Code's Claude closes every select a form asks.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L236
      */
-    const freeform = bag(bag(schema._meta).codex).isOther === true ? { allowFreeformInput: true } : {};
+    const freeform = { allowFreeformInput: bag(bag(schema._meta).codex).isOther === true };
     // A list is a question answered many times over, and the bounds the array
     // set are part of what is being asked.
     return schema.type === 'array'

@@ -681,12 +681,13 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   expect((request?.questions as unknown[])?.[1]).toMatchObject({ kind: 'boolean', defaultValue: false });
   expect((request?.questions as unknown[])?.[2]).toMatchObject({ kind: 'integer', min: 1, max: 5 });
   // An untitled enum is its own options, and an array of one is a selection of
-  // many, with the bounds the array set.
+  // many, with the bounds the array set. Both are closed sets of answers, said
+  // with `allowFreeformInput: false`, as VS Code's Claude closes a form's selects.
   expect((request?.questions as unknown[])?.[3]).toMatchObject({
-    kind: 'single-select', options: [{ id: 'fast', label: 'fast' }, { id: 'careful', label: 'careful' }],
+    kind: 'single-select', options: [{ id: 'fast', label: 'fast' }, { id: 'careful', label: 'careful' }], allowFreeformInput: false,
   });
   expect((request?.questions as unknown[])?.[4]).toMatchObject({
-    kind: 'multi-select', options: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }],
+    kind: 'multi-select', options: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }], allowFreeformInput: false,
   });
 
   // The session says somebody is needed, as a permission does, and the entry is
