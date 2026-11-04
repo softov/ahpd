@@ -190,7 +190,7 @@ Sessions, chats and turns with streaming responses, tool calls and approvals, qu
 
 ## Connecting
 
-Any AHP client works. [`ahpc`](https://github.com/softov/ahpc) is one:
+Any AHP client works. [`ahpc`](https://github.com/ahpio/ahpc) is one:
 
 ```bash
 ahpc --host ws://127.0.0.1:9187

@@ -37,8 +37,8 @@ refs:
   - "[code://UPSTREAM.md](../../../../UPSTREAM.md) - Pass 7, \"Large chats\", holds the box this plan closes"
   - https://github.com/microsoft/vscode/blob/1.143.1/src/vs/platform/agentHost/node/protocolServerHandler.ts - VS Code's host reads no `view` at subscribe, and answers `fetchTurns` with an empty `chat/turnsLoaded`
   - https://github.com/microsoft/vscode/blob/1.143.1/src/vs/platform/agentHost/node/shared/sessionServerTools.ts - VS Code's `get_session_context` takes every turn of the state and cuts it with `transcriptLimit`
-  - https://github.com/softov/ahpc/blob/4741023/src/ahp/live.ts#L1960-L1990 - ahpc subscribes with no view, and sends `fetchTurns` with the cursor it holds or with none
-  - https://github.com/softov/ahpc/blob/4741023/src/ahp/live.ts#L2876-L2890 - ahpc asks for older turns once, only when the snapshot has no turns and has a cursor
+  - https://github.com/ahpio/ahpc/blob/4741023/src/ahp/live.ts#L1960-L1990 - ahpc subscribes with no view, and sends `fetchTurns` with the cursor it holds or with none
+  - https://github.com/ahpio/ahpc/blob/4741023/src/ahp/live.ts#L2876-L2890 - ahpc asks for older turns once, only when the snapshot has no turns and has a cursor
   - https://github.com/softov/ahpw/blob/e9d6320/src/resources/sessions/Page.tsx#L133-L296 - ahpw subscribes with no view, and shows "older" only while the state has a cursor
 ---
 
