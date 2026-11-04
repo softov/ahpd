@@ -1,6 +1,6 @@
 ---
 title: The docs say how to turn it on
-status: todo
+status: implemented
 depends: [task-02-the-model-api-is-served-on-its-gate.md, task-04-ahpd-config-set-writes-a-key.md]
 layer: docs
 refs:
@@ -15,6 +15,7 @@ The docs show `modelApi`, and the release notes say a 0.14 config must add it.
 
 - `UPDATE: docs/server/PROXY.md` - `modelApi` turns the model API on, beside or apart from `httpApi`.
 - `UPDATE: docs/server/CONFIGURE.md` - `modelApi` in the keys with no flag, one line beside `httpApi`, and `ahpd config set` and `unset`.
+- `UPDATE: docs/server/REMOTE.md` - the model proxy is served while `modelApi` is on.
 - `UPDATE: docs/updates/v0_15.md` - the change, and `ahpd config set modelApi true` for a host that calls models today.
 - `UPDATE: .project/plans/proxy/00-proxy.md` - the runtime path names `modelApi`.
 
@@ -32,5 +33,5 @@ The docs show `modelApi`, and the release notes say a 0.14 config must add it.
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** every step.
+- **Found:** the change goes in a new `Unreleased` section of `v0_15.md`, because rc.1 is published. `REMOTE.md` named `/v1` beside `/api` too.

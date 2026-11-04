@@ -1,6 +1,6 @@
 ---
 title: The model API is served on its gate
-status: todo
+status: implemented
 depends: [task-01-the-modelapi-key.md]
 layer: server
 refs:
@@ -38,5 +38,5 @@ refs:
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** every step.
+- **Found:** the connector's own model list is read at startup, so the off case checks that no POST reached the provider.

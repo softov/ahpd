@@ -6,7 +6,8 @@ revalidated: 2026-10-24
 
 The proxy forwards model calls from people's own tools (Claude Code, scripts) to a model provider. It carries them under their ahpd identity, so the calls can be routed, recorded and limited.
 It is not an agent: it holds no session and runs nothing.
-It is served under `/v1` beside `/api` while `httpApi` is on, in each caller's dialect, streamed back unchanged; see [`docs/server/PROXY.md`](../../../docs/server/PROXY.md).
+It is served under `/v1` while `modelApi` is on, on the HTTP API's listener or on its own.
+Each call is in the caller's dialect and streamed back unchanged; see [`docs/server/PROXY.md`](../../../docs/server/PROXY.md).
 The OpenAI endpoints answer at the root as well, so `http://host:port` is one base URL for both SDKs.
 A provider is a connector, made from one of the four provider adapters the host ships. Its key is a vault secret, or a daemon variable that a host connector names.
 Each model a connector lists is callable as `<provider>/<id>`, and the `modelProxy` table holds the aliases over one or more providers.
@@ -31,7 +32,7 @@ Each model a connector lists is callable as `<provider>/<id>`, and the `modelPro
 ## Runtime path
 
 ```
-tool -> POST /v1/chat/completions | /chat/completions | /v1/messages | /v1/messages/count_tokens | /responses | /responses/input_tokens | /embeddings | /images/* | /audio/* | /rerank, and the root twins, on the API's listener
+tool -> POST /v1/chat/completions | /chat/completions | /v1/messages | /v1/messages/count_tokens | /responses | /responses/input_tokens | /embeddings | /images/* | /audio/* | /rerank, and the root twins, on the listener `modelApi` names
   -> guard (Host, loopback at any port, Origin) -> caller: deployment token | whose | users.verify + proxy:write
   -> scope: X-AHP-Scope | ?scope= | primary -> body (32 MiB, JSON, model)
   -> connectors channel: the open provider connectors, with each one's owner

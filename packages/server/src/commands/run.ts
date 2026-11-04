@@ -71,7 +71,8 @@ import type { ControlServer } from '../control.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
 import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
-import { API_PREFIX, apiHandler, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { API_PREFIX, PROXY_PREFIX, apiHandler, isUnder, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { isRootPath } from '../proxy/dialects.js';
 import { mcpHandler } from '../mcp.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { updateMethod } from './update.js';
@@ -98,6 +99,12 @@ import { manifest, version } from '../version.js';
 import { conflict, namedOptionsFrom, secret, flagFields, stop } from './options.js';
 import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartMethod, successorTakes } from './restart.js';
 import type { Options } from './options.js';
+
+/** The listener an HTTP surface is on: the daemon's, the API's own or the model API's own. */
+type Place = 'daemon' | 'api' | 'model';
+
+/** What a listener answers a request that nothing on it serves. */
+const notFound = async (): Promise<Response> => new Response(null, { status: 404 });
 
 /**
  * The names the API answers to.
@@ -418,8 +425,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * `listen` as its request handler and a port of its own has to be bound
    * before the announcement names it.
    */
-  if (options.httpApi !== undefined && options.stdio) {
-    stop('httpApi needs a listening port, and --stdio serves one connection on this process\'s own pipes.');
+  for (const key of ['httpApi', 'modelApi'] as const) {
+    if (options[key] !== undefined && options.stdio) {
+      stop(`${key} needs a listening port, and --stdio serves one connection on this process's own pipes.`);
+    }
   }
   /*
    * A host with no gate is not one the API may be served from.
@@ -428,8 +437,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * request against, so `httpApi` here would be an administration surface
    * anybody who reaches the port may drive.
    */
-  if (options.httpApi !== undefined && token === undefined && users === undefined) {
-    stop('httpApi needs a credential: pass --connection-token, --connection-token-file or --users.');
+  for (const key of ['httpApi', 'modelApi'] as const) {
+    if (options[key] !== undefined && token === undefined && users === undefined) {
+      stop(`${key} needs a credential: pass --connection-token, --connection-token-file or --users.`);
+    }
   }
   if (options.routes !== undefined && options.stdio) {
     stop('routes needs a listening port, and --stdio serves one connection on this process\'s own pipes.');
@@ -443,6 +454,20 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // The API's own listener binds where `httpApi.host` says, and on the
   // daemon's address otherwise.
   const apiHost = options.httpApi?.host ?? options.host;
+  /*
+   * The listener each HTTP surface is on: the daemon's own, the API's own for
+   * `httpApi.port`, or the model API's own for a `modelApi.port` that is not
+   * the API's. The model API with no port of its own shares the API's
+   * listener, and the daemon's when the API is off.
+   */
+  const apiPlace: Place | undefined = options.httpApi === undefined ? undefined : ownPort === undefined ? 'daemon' : 'api';
+  const modelPort = options.modelApi?.port;
+  const modelPlace: Place | undefined = options.modelApi === undefined
+    ? undefined
+    : modelPort === undefined || (apiPlace === 'api' && modelPort === ownPort) ? apiPlace ?? 'daemon' : 'model';
+  // The model API's own listener binds where `modelApi.host` says, and on the
+  // daemon's address otherwise.
+  const modelHost = options.modelApi?.host ?? options.host;
   /*
    * What this host's work cost: a folder of monthly JSONL files beside the
    * sessions and the automations.
@@ -581,6 +606,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * after the handler is built.
    */
   let apiBoundPort = 0;
+  /** The port of the model API's own listener, once it is bound. */
+  let modelBoundPort = 0;
   /*
    * The tunnels the host keeps, read by the API and the routes when a request
    * arrives: both listeners are built before the channel is, and a tunnel's
@@ -629,13 +656,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     version: version(),
   });
   /*
-   * The model proxy, under `/v1` in front of the API on whichever listener
-   * carries it, and only while `httpApi` is on. Its model names are the
-   * configuration read at startup; the open provider connectors, the users
-   * file and the usage store are read per call. The connectors channel is
-   * built below, so its list is read through the closure each time. The same
-   * options answer the channel's `x-ahpd/connectors/models`, whether or not
-   * the proxy is served.
+   * The model API, under `/v1` and at the root paths, only while `modelApi` is
+   * on. Its model names are the configuration read at startup; the open
+   * provider connectors, the users file and the usage store are read per
+   * call. The connectors channel is built below, so its list is read through
+   * the closure each time. The same options answer the channel's
+   * `x-ahpd/connectors/models`, whether or not the model API is served.
    */
   const proxied: ProxyOptions = {
     proxy: () => options.modelProxy,
@@ -652,16 +678,19 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     usage: () => metered,
     meter,
     hostName: hostname(),
-    origins: () => apiOrigins(apiHost, options.resource, apiBoundPort, options.origins),
-    // Asked only by the handler, which is built only when the API is.
-    otherwise: api ?? (async () => new Response(null, { status: 404 })),
+    // The names of whichever listener carries the model API.
+    origins: () => modelPlace === 'model'
+      ? apiOrigins(modelHost, options.resource, modelBoundPort, options.origins)
+      : modelPlace === 'api'
+        ? apiOrigins(apiHost, options.resource, apiBoundPort, options.origins)
+        : apiOrigins(options.host, options.resource, boundPort, options.origins),
+    // Replaced on each listener by what else that listener carries.
+    otherwise: notFound,
     onProblem: stamp,
   };
   /*
-   * The daemon's HTTP doors: `/mcp` for a person's MCP client, then the proxy
-   * under `/v1` and the API under `/api`. `/mcp` sits in front because it is
-   * one path of its own and the proxy answers another; a path that is neither
-   * falls through to the API, which is where it ended before.
+   * The HTTP API's doors: `/mcp` for a person's MCP client, then the API under
+   * `/api`.
    *
    * The host is read through the closure rather than handed over here: this
    * chain is built before `createHost` runs, and a sessionless list is built
@@ -671,9 +700,24 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     setting: options.mcpTools,
     caller: { ...(token === undefined ? {} : { token }), ...(users === undefined ? {} : { users }) },
     tools: (caller) => host.sessionlessTools(caller),
-    otherwise: proxyHandler(proxied),
+    otherwise: api,
     version: version(),
   });
+  /*
+   * What one listener serves over HTTP: the model API when it is there, in
+   * front of the HTTP API when that is there too. A model path on a listener
+   * without the model API answers 404, and so does anything on a listener
+   * whose surfaces are all elsewhere.
+   */
+  const servedAt = (place: Place): RequestHandler | undefined => {
+    const apiHere = apiPlace === place ? served : undefined;
+    if (modelPlace === place) return proxyHandler({ ...proxied, otherwise: apiHere ?? notFound });
+    if (apiHere === undefined) return undefined;
+    return async (request) => {
+      const path = new URL(request.url).pathname;
+      return isUnder(path, PROXY_PREFIX) || isRootPath(path) ? json(404, { message: `No model API at ${path}` }) : apiHere(request);
+    };
+  };
   /*
    * Who may open a connection on the daemon's own port: the deployment's own
    * token, which is the host, and a person's token that the directory knows.
@@ -701,7 +745,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // plugin's route where it is, then the proxy and the API where they are, the
   // 404 that says they are not where `httpApi.port` moved them, and the answer to
   // a token everywhere else.
-  const below = withoutApi(doorOf(door), ownPort === undefined ? served : undefined);
+  const below = withoutApi(doorOf(door), servedAt('daemon'));
   /*
    * A plugin's own route, on this listener.
    *
@@ -715,10 +759,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let pluginRequests: RequestHandler = below;
   const daemonRequest = async (request: globalThis.Request): Promise<Response> =>
     (await toolsServers.request(request)) ?? pluginRequests(request);
-  const apiListener: ApiListener | undefined = served === undefined || ownPort === undefined
+  const apiServed = servedAt('api');
+  const apiListener: ApiListener | undefined = apiServed === undefined || ownPort === undefined
     ? undefined
-    : await listenApi(served, { port: ownPort, host: apiHost });
+    : await listenApi(apiServed, { port: ownPort, host: apiHost });
   apiBoundPort = apiListener?.port ?? 0;
+  const modelServed = servedAt('model');
+  const modelListener: ApiListener | undefined = modelServed === undefined || modelPort === undefined
+    ? undefined
+    : await listenApi(modelServed, { port: modelPort, host: modelHost });
+  modelBoundPort = modelListener?.port ?? 0;
 
   /*
    * The wire, written down as it happens.
@@ -941,7 +991,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // says nothing of whether one is callable.
     models: async (connector, reader) => {
       const listed = await connectorModels(proxied, connector, reader === undefined ? { kind: 'root' } : { kind: 'person', principal: reader });
-      if (served !== undefined) return listed;
+      if (modelPlace !== undefined) return listed;
       return { ...listed, models: listed.models.map(({ callable: _callable, ...rest }) => rest) };
     },
     onProblem: listProblem,
@@ -2094,6 +2144,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     + (api === undefined ? '' : `http on http://${urlHost(apiHost)}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
     // Where the routes are, when `routes.port` gave them a listener of their own.
     + (routesListener === undefined ? '' : `routes on http://${urlHost(routesHost)}:${routesListener.port}/plugins/\n`)
+    // Where the model API is, when `modelApi.port` gave it a listener of its own.
+    + (modelListener === undefined ? '' : `models on http://${urlHost(modelHost)}:${modelListener.port}/v1\n`)
     // Its own line, in the same write as the origin, so `start` reading a log
     // other daemons also write to takes the announcement of the child it spawned.
     + `pid ${String(process.pid)}\n`
@@ -2231,6 +2283,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       // a listener the daemon is no longer behind, and a successor does not
       // find its port still bound.
       await apiListener?.close();
+      await modelListener?.close();
       await routesListener?.close();
       await listener.close();
       // Then what the host runs: the clock, the sessions and their agents,

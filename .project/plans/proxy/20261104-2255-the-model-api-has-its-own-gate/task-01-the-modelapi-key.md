@@ -1,6 +1,6 @@
 ---
 title: The modelApi key
-status: todo
+status: implemented
 depends: []
 layer: server
 refs:
@@ -38,5 +38,5 @@ The config takes `modelApi`, checked as `httpApi` is, and three short descriptio
 
 ## Resume
 
-- **Done so far:** nothing.
+- **Done so far:** every step.
 - **Found:** nothing yet.

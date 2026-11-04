@@ -14,7 +14,7 @@ import type { Registry } from '@cofold/commands';
 import type { AutomationStore, LiveNodes, Usage, Users, Vault } from '@ahpd/sdk';
 import type { Options } from './options.js';
 import { declareAutomation } from './automation.js';
-import { declareConfig } from './config.js';
+import { declareConfig, declareConfigWrite } from './config.js';
 import { declarePaths } from './paths.js';
 import { declareNodes } from './nodes.js';
 import { declarePlugin } from './plugin.js';
@@ -125,6 +125,7 @@ export const servedRegistry = (facts: ServedFacts): Registry<object> => {
   const registry = createRegistry({ authorize: checkScopes });
   declareStatus(registry, facts);
   declareConfig(registry, facts);
+  declareConfigWrite(registry, facts);
   declareUser(registry, facts);
   declareToken(registry, facts);
   declareTeams(registry, facts);
