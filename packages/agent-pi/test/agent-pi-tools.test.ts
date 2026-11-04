@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { createAgentSession, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
@@ -59,20 +63,44 @@ it('rejects the call when the host tool throws', async () => {
   await expect(callTool(tool, {})).rejects.toThrow('no such file');
 });
 
-it('drops a tool that would shadow one of pi own', async () => {
-  expect(await toPiTool({ definition: { name: 'bash' }, run: async () => 'no' }, noClient)).toBeUndefined();
+it("drops a client's tool named like one of pi's own", async () => {
+  expect(await toPiTool({ definition: { name: 'bash' }, owner: 'editor' }, noClient)).toBeUndefined();
+});
+
+it("offers a host tool named like one of pi's own in the place of pi's", async () => {
+  /*
+   * pi registers a custom tool of a built-in's name in the built-in's place,
+   * so the model is offered the host's tool and pi's own is left out, as
+   * VS Code's host tools override the runtime's built-in of the same name.
+   */
+  const host = await toPiTool({ definition: { name: 'bash', title: 'Host shell' }, run: async () => 'ran' }, noClient);
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-pi-override-'));
+  try {
+    const { session } = await createAgentSession({
+      cwd: dir,
+      agentDir: dir,
+      sessionManager: SessionManager.inMemory(dir),
+      settingsManager: SettingsManager.inMemory(),
+      ...(host === undefined ? {} : { customTools: [host] }),
+    });
+    expect(session.getActiveToolNames().filter((name) => name === 'bash')).toEqual(['bash']);
+    expect(session.getToolDefinition('bash')?.label).toBe('Host shell');
+    session.dispose();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 it('hands the host tools to pi as custom tools', async () => {
   const { session, pi } = opened({
     tools: [
-      { definition: { name: 'bash' }, run: async () => 'no' },
+      { definition: { name: 'bash' }, run: async () => 'ran' },
       { definition: { name: 'open_file', title: 'Open file' }, run: async () => 'ok' },
     ],
   } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['open_file']);
+  expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['bash', 'open_file']);
 });
 
 /** The client's tools one session offered pi, by the name the model calls them. */
