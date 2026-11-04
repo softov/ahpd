@@ -47,14 +47,14 @@ call allowed -> countCall(keys) -> MinuteMeter.add -> limit check -> meterKey ->
 
 ## Proposed architecture
 
-- **Layer responsibilities** - sdk: `measureOf(key)` in the usage module, used by `countCall` and `meterKey`.
+- **Layer responsibilities** - sdk: `measureOf(key)` beside `keyOf` in `charge.ts`, used by `countCall` and by `meterKey` in `usage.ts`.
 - **Source-of-truth files** - [`code://packages/sdk/src/usage/charge.ts`](../../../../packages/sdk/src/usage/charge.ts), [`code://packages/sdk/src/usage/usage.ts`](../../../../packages/sdk/src/usage/usage.ts)
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - each person's key is counted](task-01-each-persons-key-is-counted.md) | todo | - |
+| [01 - each person's key is counted](task-01-each-persons-key-is-counted.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -62,12 +62,12 @@ call allowed -> countCall(keys) -> MinuteMeter.add -> limit check -> meterKey ->
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-each-persons-key-is-counted.md](task-01-each-persons-key-is-counted.md).
+- **Done so far:** task 01 is implemented on 2026-11-04.
+- **Next action:** review.
 - **Open questions:** none.
-- **Watch out for:** `memberPrefixOf` builds the same `/user:` shape; keep the two in step.
+- **Watch out for:** `memberPrefixOf` builds the same `/user:` shape; keep it in step with `measureOf`.
 
 ## Final verification checklist
 
-- [ ] `pnpm --filter @ahpd/sdk test` passes, run alone.
-- [ ] `pnpm typecheck` and `pnpm lint` pass.
+- [x] `pnpm --filter @ahpd/sdk test` passes, run alone.
+- [x] `pnpm typecheck` and `pnpm boundary` pass.

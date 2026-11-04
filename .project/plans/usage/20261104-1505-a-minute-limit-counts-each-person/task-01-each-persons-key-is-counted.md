@@ -1,6 +1,6 @@
 ---
 title: Each person's key is counted
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -14,9 +14,11 @@ The meter adds to an `each` key and reads it back, so a minute limit for each pe
 
 ## Files
 
-- `UPDATE: packages/sdk/src/usage/usage.ts:43-48` - `measureOf(key)` reads the measure segment, and `meterKey` uses it.
+- `UPDATE: packages/sdk/src/usage/charge.ts:141-149` - `measureOf(key)` reads the measure segment, beside `keyOf`, which builds the key.
+- `UPDATE: packages/sdk/src/usage/usage.ts:43-48` - `meterKey` uses `measureOf`.
 - `UPDATE: packages/sdk/src/usage/charge.ts:409-418` - `countCall` counts a key whose `measureOf` is in `COUNTED_AT_CALL`.
 - `UPDATE: packages/sdk/test/charge.test.ts` - a case for a minute limit of `calls` with `pool: each` and two users.
+- `UPDATE: packages/sdk/test/usage.test.ts` - a case for the meter of a `tokens` key of one person.
 
 ## Steps
 
@@ -32,3 +34,6 @@ The meter adds to an `each` key and reads it back, so a minute limit for each pe
 - `pnpm --filter @ahpd/sdk test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step.
+- **Found:** `usage.ts` imports `charge.ts`, so `measureOf` is in `charge.ts`, not in `usage.ts`.

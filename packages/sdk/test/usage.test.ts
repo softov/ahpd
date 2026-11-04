@@ -527,6 +527,16 @@ it('feeds a minute meter the tokens, the cost and the hours of a record, and no 
   expect(meter.sum('policy:a/calls', noon)).toBe(0);
 });
 
+it('feeds a minute meter the key of each person, as the key of a row', async () => {
+  const meter = createMinuteMeter();
+  const usage = fileUsage({ folder, meter });
+  const noon = new Date('2026-10-04T10:00:30.000Z');
+  await usage.record(modelUse('2026-10-04T10:00:05.000Z', ['policy:a/tokens/user:alice', 'policy:a/calls/user:alice'], { input: 100, output: 20 }));
+
+  expect(meter.sum('policy:a/tokens/user:alice', noon)).toBe(120);
+  expect(meter.sum('policy:a/calls/user:alice', noon)).toBe(0);
+});
+
 it('cuts its days in the system\'s own zone when it is given none', async () => {
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const usage = fileUsage({ folder });
