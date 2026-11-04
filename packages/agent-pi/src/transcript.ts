@@ -26,12 +26,13 @@ export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[
     id: watched.turnId,
     startedAt: watched.startedAt,
     /*
-     * A turn this bridge began is the person's unless somebody said otherwise,
-     * and the transcript states that rather than leaving the origin off: the
-     * protocol requires one, and the live snapshot's omission is a `Bag` that
-     * a typed read cannot carry.
+     * The message as the turn had it, its attachments and model included. A
+     * turn this bridge began is the person's unless somebody said otherwise,
+     * and the transcript states that: the protocol requires an origin, and a
+     * typed read cannot carry a `Bag` that has none.
      */
     message: {
+      ...watched.message,
       text: String(watched.message.text ?? ''),
       origin: watched.message.origin ?? { kind: 'user' },
     },

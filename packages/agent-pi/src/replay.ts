@@ -12,10 +12,12 @@
 
 import type { AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { bag } from '@ahpd/sdk';
 import type { Bag, SessionAt } from '@ahpd/sdk';
 import { lookupDirectories } from './catalog.js';
 import { addUsage, callPartOf, mapEvent, readyRow } from './mapping.js';
 import { loadPi } from './pi.js';
+import { MESSAGE_ENTRY } from './types.js';
 import type { PiOptions, PiTurn, WatchedTurn } from './types.js';
 
 /** A session rebuilt from its file. */
@@ -91,9 +93,16 @@ const raise = (turn: PiTurn, event: Bag, at?: number): void => {
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
  * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
  *
+ * A turn's message is the one this host kept as the prompt's parent entry
+ * (`MESSAGE_ENTRY`), as the turn had it: the person's words, the attachments
+ * and the model. A prompt with none, one typed into pi itself, is its text with
+ * the model in force, as VS Code's reader puts the model in force on a restored
+ * message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L890
+ *
  * Entries with no turn meaning are skipped: pi's leading system message, the
  * model and thinking level changes, context edits, labels, session info and
- * an extension's own entries. A model change still names the model the turns
+ * every other extension entry. A model change still names the model the turns
  * after it ran on, for a turn whose answer does not say.
  */
 export function replayEntries(entries: readonly SessionEntry[]): Replayed {
@@ -101,6 +110,8 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
   const ends = new Map<string, string>();
   let model: string | undefined;
   let open: Reading | undefined;
+  /** The message this host kept last, by the entry it is kept under. */
+  let kept: { id: string; message: Bag } | undefined;
 
   const seal = (): void => {
     if (open === undefined) return;
@@ -156,6 +167,11 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
       model = `${entry.provider}/${entry.modelId}`;
       continue;
     }
+    if (entry.type === 'custom' && entry.customType === MESSAGE_ENTRY) {
+      const message = bag(bag(entry.data).message);
+      if (typeof message.text === 'string') kept = { id: entry.id, message };
+      continue;
+    }
     if (entry.type !== 'message') continue;
     const message = entry.message as unknown as Bag;
 
@@ -168,7 +184,9 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         watched: {
           turnId,
           startedAt: entry.timestamp,
-          message: { text: textOf(message.content), origin: { kind: 'user' } },
+          message: kept !== undefined && entry.parentId === kept.id
+            ? { ...kept.message }
+            : { text: textOf(message.content), origin: { kind: 'user' }, ...(model !== undefined ? { model: { id: model } } : {}) },
           parts,
           state: 'complete',
         },

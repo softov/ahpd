@@ -41,7 +41,7 @@ import type { ReplayPi } from './replay.js';
 import { toPiTool } from './tools.js';
 import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
-import { modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
+import { MESSAGE_ENTRY, modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
 
 /** The space characters pi folds to a plain space before it reads a path. */
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -205,6 +205,8 @@ export function piSession(
   const waiting: Waiting[] = [];
   /** The turn whose prompt pi has been handed, which steering goes into. */
   let prompted: string | undefined;
+  /** Whether the running turn's message is in pi's file, ahead of its prompt. */
+  let kept = false;
   /** The turns a later one took the place of, which run on and end in no history. */
   const replaced = new Set<string>();
   /** What it is doing, and the one handle that says it. */
@@ -834,6 +836,19 @@ export function piSession(
     const said = saidFor(event);
     if (said !== false) activity.say(said);
 
+    /*
+     * The turn's message as the turn had it, kept just before pi writes the
+     * turn's prompt: pi writes a message after its listeners hear it, so the
+     * entry kept here is the prompt's parent, which is how `replay.ts` pairs
+     * them. The turn's own prompt is the first person's message pi says once it
+     * has the prompt; a steering message after it is not the turn's.
+     */
+    if (event.type === 'message_end' && event.message.role === 'user' && !kept
+      && active !== undefined && live !== undefined && prompted === String(active.id)) {
+      kept = true;
+      live.appendEntry(MESSAGE_ENTRY, { message: active.message });
+    }
+
     // Each new answer replaces the last, so a retried error is forgotten the
     // moment the retry answers.
     if (event.type === 'message_end' && event.message.role === 'assistant') {
@@ -1142,6 +1157,7 @@ export function piSession(
     failed = undefined;
     cancelled = false;
     resumed = false;
+    kept = false;
     answered = undefined;
     spent = undefined;
     const startedAt = new Date().toISOString();

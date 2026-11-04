@@ -19,6 +19,19 @@ import type { BackendOptions, PiBackend } from './backend.js';
 export const UNTITLED = 'pi session';
 
 /**
+ * The custom entry a turn's message is kept under in pi's file.
+ *
+ * pi's prompt is one text, the person's words joined with the attachments
+ * inlined and the reference block, so the message as the turn had it is kept
+ * beside it as pi keeps an extension's data: an entry the model never reads,
+ * written just before pi writes the turn's prompt. `replay.ts` reads it back as
+ * the message of the prompt that follows it, as VS Code's readers take a
+ * restored message's text, attachments and model from the runtime's record.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L852-L890
+ */
+export const MESSAGE_ENTRY = 'ahpd.message';
+
+/**
  * The permission modes every backend offers, in the order a client reads them.
  *
  * The same six `@ahpd/agent-claude` and `@ahpd/agent-cofold` advertise, because

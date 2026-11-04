@@ -120,6 +120,9 @@ export function fakePi() {
     sendCustomMessage: async (content) => {
       asked.push({ kind: 'customMessage', content });
     },
+    appendEntry: (customType, data) => {
+      asked.push({ kind: 'appendEntry', customType, data });
+    },
     // pi says its queue emptied, as `clearQueue` does.
     clearSteering: () => {
       asked.push({ kind: 'clearSteering' });

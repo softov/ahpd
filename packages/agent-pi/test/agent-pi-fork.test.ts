@@ -51,6 +51,7 @@ function fakePi() {
     prompt: async () => { listener?.({ type: 'agent_settled', aborted: false }); },
     steer: async () => 'queued',
     sendCustomMessage: async () => {},
+    appendEntry: () => {},
     clearSteering: () => {},
     resume: async () => false,
     abort: async () => { listener?.({ type: 'agent_settled', aborted: true }); },

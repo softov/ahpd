@@ -47,6 +47,11 @@ export interface PiBackend {
    */
   sendCustomMessage(content: string): Promise<void>;
   /**
+   * Keep data in the conversation's file that the model never reads: pi's own
+   * custom entry, which is how pi keeps an extension's data with a session.
+   */
+  appendEntry(customType: string, data: unknown): void;
+  /**
    * Put a message into the turn that is already running, answering with what
    * pi did with it: queued for the turn, or handled by an extension.
    */
@@ -423,6 +428,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       { customType: 'ahpd.instructions', content, display: false },
       { deliverAs: 'nextTurn' },
     ),
+    appendEntry: (customType, data) => { session.sessionManager.appendCustomEntry(customType, data); },
     clearSteering: () => { session.clearQueue(); },
     abort: () => session.abort(),
     models,
