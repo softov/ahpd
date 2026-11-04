@@ -11,7 +11,7 @@ cat ~/.config/ahpd/connection-token      # the token
 | --- | --- |
 | [ahpw](https://github.com/softov/ahpw) | A web UI, as a plugin of the host or on its own |
 | VS Code | The Chat view, through its remote agent hosts |
-| [ahpc](https://github.com/softov/ahpc) | A terminal UI and CLI |
+| [ahpc](https://github.com/ahpio/ahpc) | A terminal UI and CLI |
 
 ::: code-group
 

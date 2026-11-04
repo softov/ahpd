@@ -6,7 +6,7 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-The [pi coding agent](https://github.com/earendil-works/pi) as a backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and a plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. A pi session runs on one machine and is driven from VS Code, [`ahpc`](https://github.com/softov/ahpc) or any other AHP client, with more than one watching at once.
+The [pi coding agent](https://github.com/earendil-works/pi) as a backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and a plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. A pi session runs on one machine and is driven from VS Code, [`ahpc`](https://github.com/ahpio/ahpc) or any other AHP client, with more than one watching at once.
 
 pi runs inside the daemon's process through pi's own SDK, not as a `pi --mode rpc` subprocess.
 

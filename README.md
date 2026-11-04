@@ -256,7 +256,7 @@ Work with agents through an interactive terminal, CLI commands, or scripts.
 npx @softov/ahpc --host <host-address> --token <your-token>
 ```
 
-[GitHub](https://github.com/softov/ahpc) · [Releases](https://github.com/softov/ahpc/releases)
+[GitHub](https://github.com/ahpio/ahpc) · [Releases](https://github.com/ahpio/ahpc/releases)
 
 ### 📱 Mobile → AgentHost Client
 Follow work, receive notifications, and respond when an agent needs your approval.
