@@ -408,7 +408,10 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * steered. So is a turn recorded as the same turn as the one before it, which
    * is that turn written down again. A local turn is the host's own and stays
    * a turn of its own, and so does every turn before the first one the record
-   * holds: a chat from before its record reads as its transcript gives it.
+   * holds: a chat from before its record reads as its transcript gives it. So
+   * does a notice turn, whose message says the system made it: it answers no
+   * one, and folding it into the turn before it would take back the line it
+   * was given a turn of its own to draw.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
    */
   const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[], records: readonly Recorded[] = recordedIn(session, chat)): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
@@ -424,7 +427,10 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       const as = began.get(id);
       recorded ||= as !== undefined;
       const into = out.at(-1);
-      if (into !== undefined && recorded && (as === undefined || as === last) && !isLocal(session, chat, id)) {
+      // A notice is the system's own and stays a turn of its own, however
+      // little the record says of it.
+      const notice = str(bag(bag(turn.message).origin).kind) === 'systemNotification';
+      if (into !== undefined && recorded && (as === undefined || as === last) && !isLocal(session, chat, id) && !notice) {
         // One the chat never began is a steer; one recorded again is the same turn.
         out[out.length - 1] = joinedTurn(into, turn, as === undefined);
         joined.set(id, String(into.id));

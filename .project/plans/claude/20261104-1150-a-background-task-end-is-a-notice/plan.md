@@ -71,7 +71,7 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 | --- | --- | --- |
 | [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | implemented | - |
 | [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | implemented | - |
-| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | todo | - |
+| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | implemented | - |
 
 ## Risks and tradeoffs
 

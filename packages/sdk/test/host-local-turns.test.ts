@@ -360,6 +360,25 @@ describe('a host started again on the same store', () => {
     await never.host.close();
   });
 
+  it('keeps a notice turn as a turn of its own, not folded into the one before it', async () => {
+    const notice: Bag = {
+      id: 'n1',
+      message: { text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } },
+      state: 'complete',
+      responseParts: [],
+    };
+    const ran = await restarted(async (c, p, ch) => {
+      say(c, ch, 't1', 'hello there');
+      await ended(p, ch, 't1');
+    }, [said('t1', 'hello there'), notice]);
+    const turns = (await stateOf(ran.client, ran.chat)).turns as Bag[];
+    expect(turns.map((turn) => turn.id)).toEqual(['t1', 'n1']);
+    expect(turns[1]?.message).toEqual({ text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } });
+    // Not a steer inside the recorded turn: its line stays its own.
+    expect((turns[0]?.responseParts as Bag[]).map(shownAs)).toEqual(['hello there']);
+    await ran.host.close();
+  });
+
   it('drops a command\'s turn whose anchor the transcript no longer holds', async () => {
     const { client, host, chat } = await restarted(async (c, p, ch) => {
       for (const [turnId, text] of [['t1', 'hello there'], ['t2', '!echo kept'], ['t3', 'gone since'], ['t4', '!echo orphan']] as const) {
