@@ -137,16 +137,16 @@ routes and, with the setting, the API -> Host check reads the list's URLs
 ## Resume state
 
 - **Done so far:** tasks 01 to 04 are done. ahpd #189 merged them as `01e7ca37`.
-- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. The checks by hand are in [plugin-1122-tunnel-checks.md](../../../pending/plugin-1122-tunnel-checks.md).
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. Softov ran its checks by hand on 2026-11-04.
 - **Open questions:** none. The `fromEnv` question and the `operation:invoke` check are in *Left for later* of [implemented.md](implemented.md).
 - **Watch out for:** the system tunnel must keep the same Dev Tunnel id and the port `31546`, or every client that found it stops connecting.
 
 ## Final verification checklist
 
-- [ ] `x-ahpd-tunnels://` lists the system tunnel with `purpose: system`, its URL and `status: running`.
-- [ ] VS Code and ahpc reach the daemon through the system tunnel with the token they derived before the upgrade.
-- [ ] `x-ahpd/invokeOperation` with `devtunnel/create` and a port forwards it, and its URL answers.
-- [ ] `disable` stops a tunnel and keeps it in the list. `enable` starts it, and a restart of the daemon starts it again.
+- [x] `x-ahpd-tunnels://` lists the system tunnel with `purpose: system`, its URL and `status: running`.
+- [x] VS Code and ahpc reach the daemon through the system tunnel with the token they derived before the upgrade.
+- [x] `x-ahpd/invokeOperation` with `devtunnel/create` and a port forwards it, and its URL answers.
+- [x] `disable` stops a tunnel and keeps it in the list. `enable` starts it, and a restart of the daemon starts it again.
 - [ ] A caller without `tunnel:delete` cannot remove a tunnel.
 - [ ] The routes answer to a tunnel's URL. The API does so only with `tunnelHosts` on.
 - [ ] No `devtunnel` process runs, and the Windows CI is green.
