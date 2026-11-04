@@ -297,7 +297,7 @@ it('answers a steering message the CLI runs after the turn\'s last answer inside
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
   const turns = state.turns as Bag[];
-  expect(history(turns)).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', 'BETA']]]);
+  expect(history(turns)).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', `> ${BETA_TEXT}`, 'BETA']]]);
   // The turn is charged for both of the CLI's turns: the second result's running total.
   expect(((turns[0] as Bag).usage as Bag)?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.00179864, currency: 'USD' } });
 });
@@ -309,7 +309,7 @@ it('gives a steering message whose id is not a UUID a uuid of its own, and answe
   // The steering message keeps its own id where a client sees it.
   expect(chat.filter((one) => one.type === 'chat/pendingMessageSet')).toEqual([expect.objectContaining({ kind: 'steering', id: 's1' })]);
   expect(chat.filter((one) => one.type === 'chat/pendingMessageRemoved')).toEqual([expect.objectContaining({ kind: 'steering', id: 's1' })]);
-  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', 'BETA']]]);
+  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', `> ${BETA_TEXT}`, 'BETA']]]);
 });
 
 it('ends the turn at its one result when the CLI folds the steering message into it', async () => {
@@ -319,7 +319,7 @@ it('ends the turn at its one result when the CLI folds the steering message into
   expect(ends).toHaveLength(1);
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
-  expect(history(state.turns as Bag[])).toEqual([[TOOL, 'complete', DONE_TEXT, 'user', ['DONE BETA2']]]);
+  expect(history(state.turns as Bag[])).toEqual([[TOOL, 'complete', DONE_TEXT, 'user', [`> ${BETA2_TEXT}`, 'DONE BETA2']]]);
 });
 
 it('begins a queued message only once the steering message the CLI still owed has its answer', async () => {
@@ -347,7 +347,7 @@ it('begins a queued message only once the steering message the CLI still owed ha
   expect(started[1]).toMatchObject({ queuedMessageId: 'q1' });
   expect(sdk.handed.map(said).at(-1)).toBe('second');
 
-  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', 'BETA']]]);
+  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', `> ${BETA_TEXT}`, 'BETA']]]);
 });
 
 it('answers a steering message the CLI runs after a stop in a turn that carries it', async () => {
@@ -376,7 +376,7 @@ it('reads a steering message the CLI took in at a tool call back in the turn it 
   expect(history(read)).toEqual([
     [FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA']],
     [LATE, 'complete', BETA_TEXT, 'user', ['BETA']],
-    [TOOL, 'complete', DONE_TEXT, 'user', ['DONE BETA2']],
+    [TOOL, 'complete', DONE_TEXT, 'user', [`> ${BETA2_TEXT}`, 'DONE BETA2']],
   ]);
 });
 
@@ -393,7 +393,7 @@ it('reads a steering message the CLI took in before a stop back inside the stopp
   expect(history(read)).toEqual([
     ['136f888d-a4e8-4f3e-a0dc-935c62dfd988', 'cancelled', COUNT_TEXT, 'user', ['1\n2\n3\n4']],
     ['056b0890-1fcc-409a-ac24-b9fbca0270a3', 'complete', BETA_TEXT, 'user', ['BETA']],
-    ['932db394-2ecd-4674-9536-593a3644009b', 'cancelled', 'Run the shell command `sleep 3` with the Bash tool, then count from 1 to 40, one number per line.', 'user', ['1']],
+    ['932db394-2ecd-4674-9536-593a3644009b', 'cancelled', 'Run the shell command `sleep 3` with the Bash tool, then count from 1 to 40, one number per line.', 'user', [`> ${BETA2_TEXT}`, '1']],
   ]);
 });
 
@@ -693,7 +693,7 @@ it('opens no turn for a steering message the CLI took in before the stop', async
   expect(chat.filter((one) => one.type === 'chat/turnStarted')).toHaveLength(1);
   expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
   const live = history(replayed(before, chat).turns as Bag[]);
-  expect(live).toEqual([[FOLD_STOPPED, 'cancelled', SLEEP_COUNT_TEXT, 'user', ['1']]]);
+  expect(live).toEqual([[FOLD_STOPPED, 'cancelled', SLEEP_COUNT_TEXT, 'user', [`> ${BETA2_TEXT}`, '1']]]);
   // Read back, the stopped turn is the one a client saw.
   const read = await readBack(renamed(fixture('claude-folded-stop-transcript.jsonl'), FOLD_STEER, steered));
   expect(history(read).slice(-1)).toEqual(live);
