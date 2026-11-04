@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
+import { activityOf, bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
@@ -221,6 +221,11 @@ export function piSession(
   let renamed = false;
   /** Whether the title is one a local command suggested, which the first real message replaces. */
   let provisional = false;
+  /**
+   * The running turn's earlier time and usage when a client resumed it, and
+   * when it ran again, so the turn holds its time and usage across both runs.
+   */
+  let resumedFrom: { duration: number; at: number; usage: Bag | undefined } | undefined;
   let modified = new Date().toISOString();
   /** What a turn failed with, or nothing. Cleared when a turn starts. */
   let failed: string | undefined;
@@ -739,7 +744,14 @@ export function piSession(
       row.reason = 'skipped';
       row.invocationMessage = row.invocationMessage ?? row.displayName;
     }
-    const duration = Date.now() - Date.parse(String(turn.startedAt));
+    /*
+     * A resumed turn's ending says this run's time alone, which the host adds
+     * the run before's to, as VS Code's host says a resumed turn's end; the
+     * turn holds its time across both runs.
+     */
+    const attempt = resumedFrom === undefined ? Date.now() - Date.parse(String(turn.startedAt)) : Date.now() - resumedFrom.at;
+    const duration = resumedFrom === undefined ? attempt : resumedFrom.duration + attempt;
+    resumedFrom = undefined;
     turn.state = ending;
     turn.duration = duration;
     // A turn a later one took the place of is in no history, as the reducer
@@ -752,8 +764,8 @@ export function piSession(
     active = undefined;
     mapping = undefined;
     cancelled = false;
-    if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration });
-    else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
+    if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration: attempt });
+    else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration: attempt });
     else {
       const message = why === undefined || why === '' ? 'pi did not answer' : why;
       if (!gone) failed = message;
@@ -765,7 +777,7 @@ export function piSession(
       // On the turn as well, so a snapshot holds what a client that watched the
       // turn end was handed, and a client that reopens the chat can resume it.
       (turn.responseParts as Bag[]).push(part);
-      emit('chat', { type: 'chat/error', turnId, duration, part });
+      emit('chat', { type: 'chat/error', turnId, duration: attempt, part });
     }
     /*
      * The chat's `modifiedAt` at a turn's end is its start plus its duration,
@@ -800,8 +812,9 @@ export function piSession(
     // The sum of the calls is already what it sent as it stood; what ends
     // the turn is the whole of it.
     if (spent !== undefined && active !== undefined) {
-      active.usage = spent;
-      if (watched !== undefined) watched.usage = spent;
+      const held = mergeLogicalTurnUsage(resumedFrom?.usage, spent) ?? spent;
+      active.usage = held;
+      if (watched !== undefined) watched.usage = held;
       emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: spent });
     }
     if (cancelled) finish('cancelled');
@@ -824,13 +837,15 @@ export function piSession(
        * A turn that runs tools spends most of what it costs between its first
        * and its last call, so the total is sent as it stands rather than only
        * at the settle. A call that used nothing hands the sum back as it was,
-       * and then nothing is sent for it.
+       * and then nothing is sent for it. A resumed turn says this run's sum,
+       * which the host merges over the run before's, and holds the two merged.
        */
       const sum = addUsage(spent, event.message);
       if (sum !== undefined && sum !== spent && active !== undefined) {
         spent = sum;
-        active.usage = sum;
-        if (watched !== undefined) watched.usage = sum;
+        const held = mergeLogicalTurnUsage(resumedFrom?.usage, sum) ?? sum;
+        active.usage = held;
+        if (watched !== undefined) watched.usage = held;
         emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: sum });
       }
     }
@@ -1414,6 +1429,11 @@ export function piSession(
         throw new Error(`${turnId} is not a turn this backend can run again`);
       }
       turns.pop();
+      resumedFrom = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        at: Date.now(),
+        usage: typeof last.usage === 'object' && last.usage !== null ? last.usage as Bag : undefined,
+      };
       delete last.state;
       delete last.duration;
       active = last;
@@ -1421,7 +1441,8 @@ export function piSession(
       cancelled = false;
       resumed = true;
       answered = undefined;
-      spent = last.usage as Bag | undefined;
+      // This run's own usage, which the host merges over the run before's.
+      spent = undefined;
       const parts = last.responseParts as Bag[];
       mapping = {
         turnId,

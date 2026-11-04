@@ -29,7 +29,7 @@ import { computerId, computersFor } from './machines/computers.js';
 import { nestedAgent } from './sessions/nested.js';
 import { createCallLinks } from './automations/calllinks.js';
 import { createSessionEvents } from './host/sessionevents.js';
-import { idFor, idOf, uriFor, Status } from './sessions/catalog.js';
+import { idFor, idOf, mergeLogicalTurnUsage, uriFor, Status } from './sessions/catalog.js';
 import { memorySessions } from './sessions/sessions.js';
 import { meter } from './usage/meter.js';
 import { debugLogs } from './sessions/debuglogs.js';
@@ -907,8 +907,21 @@ export function createHost(options: HostOptions): Host {
    * against the text is sent ahead of it.
    */
   const dispatch = (channel: string, given: Record<string, unknown>, origin?: Origin): void => {
-    const action = ctx.withWorkerUri(channel, given);
+    let action = ctx.withWorkerUri(channel, given);
     if (origin !== undefined) said.add(origin);
+    /*
+     * A resumed turn as one turn across its runs, as VS Code's host says it: a
+     * backend's usage for the run after the resume merged over what the run
+     * before used, and its end carrying the time the run before took as well.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+     */
+    const resumed = origin === undefined ? ctx.resumedTurns.get(`${channel}\n${String(action.turnId ?? '')}`) : undefined;
+    if (resumed !== undefined && action.type === 'chat/usage') {
+      action = { ...action, usage: mergeLogicalTurnUsage(resumed.usage, action.usage as Record<string, unknown> | undefined) ?? action.usage };
+    }
+    if (resumed !== undefined && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')) {
+      action = { ...action, duration: resumed.duration + (typeof action.duration === 'number' ? action.duration : 0) };
+    }
     /*
      * A backend's start of a turn the chat holds is not said: the host said
      * the client's start of it, and a second start would open the turn again

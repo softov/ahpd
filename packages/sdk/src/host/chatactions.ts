@@ -1544,7 +1544,11 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1817-L1876
        */
       dispatch(channel, action, origin);
-      const resumed = { duration: typeof last.duration === 'number' ? last.duration : 0, since: Date.now() };
+      const resumed = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        since: Date.now(),
+        ...(typeof last.usage === 'object' && last.usage !== null ? { usage: last.usage as Bag } : {}),
+      };
       ctx.resumedTurns.set(`${channel}\n${named}`, resumed);
       const rejected = (error: unknown): void => {
         if (!ctx.resumedTurns.has(`${channel}\n${named}`)) return;

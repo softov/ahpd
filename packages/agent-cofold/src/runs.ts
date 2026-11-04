@@ -71,7 +71,16 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // opened after this turn draws what one that watched it end does.
     turn.responseParts = endedParts(Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []);
     turn.state = ending;
-    turn.duration = Date.now() - Date.parse(String(turn.startedAt));
+    /*
+     * A resumed turn's time is the time its run before took and this run's,
+     * as the host says its end: the ending this run's mapping says carries
+     * this run's time alone, and the host adds the rest.
+     */
+    const resumedFrom = ctx.resumedFrom;
+    ctx.resumedFrom = undefined;
+    turn.duration = resumedFrom === undefined
+      ? Date.now() - Date.parse(String(turn.startedAt))
+      : resumedFrom.duration + (Date.now() - resumedFrom.at);
     if (!gone) turns.push(turn);
     ctx.active = undefined;
     ctx.handle = undefined;

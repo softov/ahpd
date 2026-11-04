@@ -132,6 +132,11 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   paused: { turnId: string; runId: string; requestId: string } | undefined;
   /**
+   * The running turn's earlier time when a client resumed it, and when it ran
+   * again, so the turn holds its time across both runs once it ends.
+   */
+  resumedFrom: { duration: number; at: number } | undefined;
+  /**
    * Why the cut this session was asked for did not happen.
    *
    * A session whose fork or rewind failed does not fall back to an ordinary

@@ -73,6 +73,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
     startedAt: 0,
+    resumedFrom: undefined,
     failed: undefined as string | undefined,
     rebind: undefined as unknown,
     ran: undefined as string | undefined,
@@ -302,11 +303,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
         const turn = ctx.active;
         if (turn !== undefined) {
           turn.state = 'cancelled';
-          turn.duration = Date.now() - ctx.startedAt;
+          const attempt = Date.now() - ctx.startedAt;
+          turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
+          ctx.resumedFrom = undefined;
           ctx.settleOpen(turn);
           ctx.turns.push(turn);
           ctx.active = undefined;
-          ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
+          ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
         }
       }
       ctx.closed = true;

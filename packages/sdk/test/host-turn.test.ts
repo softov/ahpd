@@ -971,6 +971,45 @@ describe('running a failed turn again', () => {
     expect(state.turns).toEqual([]);
   });
 
+  /*
+   * A resumed turn's end and usage are both its runs', as VS Code's host says
+   * them: the time the run took with the time the run before took, and its
+   * usage merged over what the run before used, the costs added. A chat opened
+   * after it holds what a client that watched it was told.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+   */
+  it('ends a resumed turn with the time and the cost of both its runs', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 5,
+      usage: { input_tokens: 10, output_tokens: 2 }, modelUsage: { 'claude-x': { costUSD: 0.5 } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+    });
+    await settle();
+    await emit({
+      type: 'result', subtype: 'success', is_error: false, duration_ms: 7, stop_reason: 'end_turn',
+      usage: { input_tokens: 4, output_tokens: 1 }, modelUsage: { 'claude-x': { costUSD: 0.75 } },
+    });
+
+    const said = actions(p, chatUri).map((e) => e.action);
+    const both = { inputTokens: 4, outputTokens: 1, _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' } } };
+    expect(said.filter((one) => one.type === 'chat/turnComplete').map((one) => one.duration)).toEqual([12]);
+    expect(said.filter((one) => one.type === 'chat/usage').at(-1)?.usage).toMatchObject(both);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string; duration?: number; usage?: unknown }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => [one.id, one.duration])).toEqual([['t1', 12]]);
+    expect(state.turns[0]?.usage).toMatchObject(both);
+  });
+
   it('refuses one that is not the latest turn', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({

@@ -206,6 +206,13 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** When the running turn started, in milliseconds. */
   startedAt: number;
   /**
+   * The time the running turn took and what it used before a client resumed
+   * it, which the turn holds with this run's; its usage and its ending say
+   * this run's alone, which the host merges the rest into, as VS Code's host
+   * says a resumed turn.
+   */
+  resumedFrom: { duration: number; usage: Bag | undefined } | undefined;
+  /**
    * Why the *last* turn failed, or nothing.
    *
    * About one turn, not about the session for the rest of its life. It reads

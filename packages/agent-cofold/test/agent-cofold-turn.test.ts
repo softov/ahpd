@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { textOf } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
@@ -1216,6 +1216,49 @@ it('runs a failed turn again on chat/turnResume, with its prompt said once', asy
   // conversation holds the prompt once rather than once per attempt.
   const transcript = await agent.transcript?.('one') ?? [];
   expect(transcript.map((turn) => (turn.message as { text?: string } | undefined)?.text)).toEqual(['hi']);
+});
+
+/*
+ * A resumed turn's time is the time both its runs took, as VS Code's host says
+ * a resumed turn's end, and not the wait between them; a chat opened after it
+ * holds the time a client that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+ */
+it('ends a resumed turn with the time both its runs took', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const began = Date.parse('2026-11-04T12:00:00.000Z');
+    vi.setSystemTime(began);
+    const failing = failingModel(1);
+    // Each call to the model takes its time on the clock: five seconds before
+    // the resume and two after it.
+    const timed: ModelAdapter = {
+      ...failing,
+      stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+        vi.setSystemTime(Date.now() + (Date.now() < began + 60_000 ? 5000 : 2000));
+        yield* failing.stream!(request);
+      },
+    };
+    const { client, peer: p, chatUri } = await talking(timed);
+    begin(client, chatUri, 't1', 'hi');
+    await until(() => types(p, chatUri).includes('chat/error'));
+    const first = Number(actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.duration);
+    expect(first).toBeGreaterThan(0);
+
+    vi.setSystemTime(began + 60_000);
+    resume(client, chatUri, 't1');
+    await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+    const ended = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnComplete');
+    expect(ended.map((e) => e.action.duration)).toEqual([first + 2000]);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string; duration?: number }[] } };
+    };
+    expect(opened.snapshot.state.turns.map((turn) => [turn.id, turn.duration])).toEqual([['t1', first + 2000]]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('resumes a conversation\'s first turn by dropping the session and starting it again', async () => {

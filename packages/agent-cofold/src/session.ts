@@ -226,6 +226,7 @@ export function cofoldSession(
     closed: false,
     opening: undefined,
     paused: undefined,
+    resumedFrom: undefined,
     refused: undefined,
     steering: undefined,
   } as SessionContext;

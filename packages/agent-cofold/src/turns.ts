@@ -439,6 +439,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       delete reopened.state;
       delete reopened.duration;
       ctx.active = reopened;
+      ctx.resumedFrom = { duration: typeof last.duration === 'number' ? last.duration : 0, at: Date.now() };
       ctx.cancelRequested = false;
       ctx.failed = undefined;
       const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
@@ -473,6 +474,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     delete again.state;
     delete again.duration;
     ctx.active = again;
+    ctx.resumedFrom = { duration: typeof last.duration === 'number' ? last.duration : 0, at: Date.now() };
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     const message = bag(again.message);

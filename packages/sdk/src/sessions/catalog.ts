@@ -1,11 +1,12 @@
 /**
- * How a session is named, what its status bits are worth, what it is doing, and
- * whether its queue waits.
+ * How a session is named, what its status bits are worth, what it is doing,
+ * whether its queue waits, and what a turn holds once it ends.
  *
- * URIs, numbers, the one activity line and the queue's one rule, and nothing
- * that knows what a session *is*: the listing itself belongs to whichever
- * backend wrote the sessions down, because only that one can say which exist.
- * See `catalogue` in `@ahpd/agent-claude`.
+ * URIs, numbers, the one activity line, the queue's one rule and the rules
+ * every backend's history keeps a turn by, and nothing that knows what a
+ * session *is*: the listing itself belongs to whichever backend wrote the
+ * sessions down, because only that one can say which exist. See `catalogue`
+ * in `@ahpd/agent-claude`.
  */
 
 import type { Bag } from '../types/common.js';
@@ -171,6 +172,47 @@ export const endedParts = (parts: Bag[]): Bag[] => parts.map((part) => {
     },
   };
 });
+
+/**
+ * A resumed turn's usage across its runs, as VS Code's host merges it: the
+ * later run's counts and model over the earlier run's, their `_meta` laid one
+ * over the other, and the cost each run carries in `_meta` as `ahpd.cost`
+ * added together with its input and output, as VS Code adds the cost its
+ * agents carry. The host says a resumed turn's usage by it and each backend
+ * holds the turn by it, so a chat opened after the turn holds what a client
+ * that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L137-L178
+ */
+export const mergeLogicalTurnUsage = (previous: Bag | undefined, current: Bag | undefined): Bag | undefined => {
+  if (previous === undefined) return current;
+  if (current === undefined) return previous;
+  const sumDefined = (first: unknown, second: unknown): number | undefined => {
+    const one = typeof first === 'number' ? first : undefined;
+    const two = typeof second === 'number' ? second : undefined;
+    return one === undefined ? two : two === undefined ? one : one + two;
+  };
+  const before = typeof previous._meta === 'object' && previous._meta !== null ? previous._meta as Bag : undefined;
+  const after = typeof current._meta === 'object' && current._meta !== null ? current._meta as Bag : undefined;
+  const paid = typeof before?.['ahpd.cost'] === 'object' && before['ahpd.cost'] !== null ? before['ahpd.cost'] as Bag : undefined;
+  const paying = typeof after?.['ahpd.cost'] === 'object' && after['ahpd.cost'] !== null ? after['ahpd.cost'] as Bag : undefined;
+  const cost: Bag | undefined = paid === undefined || paying === undefined ? paying ?? paid : { ...paid, ...paying };
+  if (cost !== undefined && paid !== undefined && paying !== undefined) {
+    for (const key of ['amount', 'input', 'output']) {
+      const sum = sumDefined(paid[key], paying[key]);
+      if (sum !== undefined) cost[key] = sum;
+    }
+  }
+  const meta = before !== undefined || after !== undefined
+    ? { ...before, ...after, ...(cost === undefined ? {} : { 'ahpd.cost': cost }) }
+    : undefined;
+  const model = current.model ?? previous.model;
+  return {
+    ...previous,
+    ...current,
+    ...(model === undefined ? {} : { model }),
+    ...(meta === undefined ? {} : { _meta: meta }),
+  };
+};
 
 /** The scheme a channel URI names, or nothing where it names none. */
 export const schemeOf = (uri: string): string | undefined => {

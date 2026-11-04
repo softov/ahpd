@@ -1,5 +1,5 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
+import { mergeLogicalTurnUsage, statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
 import { bag } from './common.js';
 import type { Scope, SessionContext } from './context.js';
@@ -136,13 +136,15 @@ export function createParts(ctx: SessionContext): Parts {
    * delegated is that turn's own cost. The protocol *replaces* the active
    * turn's usage on each `chat/usage`, so this is a total that grows rather
    * than a delta a client would have to add up itself - and the turn is held
-   * to it, so a client reading the snapshot mid-turn reads the same number.
+   * to it, so a client reading the snapshot mid-turn reads the same number. A
+   * resumed turn says this run's total, which the host merges over the run
+   * before's, and is held to the two merged.
    */
   const sayUsage = (): void => {
     const turn = ctx.active;
     const used = sum();
     if (turn === undefined || used === undefined) return;
-    turn.usage = used;
+    turn.usage = mergeLogicalTurnUsage(ctx.resumedFrom?.usage, used);
     ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
   };
 

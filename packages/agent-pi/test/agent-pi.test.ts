@@ -1146,6 +1146,57 @@ it('ends a resumed run that answers as complete, with the turn once in turns', a
   expect(pi.asked.filter((one) => one.kind === 'promptAfter')).toHaveLength(1);
 });
 
+/*
+ * A resumed run says its own time and usage, which the host merges over the
+ * run before's as VS Code's host says a resumed turn, and the turn holds both
+ * runs' so a chat opened after it reads what a client that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+ */
+it('says a resumed run\'s own time and usage, and holds the turn\'s across both runs', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const began = Date.parse('2026-11-04T12:00:00.000Z');
+    vi.setSystemTime(began);
+    const { session, pi, sent } = opened();
+    pi.hold();
+    session.sendMessage('t1', 'hello');
+    await settled();
+    vi.setSystemTime(began + 5000);
+    pi.raise({
+      type: 'message_end',
+      message: {
+        role: 'assistant', stopReason: 'error', errorMessage: '429 rate limited',
+        usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 120, cost: { total: 0.5 } },
+      },
+    } as never);
+    pi.raise({ type: 'agent_settled', aborted: false });
+    await settled();
+    // A while later, a client resumes it, and the run takes two seconds.
+    vi.setSystemTime(began + 60_000);
+    expect(() => session.resumeTurn?.('t1')).not.toThrow();
+    vi.setSystemTime(began + 62_000);
+    pi.raise({
+      type: 'message_end',
+      message: {
+        role: 'assistant', stopReason: 'stop', content: [],
+        usage: { input: 40, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 50, cost: { total: 0.25 } },
+      },
+    } as never);
+    await settled();
+
+    const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+    expect(said.filter((one) => one.type === 'chat/turnComplete').map((one) => one.duration)).toEqual([2000]);
+    expect(said.filter((one) => one.type === 'chat/usage').at(-1)?.usage)
+      .toMatchObject({ inputTokens: 40, outputTokens: 10, _meta: { 'ahpd.cost': { amount: 0.25 } } });
+    const turn = (session.chatState().turns as Bag[])[0]!;
+    expect([turn.state, turn.duration]).toEqual(['complete', 7000]);
+    expect(turn.usage).toMatchObject({ inputTokens: 40, outputTokens: 10, _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' } } });
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
 it('ends a resumed run that fails again with a second error, which is resumable', async () => {
   const { session, pi, last } = await failedTurn();
   expect(() => session.resumeTurn?.('t1')).not.toThrow();

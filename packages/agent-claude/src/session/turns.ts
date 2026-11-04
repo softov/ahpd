@@ -467,9 +467,15 @@ export function createTurns(ctx: SessionContext): Turns {
       // `state` and `duration` are what made it a finished turn; an active one
       // has neither, and the protocol says the reducer reopens *this* turn
       // rather than replacing it.
+      ctx.resumedFrom = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        usage: typeof last.usage === 'object' && last.usage !== null ? last.usage as Bag : undefined,
+      };
       delete again.state;
       delete again.duration;
       ctx.active = again as unknown as NonNullable<typeof ctx.active>;
+      // This run counts its own calls, which the host merges over the run before's.
+      ctx.newTurn();
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
       const login = ctx.login;
@@ -539,12 +545,14 @@ export function createTurns(ctx: SessionContext): Turns {
       const turn = ctx.active;
       if (turn) {
         turn.state = 'cancelled';
-        turn.duration = Date.now() - ctx.startedAt;
+        const attempt = Date.now() - ctx.startedAt;
+        turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
+        ctx.resumedFrom = undefined;
         ctx.settleOpen(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
         ctx.endedAt(turn);
-        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
+        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
       }
     },
   };

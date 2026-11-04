@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { idOf } from '@ahpd/sdk';
+import { idOf, mergeLogicalTurnUsage } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
@@ -296,13 +296,15 @@ export function createQuery(ctx: SessionContext): Query {
     const turn = ctx.active;
     if (turn) {
       turn.state = 'error';
-      turn.duration = Date.now() - ctx.startedAt;
+      const attempt = Date.now() - ctx.startedAt;
+      turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
+      ctx.resumedFrom = undefined;
       ctx.settleOpen(turn);
       const part = ctx.addFailure(turn, why);
       ctx.turns.push(turn);
       ctx.active = undefined;
       ctx.endedAt(turn);
-      ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
+      ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: attempt, part });
     }
   };
 
@@ -1039,9 +1041,14 @@ export function createQuery(ctx: SessionContext): Query {
             // `duration_ms` is the CLI's last turn alone, so a turn that took
             // more than one of them is measured from its own start.
             const spanned = spanning.delete(String(turn.id));
-            turn.duration = !spanned && typeof message.duration_ms === 'number'
+            const attempt = !spanned && typeof message.duration_ms === 'number'
               ? message.duration_ms
               : Date.now() - ctx.startedAt;
+            // The turn holds its time and usage across a resume, and its
+            // usage and ending say this run's.
+            const resumedFrom = ctx.resumedFrom;
+            ctx.resumedFrom = undefined;
+            turn.duration = (resumedFrom?.duration ?? 0) + attempt;
             // Before the turn completes, not after: the reducer hangs usage on
             // `activeTurn`, and `chat/turnComplete` is what moves that into
             // `turns` - so the other order reports it about nothing.
@@ -1054,7 +1061,7 @@ export function createQuery(ctx: SessionContext): Query {
               // writes go, rather than beside them as a field of its own.
               const total: Bag = used ?? {};
               if (cost !== undefined) total._meta = { ...bag(total._meta), 'ahpd.cost': cost };
-              turn.usage = total;
+              turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
             ctx.settleOpen(turn);
@@ -1095,10 +1102,10 @@ export function createQuery(ctx: SessionContext): Query {
              * the snapshot and nowhere in the stream.
              */
             if (part !== undefined) {
-              ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
+              ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: attempt, part });
             }
             else {
-              ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
+              ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: attempt });
             }
           }
           // About the session rather than the turn: it reads into
