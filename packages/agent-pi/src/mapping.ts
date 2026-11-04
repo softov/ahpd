@@ -511,17 +511,25 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /**
      * A shell command's output, arriving on its own event rather than on the
      * tool's. pi raises this for the bash tool while it runs, and the id is
-     * the tool call's, so it lands on the row that call already opened.
+     * the tool call's, so it lands on the row that call already opened. Each
+     * chunk is added to the output the call holds and the whole of it is said,
+     * since a content change replaces what a call shows, as VS Code's Codex
+     * mapping says a command's output.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
      */
     case 'bash_execution_update': {
       if (event.id === undefined || event.delta === '') return [];
       const call = turn.calls.get(event.id);
       if (call === undefined) return [];
+      call.output = (call.output ?? '') + event.delta;
+      const content = [{ type: 'text', text: call.output }];
+      const row = rowOf(turn, call.toolCallId);
+      if (row?.status === 'running') row.content = content;
       return [{
         type: 'chat/toolCallContentChanged',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
-        content: [{ type: 'text', text: event.delta }],
+        content,
       }];
     }
 

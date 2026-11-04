@@ -121,6 +121,26 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
 });
 
 /*
+ * A running shell call holds the output it has printed, as the reducer holds
+ * the content each change says, so a subscription opened mid-call reads what a
+ * client that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
+ */
+it('holds a running shell call\'s output so far, as the content it said', async () => {
+  const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  pi.raise({ type: 'bash_execution_update', id: 'c1', delta: 'one\n' } as never);
+  pi.raise({ type: 'bash_execution_update', id: 'c1', delta: 'two\n' } as never);
+  const output = [{ type: 'text', text: 'one\ntwo\n' }];
+  expect(last('chat/toolCallContentChanged')?.content).toEqual(output);
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'running', content: output });
+});
+
+/*
  * A call runs titled by what it runs on, and once it is done says what it did
  * as VS Code's agents word a call's past tense: a shell command as the first
  * line it ran, a call that failed as failed, and any other call by its line.

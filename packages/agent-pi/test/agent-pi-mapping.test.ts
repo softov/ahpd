@@ -194,6 +194,20 @@ it('lands a shell delta on the call that opened the row, and drops an orphan', (
   expect(mapEvent(one, { type: 'bash_execution_update', id: 'nobody', delta: 'x' })).toEqual([]);
 });
 
+/*
+ * A content change replaces what a call shows, so each chunk of a shell's
+ * output is added to what it printed before and the whole of it is said, as
+ * VS Code's Codex mapping says a command's output.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
+ */
+it('says a shell\'s whole output so far with each chunk', () => {
+  const one = turn();
+  mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
+  mapEvent(one, { type: 'bash_execution_update', id: 'c1', delta: 'one\n' });
+  const said = mapEvent(one, { type: 'bash_execution_update', id: 'c1', delta: 'two\n' });
+  expect(said.map((action) => action.content)).toEqual([[{ type: 'text', text: 'one\ntwo\n' }]]);
+});
+
 it('says nothing for an event it has no action for, rather than throwing', () => {
   expect(mapEvent(turn(), { type: 'summarization_retry_finished' })).toEqual([]);
   expect(mapEvent(turn(), { type: 'queue_update', steering: [], followUp: [] })).toEqual([]);

@@ -139,6 +139,8 @@ export interface PiCall {
   said?: string;
   /** The arguments pi named for the call, which its past tense reads. */
   input?: Bag;
+  /** The output a shell call has printed so far, which each change says whole. */
+  output?: string;
 }
 
 /** The running turn, and what has been opened inside it. */
