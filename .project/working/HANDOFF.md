@@ -10,7 +10,7 @@ Current progress and pending items only, as of 2026-11-04.
 ## Main
 
 - The last release is 0.14.0 (`v0.14.0`, 2026-10-26). The next is `0.15.0-rc.1` on npm `next`, and ahpw updates with it. What it needs is in [pending/release.md](../pending/release.md).
-- Main is `6cf8c236`, the merge of #212. Main CI on `6cf8c236` was running at 04:40 UTC. The run on `125b1ff1` failed in two jobs. On Linux, a case of `agent-cofold-plugin.test.ts` failed for the first time: "resumes a paused run and shows the open turn once to a client that subscribes after". On Windows, one attachment case of the known problem failed. Its rerun was cancelled by the push of #212.
+- Main's last code change is `6cf8c236`, the merge of #212. Main CI is green on `f9e99b34`, in run 41768795261. On `125b1ff1`, one case of `agent-cofold-plugin.test.ts` failed once on Linux, and it passed on `f9e99b34`. The case is "resumes a paused run and shows the open turn once to a client that subscribes after".
 - On 2026-11-03 and 2026-11-04, after #205, these PRs merged:
   - #207: plugin/20261103-1514, a connector field picks from the connectors. Another session built it.
   - #208: MayCXC's union `2a73f927`.
