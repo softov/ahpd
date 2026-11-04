@@ -356,6 +356,9 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '050-remove-queued-message-is-no-op-for-unknown-id': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
   '053-reorders-queued-messages': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '054-keeps-messages-not-in-order-at-end-in-original-order': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '055-ignores-unknown-ids-in-reorder': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '056-empty-reorder-preserves-all-messages-in-original-order': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
@@ -375,9 +378,6 @@ const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then r
  * do on its own: each with the sentence that says so.
  */
 const ALLOWED: Record<string, (Differs & { because: string })[]> = {
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [
-    { reduced: ['steeringMessage'], because: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."' },
-  ],
   '135-session-metachanged-sets-meta': [{
     start: ['_meta'],
     because: 'types/channels-session/state.ts, SessionState._meta: "Additional provider-specific metadata for this session."; the host says its own once the session is read',
