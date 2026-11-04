@@ -4,20 +4,19 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-The last release is `v0.14.0`, of 2026-10-26. Main is `6cf8c236`, with 1179 commits and 266 merges after that tag. Status at 2026-11-04.
+The last release is `v0.14.0`, of 2026-10-26. Main's last code change is `6cf8c236`, the merge of #212, with 266 merges after that tag. Main CI is green on `f9e99b34`, in run 41768795261. Status at 2026-11-04.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and publishes every package. The tag comes last, and only on Softov's word.
 
 ## Blockers
 
-1. **Main CI on `6cf8c236`.** Main CI on `6cf8c236` was running at 04:40 UTC. The run on `125b1ff1` failed in two jobs. On Linux, a case of `agent-cofold-plugin.test.ts` failed for the first time: "resumes a paused run and shows the open turn once to a client that subscribes after". On Windows, one attachment case of the known problem failed. Its rerun was cancelled by the push of #212. A red run blocks the release until it is green.
-2. **The daemon on main.** Restart the dev daemon in Softov's terminal. It runs #211 now, and the restart wires in #212 and #213. Use it for one working day before the tag.
-3. **The version.** The release is `0.15.0-rc.1`, and it goes to the npm `next` tag (#163). `latest` stays on 0.14.0 until 0.15.0. Softov, 2026-11-03: "0.15.0 rc this time."
-4. **The release notes.** [v0_14.md](../../docs/updates/v0_14.md) holds a 0.14.1 section that was not released. Move it to a new page, `docs/updates/v0_15.md`. The page changed last in `dbbafc43`, on 2026-10-30. About 65 PRs merged after it, #148 to #213, and nobody checked them against the notes. Add what a reader meets. #209 to #213 add the agent terminal tool, `ask_user` and async commands, and #209 adds `@xterm/headless` to the server package.
-5. **The bump.** Set `0.15.0-rc.1` in every published `packages/*/package.json`. The workflow refuses a tag that differs from one package.
-6. **The restart flag in ahpw.** The host sends `ahpd.restartNeeded` in the root config. The ahpw client reads it from the root's `_meta`, in `src/bridges/plugins.ts:171`. So ahpw shows no restart notice. Fix it in ahpw. Check ahpapp for the same read.
-7. **ahpw on the candidate.** ahpw updates with this release. Its range `^0.14.0` does not match `0.15.0-rc.1`, and `^0.15.0` does not match a pre-release either. Set `^0.15.0-rc.1`. Pack the candidate, and run ahpw's tests and typecheck against it.
-8. **A dry run.** Run the release workflow by hand with its dry-run input. It packs and checks, and publishes nothing.
+1. **The daemon on main.** Restart the dev daemon in Softov's terminal. It runs #211 now, and the restart wires in #212 and #213. Use it for one working day before the tag.
+2. **The version.** The release is `0.15.0-rc.1`, and it goes to the npm `next` tag (#163). `latest` stays on 0.14.0 until 0.15.0. Softov, 2026-11-03: "0.15.0 rc this time."
+3. **The release notes.** [v0_14.md](../../docs/updates/v0_14.md) holds a 0.14.1 section that was not released. Move it to a new page, `docs/updates/v0_15.md`. The page changed last in `dbbafc43`, on 2026-10-30. About 65 PRs merged after it, #148 to #213, and nobody checked them against the notes. Add what a reader meets. #209 to #213 add the agent terminal tool, `ask_user` and async commands, and #209 adds `@xterm/headless` to the server package.
+4. **The bump.** Set `0.15.0-rc.1` in every published `packages/*/package.json`. The workflow refuses a tag that differs from one package.
+5. **The restart flag in ahpw.** The host sends `ahpd.restartNeeded` in the root config. The ahpw client reads it from the root's `_meta`, in `src/bridges/plugins.ts:171`. So ahpw shows no restart notice. Fix it in ahpw. Check ahpapp for the same read.
+6. **ahpw on the candidate.** ahpw updates with this release. Its range `^0.14.0` does not match `0.15.0-rc.1`, and `^0.15.0` does not match a pre-release either. Set `^0.15.0-rc.1`. Pack the candidate, and run ahpw's tests and typecheck against it.
+7. **A dry run.** Run the release workflow by hand with its dry-run input. It packs and checks, and publishes nothing.
 
 ## Choices for Softov
 
@@ -54,5 +53,5 @@ The other files in this folder check older plans. They do not block a release.
 ## After the tag
 
 1. Watch the release run. A red run is reported as red.
-2. Check that `npm view @ahpd/sdk dist-tags` shows `next: 0.15.0-rc.1` and `latest: 0.14.0`.
-3. Release ahpw on the candidate.
+1. Check that `npm view @ahpd/sdk dist-tags` shows `next: 0.15.0-rc.1` and `latest: 0.14.0`.
+2. Release ahpw on the candidate.
