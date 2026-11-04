@@ -16,7 +16,6 @@ Restart the daemon on main first. Do them from the top down.
 - [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
 - [session-picker-checks.md](session-picker-checks.md) - 10 min.
-- [host-123-engines-checks.md](host-123-engines-checks.md) - 10 min.
 - [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
 - [host-114-turn-cut-checks.md](host-114-turn-cut-checks.md) - 15 min, a Claude session with more than 50 turns.
 - [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min.
