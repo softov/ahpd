@@ -482,6 +482,8 @@ export function createTerminal(
   let where = cwd;
   /** The command being run, from `C` until `D`. */
   let command: { id: string; line: string; at: number } | undefined;
+  /** How many commands this terminal has started, which keeps two in one millisecond apart. */
+  let commands = 0;
   /** What has been typed since the prompt, so the command line can be read back. */
   let typed = '';
   /** The command line the integration reported, carrying this terminal's nonce. */
@@ -518,7 +520,8 @@ export function createTerminal(
 
   /** A command's output begins, as a `C` says, with the line it ran. */
   const executed = (line: string): void => {
-    command = { id: `c${String(Date.now())}`, line, at: Date.now() };
+    commands += 1;
+    command = { id: `c${String(Date.now())}-${String(commands)}`, line, at: Date.now() };
     tell({
       type: 'terminal/commandExecuted',
       commandId: command.id,

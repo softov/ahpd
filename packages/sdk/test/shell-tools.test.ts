@@ -251,7 +251,7 @@ describe('the agent terminal tool under a person\'s grants', () => {
   });
 });
 
-describe('the agent terminal tool under a pseudoterminal', () => {
+describe.skipIf(!posix)('the agent terminal tool under a pseudoterminal', () => {
   /**
    * A screen that reads the two modes the tool asks about.
    *
