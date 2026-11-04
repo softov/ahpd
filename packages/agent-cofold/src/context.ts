@@ -116,16 +116,21 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   modified: string;
   closed: boolean;
   /**
-   * Whether the conversation the host resumed is still being looked up.
+   * Whether the session's cut, and the lookup of a run a restart left paused,
+   * are still being made.
    *
-   * A run paused before the restart still holds the session's writer claim, so
-   * a turn that started before the lookup finished would fight it for the
-   * claim and lose. Everything that would begin a turn waits on this instead,
-   * so it sees either an empty conversation or the reopened one. A fork or a
-   * rewind rides the same chain, because the cut has to land before the first
-   * turn reads the session.
+   * A fork's or a rewind's cut has to land before the first turn reads the
+   * session, and a turn that began before the paused run was found would not
+   * know to let that run go first. Everything that would begin a turn waits on
+   * this.
    */
   opening: Promise<void> | undefined;
+  /**
+   * The run a restart left paused on a person, whose turn reads back
+   * interrupted: a client's resume of that turn continues it, and a new turn
+   * lets it go.
+   */
+  paused: { turnId: string; runId: string; requestId: string } | undefined;
   /**
    * Why the cut this session was asked for did not happen.
    *

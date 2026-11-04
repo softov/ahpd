@@ -297,6 +297,30 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   let spent: Usage = ZERO_USAGE;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
+  /*
+   * A call a reopened turn still holds waiting on a person, known by its own
+   * row: the run that resumes the turn raises its question again, and that
+   * request has to find the call it asks about rather than open a second row.
+   * The input stays on the row, which already carries it.
+   */
+  for (const part of parts) {
+    const call = part.kind === 'toolCall' && typeof part.toolCall === 'object' && part.toolCall !== null ? part.toolCall as Bag : undefined;
+    if (call === undefined || call.status !== 'pending-confirmation') continue;
+    const contributor = bag(call.contributor);
+    const owner = contributor.kind === 'client' ? str(contributor.clientId) : undefined;
+    const shown = String(call.toolName);
+    open.set(String(call.toolCallId), {
+      name: owner === undefined ? shown : `${owner}__${shown}`,
+      shown,
+      input: undefined,
+      subject: undefined,
+      owner,
+      readied: false,
+      awaited: false,
+      invocation: undefined,
+      part,
+    });
+  }
   /** Requests a client is being asked about, by the run's request id. */
   const requests = new Map<string, OpenRequest>();
   /**

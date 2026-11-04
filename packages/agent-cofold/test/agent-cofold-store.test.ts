@@ -146,6 +146,25 @@ function open(
   return { session, view, uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` };
 }
 
+/**
+ * A restarted process's session over a conversation whose run is paused,
+ * resumed as a client resumes its interrupted turn: seeded with the turns the
+ * host reads back, then `chat/turnResume`.
+ */
+async function resumedTurn(
+  agent: Agent,
+  id: string,
+  workingDirectory: string,
+  turnId: string,
+  extra: Partial<Start> = {},
+  onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Bag) => void,
+) {
+  const seed = (await agent.transcript?.(id)) ?? [];
+  const opened = open(agent, id, workingDirectory, { resume: id, seed, ...extra }, onEmit);
+  await opened.session.resumeTurn?.(turnId);
+  return opened;
+}
+
 /** A policy that lets every tool run, so only the tests that ask get a pause. */
 const allowAll = (): Partial<Policy> => ({ decide: () => ({ behavior: 'allow' }) });
 
@@ -639,7 +658,38 @@ it('answers undefined for a session the store does not know and empty for one wi
   expect((await agent.list?.())?.map((row) => row.id)).toContain('empty');
 });
 
-it('reopens a paused run through start.resume without replaying the input', async () => {
+it('reads a paused run back interrupted and resumable, rejoining nothing as it opens', async () => {
+  const { root, sweep } = place();
+  const asks: Partial<Policy> = {
+    decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
+  };
+  const tool = lookup([]);
+  const first = backend(root, createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] }],
+    stream: true,
+  }), asks);
+  const before = open(first, 'one', sweep, { tools: [tool] });
+  before.session.sendMessage('t1', 'hi');
+  await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
+  await pausedRun(root, 'one');
+
+  // The turn reads back as VS Code reads one still running when its agent
+  // went away: interrupted, an error a client may resume.
+  const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
+  const turns = (await second.transcript?.('one')) ?? [];
+  expect(turns.at(-1)?.state).toBe('error');
+  expect((turns.at(-1)?.responseParts as Bag[]).at(-1)).toMatchObject({ kind: 'error', resumable: true, error: { errorType: 'executionInterrupted' } });
+
+  // Opened over it, the session takes nothing back and asks nothing again
+  // until a client resumes the turn.
+  const after = open(second, 'one', sweep, { resume: 'one', seed: turns, tools: [tool] });
+  await new Promise((r) => { setTimeout(r, 50); });
+  expect((after.session.allTurns().at(-1) as Bag | undefined)?.state).toBe('error');
+  expect(after.view.notes.filter((one) => ['chat/truncated', 'chat/turnStarted', 'session/inputNeededSet'].includes(String(one.action.type)))).toEqual([]);
+  after.session.close();
+});
+
+it('continues a paused run when a client resumes its turn, writing the input once', async () => {
   const { root, sweep } = place();
   const ran: string[] = [];
   const asks: Partial<Policy> = {
@@ -670,17 +720,17 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   expect(before.view.said('chat', 'chat/toolCallReady')?.confirmationTitle).toBeDefined();
 
   // The restart: a second process's backend, over the same directory, told to
-  // continue the same cofold session.
+  // continue the same cofold session, and a client resuming the turn.
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
+  const after = await resumedTurn(second, 'one', sweep, 't1', { tools: [tool] });
   expect(after.session.agentId()).toBe('one');
   await until(() => after.view.said('session', 'session/inputNeededSet') !== undefined);
 
-  // The open request was re-raised by the replay, and answering it reaches
-  // the run the first process left waiting.
+  // The open request was raised again on the call the turn already holds, and
+  // answering it reaches the run the first process left waiting.
   const entry = after.view.said('session', 'session/inputNeededSet');
   expect((entry?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
-  await until(() => after.view.said('chat', 'chat/toolCallStart') !== undefined);
+  expect(after.view.said('chat', 'chat/toolCallStart')).toBeUndefined();
   after.session.confirm('call-1', true);
   await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
 
@@ -719,10 +769,9 @@ it('replays a paused shell command as the question it was, whatever the rules sa
   // The restarted host now has a rule that allows the command.
   const asked: string[] = [];
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = open(second, 'rules', sweep, {
-    resume: 'rules',
-    getAutoApproval: (_kind, line) => {
-      asked.push(line);
+  const after = await resumedTurn(second, 'rules', sweep, 't1', {
+    getAutoApproval: (kind, line) => {
+      if (kind === 'shell') asked.push(line);
       return 'not-needed' as NonNullable<ReturnType<NonNullable<Start['getAutoApproval']>>>;
     },
   });
@@ -768,15 +817,14 @@ it('answers a request the replay announced before the resumed run had a handle',
   await pausedRun(root, 'one');
 
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  let answer: (() => void) | undefined;
-  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] }, (channel, action) => {
+  let answer: (() => void) | undefined = () => after.session.confirm('call-1', true);
+  const after = await resumedTurn(second, 'one', sweep, 't1', { tools: [tool] }, (channel, action) => {
     if (answer === undefined) return;
     if (channel !== 'session' || action.type !== 'session/inputNeededSet') return;
     const send = answer;
     answer = undefined;
     queueMicrotask(send);
   });
-  answer = () => after.session.confirm('call-1', true);
 
   await until(() => ended(after.view));
   expect(ended(after.view)).toBe(true);
@@ -816,8 +864,8 @@ it('answers a pause the resumed run raises after the restart', async () => {
     ],
     stream: true,
   }), asks);
-  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
-  await until(() => after.view.said('chat', 'chat/toolCallStart') !== undefined);
+  const after = await resumedTurn(second, 'one', sweep, 't1', { tools: [tool] });
+  await until(() => after.view.said('session', 'session/inputNeededSet') !== undefined);
 
   /** The calls the resumed chat has opened, in order. */
   const calls = (): string[] => after.view.notes
@@ -834,7 +882,8 @@ it('answers a pause the resumed run raises after the restart', async () => {
    * held, since a decision for a request still in flight is a decision dropped.
    */
   await until(() => entries() >= 2, 4000, () => JSON.stringify(calls()));
-  expect(calls()).toEqual(['call-1', 'call-2']);
+  // The resumed turn already holds the first call, so only the second opens.
+  expect(calls()).toEqual(['call-2']);
   // The turn is still open: the replay answered one pause, the run raised the
   // other, and neither ended it.
   expect(ended(after.view)).toBe(false);
@@ -928,7 +977,7 @@ it('takes a second turn handed while a resumed session opens, said at once and r
   expect((await reader.runs.list({ sessionId: 'one' })).length).toBe(3);
 });
 
-it('takes a turn handed while a paused run reopens, said at once in its place', async () => {
+it('runs a new message in place of resuming a paused run, the run let go first', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
@@ -944,20 +993,18 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
   await pausedRun(root, 'one');
 
   /*
-   * Somebody writes before the resume has found the run waiting on them. Once
-   * it has, that run is the chat's turn again, and the new one takes its place
-   * and waits for it.
+   * Somebody writes instead of resuming the interrupted turn. The paused run
+   * holds the writer claim the new turn's run needs, so it is let go, and the
+   * new message runs on the conversation.
    */
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
+  const after = open(second, 'one', sweep, { resume: 'one', seed: (await second.transcript?.('one')) ?? [], tools: [tool] });
   after.session.sendMessage('t2', 'something else');
-  await until(
-    () => after.view.notes.some((one) => one.action.type === 'chat/turnStarted' && one.action.turnId === 't2'),
-    4000,
-    () => JSON.stringify(after.view.notes.map((one) => one.action.type)),
-  );
+  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
 
-  expect((after.session.chatState().activeTurn as Bag | undefined)?.id).toBe('t2');
+  expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
+  const runs = await createFileStore({ root }).runs.list({ sessionId: 'one' });
+  expect(runs.map((one) => one.status)).toEqual(['completed', 'cancelled']);
 });
 
 it('keeps two chats of one session in two conversations, each with its own turn', async () => {

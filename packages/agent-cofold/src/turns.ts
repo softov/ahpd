@@ -234,6 +234,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
     mapping: TurnMapping,
     instructions: readonly string[] = [],
   ): void => {
+    // A run a restart left paused holds the writer claim this run needs, so it
+    // is let go first: this message took the place of resuming its turn.
+    if (ctx.paused !== undefined) {
+      void ctx.dropPaused().then(() => { runTurn(turnId, input, values, reference, mapping, instructions); });
+      return;
+    }
     let agent: CofoldAgent;
     try {
       agent = ctx.agentOf(values, instructions);
@@ -423,6 +429,23 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
     const end = kept.at(-1);
     if (end === undefined || end.kind !== 'error' || end.resumable !== true) return false;
+    /*
+     * The turn of the run a restart left paused: reopened as it was, as the
+     * reducer reopens it, and the run itself continued on its question.
+     */
+    if (ctx.paused?.turnId === turnId) {
+      turns.pop();
+      const reopened: Bag = { ...last };
+      delete reopened.state;
+      delete reopened.duration;
+      ctx.active = reopened;
+      ctx.cancelRequested = false;
+      ctx.failed = undefined;
+      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
+      ctx.activeMapping = mapping;
+      void ctx.resumePaused(turnId, mapping);
+      return true;
+    }
     /*
      * The turn leaves the history before the cut is read, because the point a
      * resume cuts at is the end of the turn *before* this one.

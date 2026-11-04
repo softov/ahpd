@@ -46,6 +46,13 @@ interface Waiting {
   prompt?: string;
 }
 
+/** The error a turn ends with when its run was cut off, as VS Code's reader words it. */
+const INTERRUPTED: Bag = {
+  kind: 'error',
+  error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+  resumable: true,
+};
+
 /**
  * cofold's token counts, in the protocol's spelling.
  *
@@ -211,6 +218,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const subject = new Map<string, string>();
   /** The request a paused run is waiting on, by the call it is about. */
   const waiting = new Map<string, Waiting>();
+  /** The turns whose run a restart left paused, by their message's id. */
+  const interrupted = new Set<string>();
   /**
    * What each compaction had folded, by the summary message it wrote.
    *
@@ -244,12 +253,16 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         ...(run.model !== undefined ? { model: run.model } : {}),
       });
       if (run.model !== undefined) model.set(run.inputMessageId, run.model);
-      // An `awaiting` run has not ended, and AHP's three states have no word
-      // for that; the turn reads complete while its open call says the rest.
+      /*
+       * A run a restart left paused reads back as VS Code reads a turn still
+       * running when its agent went away: interrupted, an error a client may
+       * resume, which continues the run on its question.
+       */
       ending.set(
         run.inputMessageId,
-        run.status === 'failed' ? 'error' : run.status === 'cancelled' ? 'cancelled' : 'complete',
+        run.status === 'failed' || run.status === 'awaiting' ? 'error' : run.status === 'cancelled' ? 'cancelled' : 'complete',
       );
+      if (run.status === 'awaiting') interrupted.add(run.inputMessageId);
       const spent = Date.parse(run.updatedAt) - Date.parse(run.createdAt);
       if (Number.isFinite(spent) && spent >= 0) duration.set(run.inputMessageId, spent);
     }
@@ -275,12 +288,18 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const turns: TranscriptTurn[] = [];
   let open: Building | undefined;
 
-  /** The turn as the contract wants it, so a half-built one never leaves. */
+  /**
+   * The turn as the contract wants it, so a half-built one never leaves.
+   *
+   * A paused run's turn ends with VS Code's error for a turn cut off, after its
+   * parts, marked resumable, since a resume continues the run.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L499-L500
+   */
   const sealed = (turn: Building): TranscriptTurn => ({
     id: turn.id,
     startedAt: turn.startedAt,
     message: turn.message,
-    responseParts: turn.parts,
+    responseParts: interrupted.has(turn.id) ? [...turn.parts, { ...INTERRUPTED }] : turn.parts,
     usage: turn.usage,
     state: turn.state,
     ...(turn.duration !== undefined ? { duration: turn.duration } : {}),

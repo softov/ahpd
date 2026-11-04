@@ -225,6 +225,7 @@ export function cofoldSession(
     modified: new Date().toISOString(),
     closed: false,
     opening: undefined,
+    paused: undefined,
     refused: undefined,
     steering: undefined,
   } as SessionContext;
@@ -238,15 +239,15 @@ export function cofoldSession(
   Object.assign(ctx, pauses);
 
   /*
-   * A resumed conversation may be paused, and a fork or a rewind has a cut to
-   * make, and both have to land before the first turn reads the session.
-   * Nothing else in the session reads the store first, so this is the one
-   * deferral for all three.
+   * A resumed conversation may hold a paused run, and a fork or a rewind has a
+   * cut to make, and both have to be known before the first turn reads the
+   * session. Nothing else in the session reads the store first, so this is the
+   * one deferral for all three.
    */
   if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.closed) {
     const pending = (async (): Promise<void> => {
       await ctx.cut();
-      if (start.resume !== undefined) await ctx.reopen();
+      if (start.resume !== undefined) await ctx.findPaused();
     })();
     ctx.opening = pending;
     const settledOpening = (): void => { if (ctx.opening === pending) ctx.opening = undefined; };
@@ -365,11 +366,14 @@ export function cofoldSession(
     /**
      * Run the latest turn again, without adding a message.
      *
-     * What `chat/turnResume` asks for, answered by the turn area: the turn is
-     * reopened as it was and its prompt runs again under the same id, after
-     * the store is cut back to the turn before it.
+     * What `chat/turnResume` asks for, answered by the turn area once the
+     * session has opened: the turn is reopened as it was, and the run a
+     * restart left paused continues on its question, or the turn's prompt
+     * runs again under the same id after the store is cut back to the turn
+     * before it.
      */
-    resumeTurn: (turnId) => {
+    resumeTurn: async (turnId) => {
+      await ctx.opening?.catch(() => undefined);
       if (!ctx.resumeTurn(turnId)) throw new Error(`${turnId} is not a turn this backend can run again`);
     },
 

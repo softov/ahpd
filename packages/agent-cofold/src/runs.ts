@@ -1,8 +1,7 @@
-import { resume, textOf } from '@cofold/agents';
+import { resume } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
 import { bag, endedParts, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
 import type { SessionContext } from './context.js';
 
@@ -11,8 +10,10 @@ export interface Runs {
   cut: () => Promise<void>;
   status: () => number;
   apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
-  read: (live: RunHandle, mapping: TurnMapping, turnId: string) => void;
-  reopen: () => Promise<void>;
+  read: (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough?: number) => void;
+  findPaused: () => Promise<void>;
+  resumePaused: (turnId: string, mapping: TurnMapping) => Promise<boolean>;
+  dropPaused: () => Promise<void>;
 }
 
 export const createRuns = (ctx: SessionContext): Runs => {
@@ -175,7 +176,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * turn open and the handle keeps reading, so the answer, the resolution and
    * everything after them arrive the same way the events before them did.
    */
-  const read = (live: RunHandle, mapping: TurnMapping, turnId: string): void => {
+  const read = (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough = 0): void => {
     void (async () => {
       for await (const event of live.events) {
         /*
@@ -186,10 +187,11 @@ export const createRuns = (ctx: SessionContext): Runs => {
          * that, so no entry is raised, no row is moved to
          * `pending-confirmation` and no request is held; the run's own
          * `tool.started` then readies the call `not-needed`, as it does for one
-         * nobody was asked about. Only the live stream is checked: a replay
-         * rebuilds what was asked then, whatever the rules say now.
+         * nobody was asked about. Only the live stream is checked: what a
+         * resumed handle replays, through `replayedThrough`, rebuilds what was
+         * asked then, whatever the rules say now.
          */
-        if (event.type === 'approval.requested'
+        if (event.type === 'approval.requested' && event.seq > replayedThrough
           && await ctx.autoApprove(event.requestId, event.name, event.input)) continue;
         await apply(mapping, turnId, event);
       }
@@ -197,103 +199,70 @@ export const createRuns = (ctx: SessionContext): Runs => {
   };
 
   /**
-   * Rejoin the run a restart left paused.
-   *
-   * A paused cofold run still holds the session's writer claim, so a new run
-   * under this id would be refused `writer_busy`, and no answer could reach it
-   * either: `resume()` is the only call that installs a command channel. The
-   * run's own events are replayed through the same mapping a live turn uses,
-   * so the request reaches the client by the path that put it there rather
-   * than a second path written here.
+   * The run a restart left paused, found as the session opens and left as it
+   * is: its turn reads back interrupted and resumable, and a client's resume
+   * of that turn is what continues it.
    *
    * A conversation whose newest run already finished, or that the store has
-   * never seen, is left alone: the next turn appends a new run under the same
+   * never seen, has none: the next turn appends a new run under the same
    * cofold session, which is what continuing a finished conversation means.
    */
-  const reopen = async (): Promise<void> => {
+  const findPaused = async (): Promise<void> => {
     if (ctx.closed) return;
-    const record = await store.sessions.get({ sessionId });
-    if (record === undefined || ctx.closed) return;
     const runs = await store.runs.list({ sessionId });
     const newest = runs[0];
     if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
+    ctx.paused = { turnId: newest.inputMessageId ?? newest.runId, runId: newest.runId, requestId: newest.pendingRequestId };
+  };
 
-    const agent = ctx.agentOf(ctx.settings);
-    const messages = await store.sessions.listMessages({ sessionId });
-    const input = messages.find((one) => one.id === newest.inputMessageId);
-    const turnId = input?.id ?? newest.runId;
-    const began = input === undefined ? Date.now() : Date.parse(input.createdAt);
-    const startedAt = new Date(Number.isFinite(began) ? began : Date.now()).toISOString();
-    /*
-     * The seed gives way to the replay.
-     *
-     * The host seeds `transcript(id)` into `start.seed`, and that transcript
-     * already carries this run's open turn as a finished one, because AHP's
-     * turn states have no `awaiting`. The replay below rebuilds the very same
-     * turn as the live `active` one, with the parts the next deltas append to,
-     * so keeping the seeded copy would show the open turn twice in every
-     * subscription snapshot - once in `turns` and once as `activeTurn`. The
-     * seed is the side that gives way, because only this session knows the run
-     * is about to be replayed; the transcript still carries the turn for the
-     * catalogue row a client browses without continuing it.
-     *
-     * Said as `chat/truncated` back to the turn before it, the action that
-     * drops a chat's turns after a named one, so every client's chat and the
-     * host's give way with it. The open run is the newest, so its turn is the
-     * last one the seed holds.
-     */
-    const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
-    if (seeded >= 0) {
-      turns.splice(seeded, 1);
-      const before = turns[seeded - 1];
-      start.emit('chat', before === undefined ? { type: 'chat/truncated' } : { type: 'chat/truncated', turnId: String(before.id) });
-    }
-    /*
-     * The same opening as a live turn, with no part: the replayed events open
-     * each part as they did when the turn first ran.
-     */
-    ctx.active = {
-      id: turnId,
-      startedAt,
-      message: { text: input === undefined ? '' : textOf(input) },
-      responseParts: [],
-    };
-    start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: ctx.active.message });
-    const mapping = mapTurn({
-      turnId,
-      chatUri: start.chatUri,
-      parts: ctx.active.responseParts as Bag[],
-      startedAt: Number.isFinite(began) ? began : Date.now(),
-      displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
-      ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
-      cancelled: () => false,
-      // No `asksEveryTime`: a replay rebuilds what was asked then, and the
-      // rules of now do not shape a past question.
-    });
-    ctx.activeMapping = mapping;
-
-    /*
-     * What the run already wrote, in the order cofold persisted it, before the
-     * live handle is read: the paused call and the request it waits on are
-     * rebuilt by the events that carry them.
-     */
-    const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
-    const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
-    for (const event of events) await apply(mapping, turnId, event);
-
-    // Everything up to `lastSeq` has just been replayed, so the live stream
-    // carries only what happens next rather than the conversation again.
-    const live = resume({ agent, sessionId, runId: newest.runId, afterSeq: lastSeq });
+  /**
+   * Continue the paused run on a client's resume of its turn, as VS Code's
+   * provider runs `resumeTurn`.
+   *
+   * cofold's own `resume()` is the only call that installs a command channel
+   * for a paused run, which still holds the session's writer claim. It replays
+   * the run's stored events from the one that raised its pending question, so
+   * that question reaches every client again by the path that raised it, and
+   * the run carries on once somebody answers; what the run said before it
+   * paused is the reopened turn's already. Answers whether the turn was the
+   * paused run's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1313-L1314
+   */
+  const resumePaused = async (turnId: string, mapping: TurnMapping): Promise<boolean> => {
+    const paused = ctx.paused;
+    if (paused === undefined || paused.turnId !== turnId) return false;
+    ctx.paused = undefined;
+    const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
+    const asked = events.findLast((event) => (event.type === 'approval.requested' || event.type === 'input.requested')
+      && event.requestId === paused.requestId);
+    const afterSeq = asked === undefined ? (events.at(-1)?.seq ?? 0) : asked.seq - 1;
+    const live = resume({ agent: ctx.agentOf(ctx.settings), sessionId, runId: paused.runId, afterSeq });
     if (ctx.closed) {
       live.cancel({ reason: 'the session closed' });
-      return;
+      return true;
     }
     ctx.handle = live;
-    read(live, mapping, turnId);
+    read(live, mapping, turnId, events.at(-1)?.seq ?? 0);
+    return true;
+  };
+
+  /**
+   * Let the paused run go, its writer claim with it, before a new turn runs:
+   * a client that sent a message in place of resuming the interrupted turn
+   * has left that turn where it ended.
+   */
+  const dropPaused = async (): Promise<void> => {
+    const paused = ctx.paused;
+    if (paused === undefined) return;
+    ctx.paused = undefined;
+    const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
+    const live = resume({ agent: ctx.agentOf(ctx.settings), sessionId, runId: paused.runId, afterSeq: events.at(-1)?.seq ?? 0 });
+    live.cancel({ reason: 'a new message took its place' });
+    await live.outcome.catch(() => undefined);
   };
 
   return {
-    cut, apply, read, reopen,
+    cut, apply, read, findPaused, resumePaused, dropPaused,
     /** A request nobody has answered yet is the session waiting on somebody. */
     status: (): number => statusOf({
       waiting: pending.size > 0,
