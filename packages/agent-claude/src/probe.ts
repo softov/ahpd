@@ -121,6 +121,9 @@ export async function probe(cwd: string): Promise<Offered> {
           return {
             id: str(model.value) ?? '',
             name: str(model.displayName) ?? str(model.value) ?? '',
+            // The wire id this row stands for, which a result names when it
+            // reports the model's limits. Absent on a CLI that does not say.
+            ...(str(model.resolvedModel) === undefined ? {} : { resolvedModel: str(model.resolvedModel) as string }),
             ...thinkingFor(list(model.supportedEffortLevels).filter((one): one is string => typeof one === 'string')),
           };
         })

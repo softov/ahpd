@@ -5,6 +5,9 @@ import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
+import { contextOf } from './contextusage.js';
+import type { ContextFigure } from './contextusage.js';
+import { learnLimits, limitOf } from './parts.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
@@ -748,6 +751,56 @@ export function createQuery(ctx: SessionContext): Query {
    * `handle` is not the query it was reading, so its ending is this host's own
    * doing and the session is exactly where it was.
    */
+
+  /**
+   * How long a turn waits for its context breakdown before it ends without one.
+   *
+   * The answer is a control round-trip, and a turn is ended by the CLI before
+   * it is asked, so the normal wait is a fraction of this. A CLI that is slow
+   * or gone costs the turn its figure rather than its ending.
+   */
+  const CONTEXT_WAIT_MS = 2000;
+
+  /**
+   * Ask the CLI what fills the context window, and stop waiting for it.
+   *
+   * `getContextUsage` is a `Query` method this SDK build has and an older one
+   * may not, so a missing method is no answer rather than a failure. A late
+   * answer and a failed one are both logged once and left off the turn's
+   * usage: nothing a person reads is worth holding a turn open for.
+   */
+  const contextOfTurn = async (): Promise<ContextFigure | undefined> => {
+    const handle = ctx.query as unknown as {
+      getContextUsage?: (opts: { detail: 'summary' }) => Promise<unknown>;
+    };
+    const ask = handle.getContextUsage;
+    if (typeof ask !== 'function') return undefined;
+    const late = Symbol('late');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const overdue = new Promise<typeof late>((resolve) => {
+      timer = setTimeout(() => resolve(late), CONTEXT_WAIT_MS);
+      timer.unref?.();
+    });
+    try {
+      const answer = await Promise.race([ask.call(handle, { detail: 'summary' }), overdue]);
+      if (answer === late) {
+        console.warn('@ahpd/agent-claude: the context breakdown took too long; the turn ends without it');
+        return undefined;
+      }
+      const model = str(bag(answer).model) ?? ctx.ran;
+      const figure = contextOf(answer, limitOf(model)?.contextWindow);
+      if (figure === undefined) {
+        console.warn('@ahpd/agent-claude: the context breakdown held no token count; the turn ends without it');
+      }
+      return figure;
+    } catch (error) {
+      console.warn(`@ahpd/agent-claude: the context breakdown failed: ${reason(error)}`);
+      return undefined;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
   const consume = async (): Promise<void> => {
     const mine = ctx.query;
     try {
@@ -1013,6 +1066,13 @@ export function createQuery(ctx: SessionContext): Query {
 
         if (type === 'result') {
           /*
+           * The result names each model's window and output cap, which is the
+           * only place a model's limit is stated: the CLI's own model list has
+           * none. Learned before the turn is read, because a result that ends
+           * nothing still says what the model that answered can hold.
+           */
+          learnLimits(message);
+          /*
            * The end of an attempt on a login that failed before the turn
            * showed anything, which ends nothing when another login is ready:
            * the turn goes on there.
@@ -1108,11 +1168,23 @@ export function createQuery(ctx: SessionContext): Query {
             // and the result's own main-loop count is then the best there is.
             const used = ctx.sum() ?? ctx.usageOf(message.usage, ctx.ran);
             const cost = ctx.costOf(message);
-            if (used !== undefined || cost !== undefined) {
-              // The cost rides the tokens' own `_meta`, the same place cache
-              // writes go, rather than beside them as a field of its own.
+            /*
+             * Asked once the turn has ended, because the CLI answers it from
+             * the state the turn left.
+             */
+            const figure = await contextOfTurn();
+            if (used !== undefined || cost !== undefined || figure !== undefined) {
+              // The cost and the context ride the tokens' own `_meta`, the
+              // same place cache writes go, rather than beside them as fields
+              // of their own.
               const total: Bag = used ?? {};
-              if (cost !== undefined) total._meta = { ...bag(total._meta), 'ahpd.cost': cost };
+              const meta: Bag = { ...bag(total._meta) };
+              if (cost !== undefined) meta['ahpd.cost'] = cost;
+              if (figure !== undefined) {
+                meta.contextAttribution = figure.attribution;
+                meta['ahpd.context'] = figure.context;
+              }
+              if (Object.keys(meta).length > 0) total._meta = meta;
               turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }

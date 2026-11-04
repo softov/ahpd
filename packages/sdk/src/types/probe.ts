@@ -50,6 +50,14 @@ export interface Offered {
   models: {
     id: string;
     name: string;
+    /**
+     * The canonical wire id this row's `id` resolves to, when the harness says.
+     *
+     * A row can be an alias - `sonnet` resolving to `claude-sonnet-5` - and a
+     * limit learned from a result is keyed by the canonical id. A host reads
+     * this to match the two; it is not a second name to offer the model under.
+     */
+    resolvedModel?: string;
     maxContextWindow?: number;
     maxOutputTokens?: number;
     maxPromptTokens?: number;

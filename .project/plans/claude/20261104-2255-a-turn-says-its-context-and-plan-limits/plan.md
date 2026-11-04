@@ -1,7 +1,7 @@
 ---
 title: A turn says its context and its plan limits
 domain: claude
-status: planned
+status: active
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -80,7 +80,7 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a turn says its context](task-01-a-turn-says-its-context.md) | todo | - |
+| [01 - a turn says its context](task-01-a-turn-says-its-context.md) | done | - |
 | [02 - a login says its plan limits](task-02-a-login-says-its-plan-limits.md) | todo | - |
 
 ## Risks and tradeoffs
@@ -91,8 +91,8 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-turn-says-its-context.md](task-01-a-turn-says-its-context.md).
+- **Done so far:** task 01, a turn says its context.
+- **Next action:** [task-02-a-login-says-its-plan-limits.md](task-02-a-login-says-its-plan-limits.md).
 - **Watch out for:** a turn must not wait on `getContextUsage`; put a short time limit on it.
 
 ## Final verification checklist

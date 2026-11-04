@@ -1,6 +1,6 @@
 ---
 title: A turn says its context
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -44,4 +44,10 @@ The breakdown is `contextAttribution` in VS Code's shape, and the rest is `ahpd.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude tests pass.
 
 ## Resume
+
+Done: each result's `modelUsage` teaches a model's `contextWindow` and `maxOutputTokens`, the probe fills the rows and fires `probeChanged` on a new limit, and a turn asks `getContextUsage({ detail: 'summary' })` with a two-second limit and carries `contextAttribution` and `ahpd.context`.
+Left: nothing.
+Found: `session/context.ts` already names the session context, so the map is `session/contextusage.ts`.
+Found: the control answer spells its fields in camelCase, so the map reads both spellings.
+Found: `resolvedModel` did not reach `Offered.models`, so the sdk type and `probe.ts` now carry it.
 

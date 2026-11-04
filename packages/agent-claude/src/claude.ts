@@ -8,13 +8,14 @@ import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
 import type { AgentLogins } from './logins.js';
 import { offeredModels, ownModels, type ModelEntry, type ModelSource, type OfferedModel } from './models.js';
+import { limitOf, onLimitLearned } from './session/parts.js';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, Spawned } from './spawn.js';
-import type { Agent, Bag, Listed, MachineNeed, Session, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 
 /**
  * The host's Claude Code CLI, as the installer leaves it.
@@ -212,6 +213,24 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     if (options.models === undefined && options.modelSources === undefined) return cli;
     named ??= ownModels(options.models, options.modelSources, options.log);
     return offeredModels(cli, await named, options.keepCliModels);
+  };
+
+  /**
+   * Fill one probed row's limits from what results have said of its model.
+   *
+   * The CLI's model list has an id and a display name and no limit, and a
+   * result names the window and the output cap of the model that answered.
+   * The row's `resolvedModel` is the canonical id a result reports, so a row
+   * written as an alias is matched there as well as by its own id.
+   */
+  const withLearned = (model: Offered['models'][number]): Offered['models'][number] => {
+    const learned = limitOf(model.id) ?? limitOf(model.resolvedModel);
+    if (learned === undefined) return model;
+    return {
+      ...model,
+      ...(learned.contextWindow === undefined ? {} : { maxContextWindow: learned.contextWindow }),
+      ...(learned.maxOutputTokens === undefined ? {} : { maxOutputTokens: learned.maxOutputTokens }),
+    };
   };
 
   /**
@@ -489,11 +508,19 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     // What the CLI offers, its models with this variant's own.
     probe: async () => {
       const probed = await probe(dir);
-      return { ...probed, models: await offer(probed.models) };
+      return { ...probed, models: (await offer(probed.models)).map(withLearned) };
     },
 
-    // The personal folder only, which is the one the probe reads.
-    probeChanged: (onChange) => watchFolders({ configDir: configDirOf() }, onChange),
+    // The personal folder only, which is the one the probe reads, and a limit
+    // a result taught, which changes the rows without a file changing.
+    probeChanged: (onChange) => {
+      const stopWatching = watchFolders({ configDir: configDirOf() }, onChange);
+      const stopLearning = onLimitLearned(onChange);
+      return () => {
+        stopWatching();
+        stopLearning();
+      };
+    },
 
     // Every directory it serves, as one list. A session is listed by the
     // catalogue of the directory it ran in, and a host serving several has
