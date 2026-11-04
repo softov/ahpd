@@ -1604,7 +1604,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           (typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}) as Bag,
           'session', locale, (key) => ctx.catalogsOf(key, provider),
         ),
-        { provider, ...(asked === undefined ? {} : { workingDirectory: asked }), config: answered },
+        {
+          provider,
+          ...(asked === undefined ? {} : { workingDirectory: asked }),
+          config: answered,
+          ...(connection.principal === undefined ? {} : { reader: connection.principal }),
+        },
         agent.completions,
       );
       const hostProperties = formIn((typeof mine.schema.properties === 'object' && mine.schema.properties !== null
@@ -1682,6 +1687,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
               ...(typeof params.config === 'object' && params.config !== null
                 ? { config: params.config as Record<string, unknown> }
                 : {}),
+              ...(connection.principal === undefined ? {} : { reader: connection.principal }),
             }),
           };
         }

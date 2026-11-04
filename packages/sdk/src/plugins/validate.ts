@@ -70,6 +70,9 @@ const gapsOf = (read: () => unknown): SchemaGap[] => {
 /** The reason a vault field marked `writeOnly` gives at load. */
 const WRITEOUT_IN_VAULT = 'writeOnly kept in the vault; mark it secret';
 
+/** The reason a nested `writeOnly` field gives, where only a top-level field is kept in the vault. */
+const WRITEOUT_NESTED = 'writeOnly below the top stays in the record, masked; only a top-level field is kept in the vault';
+
 /** One path below another, with a dot only when there is a parent. */
 const under = (base: string, tail: string): string => (base === '' ? tail : `${base}.${tail}`);
 
@@ -85,32 +88,40 @@ const under = (base: string, tail: string): string => (base === '' ? tail : `${b
  * draws. A node that says `secret: false` is not one: the plugin has said the
  * value stays in the record.
  */
-const writeOnlyGaps = (schema: unknown): SchemaGap[] => {
+const writeOnlyGaps = (schema: unknown, topLevel = false): SchemaGap[] => {
   const gaps: SchemaGap[] = [];
   // A schema built in code may hold itself, so a node is not walked again inside itself.
   const walking = new Set<object>();
-  const walk = (node: unknown, path: string): void => {
+  // `top` is a property of the schema itself: with `topLevel`, the only place a
+  // vault field is kept.
+  const walk = (node: unknown, path: string, top: boolean): void => {
     if (typeof node !== 'object' || node === null || Array.isArray(node)) return;
     if (walking.has(node)) return;
     walking.add(node);
     const held = node as Record<string, unknown>;
     if (held['writeOnly'] === true && held['secret'] === undefined) {
-      gaps.push({ path, reason: WRITEOUT_IN_VAULT });
+      gaps.push({ path, reason: topLevel && !top ? WRITEOUT_NESTED : WRITEOUT_IN_VAULT });
     }
     const properties = held['properties'];
     if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
-      for (const [key, one] of Object.entries(properties)) walk(one, under(path, key));
+      for (const [key, one] of Object.entries(properties)) walk(one, under(path, key), path === '');
     }
-    walk(held['additionalProperties'], under(path, '*'));
-    walk(held['items'], under(path, 'items'));
+    walk(held['additionalProperties'], under(path, '*'), false);
+    walk(held['items'], under(path, 'items'), false);
     walking.delete(node);
   };
-  walk(schema, '');
+  walk(schema, '', false);
   return gaps;
 };
 
-/** The gaps one schema gives: the values it leaves unnamed, and the vault fields it marks `writeOnly`. */
-const schemaProblems = (schema: unknown): SchemaGap[] => [...schemaGaps(schema), ...writeOnlyGaps(schema)];
+/**
+ * The gaps one schema gives: the values it leaves unnamed, and the vault fields it marks `writeOnly`.
+ *
+ * `topLevel` is for a schema whose vault fields are its own properties only,
+ * as an adapter's and a tunnel kind's are.
+ */
+const schemaProblems = (schema: unknown, topLevel = false): SchemaGap[] =>
+  [...schemaGaps(schema), ...writeOnlyGaps(schema, topLevel)];
 
 /** Whether a value is that kind. Arrays are not objects and `null` is neither. */
 const right = (value: unknown, expected: Kind): boolean => {
@@ -798,7 +809,7 @@ export const checkAdapter = (value: unknown, by: string): { name: string; checke
     throw new Error(miss(by, 'registerAdapter', 'schema', 'an object, the JSON Schema a client draws the form from'));
   }
   checkSignIn(object.signIn, object.schema as Record<string, unknown>, by);
-  const checked: CheckedSchema[] = [{ where: `adapter ${name}`, gaps: schemaProblems(object.schema) }];
+  const checked: CheckedSchema[] = [{ where: `adapter ${name}`, gaps: schemaProblems(object.schema, true) }];
   if (!Array.isArray(object.capabilities)) {
     throw new Error(miss(by, 'registerAdapter', 'capabilities', 'a list of the capabilities a connector of this adapter has'));
   }
@@ -937,7 +948,7 @@ export const checkTunnelKind = (value: unknown, by: string): { name: string; che
       throw new Error(miss(by, 'registerTunnelKind', member, 'a function, or nothing'));
     }
   }
-  const checked: CheckedSchema[] = [{ where: `tunnel kind ${name}`, gaps: schemaProblems(object.schema) }];
+  const checked: CheckedSchema[] = [{ where: `tunnel kind ${name}`, gaps: schemaProblems(object.schema, true) }];
   if (object.operations === undefined) return { name, checked };
   if (!Array.isArray(object.operations)) {
     throw new Error(miss(by, 'registerTunnelKind', 'operations', 'a list of operations, or nothing'));

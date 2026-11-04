@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Status, bag, idOf, steerOf, steerPart, str, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { BOTS_DIR, logsOf } from './names.js';
+import { mayRead } from './provider.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
 
@@ -1417,7 +1418,10 @@ export function botChatAgent(
       bot: async (ask) => {
         await store.ready();
         const query = ask.query.toLowerCase();
+        const reader = ask.reader;
+        // Only the bots this person may read, as a read of `bot://` answers.
         return store.all()
+          .filter((one) => reader === undefined || mayRead(one, reader))
           .map((one) => ({ value: one.id, label: one.name }))
           .filter((one) => one.value.toLowerCase().includes(query) || one.label.toLowerCase().includes(query));
       },
@@ -1474,7 +1478,9 @@ export function botChatAgent(
       const slug = typeof asked === 'string' ? asked.trim() : '';
       // The store's cache, which is what a read of `bot://` answers from too.
       // A chat is started by one of those reads, so the bot is here by then.
-      const bot = slug === '' ? undefined : store.get(slug);
+      const found = slug === '' ? undefined : store.get(slug);
+      // A bot this person may not read is one they are not told exists.
+      const bot = found !== undefined && start.reader !== undefined && !mayRead(found, start.reader) ? undefined : found;
       // A plain sentence rather than a coded refusal: the host answers whatever
       // a backend throws out of `create` as its own `INVALID_PARAMS`, keeping
       // the words and dropping the code, so a code here would be one no client

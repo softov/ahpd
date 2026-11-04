@@ -288,6 +288,38 @@ it('keeps a writeOnly value in the vault, and in no record and no snapshot', asy
   await close();
 });
 
+it('answers a writeOnly value that stays in the record as set, at the top and below it', async () => {
+  const { host, users, collection, adapters, close } = await served();
+  adapters['webhook'] = {
+    ...adapters['webhook']!,
+    schema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        pin: { type: 'string', writeOnly: true, secret: false },
+        auth: { type: 'object', properties: { token: { type: 'string', writeOnly: true } } },
+        empty: { type: 'string', writeOnly: true, secret: false },
+      },
+      required: ['target'],
+    },
+  };
+  const cy = await as(host, users, 'cy');
+
+  const put = await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy',
+    config: { target: 'bot://motion', pin: '4242', auth: { token: 'tk-nested-1' }, empty: '' },
+  });
+  expect(put).toHaveProperty('result');
+
+  // The record keeps both: neither is a vault field of this adapter.
+  expect((await collection.get('ci'))?.['config']).toMatchObject({ pin: '4242', auth: { token: 'tk-nested-1' } });
+  const row = (await cy.rows())['ci'];
+  expect(row?.['config']).toEqual({ target: 'bot://motion', pin: '<set>', auth: { token: '<set>' }, empty: '' });
+  expect(JSON.stringify(put)).not.toContain('4242');
+  expect(JSON.stringify(put)).not.toContain('tk-nested-1');
+  await close();
+});
+
 it('keeps the stored secret when a put sends the writeOnly field empty', async () => {
   const { host, users, collection, opened, vault, close } = await served();
   const cy = await as(host, users, 'cy');

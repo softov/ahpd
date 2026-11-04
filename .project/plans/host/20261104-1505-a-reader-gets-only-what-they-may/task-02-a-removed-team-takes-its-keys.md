@@ -1,6 +1,6 @@
 ---
 title: A removed team takes its keys
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -29,3 +29,5 @@ When a team goes, its keys go from the tokens file, so a team added back with th
 - `pnpm --filter @ahpd/sdk test` passes, run alone.
 
 ## Resume
+
+- **Done so far:** every step. `docs/server/USERS.md` says a removed team takes its keys.
