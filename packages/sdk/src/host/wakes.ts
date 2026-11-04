@@ -112,7 +112,12 @@ export function createWakes(ctx: HostContext): Wakes {
       const state = woken.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
       const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
         || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
-      const from: MessageFrom = { origin: { kind: 'agent' }, _meta: { 'vscode.chat.delegation': { sourceSession: woken.uri, sourceChat: chat } } };
+      /*
+       * The host started this turn, so its message is a system notification:
+       * a client draws it as the host's line, not as the person's message or
+       * one sent from another chat.
+       */
+      const from: MessageFrom = { origin: { kind: 'systemNotification' } };
       const provider = sessions.get(woken.uri)?.agent.provider ?? owners.get(woken.uri)?.provider ?? '';
       const turnId = crypto.randomUUID();
       /*

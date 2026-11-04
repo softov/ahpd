@@ -315,5 +315,9 @@ describe.skipIf(!posix)('the end of an async command', () => {
       .map((one) => one.action);
     const woken = started.find((one) => String(((one.message ?? {}) as { text?: unknown }).text ?? '').startsWith('The background shell command ended'));
     expect(woken?._meta).toMatchObject({ 'ahpd.sender': 'user:ana' });
+    // The host started it: a system notification, not a message from another chat.
+    const message = (woken?.message ?? {}) as { origin?: unknown; _meta?: Record<string, unknown> };
+    expect(message.origin).toEqual({ kind: 'systemNotification' });
+    expect(message._meta?.['vscode.chat.delegation']).toBeUndefined();
   });
 });
