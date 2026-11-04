@@ -1,7 +1,7 @@
 ---
 title: A session outside the paths stays listed
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-18
 revalidated: 2026-10-18
@@ -64,7 +64,7 @@ restart -> listing: backends list their paths -> the store's recorded sessions w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The listing looks up recorded sessions](task-01-the-listing-looks-up-recorded-sessions.md) | implemented | - |
+| [01 - The listing looks up recorded sessions](task-01-the-listing-looks-up-recorded-sessions.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,20 +72,13 @@ restart -> listing: backends list their paths -> the store's recorded sessions w
 
 ## Resume state
 
-- **Done so far:** The plan was written 2026-10-18.
-  Task 01 is implemented, with 6 tests.
-  A listing asks the backends' `find` about each recorded session in a folder that no backend read.
-  The gates and the sdk suite pass.
-- **Next action:** None, since task 01 is the plan's only task. Nothing is set to `done`, and the index is untouched.
-- **Open questions:** none.
-- **Watch out for:** the lookups run after the backends answer, because `read` is only known then. Run them at the same time with `Promise.all`, and fold them in a fixed order.
-  Each pass makes one `find` per recorded session outside the paths.
-  A session whose record names no folder is not looked up.
+- **Done so far:** built in 5bf8a8f2, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
-- [ ] A test: after a restart, a session in a folder outside `paths` is listed before it is opened.
-- [ ] A test: the row stays across two refreshes, with no `root/sessionRemoved`.
-- [ ] A test: a session in a git worktree folder is listed the same way.
-- [ ] The gates pass: build, typecheck, boundary, schema and vitest.
-- [ ] By hand: after a restart, the Ember bot's session opens from the catalogue.
+- [x] A test: after a restart, a session in a folder outside `paths` is listed before it is opened.
+- [x] A test: the row stays across two refreshes, with no `root/sessionRemoved`.
+- [x] A test: a session in a git worktree folder is listed the same way.
+- [x] The gates pass: build, typecheck, boundary, schema and vitest.
+- [x] By hand: after a restart, the Ember bot's session opens from the catalogue.
