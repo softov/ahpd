@@ -90,6 +90,8 @@ interface Question {
   toolName: string;
   /** The input the call would run with, as the caller was handed it. */
   raw: Bag;
+  /** The input as the model wrote it, which the question shows, where it differs from `raw`. */
+  shown?: Bag;
   /** The agent's own id for the call, which is also the question's. */
   callId: string;
   /** The subagent the call runs in, when it is one. */
@@ -364,11 +366,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * raised comes down, and one that would be raised is not raised.
        */
       ctx.holdCall(id);
-      const input = toolInputOf(toolName, raw);
+      // The card shows the call as the model wrote it; the CLI runs `raw`.
+      const written = asked.shown ?? raw;
+      const input = toolInputOf(toolName, written);
       const displayName = asked.displayName ?? toolName;
       // The card reads the row's line; the CLI's own sentence is its title.
-      const invocationMessage = lineOf(toolName, raw);
-      ctx.pastLines.set(id, pastLineOf(toolName, raw));
+      const invocationMessage = lineOf(toolName, written);
+      ctx.pastLines.set(id, pastLineOf(toolName, written));
       const confirmationTitle = asked.title ?? `Run ${displayName}?`;
 
       // The call the assistant message opened, if it arrived first. Which of
@@ -532,6 +536,17 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const title = str(about.title);
     const displayName = str(about.displayName);
     /*
+     * The command the model wrote, which `sourceFirst` kept under this call's
+     * id when it put the operator's environment in front of it: what a rule
+     * reads and what a confirmation shows, as the reference asks a person
+     * about the command as the model wrote it. The input this callback was
+     * handed is the rewritten one, which the call runs.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174
+     */
+    const written = ctx.unprefixed.get(id);
+    ctx.unprefixed.delete(id);
+    const shown = toolName === 'Bash' && written !== undefined ? { ...raw, command: written } : undefined;
+    /*
      * A matched call, put where a harness that asks anyway would reach it.
      *
      * The hook normally asks first and this callback is never called. When it
@@ -543,6 +558,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       return await askPerson({
         toolName,
         raw,
+        ...(shown !== undefined ? { shown } : {}),
         callId: id,
         suggestions: [],
         ...(agentId !== undefined ? { agentId } : {}),
@@ -557,17 +573,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * The host answers from the rules the window that started this session
      * pushed, and only an approval reaches here: a command a rule denied and a
      * line no rule could read both answer nothing, and the question is put as
-     * it always was. The line read is the one the model wrote, which
-     * `sourceFirst` kept under this call's id when it put the operator's
-     * environment in front of it; the input this callback was handed is the
-     * rewritten one. Read after the abort, because a cancelled call is not one
+     * it always was. Read after the abort, because a cancelled call is not one
      * to approve. Nothing is announced either, as with an allow list: the row
      * the assistant message carries is already `not-needed`, and there is no
      * question for a client to draw.
      */
     if (toolName === 'Bash') {
-      const written = ctx.unprefixed.get(id);
-      ctx.unprefixed.delete(id);
       const command = written ?? str(raw.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
         return { behavior: 'allow', updatedInput: raw };
@@ -576,6 +587,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     return await askPerson({
       toolName,
       raw,
+      ...(shown !== undefined ? { shown } : {}),
       callId: id,
       suggestions: list(about.suggestions),
       ...(agentId !== undefined ? { agentId } : {}),

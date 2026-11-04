@@ -1,6 +1,6 @@
 ---
 title: A confirmation shows the model's command
-status: todo
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -26,4 +26,7 @@ A Bash call's confirmation shows the command the model wrote, whatever the host 
 - `packages/sdk/test/host-tool-confirm.test.ts`: a Claude Bash confirmation shows no export or sourcing line.
 
 ## Resume
+
+- **Done:** steps 1 and 2, at the commit that closes this task: the card, its entry and its past line read the model's command.
+- **The case's file:** `agent-claude-autoapproval`, whose harness runs the shell hook; `host-tool-confirm` lives in agent-claude and covers host tools.
 

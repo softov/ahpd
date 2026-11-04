@@ -595,7 +595,11 @@ puts a `source` of the bash entry in front of every command: the script is
 written to a file of its own for the session's life and rewritten on each
 change, its stderr is dropped and a nonzero status is printed, the way the
 reference runtime treats it. A PowerShell entry is kept and not sourced, since
-the CLI's shell tool is bash everywhere; an empty list clears the file.
+the CLI's shell tool is bash everywhere; an empty list clears the file. What is
+put in front is the host's: the owner's rules read the command the model wrote,
+a confirmation shows it, and the command runs with the prefix, as
+[VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174)
+asks about the command the model wrote.
 
 ### Chat URIs
 
