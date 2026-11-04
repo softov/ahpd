@@ -406,10 +406,11 @@ it('asks about a tool inside a subagent on that subagent\'s chat', async () => {
   const needed = (session.sessionState().inputNeeded as Bag[]) ?? [];
   expect(needed.some((one) => one.chat === worker.uri)).toBe(true);
 
-  // Approving it there lets the tool run and is said back where it was asked.
+  // Approving it there lets the tool run. The confirmation is the client's,
+  // which the host says where it was asked, so the backend says none of its own.
   session.confirm(write, true);
   await expect(asked).resolves.toMatchObject({ behavior: 'allow' });
-  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed' && one.toolCallId === write)).toBe(true);
+  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed')).toBe(false);
 
   // The rest of the turn: the tool's result on the worker's chat, which ends once.
   sdk.push(...lines.slice(at + 1));

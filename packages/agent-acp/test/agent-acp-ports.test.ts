@@ -317,11 +317,14 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   await endedTurn(p, chatUri, 1);
   begin('t2', 'ask me first');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
+  // An approval as VS Code's client sends one, which the host says as it came
+  // and the backend says nothing more of.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true } },
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true, confirmed: 'user-action' } },
   });
   await endedTurn(p, chatUri, 2);
+  expect(p.notes.filter((note) => note.method === 'action' && ((note.params as Bag).action as Bag).type === 'chat/toolCallConfirmed')).toHaveLength(1);
   begin('t3', '!echo declared');
   await endedTurn(p, chatUri, 3);
 

@@ -177,12 +177,12 @@ export const createPauses = (
        *
        * Found by the call's own id rather than assumed to be the only request:
        * with two open, comparing against whichever was held last is a person
-       * pressing Approve and nothing at all happening. The entry leaves by the
-       * same id it arrived with, the decision is said back because nothing in a
-       * client applies its own dispatch, and the answer goes into the run. An
-       * approval that picked `allow-session` is sent with `alwaysApprove`, which
-       * cofold keeps for this session and tool - unless the operator's rule
-       * names the tool, because a matched call asks every time.
+       * pressing Approve and nothing at all happening. The host has said the
+       * client's confirmation; the entry leaves by the same id it arrived with,
+       * and the answer goes into the run. An approval that picked
+       * `allow-session` is sent with `alwaysApprove`, which cofold keeps for
+       * this session and tool - unless the operator's rule names the tool,
+       * because a matched call asks every time.
        */
       confirm: (toolCallId, approved, optionId) => {
         const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
@@ -222,19 +222,6 @@ export const createPauses = (
           if (picked !== undefined) call.selectedOption = picked;
           part.toolCall = call;
         }
-        /*
-         * A refusal is `denied`, the protocol's word for a person who turned a
-         * call down; the sentence is the model's, and goes to cofold.
-         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
-         */
-        start.emit('chat', {
-          type: 'chat/toolCallConfirmed',
-          turnId: ctx.active?.id,
-          toolCallId,
-          approved,
-          ...(approved ? { confirmed: 'user-action' } : { reason: 'denied' }),
-          ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-        });
         route(approved
           ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
           : { type: 'deny', requestId: held.requestId, reason: DECLINED });

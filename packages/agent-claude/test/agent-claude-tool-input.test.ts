@@ -452,7 +452,7 @@ it('measures an approved call from when it was approved, not from the ready befo
   sdk.hold = Promise.resolve();
 });
 
-it('says no times for a call a person denied', async () => {
+it('says no confirmation of its own and no duration for a call a person denied', async () => {
   let held: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { held = resolve; });
   const { held: calls, sent, session } = await live(opened, () => {
@@ -460,21 +460,17 @@ it('says no times for a call a person denied', async () => {
   });
   session.confirm('toolu_bash', false);
   await settle();
-  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(confirmed)['ahpd.endedAt']).toBeUndefined();
-  expect(metaOf(confirmed)['ahpd.durationMs']).toBeUndefined();
-  // The kind it was announced with is all a call that never ran has left.
-  expect(metaOf(confirmed).toolKind).toBe('terminal');
-  expect(metaOf(calls.get('toolu_bash'))['ahpd.startedAt']).toBeUndefined();
-  // And the result the harness sends for it carries none either.
+  // The confirmation is the client's, which the host says as it was sent.
+  expect(actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash')).toBeUndefined();
+  // The kind it was announced with is all a call that never ran has.
+  expect(metaOf(calls.get('toolu_bash'))).toEqual({ toolKind: 'terminal' });
+  // And the result the harness sends for it says no duration either.
   sdk.pushed.push(result('toolu_bash', 'u2'));
   held?.();
   await settle();
   const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
   expect(complete).toBeDefined();
-  expect(metaOf(complete)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(complete)['ahpd.durationMs']).toBeUndefined();
+  expect(metaOf(complete)).toEqual({ toolKind: 'terminal' });
   sdk.hold = Promise.resolve();
 });
 
@@ -552,6 +548,22 @@ it('carries the questions and the answers of a live answered question', async ()
   expect(held.get('toolu_ask')?.structuredContent).toEqual(answered);
   // The input stays what the model sent, which has no answers in it.
   expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+});
+
+it('holds a part-way answer on the request, and says nothing of the client\'s answer', async () => {
+  sdk.hold = new Promise<void>(() => {});
+  const { sent, session } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+  ], () => {
+    void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+  });
+  expect(session.setAnswer?.('toolu_ask', 'q1', said.q1 as never)).toBe(true);
+  // The client's answer is the host's to say, as the client sent it.
+  expect(sent.some((one) => one.type === 'chat/inputAnswerChanged')).toBe(false);
+  // A client that arrives now reads it off the request.
+  const needed = (session.sessionState().inputNeeded ?? []) as Bag[];
+  expect((needed.find((one) => one.kind === 'chatInput')?.request as Bag | undefined)?.answers).toEqual({ q1: said.q1 });
+  sdk.hold = Promise.resolve();
 });
 
 it('carries no answers for a live question nobody answered', async () => {

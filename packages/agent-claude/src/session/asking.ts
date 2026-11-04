@@ -675,37 +675,38 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const settle = held.settle;
       pending.delete(held.id);
       ctx.inputNeededRemoved(held.id);
-      // The call's own conversation, so an approval given in a worker's chat
-      // is said back there rather than on the lead chat.
+      // The call's own conversation, a worker's chat or the lead's, whose held
+      // call moves with the confirmation the host said there.
       const scope = ctx.scopeOfCall(toolCallId) ?? ctx.mainScope;
       // The choice picked, when it is one this call offered and of the
       // answer's kind; anything else is a plain approve or deny.
       const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = scope.parts.get(toolCallId);
-      let times: Bag | undefined;
       if (part) {
         const call = bag(part.toolCall);
         call.status = approved ? 'running' : 'cancelled';
-        // And how it was approved, which is required on the call and was only
-        // ever said in the action.
+        // And how it was approved, which is required on the call.
         if (approved) call.confirmed = 'user-action';
         delete call.options;
         if (picked !== undefined) call.selectedOption = picked;
         /*
          * A call starts running now, and not at the ready that came before the
          * question: the wait for a person is not work. A call refused never
-         * runs, so it loses the start it was given and says none.
+         * runs, so it loses the start it was given.
          */
-        times = approved ? ctx.stampStart(call) : ctx.untimed(call);
+        if (approved) ctx.stampStart(call);
+        else ctx.untimed(call);
       }
       if (scope === ctx.mainScope) ctx.doing(approved ? ctx.busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       /*
        * A call of a client's, which is the client's to run now and only now.
        *
-       * Before the action that says the call is running, because the entry is
-       * what the client goes on and the chat is what tells everybody else: a
-       * client that reads the session runs the tool the person just allowed.
-       * A refused call runs nowhere, and whoever waits for it is told so.
+       * The host has said the client's confirmation, so the entry the client
+       * goes on follows the call into `running`, as VS Code's host raises it
+       * from the chat's state: a client that reads the session runs the tool
+       * the person just allowed. A refused call runs nowhere, and whoever
+       * waits for it is told so.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
        */
       const call = bag(held.entry.toolCall);
       const name = str(call.toolName) ?? '';
@@ -713,23 +714,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
       else ctx.refuseCall(name, toolCallId, DECLINED);
-      // Said back, like every other action a client originates. Nothing in a
-      // client applies its own dispatch, so a row approved here stayed
-      // `pending-confirmation` on every screen watching it - including the
-      // one that had just answered it.
-      ctx.emitOn(scope, {
-        type: 'chat/toolCallConfirmed',
-        turnId: scope.turn?.id,
-        toolCallId,
-        approved,
-        ...(approved ? { confirmed: 'user-action' } : {}),
-        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-        // The whole bag, because an action's `_meta` replaces the call's.
-        ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
-      });
-      // The answer is given and said back, so the preview goes with it: what
-      // the tool would leave is on no disk, and the file itself is the copy
-      // every client can read once it has run.
+      // The answer is given, so the preview goes with it: what the tool would
+      // leave is on no disk, and the file itself is the copy every client can
+      // read once it has run.
       settleEdits(toolCallId);
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
@@ -739,11 +726,10 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     },
 
     /**
-     * One question of a request, part-way answered.
+     * One question of a request, part-way answered, which the host has said as
+     * the client sent it.
      *
-     * The same thing `setDraft` is for a message: held here so that two people
-     * looking at one elicitation see the form being filled in rather than each
-     * filling in their own. Kept on the request itself as well as emitted,
+     * The same thing `setDraft` is for a message: held on the request itself,
      * because a client that arrives while the question is open reads
      * `session.inputNeeded` and would otherwise see an empty form somebody has
      * already answered.
@@ -765,12 +751,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       else delete request.answers;
       // Not `touch()`: typing is not a change to the conversation, and a
       // catalogue that reordered itself on every keystroke would be unusable.
-      ctx.emit('chat', {
-        type: 'chat/inputAnswerChanged',
-        requestId,
-        questionId,
-        ...(answer !== undefined ? { answer } : {}),
-      });
       return true;
     },
 

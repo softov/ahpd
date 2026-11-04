@@ -1439,7 +1439,8 @@ export function piSession(
     setDraft: (next) => { draft = next; },
 
     /*
-     * A person's answer to a call that was shown `pending-confirmation`.
+     * A person's answer to a call that was shown `pending-confirmation`, which
+     * the host has said as the client sent it.
      *
      * Found by id rather than assumed to be the only one: two calls can wait
      * at once, and answering one must not answer the other.
@@ -1451,7 +1452,6 @@ export function piSession(
       emit('session', { type: 'session/inputNeededRemoved', id: held.id });
       const toolCall = bag(held.entry.toolCall);
       const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
-      let times: Bag | undefined;
       if (part !== undefined) {
         const row = bag(part.toolCall);
         row.status = approved ? 'running' : 'cancelled';
@@ -1461,20 +1461,9 @@ export function piSession(
          * that came before the question: the wait for a person is not work. A
          * call refused never runs, so it loses the start it was given.
          */
-        times = approved ? stampStart(row, Date.now()) : untime(row);
+        if (approved) stampStart(row, Date.now());
+        else untime(row);
       }
-      emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
-        toolCallId,
-        approved,
-        ...(approved ? { confirmed: 'user-action' as const } : { reason: 'denied' as const }),
-        // The whole bag, because an action's `_meta` replaces the call's.
-        ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
-      });
-      // Said back like every other action a client originates. Nothing in a
-      // client applies its own dispatch, so a row approved here would stay
-      // pending on every screen watching it, including the answering one.
       if (approved) activity.say(`Running ${String(toolCall.displayName ?? '')}`);
       else activity.say('Thinking');
       // An allowed call is one a client now has to run, so it is asked here.

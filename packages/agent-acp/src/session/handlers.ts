@@ -903,21 +903,15 @@ export function createHandlers(ctx: SessionContext): Handlers {
      *
      * The mapping's own readiness never comes for a call a question has stood
      * on - `asked` is what stopped it - so without this a client would never be
-     * told about a call the person has just allowed. Before the action that
-     * says the call is running, because the entry exists before the chat does.
+     * told about a call the person has just allowed. The host has said the
+     * client's confirmation by now, so the entry follows the call into
+     * `running`, as VS Code's host raises it from the chat's state.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
      */
     const allowed = ctx.mapping?.calls.get(toolCallId);
     if (approved && allowed !== undefined && ctx.mapping !== undefined) {
       ctx.openCall(allowed, ctx.mapping.turnId);
     }
-    emit('chat', {
-      type: 'chat/toolCallConfirmed',
-      turnId: ctx.mapping?.turnId,
-      toolCallId,
-      approved,
-      ...(approved ? { confirmed: 'user-action' } : {}),
-      ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-    });
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
     doing(approved ? 'Running' : 'Thinking');

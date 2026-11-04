@@ -283,12 +283,11 @@ methods:
 
 A confirmation may offer the agent's own choices as `options` on the call's `chat/toolCallReady` and on the entry's `toolCall`.
 `optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.
-Say it back as `selectedOptionId` on the `chat/toolCallConfirmed` the backend emits, so the call records which choice was made.
 
 The host checks a confirmation and an answer against the chat's state before it calls either: a call pending a confirmation, a request open in the running turn.
-`answer` returns false for a request the session is not waiting on.
-The host says the `chat/inputCompleted` back to every client of the chat, so the backend does not emit it.
-A `confirm` the backend has no question for returns false, and the host says the decision back itself.
+It says the client's `chat/toolCallConfirmed`, `chat/inputAnswerChanged` and `chat/inputCompleted` to every client of the chat as the client sent them, and then calls the backend, as VS Code's host applies a client's action and then hands it to its agent.
+The backend moves the call or the request it holds and answers its agent: the client's `selectedOptionId` is on the action every client holds, so the call records which choice was made.
+`answer` returns false for a request the session is not waiting on, and so does a `confirm` the backend has no question for.
 
 Hold them in a **map keyed by id**, never in one slot. A backend that can ask
 twice will: an agent firing two tools in parallel asks twice before either is

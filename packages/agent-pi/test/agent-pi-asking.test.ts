@@ -49,8 +49,11 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
   expect((last('session/inputNeededSet')?.request as Bag).kind).toBe('toolConfirmation');
   session.confirm('c1', true);
   expect(await waiting).toBeUndefined();
-  expect(last('chat/toolCallConfirmed')?.approved).toBe(true);
-  expect(last('chat/toolCallConfirmed')?.confirmed).toBe('user-action');
+  // The confirmation is the client's, which the host says as it was sent; the
+  // call this session holds moves with it.
+  expect(last('chat/toolCallConfirmed')).toBeUndefined();
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'running', confirmed: 'user-action' });
   expect(session.status()).toBe(Status.InProgress);
 });
 
@@ -243,6 +246,9 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
+  // A client folds the client's refusal, which the host says as it was sent,
+  // and then what this session says of the call.
+  const answered = sent.length;
   session.confirm('c1', false);
   await waiting;
   // pi reports the blocked call as a failed execution.
@@ -250,7 +256,9 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   await settled();
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
   expect(callIn(parts, 'c1')?.status).toBe('cancelled');
-  expect(callStatuses(sent).get('c1')).toBe('cancelled');
+  expect(sent.some((one) => one.action.type === 'chat/toolCallConfirmed')).toBe(false);
+  const refusal = { channel: 'chat', action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: false, reason: 'denied' } };
+  expect(callStatuses([...sent.slice(0, answered), refusal, ...sent.slice(answered)]).get('c1')).toBe('cancelled');
 });
 
 it('still asks under projectTrust deny, because the inline extension is not the project\'s own', async () => {
