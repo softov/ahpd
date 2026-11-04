@@ -1,6 +1,6 @@
 ---
 title: The restored turn is a notice
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -35,4 +35,12 @@ Its message has origin `systemNotification`, and the text of the frame's `<summa
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude tests pass.
 
 ## Resume
+
+- **Done so far:** a user frame whose `origin.kind` is `task-notification` opens a turn with origin `systemNotification` and the trimmed text of its `<summary>`, or its whole text when there is none or it is empty.
+Every other user frame still opens a turn of origin `user`.
+- **Next action:** [task-03-the-host-does-not-fold-it.md](task-03-the-host-does-not-fold-it.md).
+- **Open questions:** none.
+- **Watch out for:** only `origin.kind` is read; the frame's `producer` is what the CLI writes and alters nothing here.
+
+Files changed by this task: `packages/agent-claude/src/transcript.ts`, `packages/agent-claude/test/agent-claude-transcript.test.ts`.
 
