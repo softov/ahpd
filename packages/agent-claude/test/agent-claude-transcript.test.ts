@@ -161,6 +161,31 @@ it('reads a compact summary as no prompt', async () => {
 });
 
 /*
+ * A background task's end, which the CLI writes as a user frame of its own
+ * origin. Read back it is a notice turn: the task's summary is its message,
+ * and its origin says the system made it, as the live turn said.
+ */
+it('reads a task notification as a notice with the task\'s summary', async () => {
+  const turns = await read([
+    frame('user', 'u1', {
+      role: 'user',
+      content: '<task-notification>\n<task-id>b01fnggfk</task-id>\n<status>completed</status>\n<summary>Pause for 4 seconds</summary>\n</task-notification>',
+    }, { origin: { kind: 'task-notification', producer: 'session-task' } }),
+  ]);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.message).toEqual({ text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } });
+});
+
+it('reads a task notification without a summary as its own text', async () => {
+  const text = '<task-notification>\n<task-id>b01fnggfk</task-id>\n<status>completed</status>\n</task-notification>';
+  const turns = await read([
+    frame('user', 'u1', { role: 'user', content: text }, { origin: { kind: 'task-notification', producer: 'session-task' } }),
+  ]);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.message).toEqual({ text, origin: { kind: 'systemNotification' } });
+});
+
+/*
  * When a past turn and its calls ran, off the frames.
  *
  * The CLI writes a time on every frame and the protocol has nowhere to put a

@@ -1,7 +1,7 @@
 ---
 title: A background task's end is a notice turn
 domain: claude
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -69,9 +69,9 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | todo | - |
-| [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | todo | - |
-| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | todo | - |
+| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | implemented | - |
+| [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | implemented | - |
+| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -80,12 +80,12 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-live-turn-is-a-notice.md](task-01-the-live-turn-is-a-notice.md).
-- **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn.
+- **Done so far:** all three tasks are implemented. Live, the turn a background task's end wakes opens with the task's summary and origin `systemNotification`; after a restart the same frame restores the same way, and the host keeps that turn its own.
+- **Next action:** none; `implemented.md` records what was verified.
+- **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn and leaves no pending summary.
 
 ## Final verification checklist
 
-- [ ] Live, the turn after a background Bash ends has one message of origin `systemNotification` with the summary.
-- [ ] After a restart, the same chat shows that turn as its own turn, with the same origin and text.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
+- [x] Live, the turn after a background Bash ends has one message of origin `systemNotification` with the summary.
+- [x] After a restart, the same chat shows that turn as its own turn, with the same origin and text.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
