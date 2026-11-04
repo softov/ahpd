@@ -48,6 +48,30 @@ const CUSTOMIZATIONS: Bag[] = [
 const SLOW_LINES = 60;
 
 /** How to build the demo backend: the `notes` options, and how fast `slow` goes. */
+/**
+ * The platform's `mode` key, as VS Code's agent host declares it.
+ *
+ * A real host offers it, so a client draws it on a new session here too. A
+ * demo turn reads nothing from it.
+ */
+const MODE: Bag = {
+  type: 'string',
+  title: 'Agent Mode',
+  description: 'How the agent should approach this turn',
+  enum: ['interactive', 'plan', 'autopilot'],
+  enumLabels: ['Interactive', 'Plan', 'Autopilot'],
+  enumDescriptions: [
+    'Step-by-step collaboration',
+    'Plan first, execute when ready',
+    'Works autonomously within permissions',
+  ],
+  default: 'interactive',
+  sessionMutable: true,
+};
+
+/** The modes `MODE` offers. */
+const MODES = ['interactive', 'plan', 'autopilot'];
+
 export interface DemoOptions extends NotesOptions {
   /** Milliseconds between the lines `slow` streams. */
   every?: number;
@@ -67,6 +91,8 @@ export function demo(options: DemoOptions): Agent {
     let activity: string | undefined;
     /** Whether the last turn ended in an error, which the status says until the next turn. */
     let failed = false;
+    /** The session's mode. `notes` refuses a key it does not have, so the demo keeps this one. */
+    let mode = typeof start.settings.mode === 'string' && MODES.includes(start.settings.mode) ? start.settings.mode : 'interactive';
     /** The title a first `slow` or `fail` gave the session, as `notes` titles one from its first message. */
     let named: string | undefined;
     const title = (): string => named ?? inner.title();
@@ -146,8 +172,16 @@ export function demo(options: DemoOptions): Agent {
       activity: () => activity ?? inner.activity(),
       status,
       title,
+      settings: () => ({ ...inner.settings(), mode }),
+      setConfig: (key, value) => {
+        if (key !== 'mode') return inner.setConfig?.(key, value) ?? `${key} is not a config key this backend takes`;
+        if (typeof value !== 'string' || !MODES.includes(value)) return `mode is one of ${MODES.join(', ')} - not ${String(value)}`;
+        mode = value;
+        return true;
+      },
       sessionState: () => ({
         ...inner.sessionState(),
+        config: { ...(inner.sessionState().config as Bag | undefined), values: { ...inner.settings(), mode } },
         provider: 'demo',
         title: title(),
         chats: [{ resource: start.chatUri, title: title() }],
@@ -199,7 +233,12 @@ export function demo(options: DemoOptions): Agent {
   return {
     ...base,
     provider: 'demo',
-    displayName: 'Demo',
+    displayName: 'Agent Demo',
+    schema: () => {
+      const theirs = base.schema();
+      return { ...theirs, properties: { mode: MODE, ...(theirs.properties as Bag) } };
+    },
+    defaults: () => ({ mode: 'interactive', ...base.defaults() }),
     description: `Notes in ${options.path}, with models, customizations, a slow turn and a failing one`,
     probe: async () => ({
       models: MODELS,

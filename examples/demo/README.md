@@ -34,5 +34,7 @@ A cancel stops `slow`.
 | Models | `demo-fast`, `demo-large` and `demo-small`. A turn on any of them is the same `notes` turn |
 | Customizations | a skill, `summarize`, and a prompt, `tidy`. Neither does anything |
 | Automations | held in memory, as `memoryAutomations` holds them. A restart forgets them |
+| Agent | `Agent Demo`, with the fields a new session offers: `Agent Mode`, `Ask before` and `Tone`. The mode changes nothing in a turn |
+| Worktrees | a git folder offers isolation and branch, as on the daemon. A worktree goes beside its repository |
 | Status | running while `slow` streams, and in error after `fail` until the next turn |
 | Terminals | under a pseudoterminal, as the daemon's are, so a shell shows its prompt. Where `node-pty` does not load, on pipes |
