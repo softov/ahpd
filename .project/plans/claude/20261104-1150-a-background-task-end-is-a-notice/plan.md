@@ -1,7 +1,7 @@
 ---
 title: A background task's end is a notice turn
 domain: claude
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -80,12 +80,12 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 are implemented. Live, the turn a background task's end wakes opens with the task's summary and origin `systemNotification`; after a restart the same frame restores the same way.
-- **Next action:** [task-03-the-host-does-not-fold-it.md](task-03-the-host-does-not-fold-it.md).
+- **Done so far:** all three tasks are implemented. Live, the turn a background task's end wakes opens with the task's summary and origin `systemNotification`; after a restart the same frame restores the same way, and the host keeps that turn its own.
+- **Next action:** none; `implemented.md` records what was verified.
 - **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn and leaves no pending summary.
 
 ## Final verification checklist
 
-- [ ] Live, the turn after a background Bash ends has one message of origin `systemNotification` with the summary.
-- [ ] After a restart, the same chat shows that turn as its own turn, with the same origin and text.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
+- [x] Live, the turn after a background Bash ends has one message of origin `systemNotification` with the summary.
+- [x] After a restart, the same chat shows that turn as its own turn, with the same origin and text.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
