@@ -26,8 +26,53 @@ export interface Terminals {
   terminalInfo(): OnWire<TerminalInfo>[];
   /** The terminal factory a backend is handed on `Start`. */
   heldTerminals(shells: TerminalStore, sessionUri: string, chatUri: string): StartTerminals;
+  /**
+   * A terminal on a channel of the host's own, for the host itself.
+   *
+   * The one road all three take: a `!` command's terminal, one a backend opens
+   * on `Start`, and the shell an agent's tools run commands in. What each does
+   * with the terminal once it exits is its own, which is `onAction`'s.
+   */
+  heldShell(shells: TerminalStore, asked: HeldShellOptions): Terminal;
   /** The output terminals a backend may open, handed on `Start`. */
   heldOutputs(sessionUri: string): OutputTerminals;
+}
+
+/**
+ * What the host opens a terminal of its own with.
+ *
+ * The fields `TerminalOptions` takes, less the ones the host owns: the URI, the
+ * claim, the emit and the registration are all this file's to make, and the
+ * caller says only what the process is and gets told what it says.
+ */
+export interface HeldShellOptions {
+  /** The terminal channel's name. The host's callers choose it, as `heldTerminals` does. */
+  uri: string;
+  /** The directory to start in. */
+  cwd: string;
+  /** Who is holding it. */
+  claim: Claim;
+  /** Display name. The shell's own if none is given. */
+  name?: string;
+  /** One command to run instead of a shell to sit in. */
+  command?: string;
+  /** The command's arguments, when `command` names a program rather than a line. */
+  args?: string[];
+  /** Environment variables for the process, over the host's own. */
+  env?: Record<string, string | undefined>;
+  /** Say the shell is one a person is not watching. */
+  nonInteractive?: boolean;
+  /** Keep what the shell runs out of the person's history. */
+  preventShellHistory?: boolean;
+  /** The machine the process runs in, by the id a computer URI names. */
+  machine?: string;
+  /**
+   * Where the terminal's output is kept when it exits, so a call that names it
+   * is answered after a restart.
+   */
+  kept?: { chat: string; key: string; session: string };
+  /** Hear each action once it has been routed to the terminal. */
+  onAction?: (action: Bag) => void;
 }
 
 /**
@@ -91,6 +136,42 @@ export function createTerminals(ctx: HostContext): Terminals {
   const outputs = new Set<string>();
 
   /**
+   * Open a terminal on a channel of the host's own.
+   *
+   * The one open block: the options the caller asked for, the emit that routes
+   * its actions to the terminal instead of the session, and the registration
+   * that makes the channel reachable. What happens once it exits is the
+   * caller's, through `onAction`; a terminal whose output is kept when the
+   * session goes is the caller's `kept`.
+   */
+  const heldShell = (shells: TerminalStore, asked: HeldShellOptions): Terminal => {
+    if (ctx.closed) throw new Error(CLOSING);
+    const terminal = shells.create({
+      uri: asked.uri,
+      cwd: asked.cwd,
+      claim: asked.claim,
+      ...(asked.command !== undefined ? { command: asked.command } : {}),
+      ...(asked.args !== undefined ? { args: asked.args } : {}),
+      ...(asked.env !== undefined ? { env: asked.env } : {}),
+      ...(asked.name !== undefined ? { name: asked.name } : {}),
+      ...(asked.nonInteractive === true ? { nonInteractive: true } : {}),
+      ...(asked.preventShellHistory === true ? { preventShellHistory: true } : {}),
+      ...(asked.machine !== undefined ? { machine: asked.machine } : {}),
+      emit: (_channel, action) => {
+        dispatch(asked.uri, action);
+        // Kept before the action reaches whoever asked, so a terminal the
+        // action names answers from the moment it can be read.
+        if ((action as Bag).type === 'terminal/exited' && asked.kept !== undefined) {
+          ctx.keepExited(asked.kept.chat, asked.kept.key, asked.kept.session, terminal.state(), terminal.exitCode());
+        }
+        asked.onAction?.(action as Bag);
+      },
+    });
+    terminals.set(asked.uri, terminal);
+    return terminal;
+  };
+
+  /**
    * One command, in a terminal of its own, and what it did.
    *
    * The composer's `!` shorthand runs here rather than in the session,
@@ -123,20 +204,21 @@ export function createTerminals(ctx: HostContext): Terminals {
       : undefined;
     const uri = call === undefined ? `ahp-terminal:/${crypto.randomUUID()}` : retainedTerminalUri(call.chat, call.key);
     return await new Promise<Ran>((resolve) => {
-      const terminal = shells.create({
+      /*
+       * No shell named, so `shellOf` takes the daemon's own: `$SHELL`, then
+       * `/bin/sh`, or the first PowerShell found on Windows. `defaultShell`
+       * is what a client's own terminal opens, and this runs through a
+       * session - and a pushed shell must not be what a turn runs, because
+       * that is the escalation the review found.
+       */
+      const terminal = heldShell(shells, {
         uri,
         cwd,
         claim,
         command,
         name: 'Terminal',
-        // No shell named, so `shellOf` takes the daemon's own: `$SHELL`, then
-        // `/bin/sh`, or the first PowerShell found on Windows. `defaultShell`
-        // is what a client's own terminal opens, and this runs through a
-        // session - and a pushed shell must not be what a turn runs, because
-        // that is the escalation the review found.
-        emit: (_channel, action) => {
-          dispatch(uri, action);
-          if ((action as Bag).type !== 'terminal/exited') return;
+        onAction: (action) => {
+          if (action.type !== 'terminal/exited') return;
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
           // A command that ran in this session's directory may have moved it:
           // a commit, a checkout, or anything that wrote a file.
@@ -158,7 +240,6 @@ export function createTerminals(ctx: HostContext): Terminals {
           resolve({ output: printed, terminal: uri, ...ptyOf(terminal), code });
         },
       });
-      terminals.set(uri, terminal);
       log(`ran ${command} in ${uri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
       opened?.({ uri, ...ptyOf(terminal) });
@@ -282,7 +363,18 @@ export function createTerminals(ctx: HostContext): Terminals {
       if (ctx.closed) throw new Error(CLOSING);
       const key = crypto.randomUUID();
       const uri = retainedTerminalUri(chatUri, key);
-      const terminal = shells.create({
+      /*
+       * No shell named, so the daemon's own is used.
+       *
+       * A backend opening a terminal runs a turn's command, and an automation
+       * fires with nobody connected at all, so the pushed `defaultShell` is not
+       * what it opens. Answered deliberately (the user, 2026-09-23): the
+       * daemon's default only. It costs an agent's terminal the shell you
+       * chose in your client, and it closes by construction the path where
+       * writing a file and naming it in `defaultShell` made the next tool call
+       * run it.
+       */
+      const terminal = heldShell(shells, {
         uri,
         cwd: asked.cwd,
         claim: { kind: 'session', session: sessionUri, chat: chatUri },
@@ -290,31 +382,17 @@ export function createTerminals(ctx: HostContext): Terminals {
         ...(asked.args !== undefined ? { args: asked.args } : {}),
         ...(asked.env !== undefined ? { env: asked.env } : {}),
         ...(asked.name !== undefined ? { name: asked.name } : {}),
-        /*
-         * No shell named, so the daemon's own is used.
-         *
-         * A backend opening a terminal runs a turn's command, and an automation
-         * fires with nobody connected at all, so the pushed `defaultShell` is not
-         * what it opens. Answered deliberately (the user, 2026-09-23): the
-         * daemon's default only. It costs an agent's terminal the shell you
-         * chose in your client, and it closes by construction the path where
-         * writing a file and naming it in `defaultShell` made the next tool call
-         * run it.
-         */
-        emit: (_channel, action) => {
-          dispatch(uri, action);
+        kept: { chat: chatUri, key, session: sessionUri },
+        onAction: (action) => {
           // The root list says whether a terminal is still running, so it is
           // stale the moment one exits and reaches nobody unless it moves.
-          if ((action as Bag).type === 'terminal/exited') {
-            ctx.keepExited(chatUri, key, sessionUri, terminal.state(), terminal.exitCode());
-            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
-            // A command that ran in this session's directory may have moved it.
-            const ranIn = dirOfFile(asked.cwd);
-            if (ranIn !== undefined) void refreshWatched(ranIn);
-          }
+          if (action.type !== 'terminal/exited') return;
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+          // A command that ran in this session's directory may have moved it.
+          const ranIn = dirOfFile(asked.cwd);
+          if (ranIn !== undefined) void refreshWatched(ranIn);
         },
       });
-      terminals.set(uri, terminal);
       // The same observation the client path makes, so a plugin watching for a
       // shell cannot tell which half of the host opened it.
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked.cwd });
@@ -424,6 +502,7 @@ export function createTerminals(ctx: HostContext): Terminals {
         isInAltBuffer: () => false,
         isBracketedPasteMode: () => false,
         whenAltBuffer: () => Promise.resolve(),
+        whenScreenSettled: () => Promise.resolve(),
       };
 
       outputs.add(uri);
@@ -464,7 +543,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     },
   });
 
-  return { bang, terminalInfo, heldTerminals, heldOutputs };
+  return { bang, terminalInfo, heldTerminals, heldShell, heldOutputs };
 }
 
 /**

@@ -797,6 +797,7 @@ export function createTerminal(
     isInAltBuffer: () => screen?.isInAltBuffer() ?? false,
     isBracketedPasteMode: () => screen?.isBracketedPasteMode() ?? false,
     whenAltBuffer: () => screen?.whenAltBuffer() ?? Promise.resolve(),
+    whenScreenSettled: () => screen?.whenSettled?.() ?? Promise.resolve(),
     lifecycle: () => (exitCode === undefined
       ? { status: 'running' }
       : { status: 'exited', exitCode }),
