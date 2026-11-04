@@ -187,7 +187,8 @@ it('steers the running turn with its pasted image', async () => {
   pi.hold();
   session.sendMessage('t1', 'first');
   await until(() => prompts(pi).length === 1);
-  expect(session.sendSteeringMessage?.({ id: 't1', text: 'actually', attachments: [written(smallImage, 'small.png', 'image/png')] })).toBe(true);
+  // Answered once pi has read it, which the hand-off waits on.
+  expect(session.sendSteeringMessage?.({ id: 't1', text: 'actually', attachments: [written(smallImage, 'small.png', 'image/png')] })).toBeInstanceOf(Promise);
   await until(() => pi.asked.some((one) => one.kind === 'steer'));
 
   expect(pi.asked.find((one) => one.kind === 'steer'))
@@ -212,9 +213,9 @@ it('sends a turn handed while another runs with its image when its turn comes', 
 });
 
 it('keeps a turn\'s attachments on the message the turn was accepted with', async () => {
-  const { session, pi, last } = opened();
+  const { session, pi } = opened();
   const one = written(smallImage, 'small.png', 'image/png');
   session.sendMessage('t1', 'look', undefined, [one]);
-  await until(() => prompts(pi).length === 1);
-  expect((last('chat/turnStarted')?.message as Bag).attachments).toEqual([one]);
+  await until(() => prompts(pi).length === 1 && (session.chatState().turns as Bag[]).length === 1);
+  expect(((session.chatState().turns as Bag[])[0]?.message as Bag).attachments).toEqual([one]);
 });

@@ -1,6 +1,6 @@
 ---
 title: cofold, pi, ACP and the bot follow the contract
-status: todo
+status: done
 depends: [task-04-the-session-contract-follows-iagent.md, task-05-the-host-owns-the-queue.md]
 layer: agents
 refs:
@@ -48,4 +48,10 @@ Each answers false to a steer while its turn prepares, and puts the turn's instr
 - **From 07:** the host books each turn's start as it hands the turn over, and drops a backend's start of it.
 - **Also from 05:** the queues of cofold, pi and ACP are fed by nothing and go here.
 - **Withdrawal:** cofold's is `withdrawSteeringMessage`.
+- **Done:** steps 1 to 7, at the commit that closes this task, with a case for each validation item but the bot's.
+- **The bot's item:** a stop taking pending steering out and starting nothing is 05's host case; the bot keeps no steering since 05.
+- **Examples:** echo and notes say no start of a turn they are handed either, as step 1 reads for every backend.
+- **cofold's settled run:** a run that settled declines a steer at once, so a message it gave back goes to the next run.
+- **A stop:** each drops the turns handed behind the one it stops; the bot ends them in its log.
+- **Instructions:** cofold puts them in the turn's system prompt, pi and ACP ahead of the words in its prompt.
 

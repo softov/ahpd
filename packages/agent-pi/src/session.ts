@@ -7,8 +7,8 @@
  *
  * What pi gives this bridge for free, and what it does not:
  *
- * - **Steering** is pi's own `steer()`, so a message mid-turn is the thing it
- *   says it is rather than a queued message pretending.
+ * - **Steering** is pi's own `steer()`: a message mid-turn goes into the turn
+ *   pi is running, read before its next step.
  * - **Truncation** is `navigateTree`: pi's sessions are append-only trees, the
  *   leaf moves, and the abandoned path stops being context. That is exactly
  *   what `chat/truncated` asks for, so `rewindAt` is honest here.
@@ -25,9 +25,9 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, callTimes, createClientCalls, holdsTheQueue, idFor, partsOf, reason, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
+import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects,
+  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
@@ -99,22 +99,14 @@ const promptFor = async (
   return { text: said.join('\n\n'), images };
 };
 
-/** The attachments a message a client sent carries, where it carries any. */
-const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
-  const kept = bag(message).attachments;
-  return Array.isArray(kept) ? kept as MessageAttachment[] : undefined;
-};
-
-/**
- * A turn said while pi ran another: what it runs, the queued message it came
- * from if it did, and the turn as it was said.
- */
+/** A turn handed while pi ran another: what `sendMessage` was handed. */
 interface Waiting {
-  said: Bag;
+  turnId: string;
+  text: string;
   model?: Chosen | undefined;
   from?: MessageFrom | undefined;
-  queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
+  options?: TurnOptions | undefined;
 }
 
 /**
@@ -198,32 +190,15 @@ export function piSession(
   let closed = false;
   let cancelled = false;
   /**
-   * Whether a client changed the queue while a stop was in flight.
-   *
-   * A stopped turn starts nothing behind it, as the reference host leaves
-   * queued messages queued, and a message queued, taken back or reordered
-   * after the stop starts the head of the queue once pi lets the turn go, as
-   * the reference host's drain takes the head once a client changes the queue
-   * while idle.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-   */
-  let askedSinceStop = false;
-  /**
-   * The turns said while pi still ran another, in the order they came, each
-   * run once the turn in front of it is over.
-   *
-   * A turn a client sends while one runs is said at once, so it takes the place
-   * of the one before it in every client's state, as the protocol's reducer
-   * replaces the active turn; pi runs one prompt at a time, so it runs after.
-   * A message queued while a stopped turn winds down is started the same way:
-   * every client holds the chat idle once the stop is said, and the reference
-   * host takes the head of the queue when a message is set on an idle chat.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L87-L89
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   * The turns handed while pi still ran another, in the order they came, each
+   * run once the turn in front of it is over, as the reference agent runs each
+   * send after the one before it: pi runs one prompt at a time. The host said
+   * each start, so the turn it took the place of runs on here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    */
   const waiting: Waiting[] = [];
+  /** The turn whose prompt pi has been handed, which steering goes into. */
+  let prompted: string | undefined;
   /** The turns a later one took the place of, which run on and end in no history. */
   const replaced = new Set<string>();
   /** What it is doing, and the one handle that says it. */
@@ -258,20 +233,15 @@ export function piSession(
    * being handed the last answer's count, and the sum is what the turn ends on.
    */
   let spent: Bag | undefined;
-  /** Messages waiting for the running turn to end. The host's, not a client's. */
-  const queued: Bag[] = [];
   /**
-   * The chat's steering message, as every client's reducer holds it: the last
-   * one said, until it is taken out.
-   */
-  let steering: Bag | undefined;
-  /**
-   * The steering messages handed to pi and not yet read, by id, oldest first.
+   * The steering messages handed to pi and not yet read, by id, oldest first,
+   * each with the answer its hand-off is waiting on.
    *
    * pi holds them in the order they were handed and says the queue on every
    * change, so the ones its queue no longer counts are the oldest here.
    */
   const handed: string[] = [];
+  const answers = new Map<string, (taken: boolean) => void>();
   let draft: Bag | undefined;
   /** The models pi reported, once it has been asked. */
   let models: { id: string; name: string }[] = [];
@@ -314,11 +284,30 @@ export function piSession(
 
   const touch = (): void => { modified = new Date().toISOString(); };
 
-  /** A steering message pi no longer holds, read into the turn or let go, taken out of the chat. */
+  /** A steering message pi read into the turn, taken out of the chat, its hand-off answered `true`. */
   const takenOut = (id: string): void => {
-    if (steering?.id === id) steering = undefined;
     emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+    answers.get(id)?.(true);
+    answers.delete(id);
     touch();
+  };
+
+  /**
+   * The steering messages pi still holds when the turn they went into ends,
+   * handed back: their hand-offs answer `false`, for the host to steer the turn
+   * that runs then or run them next, as the reference agent hands back a
+   * steering message whose turn ended first. pi is told to let them go first,
+   * so its queue says nothing of them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1949
+   */
+  const handBack = (): void => {
+    const left = handed.splice(0);
+    if (left.length === 0) return;
+    live?.clearSteering();
+    for (const id of left) {
+      answers.get(id)?.(false);
+      answers.delete(id);
+    }
   };
 
   /**
@@ -767,16 +756,11 @@ export function piSession(
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
     touch();
-    /*
-     * Only a turn that completed starts the queue, as the reference host drains
-     * it after a success: a stopped or failed turn leaves it waiting, and starts
-     * only what a client's change to it asked for. A turn said while this one
-     * ran goes on whatever the ending.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
-     */
-    const asked = askedSinceStop;
-    askedSinceStop = false;
-    if (ending === 'complete' || asked || waiting.length > 0) startNext();
+    // The steering the turn did not read, and the turn handed behind it, which
+    // runs whatever the ending: each send is its own.
+    handBack();
+    prompted = undefined;
+    sendNext();
   };
 
   /**
@@ -1092,54 +1076,25 @@ export function piSession(
   };
 
   /**
-   * A turn sent while pi runs another, said now as the chat's turn and run
-   * once the turn in front of it is over. The turn it takes the place of, the
-   * running one or one said before it, runs on and ends in no history; a turn
-   * pi still runs after a stop already ended in every client's state.
-   */
-  const hand = (turnId: string, text: string, rest: Omit<Waiting, 'said'>): void => {
-    const shown = waiting.at(-1)?.said ?? (cancelled ? undefined : active);
-    if (shown !== undefined) replaced.add(String(shown.id));
-    const ran = rest.model?.id ?? live?.chosen()?.id ?? options.model;
-    const said: Bag = {
-      id: turnId,
-      startedAt: new Date().toISOString(),
-      message: {
-        text,
-        origin: rest.from?.origin ?? { kind: 'user' },
-        ...(rest.from?._meta !== undefined ? { _meta: rest.from._meta } : {}),
-        ...(rest.attachments !== undefined && rest.attachments.length > 0 ? { attachments: rest.attachments } : {}),
-        ...(ran !== undefined
-          ? { model: { id: ran, ...(rest.model?.config !== undefined ? { config: rest.model.config } : {}) } }
-          : {}),
-      },
-      responseParts: [],
-    };
-    waiting.push({ ...rest, said });
-    titled(text);
-    emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt: said.startedAt,
-      message: said.message,
-      ...(rest.queuedMessageId !== undefined ? { queuedMessageId: rest.queuedMessageId } : {}),
-    });
-    touch();
-  };
-
-  /**
    * Start a turn, once there is nothing else running.
    *
-   * `said` is a turn said while another ran, which runs now as it was said.
+   * Its preparation reads whether it was stopped after each of its steps, and
+   * a turn stopped while it prepared sends pi nothing and ends cancelled, as
+   * the reference host checks for a cancel after each step of a turn's
+   * preparation. What the host has to say on the turn goes ahead of the words
+   * in its prompt, since pi takes nothing beside a prompt but the instructions
+   * it was opened with, as every reference agent puts the instructions its
+   * host contributes for a send into that turn's prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2316
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
    */
   const begin = (
     turnId: string,
     text: string,
     model?: Chosen,
     from?: MessageFrom,
-    queuedMessageId?: string,
     attachments?: MessageAttachment[],
-    said?: Bag,
+    turnOptions?: TurnOptions,
   ): void => {
     failed = undefined;
     cancelled = false;
@@ -1178,7 +1133,7 @@ export function piSession(
     // No part yet: each is opened when pi starts writing the block it holds.
     // The fields `ActiveTurn` declares; `finish` gives it the `state` a `Turn`
     // carries once it ends.
-    active = said ?? {
+    active = {
       id: turnId,
       startedAt,
       message,
@@ -1196,31 +1151,34 @@ export function piSession(
     watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[], state: 'complete' };
     watchedTurns.push(watched);
 
-    if (said === undefined) {
-      titled(text);
-      emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt,
-        message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
-    }
+    titled(text);
     activity.say('Thinking');
     touch();
+    // What the host has to say on this turn, asked now that the turn exists.
+    const told = (turnOptions?.instructions?.() ?? []).filter((one) => one.trim() !== '');
+    // Whether the turn ended, or a stop came, while it prepared: a stop ends it unsent.
+    const stopped = (): boolean => {
+      if (active?.id !== turnId) return true;
+      if (!cancelled) return false;
+      finish('cancelled');
+      return true;
+    };
 
     void (async () => {
       try {
         let backend = await opened();
+        if (stopped()) return;
         // pi fixes its custom tools when it is built, so a change made since
         // means a rebuilt pi on the same file before this turn runs.
         if (stale) backend = await reopen(backend);
+        if (stopped()) return;
         /*
          * The record's variables, before the choice and the prompt: the keys
          * are what a provider is available by, and a key edited between two
          * turns is the one this turn's request carries.
          */
         await backend.useEnv(options.env ?? {});
+        if (stopped()) return;
         const wanted = model?.id ?? (moved ? options.model : undefined);
         if (wanted !== undefined) {
           /*
@@ -1233,9 +1191,12 @@ export function piSession(
           if (!await backend.choose(wanted, model?.config)) {
             throw new Error(`pi has no model ${wanted}`);
           }
+          if (stopped()) return;
         }
-        const asked = await promptFor(text, attachments, backend.takesImages());
+        const asked = await promptFor(told.length === 0 ? text : `${told.join('\n\n')}\n\n${text}`, attachments, backend.takesImages());
+        if (stopped()) return;
         promptedAfter = backend.leaf();
+        prompted = turnId;
         await backend.prompt(asked.text, asked.images);
         /*
          * `prompt` settling is not the turn ending: pi raises `agent_settled`
@@ -1244,65 +1205,16 @@ export function piSession(
          */
       }
       catch (error) {
-        finish('error', reason(error));
+        if (active?.id === turnId) finish('error', reason(error));
       }
     })();
   };
 
-  /**
-   * Whatever was waiting, once the turn in front of it is done.
-   *
-   * The turn names the message as its `queuedMessageId`, which takes it out of
-   * every client's queue, and nothing is said before it: the reference host
-   * starts a queued message that way, and its chat finds the message a turn
-   * consumed in the queue it held when the turn started.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L283-L292
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2992-L2999
-   */
-  const startNext = (): void => {
-    if (closed) return;
-    /*
-     * While pi still lets a stopped turn go, every client holds the chat idle,
-     * so the head of the queue is said as the chat's turn now, and runs once
-     * pi is free.
-     */
-    if (active !== undefined) {
-      if (!cancelled || waiting.length > 0) return;
-      // Steering first, as the drain below takes it.
-      const [head] = queued.splice(Math.max(0, queued.findIndex((one) => one.steering === true)), 1);
-      if (head === undefined) return;
-      hand(String(head.id), String(bag(head.message).text ?? ''), {
-        queuedMessageId: String(head.id),
-        model: head.model as Chosen | undefined,
-        attachments: attachmentsOf(head.message),
-      });
-      return;
-    }
-    // A turn said while another ran goes first, as it was said.
-    const first = waiting.shift();
-    if (first !== undefined) {
-      begin(String(first.said.id), String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
-      return;
-    }
-    // Nor behind a failure a client can resume, which waits to be resumed.
-    if (holdsTheQueue(turns.at(-1))) return;
-    /*
-     * The first steering message waiting, in the order they came, and then the
-     * head: the reference host's drain runs steering that came too late to
-     * steer a turn ahead of queued messages.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-     */
-    const [next] = queued.splice(Math.max(0, queued.findIndex((held) => held.steering === true)), 1);
-    if (next === undefined) return;
-    const id = String(next.id);
-    begin(
-      id,
-      String(bag(next.message).text ?? ''),
-      next.model as Chosen | undefined,
-      undefined,
-      id,
-      attachmentsOf(next.message),
-    );
+  /** The first turn handed while another ran, once nothing runs. */
+  const sendNext = (): void => {
+    if (closed || active !== undefined) return;
+    const next = waiting.shift();
+    if (next !== undefined) begin(next.turnId, next.text, next.model, next.from, next.attachments, next.options);
   };
 
   /** The model a client picked, taken by the next send: pi keeps a model it took. */
@@ -1370,29 +1282,20 @@ export function piSession(
       status: statusOf(bits()),
       modifiedAt: modified,
       turns,
-      // The last turn said, which may be one still waiting for pi.
-      ...((waiting.at(-1)?.said ?? active) !== undefined ? { activeTurn: waiting.at(-1)?.said ?? active } : {}),
+      ...(active !== undefined ? { activeTurn: active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      // A steering message no turn was running to take waits ahead of the
-      // queue, and is still a steering message while it waits: the one set
-      // last, as the protocol's reducer holds the latest.
-      ...(steering !== undefined
-        ? { steeringMessage: steering }
-        : queued.filter((held) => held.shown === true)
-          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
-      queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    // A turn sent while pi runs another is run after it.
-    sendMessage: (turnId, text, from, attachments) => {
+    // A turn sent while pi runs another is run after it; the turn it took the
+    // place of in every client's state runs on here and ends in no history.
+    sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      if (active !== undefined || waiting.length > 0) {
-        hand(turnId, text, { model, from, attachments });
-        return;
-      }
-      begin(turnId, text, model, from, undefined, attachments);
+      const shown = waiting.at(-1)?.turnId ?? (cancelled || active === undefined ? undefined : String(active.id));
+      if (shown !== undefined) replaced.add(shown);
+      waiting.push({ turnId, text, model, from, attachments, options: turnOptions });
+      sendNext();
     },
 
     changeModel: (model) => { chosen = model; },
@@ -1402,54 +1305,54 @@ export function piSession(
     /**
      * A message into the turn that is already running.
      *
-     * pi's own `steer`, so this is the thing the protocol means rather than a
-     * queued message dressed as one. False when there is nothing to steer,
-     * which the host turns into a refusal rather than an ordinary message.
+     * pi's own `steer`, the thing the protocol means by steering. Answered as
+     * the reference agents answer a steering message: `false` while pi has not
+     * been handed the turn's prompt or the turn is stopping, which has the host
+     * hand it again on the turn's next action, and a promise that answers
+     * `true` once pi's queue no longer holds it, when its removal is said, or
+     * `false` when the turn ended first and handed it back.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1955
      *
-     * Said and held as the chat's steering message before pi has it, so the
-     * client that sent it is answered inside its dispatch. It is taken out
-     * once pi's queue no longer holds it, and at once when pi never queued
-     * it: an extension handled it, or the steer failed.
+     * One pi never queued is taken out at once: an extension handled it, or the
+     * steer failed.
      */
-    sendSteeringMessage: ({ id, text, attachments, from }) => {
+    sendSteeringMessage: ({ id, text, attachments }) => {
       const backend = live;
-      if (active === undefined || backend === undefined) return false;
-      const message: Bag = {
-        text,
-        origin: from?.origin ?? { kind: 'user' },
-        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      };
-      steering = { id, message };
-      emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
-      // Built the way the turn's own prompt is, so a picture pasted into a
-      // correction reaches pi as one when the model takes it.
-      void promptFor(text, attachments, backend.takesImages())
-        .then((asked) => {
-          handed.push(id);
-          return backend.steer(asked.text, asked.images);
-        })
-        .then(
-          (disposition) => disposition === 'queued',
-          /*
-           * A steer pi would not take is the steering message's failure: the
-           * turn runs on in pi, and a client holds it running. Said in the
-           * log and taken out, as the reference drops a steering message it
-           * cannot hand its agent.
-           * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
-           */
-          (error: unknown) => {
+      const turnId = active === undefined ? undefined : String(active.id);
+      if (backend === undefined || turnId === undefined || prompted !== turnId || cancelled) return false;
+      return new Promise<boolean>((resolve) => {
+        answers.set(id, resolve);
+        void (async () => {
+          let queued = false;
+          try {
+            // Built the way the turn's own prompt is, so a picture pasted into
+            // a correction reaches pi as one when the model takes it.
+            const asked = await promptFor(text, attachments, backend.takesImages());
+            // The turn ended while the pictures were read, and handed back what it held.
+            if (prompted !== turnId) {
+              answers.delete(id);
+              resolve(false);
+              return;
+            }
+            handed.push(id);
+            queued = await backend.steer(asked.text, asked.images) === 'queued';
+          }
+          catch (error) {
+            /*
+             * A steer pi would not take is the steering message's failure: the
+             * turn runs on in pi, and a client holds it running. Said in the
+             * log and taken out, as the reference drops a steering message it
+             * cannot hand its agent.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
+             */
             console.warn(`@ahpd/agent-pi: pi did not take the steering message ${id}: ${reason(error)}`);
-            return false;
-          },
-        )
-        .then((queued) => {
+          }
           if (queued) return;
           const at = handed.indexOf(id);
           if (at >= 0) handed.splice(at, 1);
-          takenOut(id);
-        });
-      touch();
-      return true;
+          if (answers.has(id)) takenOut(id);
+        })();
+      });
     },
 
     /**
@@ -1461,9 +1364,6 @@ export function piSession(
      * run writes is added after them. pi continues from the call that failed or
      * the request that was cut off - see `PiBackend.resume` - so the calls the
      * turn already ran are not run again.
-     *
-     * `chat/turnResume` is said here, while the client's action is being
-     * applied, so it goes out as that action's echo.
      */
     resumeTurn: (turnId) => {
       const last = turns.at(-1);
@@ -1495,7 +1395,6 @@ export function piSession(
       // back with it. A turn read from pi's file is there once the file has been.
       watched = watchedTurns.find((one) => one.turnId === turnId);
       if (watched !== undefined) watched.parts = parts;
-      emit('chat', { type: 'chat/turnResume', turnId });
       activity.say('Thinking');
       touch();
 
@@ -1515,32 +1414,18 @@ export function piSession(
       })();
     },
 
+    /*
+     * A stop: the turns handed behind the one running are sent to nobody, the
+     * steering pi holds goes back, and the run is stopped, as the reference stop
+     * aborts the agent's work in flight and drops what waits behind it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
+     */
     abort: () => {
-      /*
-       * A stop of a turn said while another ran: it ends now, the turns
-       * waiting with it go, and the run in front of it is stopped, as the
-       * reference stop aborts the agent's work in flight and drops the turns
-       * waiting behind it.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
-       */
-      const shown = waiting.at(-1)?.said;
-      if (shown !== undefined) {
-        waiting.length = 0;
-        shown.state = 'cancelled';
-        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
-        turns.push(shown);
-        emit('chat', { type: 'chat/turnCancelled', turnId: String(shown.id), duration: shown.duration });
-        touch();
-      }
+      waiting.length = 0;
       if (active === undefined || cancelled) return;
       cancelled = true;
       activity.say('Stopping');
-      /*
-       * The steering pi was handed and has not read goes with the stop, so
-       * none of it reaches a later run; pi says each one let go.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
-       */
-      live?.clearSteering();
+      handBack();
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
       calls.release('The turn was stopped');
@@ -1551,10 +1436,8 @@ export function piSession(
       void live?.abort().catch(() => { finish('cancelled'); });
     },
 
-    setDraft: (next) => {
-      draft = next;
-      emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
+    // The draft the host said, held for the chat's state.
+    setDraft: (next) => { draft = next; },
 
     /*
      * A person's answer to a call that was shown `pending-confirmation`.

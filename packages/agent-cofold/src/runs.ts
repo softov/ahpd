@@ -152,14 +152,13 @@ export const createRuns = (ctx: SessionContext): Runs => {
        */
       start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
       /*
-       * Only a turn that completed starts the queue, as the reference host
-       * drains it after a success: somebody stopping a turn is stopping this
-       * conversation, and a failed turn leaves what waits for a client to
-       * start. A turn said while this one ran goes on whatever the ending.
-       * After the ending, so the next turn starts after the last one ended.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+       * The turn handed behind it runs whatever the ending, as the reference
+       * agent runs each send after the one before it; a stop drops the turns
+       * handed behind the one it stops. After the ending, so the next turn
+       * starts after the last one ended.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
        */
-      if (ended && (ending === 'complete' || ctx.waiting.length > 0)) ctx.startNext();
+      if (ended) ctx.sendNext();
     }
     hold();
     if (mapped.settled !== undefined) pending.delete(mapped.settled);

@@ -1,24 +1,21 @@
 import type { CreateElicitationResponse, PromptCapabilities, SessionModeState, SessionUpdate } from '@agentclientprotocol/sdk';
-import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, OpenedTerminal, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, OpenedTerminal, Start, TurnOptions } from '@ahpd/sdk';
 import type { TypedAnswer } from '../mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
 import type { ClientCalls } from './clientcalls.js';
 import type { Config } from './config.js';
 import type { Handlers } from './handlers.js';
 import type { Opening } from './opening.js';
-import type { Queue } from './queue.js';
 import type { Turn } from './turn.js';
 
-/**
- * A turn said while the server ran another: what it runs, the queued message
- * it came from if it did, and the turn as it was said.
- */
+/** A turn handed while the server ran another: what `sendMessage` was handed. */
 export interface Waiting {
-  said: Bag;
+  turnId: string;
+  text: string;
   model?: Chosen | undefined;
   from?: MessageFrom | undefined;
-  queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
+  options?: TurnOptions | undefined;
 }
 
 /**
@@ -57,7 +54,7 @@ export interface HeldTerminal {
  * than copied onto a factory's own scope at construction - so the order the
  * areas are built in never matters and nothing is frozen.
  */
-export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, ClientCalls {
+export interface SessionContext extends Config, Handlers, Opening, Turn, ClientCalls {
   /** The backend's identity and wiring. */
   options: AcpOptions;
   /** What this particular session was told. */
@@ -111,13 +108,12 @@ export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, 
   heardModes?: (modes: { id: string; name: string }[]) => void;
   active: Bag | undefined;
   /**
-   * The turns said while the server ran another, in the order they came, each
-   * prompted once the turn in front of it is over.
-   *
-   * Said at once, so each takes the place of the one before it in every
-   * client's state, as the protocol's reducer replaces the active turn; a
-   * session runs one prompt at a time, so each runs after.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+   * The turns handed while the server ran another, in the order they came,
+   * each prompted once the turn in front of it is over: a session runs one
+   * prompt at a time, as the reference agent runs each send after the one
+   * before it. The host said each start, so the turn it took the place of in
+   * every client's state runs on here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
    */
   waiting: Waiting[];
@@ -201,8 +197,6 @@ export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, 
    * is read as nothing to do.
    */
   renamed: boolean;
-  /** Messages waiting for the running turn to end. The host's, not a client's. */
-  queued: Bag[];
   /** The catalogue's record of this session, once the server has named it. */
   record: WatchedSession | undefined;
   /** The turn being watched, while one runs. Kept for the transcript. */

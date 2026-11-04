@@ -186,7 +186,7 @@ export function notes(options: NotesOptions): Agent {
     /** Finished turns. The running one is `active` and is deliberately not here. */
     const turns: Bag[] = [...(start.seed ?? [])];
     let active: Bag | undefined;
-    /** The turns said while another ran, each worked once the one in front of it is done. */
+    /** The turns handed while another ran, each worked once the one in front of it is done. */
     const handed: { turn: Bag; text: string }[] = [];
     /** The turns a later one took the place of. */
     const replaced = new Set<string>();
@@ -450,27 +450,26 @@ export function notes(options: NotesOptions): Agent {
     };
 
     /**
-     * Start a turn. One handed while another runs is said now, taking that
-     * one's place in every client's state as the protocol's reducer replaces
-     * the active turn, and worked once that one is done; `said` is such a turn,
-     * worked now as it was said. The turn it replaced runs on, in no history.
+     * Work a turn the host handed. The host said its start, so one handed
+     * while another runs took that one's place in every client's state as the
+     * protocol's reducer replaces the active turn, and is worked once that one
+     * is done; `waited` is such a turn, worked now. The turn it replaced runs
+     * on, in no history.
      */
-    const beginTurn = (turnId: string, text: string, said?: Bag): void => {
-      if (said === undefined && title === 'Notes session' && text) {
+    const beginTurn = (turnId: string, text: string, waited?: Bag): void => {
+      if (waited === undefined && title === 'Notes session' && text) {
         title = text.slice(0, 60);
         start.emit('session', { type: 'session/titleChanged', title });
       }
       const startedAt = new Date().toISOString();
-      const turn: Bag = said ?? { id: turnId, startedAt, message: { text }, responseParts: [] };
-      if (said === undefined && (active !== undefined || handed.length > 0)) {
+      const turn: Bag = waited ?? { id: turnId, startedAt, message: { text }, responseParts: [] };
+      if (waited === undefined && (active !== undefined || handed.length > 0)) {
         replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
         handed.push({ turn, text });
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
         touch();
         return;
       }
       active = turn;
-      if (said === undefined) start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
       doing('Reading what you asked');
       const began = Date.now();
 
@@ -488,7 +487,7 @@ export function notes(options: NotesOptions): Agent {
         touch();
         remember();
         start.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
-        startNext();
+        sendNext();
       })();
       touch();
     };
@@ -549,8 +548,8 @@ export function notes(options: NotesOptions): Agent {
       await say(turn, ran ? `${file} is saved.` : `Left ${file} alone.`);
     };
 
-    /** The next turn said while another ran, worked as it was said once nothing runs. */
-    const startNext = (): void => {
+    /** The next turn handed while another ran, worked once nothing runs. */
+    const sendNext = (): void => {
       if (active || closed) return;
       const first = handed.shift();
       if (first !== undefined) beginTurn(String(first.turn.id), first.text, first.turn);
@@ -596,8 +595,7 @@ export function notes(options: NotesOptions): Agent {
         status: status(),
         modifiedAt: modified,
         turns,
-        // The last turn said, which may be one still waiting its turn.
-        ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
+        ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
       }),
@@ -609,13 +607,8 @@ export function notes(options: NotesOptions): Agent {
       changeModel: () => {},
       changeAgent: () => {},
 
-      setDraft: (next) => {
-        if (JSON.stringify(next) === JSON.stringify(draft)) return;
-        draft = next;
-        // The key is left off to clear it, which is what the action's
-        // `undefined` means and the only way JSON can say it.
-        start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-      },
+      // The draft the host said, held for the chat's state.
+      setDraft: (next) => { draft = next; },
 
       /**
        * Stop the turn, and answer anything it was blocked on.
@@ -625,8 +618,8 @@ export function notes(options: NotesOptions): Agent {
        * a promise that is never settled.
        */
       abort: () => {
-        // The chat's turn is the last one said; the turns it took the place of
-        // stop with it, in no history.
+        // The chat's turn is the last one handed; the turns it took the place
+        // of stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
         for (const held of [...waiting.values()]) {
           wanted(held.id);

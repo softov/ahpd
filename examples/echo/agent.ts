@@ -102,14 +102,13 @@ export function echo(options: EchoOptions): Agent {
     /** What it is doing, or nothing while it is idle. */
     let activity: string | undefined;
     /**
-     * The turns said while another ran, each echoed once the one in front of
+     * The turns handed while another ran, each echoed once the one in front of
      * it is done.
      *
-     * Said at once, so each takes the place of the one before it in every
-     * client's state, as the protocol's reducer replaces the active turn: a
-     * backend handed a turn while one runs takes it rather than refusing it,
-     * and runs the turns it is handed one at a time. The turn it replaced runs
-     * on, and is in no history.
+     * The host said each start, so each took the place of the one before it in
+     * every client's state, as the protocol's reducer replaces the active turn:
+     * a backend handed a turn while one runs takes it, and runs the turns it is
+     * handed one at a time. The turn it replaced runs on, and is in no history.
      */
     const handed: { turn: Bag; text: string }[] = [];
     /** The turns a later one took the place of. */
@@ -151,19 +150,19 @@ export function echo(options: EchoOptions): Agent {
     };
 
     /**
-     * Start a turn, whoever asked for it.
+     * Echo a turn the host handed.
      *
-     * One handed while another runs is said now and echoed once that one is
-     * done; `said` is such a turn, echoed now as it was said.
+     * One handed while another runs waits and is echoed once that one is done;
+     * `waited` is such a turn, echoed now.
      */
     const beginTurn = (
       turnId: string,
       text: string,
       from?: MessageFrom,
       attachments?: MessageAttachment[],
-      said?: Bag,
+      waited?: Bag,
     ): void => {
-      if (said === undefined && title === 'Echo session' && text) {
+      if (waited === undefined && title === 'Echo session' && text) {
         title = text.slice(0, 60);
         // Said, because a client that opened the session holds the old one.
         start.emit('session', { type: 'session/titleChanged', title });
@@ -180,16 +179,14 @@ export function echo(options: EchoOptions): Agent {
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
-      const turn: Bag = said ?? { id: turnId, startedAt, message, responseParts: [] };
-      if (said === undefined && (active !== undefined || handed.length > 0)) {
+      const turn: Bag = waited ?? { id: turnId, startedAt, message, responseParts: [] };
+      if (waited === undefined && (active !== undefined || handed.length > 0)) {
         replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
         handed.push({ turn, text });
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
         touch();
         return;
       }
       active = turn;
-      if (said === undefined) start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
       doing('Echoing');
 
       const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: '' };
@@ -220,13 +217,13 @@ export function echo(options: EchoOptions): Agent {
         touch();
         remember();
         start.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
-        startNext();
+        sendNext();
       })();
       touch();
     };
 
-    /** The next turn said while another ran, echoed as it was said once nothing runs. */
-    const startNext = (): void => {
+    /** The next turn handed while another ran, echoed once nothing runs. */
+    const sendNext = (): void => {
       if (active || closed) return;
       const first = handed.shift();
       if (first !== undefined) beginTurn(String(first.turn.id), first.text, undefined, undefined, first.turn);
@@ -273,19 +270,18 @@ export function echo(options: EchoOptions): Agent {
         status: status(),
         modifiedAt: modified,
         turns,
-        // The last turn said, which may be one still waiting its turn.
-        ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
+        ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
       }),
 
       /**
-       * The host says a turn has begun; making it true is this method.
+       * The host said a turn has begun before it handed the turn here; making
+       * it true is this method.
        *
-       * Note the order every backend has to keep: the turn is said first, then
-       * a part is opened, and only then does text stream into it. A
-       * `chat/delta` naming a part nobody opened appends to nothing, and a
-       * part naming a turn no client has is dropped.
+       * Note the order every backend has to keep: a part is opened before text
+       * streams into it. A `chat/delta` naming a part nobody opened appends to
+       * nothing, and a part naming a turn no client has is dropped.
        */
       sendMessage: (turnId, text, from, attachments) => beginTurn(turnId, text, from, attachments),
 
@@ -294,18 +290,12 @@ export function echo(options: EchoOptions): Agent {
       changeModel: () => {},
       changeAgent: () => {},
 
-      // Held by the session, so two people on one chat see each other's.
-      setDraft: (next) => {
-        if (JSON.stringify(next) === JSON.stringify(draft)) return;
-        draft = next;
-        // The key is left off to clear it, which is what the action's
-        // `undefined` means and the only way JSON can say it.
-        start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-      },
+      // The draft the host said, held for the chat's state.
+      setDraft: (next) => { draft = next; },
 
       abort: () => {
-        // The chat's turn is the last one said; the turns it took the place of
-        // stop with it, in no history.
+        // The chat's turn is the last one handed; the turns it took the place
+        // of stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
         if (!turn) return;
         handed.length = 0;

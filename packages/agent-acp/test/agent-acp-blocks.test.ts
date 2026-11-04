@@ -288,6 +288,21 @@ const turn = async (session: Session, watch: Watcher, text: string): Promise<voi
   await until(() => watch.ended() > before);
 };
 
+/*
+ * What the host has to say on a turn goes into that turn's prompt, ahead of
+ * what was said, as the reference agents put the instructions their host
+ * contributes for a send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+ */
+it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'told');
+  session.sendMessage('t1', 'what are these blocks?', undefined, undefined, { instructions: () => ['Report back to the chat this came from.', ' '] });
+  await until(() => watch.ended() > 0);
+  const said = watch.prose();
+  expect(said.slice(said.indexOf('blocks='))).toBe('blocks=text:Report back to the chat this came from.|text:what are these blocks?');
+});
+
 it('sends a turn handed while another runs with its attachments when its turn starts', async () => {
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = start(agent, 'queued');

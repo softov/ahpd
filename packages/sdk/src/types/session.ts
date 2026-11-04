@@ -673,10 +673,9 @@ export interface Session {
   stopWorker?(toolCallId: string): void;
 
   /**
-   * What somebody is part-way through typing.
-   *
-   * Held by the session so two people on one chat see each other's - a client
-   * that kept its own would need nothing from a host for this.
+   * What somebody is part-way through typing, which the host has said to every
+   * client of the chat: held for the chat's state the session answers, and
+   * said by nothing here.
    */
   setDraft(draft: Bag | undefined): void;
   /**

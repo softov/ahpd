@@ -381,6 +381,34 @@ it('keeps two turns in one cofold session and finishes both', async () => {
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('remember the number 41');
 });
 
+/*
+ * What the host has to say on a turn goes into that turn's run, in the system
+ * prompt its agent is built with, as the reference agents put the instructions
+ * their host contributes for a send into that turn's prompt.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+ */
+it('puts the send\'s instructions in that turn\'s system prompt, and only that turn\'s', async () => {
+  const model = createFakeModel({ script: [{ text: 'one' }, { text: 'two' }], stream: true });
+  const agent = cofoldAgent({ adapter: model, memory: true });
+  const ended: string[] = [];
+  const session = agent.create({
+    uri: 'ahp-session:/told',
+    chatUri: chatUriFor('ahp-session:/told'),
+    settings: agent.defaults(),
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-told-')),
+    schema: () => agent.schema(),
+    emit: (_channel, action) => { if (action.type === 'chat/turnComplete') ended.push(String(action.turnId)); },
+    clientToolTimeoutMs: 600_000,
+  });
+  session.sendMessage('t1', 'hi', undefined, undefined, { instructions: () => ['Report back to the chat this came from.'] });
+  await until(() => ended.length === 1);
+  session.sendMessage('t2', 'again');
+  await until(() => ended.length === 2);
+  expect(model.requests[0]?.instructions).toContain('Report back to the chat this came from.');
+  expect(model.requests[1]?.instructions).not.toContain('Report back to the chat this came from.');
+  await session.close();
+});
+
 /** A model that streams one delta and then waits, so a cancel lands mid-turn. */
 function heldModel(): ModelAdapter {
   let ids = 0;
@@ -650,6 +678,64 @@ it('runs a steering message the run never took in as a turn of its own, named by
   expect(started).toHaveLength(2);
   expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'one more thing' } });
   expect(asked[1]).toContain('one more thing');
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+});
+
+/**
+ * A model whose first answer is held until `release`, and whose next run calls
+ * the host's `lookup` before it answers, so that run has a step after its first.
+ */
+function gatedThenLooking(): { model: ModelAdapter; release: () => void; asked: string[] } {
+  const held = createFakeModel({ script: [{ text: 'answer 1' }], stream: true });
+  const looking = createFakeModel({ script: [{ toolCalls: [{ name: 'lookup', input: {} }] }, { text: 'done' }], stream: true });
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const asked: string[] = [];
+  const model: ModelAdapter = {
+    ...looking,
+    id: 'gated-then-looking',
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      asked.push(JSON.stringify(request.messages));
+      if (asked.length > 1) { yield* looking.stream!(request); return; }
+      yield { type: 'text.delta', text: 'working' };
+      await gate;
+      yield* held.stream!(request);
+    },
+  };
+  return { model, release, asked };
+}
+
+/*
+ * A steering message a run handed back, because it settled before a step read
+ * it, steers the turn the chat runs then, as the reference host steers the
+ * current turn with steering handed back unsent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L230-L243
+ */
+it('steers the turn that runs next with a steering message the run before it handed back', async () => {
+  const tool: HostTool = {
+    definition: {
+      name: 'lookup',
+      title: 'Look something up',
+      description: 'Looks a word up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    run: () => 'found x',
+  };
+  const { model, release, asked } = gatedThenLooking();
+  const { client, peer: p, chatUri } = await talking(model, [tool]);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  steer(client, chatUri, 4, 's1', 'one more thing');
+  await until(() => answer(p, chatUri, 4) !== undefined);
+  begin(client, chatUri, 't2', 'second');
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2'));
+  release();
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
+
+  // Read in the second turn's run, and taken out once it was, with no turn of its own.
+  expect(asked.slice(1).some((one) => one.includes('one more thing'))).toBe(true);
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId)).toEqual(['t1', 't2']);
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved').map((e) => e.action.id)).toEqual(['s1']);
   expect(fold(p, chatUri).steeringMessage).toBeUndefined();
 });
 

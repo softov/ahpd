@@ -1,5 +1,5 @@
 import type { Store, RunHandle } from '@cofold/agents';
-import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Start } from '@ahpd/sdk';
+import type { Activity, Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Start, TurnOptions } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
@@ -8,16 +8,14 @@ import type { Runs } from './runs.js';
 import type { Pauses } from './pauses.js';
 import type { Turns } from './turns.js';
 
-/**
- * A turn said while a run held another: what it runs, the queued message it
- * came from if it did, and the turn as it was said.
- */
+/** A turn handed while a run held another: what `sendMessage` was handed. */
 export interface Waiting {
-  said: Bag;
+  turnId: string;
+  text: string;
   model?: Chosen | undefined;
   from?: MessageFrom | undefined;
-  queuedMessageId?: string | undefined;
   attachments?: MessageAttachment[] | undefined;
+  options?: TurnOptions | undefined;
 }
 
 /**
@@ -50,30 +48,15 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   editing: Map<string, string>;
   pending: Map<string, OpenRequest>;
   points: Map<string, string>;
-  queued: Bag[];
-  /**
-   * The chat's steering message, as every client's reducer holds it: the last
-   * one said, until it is taken out.
-   */
+  /** The steering message the run was handed and has not read yet, whose removal is said once it reads it. */
   steering: { id: string; message: Bag } | undefined;
-  /**
-   * The steering messages the run they were sent into never took in, oldest
-   * first.
-   *
-   * cofold rejects a steer the run settled before reading, and leaves what
-   * becomes of it to the caller. Each one here is a turn of its own once the
-   * chat is idle, ahead of the queue, as a message Claude's CLI never took in
-   * is.
-   */
-  untaken: { id: string; text: string; from?: MessageFrom; attachments?: MessageAttachment[] }[];
   /**
    * The steering messages a client took back while the run still held them.
    *
    * cofold's submit gives a steer back only by rejecting it, so one taken back
-   * is dropped when it comes back rather than run as a turn of its own, as the
-   * reference host has its provider withdraw a steering message a client
-   * removes after handing it over.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
+   * is answered nowhere when it comes back, as the reference host has its
+   * provider withdraw a steering message a client removes after handing it over.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
    */
   withdrawn: Set<string>;
   settings: Record<string, unknown>;
@@ -98,14 +81,11 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   offered: BoundTool[];
   active: Bag | undefined;
   /**
-   * The turns said while a run held another, in the order they came, each run
-   * once the turn in front of it is over.
-   *
-   * Said at once, so each takes the place of the one before it in every
-   * client's state, as the protocol's reducer replaces the active turn; one
-   * run reads the session at a time, so each runs after.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
+   * The turns handed while a run held another, in the order they came, each
+   * run once the turn in front of it is over: one run reads the session at a
+   * time, as the reference agent runs each send after the one before it. The
+   * host said each start, so the turn it took the place of runs on here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    */
   waiting: Waiting[];
   /** The turns a later one took the place of, which run on and end in no history. */

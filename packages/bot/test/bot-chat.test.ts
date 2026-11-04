@@ -861,11 +861,18 @@ it('takes a second message while the answer is still coming, said in the first o
   expect((done['turns'] as Bag[]).map((turn) => turn['id'])).toEqual(['t2']);
 });
 
-it('says a begin at once in the open turn\'s place, and hands it on once the open turn is answered', async () => {
+/*
+ * A turn sent while another is open is handed on once the open turn is
+ * answered, as the reference agent runs each send after the one before it.
+ * The host said each start, so the chat says none, and the turn it took the
+ * place of is in no history.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
+ */
+it('hands a turn sent while another is open on once the open turn is answered, saying no start of either', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);
   // The bot, written the way a person writes one. No session is started here:
-  // what is tested below is a road into a turn no client's message takes.
+  // what is tested below is the backend the host hands its turns to.
   await client.handle({
     method: 'resourceWrite',
     params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
@@ -891,9 +898,8 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   session.sendMessage('t1', 'hello');
   session.sendMessage('t2', 'and then this');
 
-  // Said at once, in the open turn's place, as the reducer replaces the active
-  // turn; the open turn is still the one being answered.
-  expect(session.chatState().activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
+  // The open turn is the one being answered.
+  expect(session.chatState().activeTurn).toMatchObject({ id: 't1', message: { text: 'hello' } });
   expect(session.chatState().turns).toEqual([]);
   expect(heard).toEqual(['t1']);
 
@@ -905,8 +911,6 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   expect(next.activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
   expect(heard).toEqual(['t1', 't2']);
   expect(sent.map((one) => [one['type'], one['turnId']])).toEqual([
-    ['chat/turnStarted', 't1'],
-    ['chat/turnStarted', 't2'],
     ['chat/responsePart', 't1'],
     ['chat/turnComplete', 't1'],
   ]);

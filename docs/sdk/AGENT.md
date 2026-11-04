@@ -167,7 +167,7 @@ cofold stores a prompt under the turn's id, says nothing.
 **A turn is read back as it began.** The host records, in the session's folder
 under the chat, the transcript id each turn began under: its own id as it
 starts, whether a client sent it, the host took it up from the chat's queue, or
-your backend opened it with `queuedMessageId`, and what `onTurnRecorded` says. A read puts a turn your
+your backend opened it itself, and what `onTurnRecorded` says. A read puts a turn your
 transcript holds and the record does not inside the turn before it, and so does
 a turn recorded as the same turn as the one before, which is that turn written
 down again: Claude's CLI writes a steering message it runs after the turn's last
@@ -206,7 +206,17 @@ its agent with `changeAgent`, and its prompt with `sendMessage`. A
 `changeModel` that rejects ends the turn in a `modelSelectionFailed` error, one
 to `changeAgent` is logged and the turn is sent all the same, and a
 `sendMessage` that rejects ends it in a `sendFailed` error with your words. A
-turn stopped while the host prepared it is never sent.
+turn stopped while the host prepared it is never sent, and one stopped while
+you prepare it is yours to leave unsent: check for the stop before the prompt
+goes out.
+
+A turn handed while another runs is a send of its own, which you run once the
+work in front of it is done, as VS Code's agents run each send after the one
+before it; `abort` drops every turn handed behind the one it stops. The turn's
+`options.instructions()` is what the host has to say on that turn, asked when
+the turn begins, and goes into that turn's prompt, as each of VS Code's agents
+puts the instructions its host contributes for a send
+([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)).
 
 The chat's pending messages, queued and steering, are the host's, as VS Code's
 host holds them
