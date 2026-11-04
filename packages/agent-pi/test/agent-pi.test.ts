@@ -1015,6 +1015,25 @@ it('reads back a turn that had not ended as interrupted, as pi file reads one ba
   expect(closed?.[0]?.responseParts.at(-1)).toEqual(interrupted);
 });
 
+it('lists a session it watched as modified at its last change, as the chat is', async () => {
+  /*
+   * A listing dates a session by its last activity, as Codex's catalogue dates
+   * its threads, and the record wins over pi's file in the listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8204
+   */
+  const { session } = opened();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await new Promise((done) => { setTimeout(done, 5); });
+  session.sendMessage('t2', 'again');
+  await settled();
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
+  const row = (await agent.list?.())?.find((one) => one.id === 'pi-session-1');
+  expect(row?.modifiedAt).toBe(session.modifiedAt());
+  expect(Date.parse(String(row?.modifiedAt))).toBeGreaterThan(Date.parse(String(row?.createdAt)));
+  expect((await agent.find?.('pi-session-1'))?.modifiedAt).toBe(session.modifiedAt());
+});
+
 it('reads back the turns of a session it did watch', async () => {
   const { session } = opened();
   session.sendMessage('t1', 'hello');

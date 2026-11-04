@@ -791,10 +791,15 @@ export function piSession(
     /*
      * The chat's `modifiedAt` at a turn's end is its start plus its duration,
      * as the protocol's reducer moves it, and a turn a later one took the
-     * place of ends in no state.
+     * place of ends in no state. The catalogue's record is dated the same, as
+     * a listing dates a session by its last activity.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8204
      */
-    if (!gone) modified = new Date(Date.parse(String(turn.startedAt)) + duration).toISOString();
+    if (!gone) {
+      modified = new Date(Date.parse(String(turn.startedAt)) + duration).toISOString();
+      if (record !== undefined) record.modifiedAt = modified;
+    }
     // The steering the turn did not read, and the turn handed behind it, which
     // runs whatever the ending: each send is its own.
     handBack();
@@ -1208,8 +1213,10 @@ export function piSession(
     };
     watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
     watchedTurns.push(watched);
-    // A turn's start is the chat's `modifiedAt`, as the reducer moves it.
+    // A turn's start is the chat's `modifiedAt`, as the reducer moves it, and
+    // the record's.
     modified = String(active.startedAt);
+    if (record !== undefined) record.modifiedAt = modified;
 
     titled(text);
     activity.say('Thinking');
