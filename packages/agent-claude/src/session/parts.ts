@@ -49,7 +49,7 @@ export interface Parts {
   /** Forget a call's start, for a call that never ran, and hand back its bag. */
   untimed: (call: Bag) => Bag;
   /** Record a failure as a part of a turn, and hand the part back. `resumable` says a client may ask for the turn again. */
-  addFailure: (turn: Bag, why: string, resumable?: boolean) => Bag;
+  addFailure: (turn: Bag, errorType: string, why: string, resumable?: boolean) => Bag;
 }
 
 export function createParts(ctx: SessionContext): Parts {
@@ -327,14 +327,19 @@ export function createParts(ctx: SessionContext): Parts {
    * `chat/error` *carries* this part and appends it itself, so a
    * `chat/responsePart` for the same thing is the failure printed twice. The
    * part is `{ kind, error }` and nothing else: `ErrorResponsePart` has no id.
+   *
+   * `errorType` is what VS Code names the failure by: a failed result's
+   * subtype, as its Claude mapper sets it, and the stage a failure before the
+   * result happened at, as its host does for a send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L541-L544
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2575
    */
-  const failurePart = (why: string, resumable = false): Bag => ({
-    kind: 'error',
-    error: { errorType: 'turnFailed', message: why },
-    ...(resumable ? { resumable: true } : {}),
-  });
-  const addFailure = (turn: Bag, why: string, resumable = false): Bag => {
-    const part = failurePart(why, resumable);
+  const addFailure = (turn: Bag, errorType: string, why: string, resumable = false): Bag => {
+    const part: Bag = {
+      kind: 'error',
+      error: { errorType, message: why },
+      ...(resumable ? { resumable: true } : {}),
+    };
     (turn.responseParts as Bag[]).push(part);
     return part;
   };

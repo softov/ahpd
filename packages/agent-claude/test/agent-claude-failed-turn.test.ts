@@ -185,7 +185,12 @@ it('marks a failed model call resumable, on chat/error and on the turn', async (
   sdk.push(notice, result);
   await settle();
 
-  const part = { kind: 'error', error: { errorType: 'turnFailed', message: WORDS }, resumable: true };
+  /*
+   * Typed by the result's subtype, as VS Code's Claude mapper types a failed
+   * result.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L541-L544
+   */
+  const part = { kind: 'error', error: { errorType: 'success', message: WORDS }, resumable: true };
   expect(chat.filter((one) => one.type === 'chat/error').at(-1)?.part).toEqual(part);
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
   // A `success` the CLI says failed is a turn in error, so it can be resumed.
@@ -205,8 +210,33 @@ it('does not mark a turn refused before the CLI resumable', async () => {
 
   const part = chat.find((one) => one.type === 'chat/error')?.part as Bag;
   expect(String(bag(part.error).message)).toContain('the CLI went away');
+  expect(bag(part.error).errorType).toBe('sendFailed');
   expect(part.resumable).toBeUndefined();
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+/*
+ * A failure outside a result is typed by the stage it happened at, as VS
+ * Code's host types a send that failed: `sendFailed`, for a turn whose CLI was
+ * gone before it and for one whose CLI ended under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2575
+ */
+it('types a failure outside a result as a failed send', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'));
+  await settle();
+  // The CLI ends under the turn, and the CLI after it is gone before the next.
+  sdk.queries.at(-1)?.close();
+  await settle();
+  sdk.failing = new Error('the CLI went away');
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => [one.turnId, bag(bag(one.part).error).errorType]))
+    .toEqual([['t1', 'sendFailed'], ['t2', 'sendFailed']]);
 });
 
 /*

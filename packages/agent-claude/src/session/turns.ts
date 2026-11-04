@@ -168,7 +168,7 @@ export function createTurns(ctx: SessionContext): Turns {
       },
       responseParts: [],
     } as unknown as Bag;
-    const part = ctx.addFailure(turn, why);
+    const part = ctx.addFailure(turn, 'sendFailed', why);
     turn.state = 'error';
     turn.duration = Math.max(0, Date.now() - began);
     ctx.turns.push(turn);

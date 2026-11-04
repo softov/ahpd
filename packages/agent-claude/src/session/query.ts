@@ -299,7 +299,7 @@ export function createQuery(ctx: SessionContext): Query {
       turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
       ctx.resumedFrom = undefined;
       ctx.settleOpen(turn);
-      const part = ctx.addFailure(turn, why);
+      const part = ctx.addFailure(turn, 'sendFailed', why);
       ctx.turns.push(turn);
       ctx.active = undefined;
       ctx.endedAt(turn);
@@ -1072,7 +1072,7 @@ export function createQuery(ctx: SessionContext): Query {
              */
             const part = wrong === undefined
               ? undefined
-              : ctx.addFailure(turn, wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
+              : ctx.addFailure(turn, String(message.subtype), wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
             ctx.turns.push(turn);
             ctx.active = undefined;
             ctx.endedAt(turn);
