@@ -12,7 +12,7 @@ refs:
 
 On the Windows CI runners, the case fails with "timed out waiting" at its wait for the turn to end.
 It failed in main's run 41356874909 on 2026-11-01, in #211's run 41759175381 and in #213's run 41765190223.
-Each time a rerun of the failed jobs passed.
+The reruns of the failed jobs in #211 and #213 passed.
 It passes on Linux.
 
 ## Cause
