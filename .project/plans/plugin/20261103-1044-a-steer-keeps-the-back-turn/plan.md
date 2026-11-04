@@ -1,7 +1,7 @@
 ---
 title: A steer keeps the back turn
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-04
@@ -55,7 +55,7 @@ The back turn's two `post_message` calls at 10:37:04 and 10:37:09 found no main 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a steer keeps the back turn](task-01-a-steer-keeps-the-back-turn.md) | implemented | - |
+| [01 - a steer keeps the back turn](task-01-a-steer-keeps-the-back-turn.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -63,10 +63,8 @@ The back turn's two `post_message` calls at 10:37:04 and 10:37:09 found no main 
 
 ## Resume state
 
-- **Done so far:** [task-01-a-steer-keeps-the-back-turn.md](task-01-a-steer-keeps-the-back-turn.md) is implemented again on main, on top of plan bots/20261103-1008, with two cases in `bot-wake.test.ts`.
-- **Next action:** review, then the check by hand in [bot-steer-checks.md](../../../pending/bot-steer-checks.md).
-- **Open questions:** none.
-- **Watch out for:** never use ports 5180 or 37537.
+- **Done so far:** built, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
@@ -74,4 +72,4 @@ The back turn's two `post_message` calls at 10:37:04 and 10:37:09 found no main 
 - [x] A refused steer ends no main turn, and a later `post_message` lands.
 - [x] `pnpm --filter @ahpd/bot test` passes, run alone.
 - [x] `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] By hand: [bot-steer-checks.md](../../../pending/bot-steer-checks.md).
+- [x] By hand: [bot-steer-checks.md](../../../pending/bot-steer-checks.md).

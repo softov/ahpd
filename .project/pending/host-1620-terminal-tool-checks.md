@@ -4,12 +4,11 @@ plans:
   - plans/host/20261103-1620-a-shell-runs-vscodes-shell-integration/plan.md
   - plans/host/20261103-1620-an-agent-asks-the-person/plan.md
   - plans/host/20261103-1620-the-agent-terminal-tool/plan.md
-  - plans/host/20261103-1620-an-async-command-is-a-background-row/plan.md
 ---
 
 # Check the agent terminal tool, ask_user and async commands
 
-Four plans merged on 2026-11-03 and 2026-11-04: #209, #210, #211 and #213.
+Three plans merged on 2026-11-03 and 2026-11-04: #209, #210 and #211. The async commands of #213 passed on 2026-11-04.
 Each plan has one check that no gate covers: a run on a live daemon.
 
 ## Set up
@@ -45,13 +44,6 @@ cd /github/ahpd && AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.v
 3. Check that the call shows a terminal while it runs, and keeps it when it ends.
 4. Check that the answer has `Shell ID:` and the output.
 5. Type into that terminal from the client, and check that the shell takes it.
-
-## Async commands (#213)
-
-1. With the tool still on, send: `Run "sleep 5; echo done" with mode=async.`
-2. Check that the call answers at once, and that a background row shows with the command and a stop.
-3. Check that the row goes after about five seconds, and that a new turn starts with `done` in it.
-4. Send: `Run "sleep 60" with mode=async.` Press the row's stop, and check that the row goes.
 
 ## After the checks
 

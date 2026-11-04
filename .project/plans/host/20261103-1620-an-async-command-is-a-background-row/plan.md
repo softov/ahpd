@@ -1,7 +1,7 @@
 ---
 title: An async command is a background row
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -74,8 +74,8 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | implemented | - |
-| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | implemented | 01 |
+| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | done | - |
+| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,21 +84,11 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02.
-  - The shell tool has `mode`, and the per-chat manager has `Shells.start`.
-  - `ToolCall.background()` sets a row on the chat's held tasks, with the terminal and a stop.
-  - `ctx.beginWakeTurn` begins a turn for a wake and for a command's end.
-  - The end's prompt names the command, its exit code and its output.
-  - The sender is read when the command starts.
-  - No turn begins once the host is closing, or the chat or session is closed.
-  - `packages/sdk/test/shell-async.test.ts` covers both tasks.
-  - `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md` describe the mode.
-- **Next action:** none. Both tasks are implemented; the plan's last gate, a live test daemon, is not run yet.
-- **Open questions:** none.
-- **Watch out for:** the end of a command must not call `setWake`.
+- **Done so far:** built, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] `pnpm --filter @ahpd/sdk test` passes.
-- [ ] On a test daemon, `sleep 5; echo done` with `mode=async` shows a row, and five seconds later a turn starts with `done`.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
+- [x] `pnpm --filter @ahpd/sdk test` passes.
+- [x] On a test daemon, `sleep 5; echo done` with `mode=async` shows a row, and five seconds later a turn starts with `done`.
