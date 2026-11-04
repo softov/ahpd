@@ -23,7 +23,7 @@ On 2026-11-04, three cases failed in the Windows job `windows (1/3)`, each once,
 
 #228 does not touch `packages/computer`, and #230 changes two docs pages only. Each case passes on Linux.
 
-On Linux, the `processes` job of #233 failed once, in run 41901468359. The case is "runs its own script under sh, and reads what this host has" in `computer-servercheck.test.ts`, with `Test timed out in 5000ms`. The same run hit the known case of [two-attachment-cases-time-out-on-windows.md](two-attachment-cases-time-out-on-windows.md) on Windows.
+On Linux, the `processes` job of #233 failed once, in run 41901468359. The case is "runs its own script under sh, and reads what this host has" in `computer-servercheck.test.ts`, with `Test timed out in 5000ms`. Its rerun failed the same way, and the case takes 1 s on Softov's machine. The script calls `docker version` and `docker info`, which wait on the runner's Docker daemon. The same run hit the known case of [two-attachment-cases-time-out-on-windows.md](two-attachment-cases-time-out-on-windows.md) on Windows.
 
 The first rerun of #230's `windows (1/3)` failed another way: no case failed, and the unit run hit the `timeout 300` of [`code://.github/workflows/ci.yml`](../../.github/workflows/ci.yml#L104) with exit code 124.
 
