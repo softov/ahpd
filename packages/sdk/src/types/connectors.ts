@@ -257,7 +257,47 @@ export interface ConnectorHealth {
   lastCall?: CallOutcome;
   /** The last call that failed. */
   lastFailure?: CallOutcome;
+  /**
+   * The plan limits a login last reported, by quota type, in memory only.
+   *
+   * The shape is VS Code's `UsageInfoMeta.quotaSnapshots`, so a client draws
+   * it as it draws the ones Copilot reports. An empty map is a login whose
+   * account has no plan limits, and an absent one is a login nobody has asked
+   * yet: the two are not the same answer.
+   */
+  quotaSnapshots?: QuotaSnapshots;
 }
+
+/** One window of an account's plan limits, as a client draws it. */
+export interface QuotaSnapshot {
+  /** Whether the account's plan gives this quota without a limit. */
+  isUnlimitedEntitlement?: boolean;
+  /** How many requests the plan entitles the account to. */
+  entitlementRequests?: number;
+  /** How many requests the account has used. */
+  usedRequests?: number;
+  /** What is left of the window, from 0 to 100. */
+  remainingPercentage?: number;
+  /** What the account has used beyond the plan, in its credits. */
+  overage?: number;
+  /** Whether extra usage may continue once the plan is exhausted. */
+  overageAllowedWithExhaustedQuota?: boolean;
+  /** When the window resets, as an ISO time. */
+  resetDate?: string;
+  /** Whether this window is billed against an AI-credits allocation. */
+  tokenBasedBilling?: boolean;
+  /** The extra-usage budget cap, in credits. */
+  overageEntitlement?: number;
+}
+
+/**
+ * The plan limits of one account, by quota type.
+ *
+ * `session` is a rolling window of hours, `weekly` a week's, and
+ * `weekly:<model>` one model's share of the week. A key is absent when the
+ * provider did not report that window.
+ */
+export type QuotaSnapshots = Record<string, QuotaSnapshot>;
 
 /**
  * A sign-in where a person pastes a code the vendor's page shows.

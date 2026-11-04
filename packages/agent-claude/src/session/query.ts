@@ -7,6 +7,7 @@ import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
 import { contextOf } from './contextusage.js';
 import type { ContextFigure } from './contextusage.js';
+import { limitsOf, noteLimit, refreshLimits } from './limits.js';
 import { learnLimits, limitOf } from './parts.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
@@ -1029,7 +1030,14 @@ export function createQuery(ctx: SessionContext): Query {
          * unified rate-limit headers, which comes before the assistant frame
          * that carries a failure's `error` and names when the login is back.
          */
-        if (type === 'rate_limit_event') { ctx.limited(bag(message.rate_limit_info)); continue; }
+        if (type === 'rate_limit_event') {
+          const info = bag(message.rate_limit_info);
+          ctx.limited(info);
+          // The one window whose state changed also goes to the turn's plan,
+          // its login's or its own, beside the windows the usage request answered.
+          noteLimit(ctx, info);
+          continue;
+        }
         // The status of a request the CLI retries, which says whether the API
         // answered it at all.
         if (type === 'system' && str(message.subtype) === 'api_retry') ctx.retried(message);
@@ -1173,6 +1181,11 @@ export function createQuery(ctx: SessionContext): Query {
              * the state the turn left.
              */
             const figure = await contextOfTurn();
+            /*
+             * The plan limits the login has reported so far, which are the
+             * last event's windows and the last usage answer's.
+             */
+            const plans = limitsOf(ctx);
             if (used !== undefined || cost !== undefined || figure !== undefined) {
               // The cost and the context ride the tokens' own `_meta`, the
               // same place cache writes go, rather than beside them as fields
@@ -1184,6 +1197,7 @@ export function createQuery(ctx: SessionContext): Query {
                 meta.contextAttribution = figure.attribution;
                 meta['ahpd.context'] = figure.context;
               }
+              if (plans !== undefined) meta.quotaSnapshots = plans;
               if (Object.keys(meta).length > 0) total._meta = meta;
               turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
@@ -1235,6 +1249,12 @@ export function createQuery(ctx: SessionContext): Query {
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
           if (wrong !== undefined) ctx.failed = wrong;
+          /*
+           * The account's own answer for every window, asked once the turn has
+           * ended and at most once a minute for each login. It is not awaited:
+           * a turn has already said what it knew, and the next one says more.
+           */
+          void refreshLimits(ctx);
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed

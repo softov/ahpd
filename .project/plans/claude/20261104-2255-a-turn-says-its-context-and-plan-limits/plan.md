@@ -81,7 +81,7 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - a turn says its context](task-01-a-turn-says-its-context.md) | done | - |
-| [02 - a login says its plan limits](task-02-a-login-says-its-plan-limits.md) | todo | - |
+| [02 - a login says its plan limits](task-02-a-login-says-its-plan-limits.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -91,8 +91,8 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 
 ## Resume state
 
-- **Done so far:** task 01, a turn says its context.
-- **Next action:** [task-02-a-login-says-its-plan-limits.md](task-02-a-login-says-its-plan-limits.md).
+- **Done so far:** task 01, a turn says its context; task 02, a login says its plan limits.
+- **Next action:** [implemented.md](implemented.md), then the plan is `implemented`.
 - **Watch out for:** a turn must not wait on `getContextUsage`; put a short time limit on it.
 
 ## Final verification checklist

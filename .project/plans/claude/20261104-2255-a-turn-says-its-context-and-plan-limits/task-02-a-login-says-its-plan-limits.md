@@ -1,6 +1,6 @@
 ---
 title: A login says its plan limits
-status: todo
+status: done
 depends: []
 layer: "agent-claude, sdk"
 refs:
@@ -47,3 +47,9 @@ They go on each turn's usage `_meta`, and into the connector's health in the hos
 
 ## Resume
 
+Done: each `rate_limit_event` updates one window of the turn's login, a turn's usage carries the login's `quotaSnapshots`, and the usage request runs after each turn at most once a minute for each login with `skipBehaviors`.
+Done: `OpenLogins.noted` checks the token as `called` does, and the plugin sends the limits through `x-ahpd/connectors/note`, where `note` refuses a map that is not made of snapshots and keeps a good one in the connector's health.
+Left: no turn-level test asserts `_meta.quotaSnapshots`, because the harness has no login connector.
+Found: the SDK spells the option `skipBehaviors`, not `skip_behaviors`.
+Found: an answer's `extra_usage` has no window of its own, so its overage fields ride the weekly snapshot, or the session snapshot when the week has none.
+Found: `model_scoped` windows are keyed `weekly:<lowercased display name>`, and `seven_day_overage_included` keeps a window of its own.

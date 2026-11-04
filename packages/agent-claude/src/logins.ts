@@ -13,7 +13,7 @@
  * thing kept between turns.
  */
 
-import type { Bag, CallOutcome, Connector, ConnectorOwner } from '@ahpd/sdk';
+import type { Bag, CallOutcome, Connector, ConnectorOwner, QuotaSnapshots } from '@ahpd/sdk';
 import { sameOwnerOrHost } from '@ahpd/sdk';
 
 /** One call of a login as its connector's health keeps it; the host stamps the time. */
@@ -149,6 +149,9 @@ export class OpenLogins {
   /** What a call of a login calls, with its id and how the call went. */
   onCall: ((id: string, outcome: CallNote) => void) | undefined;
 
+  /** What a login's plan limits call, with its id and the windows it reported. */
+  onLimits: ((id: string, quotaSnapshots: QuotaSnapshots) => void) | undefined;
+
   constructor(now: () => number = Date.now) {
     this.rests = new Rests(now);
   }
@@ -208,6 +211,17 @@ export class OpenLogins {
    */
   called(id: string, token: string, outcome: CallNote): void {
     if (this.open.get(id)?.token === token) this.onCall?.(id, outcome);
+  }
+
+  /**
+   * Say the plan limits an open login's account reported, which the plugin has
+   * the host keep in the connector's health beside the last call.
+   *
+   * A note of a token the login no longer holds says nothing, as a call of it
+   * does: the limits belong to the account that token signs in to.
+   */
+  noted(id: string, token: string, quotaSnapshots: QuotaSnapshots): void {
+    if (this.open.get(id)?.token === token) this.onLimits?.(id, quotaSnapshots);
   }
 }
 
