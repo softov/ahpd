@@ -12,6 +12,8 @@ Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e
 
 Restart the daemon on main first. Do them from the top down.
 
+- [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, two curls on your daemon with `config-dev.json`. It passed on a test daemon.
+- [install-path-checks.md](install-path-checks.md) - 20 min, sudo and a test user. Claude cannot add a system user here.
 - [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
 - [session-picker-checks.md](session-picker-checks.md) - 10 min.
@@ -37,9 +39,7 @@ Restart the daemon on main first. Do them from the top down.
 
 Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 
-- [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, one call through the proxy.
 - [proxy-06-endpoint-checks.md](proxy-06-endpoint-checks.md) - 10 min, curl only. Steps 1, 3, 4 and 6 are left: the OpenAI key needs credit, and OpenRouter lists no rerank model.
-- [install-path-checks.md](install-path-checks.md) - 20 min. Steps 1, 2 and 4 to 6 use sudo and a test user. Step 3 is Softov at a GNOME login.
 
 ## Softov's decision, nothing to run
 
