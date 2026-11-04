@@ -1931,6 +1931,21 @@ export function createTooling(ctx: HostContext): Tooling {
       running: held.exitCode() === undefined,
     })),
     shells: () => ctx.shells.of(uri, chatUri),
+    /*
+     * The row a tool draws, on the chat it runs in.
+     *
+     * The seam is bound here rather than handed whole, because a tool has no
+     * business reporting work into a chat it is not in: the same call a
+     * backend makes with a chat named is made here with the chat already
+     * known, so the two cannot disagree about where a row goes.
+     */
+    background: () => {
+      const tasks = ctx.background.heldTasks();
+      return {
+        set: (task) => { tasks.set(chatUri, task); },
+        remove: (id) => { tasks.remove(chatUri, id); },
+      };
+    },
     read: async (asked) => {
       // The client that published it, if one did - that is the only thing
       // that can read it - and this host's own store otherwise.
@@ -2072,6 +2087,8 @@ export function createTooling(ctx: HostContext): Tooling {
         await removeSession(session, caller.root === true ? sender : caller.principal ?? sender);
       },
       setWorkspace: needsSession,
+      // A row is drawn in a chat, and a call with no session has none.
+      background: needsSession,
       scheduleWake: needsSession,
       cancelWake: needsSession,
       artifacts: needsSession,

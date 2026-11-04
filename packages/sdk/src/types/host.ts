@@ -9,6 +9,7 @@ import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
 import type { TerminalStore } from './terminals.js';
 import type { Shells } from './shells.js';
+import type { ChatBackgroundTasks } from './background.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
@@ -1377,6 +1378,15 @@ export interface ToolCall {
    * nobody sees.
    */
   shells(): Shells | undefined;
+  /**
+   * The calling chat's background rows, to set one and take it back.
+   *
+   * The same seam a backend reports through, with the chat already named: a
+   * tool draws a row where it runs and nowhere else. A row is set while the
+   * work it names is running and removed when that work has ended, so a
+   * client goes on holding its stop until there is nothing left to stop.
+   */
+  background(): ChatBackgroundTasks;
   /**
    * Read a resource this host serves, as text.
    *
