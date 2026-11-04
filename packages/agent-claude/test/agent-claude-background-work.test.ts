@@ -432,6 +432,70 @@ it('says nothing more when the session is closed', async () => {
 });
 
 /*
+ * The turn a background task's end wakes.
+ *
+ * A notification that arrives while no turn is open is the CLI's cue to start
+ * a turn of its own, and that turn answers the notification rather than the
+ * person: its message is the task's summary, drawn as one muted line. One that
+ * arrives inside a turn starts no turn, so it gives the next one nothing.
+ */
+it('opens the turn a finished task wakes with the task\'s summary as a notice', async () => {
+  const { main } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 100'));
+  sdk.push(level({ task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 100' }));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'completed',
+    summary: 'sleep 100 finished',
+  });
+  // The turn the CLI starts once the notification has woken it.
+  sdk.push({
+    type: 'assistant',
+    message: { id: 'msg-wake', content: [{ type: 'text', text: 'The shell finished.' }] },
+  });
+  await settle();
+
+  const started = main.filter((action) => action.type === 'chat/turnStarted');
+  expect(started).toHaveLength(2);
+  expect(started.at(-1)?.message).toEqual({ text: 'sleep 100 finished', origin: { kind: 'systemNotification' } });
+});
+
+it('does not give a task notification inside a turn to the next turn', async () => {
+  const { main } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 100'));
+  sdk.push(level({ task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 100' }));
+  // The notification arrives while the turn that started the task is open.
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'completed',
+    summary: 'sleep 100 finished',
+  });
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+
+  sdk.push({
+    type: 'assistant',
+    message: { id: 'msg-next', content: [{ type: 'text', text: 'And then.' }] },
+  });
+  await settle();
+
+  const started = main.filter((action) => action.type === 'chat/turnStarted');
+  expect(started).toHaveLength(2);
+  expect(started.at(-1)?.message).toEqual({ text: '', origin: { kind: 'agent' } });
+});
+
+/*
  * What keeps the session awake: a background task the level names, and a
  * timer of the CLI's own that the `Stop` hook lists.
  */

@@ -919,6 +919,14 @@ export function createQuery(ctx: SessionContext): Query {
                 status === 'failed' ? str(message.summary) : undefined);
             }
           }
+          /*
+           * A notification that arrives while no turn is open is the one the
+           * CLI wakes into a turn of its own, and that turn opens with the
+           * task's summary as its message. One that arrives inside a turn
+           * starts none, so it leaves the next turn's message alone.
+           */
+          const summary = str(message.summary);
+          if (summary !== undefined && ctx.active === undefined) ctx.pendingSummary = summary;
           continue;
         }
 

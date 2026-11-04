@@ -226,6 +226,18 @@ export function createParts(ctx: SessionContext): Parts {
 
   const openTurn = (scope: Scope = ctx.mainScope): Bag => {
     if (scope.turn) return scope.turn;
+    /*
+     * The summary a background task's end left for the turn it wakes.
+     *
+     * The CLI starts a turn when a notification arrives while nothing runs,
+     * and that turn answers the notification rather than the person: its
+     * message is the task's summary, drawn as one muted line. A notification
+     * that arrived inside a turn left none here, and a turn that opens with
+     * something else - a person's prompt, a steering message answered late -
+     * takes what was left with it.
+     */
+    const notice = scope === ctx.mainScope ? ctx.pendingSummary : undefined;
+    if (scope === ctx.mainScope) ctx.pendingSummary = undefined;
     // A turn the client did not begin: the agent spoke first, which happens on
     // a resumed session. Better an id of our own than a turn with none.
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
@@ -234,9 +246,11 @@ export function createParts(ctx: SessionContext): Parts {
     const opened = {
       id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
-      // The agent spoke first, so the message in front of this turn is its
-      // own. `Message.origin` is required.
-      message: { text: '', origin: { kind: 'agent' } },
+      // A notice is the system's, and a turn nobody opened is the agent's own.
+      // `Message.origin` is required.
+      message: notice !== undefined
+        ? { text: notice, origin: { kind: 'systemNotification' } }
+        : { text: '', origin: { kind: 'agent' } },
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;

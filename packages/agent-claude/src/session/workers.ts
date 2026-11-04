@@ -71,6 +71,15 @@ export interface Workers {
   spawning: Map<string, Spawning>;
   /** The calls `task_started` named, whose terminal `task_notification` ends them. */
   background: Set<string>;
+  /**
+   * The summary of the last task that ended while no turn was running.
+   *
+   * A notification that arrives then is what wakes the CLI into a turn of its
+   * own, and that turn opens with this as its message: one muted line, not
+   * words the agent said. One that arrives inside a turn starts none, so it
+   * leaves this alone.
+   */
+  pendingSummary: string | undefined;
   /** The task id `task_started` named for each call, which is what `stopTask` stops. */
   tasks: Map<string, string>;
   /** The agent ids a permission ask was seen with, so the next one lands in the same chat. */
@@ -753,6 +762,7 @@ export function createWorkers(ctx: SessionContext): Workers {
 
   return {
     parts, calling, mainScope, scopes, spawning, background, tasks, byAgent, ended,
+    pendingSummary: undefined as string | undefined,
     taskInfo, live, told,
     scopeFor, releaseHeld, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
     workerBlock, noteTask, noteLive, dropTask, closeOutputs, working: () => live.size > 0,
