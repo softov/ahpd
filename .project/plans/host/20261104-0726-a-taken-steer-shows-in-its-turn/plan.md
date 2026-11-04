@@ -1,7 +1,7 @@
 ---
 title: A taken steer shows in its turn
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -68,9 +68,9 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the bot chat shows a steer](task-01-the-bot-chat-shows-a-steer.md) | implemented | - |
-| [02 - Claude shows a steer it took in](task-02-claude-shows-a-steer-it-took-in.md) | implemented | - |
-| [03 - a steer is a system notification](task-03-a-steer-is-a-system-notification.md) | implemented | 01, 02 |
+| [01 - the bot chat shows a steer](task-01-the-bot-chat-shows-a-steer.md) | done | - |
+| [02 - Claude shows a steer it took in](task-02-claude-shows-a-steer-it-took-in.md) | done | - |
+| [03 - a steer is a system notification](task-03-a-steer-is-a-system-notification.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -79,14 +79,12 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03 are implemented on 2026-11-04. The changed tests fail without the change.
-- **Next action:** review, then do the check by hand in `pending/bot-steer-checks.md`.
-- **Watch out for:** a bot back session's steer carries the context block before the person's words.
-  The Claude quote shows the prompt as the CLI got it.
+- **Done so far:** built on 2026-11-04 in #219 and #220, and Softov checked the steer in a bot chat. See [implemented.md](implemented.md).
+- **Next action:** none. The cofold and pi steer parts wait, as [deferred.md](deferred.md) says.
 
 ## Final verification checklist
 
 - [x] A bot chat steer shows in the open turn, live and after a reload.
 - [x] A Claude steer shows in its turn when the CLI takes it in, and again when the transcript is read back.
 - [x] Every steer part is a `systemNotification` with `_meta['ahpd.steer']`.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the bot and agent-claude tests pass.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the bot and agent-claude tests pass.

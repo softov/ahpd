@@ -31,16 +31,10 @@ Open a bot chat in ahpw or VS Code.
 5. Check that the bot stops near 10, and that its post shows in the same main turn.
 6. Check that the main turn ends when the back session's turn ends.
 
-## The steer in the turn (host/20261104-0726)
-
-1. Check that the bot chat shows your second message, `Stop at 10 instead.`, as a notice after the numbers posted before it.
-2. Open the back session, and check that it shows the same words as a notice, with the context block.
-3. Check that the notice sits between the two tool calls where Claude took it in.
-
 ## After a reload
 
 1. Reload the window, and open the same bot chat and the back session.
-2. Check that each shows one turn, with the notice where it was live.
+2. Check that each shows one turn.
 
 ## Reply
 

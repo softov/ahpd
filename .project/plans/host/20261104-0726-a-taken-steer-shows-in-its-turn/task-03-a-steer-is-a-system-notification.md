@@ -1,6 +1,6 @@
 ---
 title: A steer is a system notification
-status: implemented
+status: done
 depends:
   - task-01-the-bot-chat-shows-a-steer.md
   - task-02-claude-shows-a-steer-it-took-in.md
