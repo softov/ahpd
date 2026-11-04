@@ -1,6 +1,6 @@
 ---
 title: A host tool asks the person
-status: todo
+status: implemented
 depends: []
 layer: "@ahpd/sdk host"
 refs:
@@ -43,3 +43,10 @@ A stop of the turn cancels a request that waits.
 - `pnpm --filter @ahpd/sdk test` passes.
 
 ## Resume
+
+- **Done so far:** `ToolCall.ask(questions)` sends `chat/inputRequested` on the tool's chat under an id prefixed `host-ask:` and resolves with `{ response, answers }`. `chat/inputCompleted` settles a request the host holds and does not reach `session.answer`; the action still goes to every client. A turn that ends or stops cancels its held requests, which resolve as `cancel`.
+- **Next action:** [task-02-the-ask-user-tool.md](task-02-the-ask-user-tool.md).
+- **Open questions:** none.
+- **Watch out for:** `SessionlessToolCall` omits `ask`, because a call with no chat has nobody to ask. The held requests live on the host context as `asks`, since `asking` is already taken by the auth port. `packages/sdk/test/fixtures/wire.jsonl` is rewritten by the suite; restore it with `git checkout -- packages/sdk/test/fixtures/wire.jsonl`.
+
+Files changed by this task: `packages/sdk/src/types/host.ts`, `packages/sdk/src/types/index.ts`, `packages/sdk/src/host/context.ts`, `packages/sdk/src/host/asking.ts`, `packages/sdk/src/host.ts`, `packages/sdk/src/host/tooling.ts`, `packages/sdk/src/host/chatactions.ts`, `packages/sdk/test/host-asking.test.ts`.

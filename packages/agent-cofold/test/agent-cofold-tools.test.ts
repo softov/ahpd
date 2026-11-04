@@ -305,6 +305,40 @@ it('gives a host tool its call id, and puts the terminal it opened on the call',
   rmSync(dir, { recursive: true, force: true });
 });
 
+/*
+ * The name cofold's own question tool has, given to the host's.
+ *
+ * The host's `ask_user` is the more specific contribution: it asks on the chat
+ * this session runs in, and cofold's own question would be a second tool with
+ * the same name. So cofold leaves its own out, as it does for any capability
+ * tool a host tool shares a name with.
+ */
+it('gives the ask_user name to the host\'s tool', async () => {
+  const dir = place();
+  const mine: BoundTool = {
+    definition: { name: 'ask_user', description: 'The host asks the person.', inputSchema: { type: 'object' } },
+    run: () => 'the host asked the person',
+  };
+  const { model, session, v } = await open({
+    script: [{ toolCalls: [call('ask_user', { questions: [{ id: 'q', question: 'Which?' }] })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    hostTools: [mine],
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'ask it');
+  await when(() => ended(v));
+
+  const asked = (model.requests[0]?.tools ?? []).filter((one) => one.name === 'ask_user');
+  expect(asked).toHaveLength(1);
+  expect(asked[0]?.description).toBe('The host asks the person.');
+  // The call ran the host's tool, so cofold's own question was never raised.
+  expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
+  expect(JSON.stringify((completeFor(v, 'c1')?.result as Bag).content)).toContain('the host asked the person');
+  expect(v.of('chat', 'chat/inputRequested')).toEqual([]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('offers web_search only when a search provider is configured', async () => {
   const dir = place();
   const plain = await open({ script: [{ text: 'ok' }], workspace: dir, store: dir });

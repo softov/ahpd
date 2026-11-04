@@ -263,6 +263,14 @@ WHEN any of the three is not so
 THEN the tools are not offered, and a backend keeps its own shell.
 The reason: the reference host's terminal tool takes the place of the harness's own, and a backend that kept both would run the model's commands in a shell the person cannot watch.
 
+### `ask_user` reaches every backend but Claude
+
+WHEN the host contributes its `ask_user` tool
+THEN a pi or ACP session is offered it, and a call puts the questions on the chat and waits for the person's answer
+AND a cofold session is offered the host's `ask_user` in place of cofold's own tool of that name
+AND a Claude session is not offered it, because this backend keeps its own question tool for now
+The reason: a request the host holds is settled by the host, and only it can send `chat/inputRequested` for the chat the session runs in. Leaving Claude its own tool is a deferred change, in the plan `host/20261103-1620-an-agent-asks-the-person`.
+
 ### A terminal that a tool result names stays
 
 WHEN a tool result names a terminal that the host opened, or an output that a backend kept with `Start.terminalOutputs`

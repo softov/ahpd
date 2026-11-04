@@ -1134,6 +1134,45 @@ export interface SessionlessHostTool extends HostToolCommon {
 export type HostTool = SessionHostTool | SessionlessHostTool;
 
 /**
+ * One question a host tool asks the person through `ToolCall.ask`.
+ *
+ * The shape is cofold's `ask_user` input, adopted whole: an id the answer is
+ * keyed by, the words of the question, a short header a client draws as a
+ * chip, the choices offered, whether more than one may be picked, and whether
+ * free text is accepted beside them.
+ */
+export interface AskedQuestion {
+  /** The key of the answer, unique within one call. */
+  id: string;
+  /** The question itself. */
+  question: string;
+  /** A short label a client shows as a chip. */
+  header?: string;
+  /** The choices offered, when the question has any. */
+  options?: AskedOption[];
+  /** The answer is a list of option labels. Only with `options`. */
+  multiSelect?: boolean;
+  /** Free text is accepted even when options are given. Default true. */
+  allowOther?: boolean;
+}
+
+/** One choice a question offers. */
+export interface AskedOption {
+  /** The words of the choice, which are also what the answer names. */
+  label: string;
+  /** What choosing it means. */
+  description?: string;
+}
+
+/** What `ToolCall.ask` answers: what the person did, and what they said. */
+export interface AskedAnswers {
+  /** `accept` answered it, `decline` said no, `cancel` ended the request. */
+  response: 'accept' | 'decline' | 'cancel';
+  /** Each question's answer by its id; empty unless the request was accepted. */
+  answers: Record<string, string | string[]>;
+}
+
+/**
  * Where a host tool was called from, and what the host knows.
  *
  * The reason a tool is the host's rather than the backend's: an agent inside
@@ -1347,6 +1386,22 @@ export interface ToolCall {
    * nothing serves it, in the words of whatever refused.
    */
   read(uri: string): Promise<string>;
+  /**
+   * Ask the person one or more questions in the calling chat, and wait.
+   *
+   * The request goes on the chat as `chat/inputRequested`, under an id this
+   * host minted, so a `chat/inputCompleted` for it is settled here and never
+   * reaches the backend: the backend did not ask, and its own `answer` is for
+   * its own questions. A turn that ends or is stopped settles a request still
+   * waiting as cancelled, so a tool does not wait on a person the turn no
+   * longer has.
+   *
+   * The answer says what the person did: `accept` carries an answer for each
+   * question by its id, and `decline` and `cancel` carry none. Both are
+   * answers rather than errors, because the model has to know the person said
+   * no.
+   */
+  ask(questions: AskedQuestion[]): Promise<AskedAnswers>;
 }
 
 /**
@@ -1360,9 +1415,10 @@ export interface ToolCall {
  *
  * What is left is the person: `person()` names the caller, `may` and
  * `refusal` answer for them, and the tools that reach a chat or a session take
- * one as an argument instead of reading it from the call.
+ * one as an argument instead of reading it from the call. `ask` is left out
+ * with the two channel URIs: a call with no chat has nobody in it to ask.
  */
-export interface SessionlessToolCall extends Omit<ToolCall, 'session' | 'chat'> {
+export interface SessionlessToolCall extends Omit<ToolCall, 'session' | 'chat' | 'ask'> {
   /** The session the call was made from, where one was. */
   session?: string;
   /** The chat the call was made from, where one was. */

@@ -1944,6 +1944,9 @@ export function createTooling(ctx: HostContext): Tooling {
       const data = String(held.data ?? '');
       return bodyText({ data, encoding: held.encoding === 'base64' ? 'base64' : 'utf-8' });
     },
+    // The person is asked in the chat the call came from, and in the turn it
+    // is running in, so the end of that turn is what ends the wait.
+    ask: (questions) => ctx.asks.ask(chatUri, activeTurnOf(chatUri), questions),
   });
 
   /**

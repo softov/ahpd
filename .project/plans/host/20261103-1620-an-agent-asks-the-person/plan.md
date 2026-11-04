@@ -74,8 +74,8 @@ model calls ask_user -> ToolCall.ask(questions) -> chat/inputRequested on the ch
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a host tool asks the person](task-01-a-host-tool-asks-the-person.md) | todo | - |
-| [02 - the ask_user tool](task-02-the-ask-user-tool.md) | todo | 01 |
+| [01 - a host tool asks the person](task-01-a-host-tool-asks-the-person.md) | implemented | - |
+| [02 - the ask_user tool](task-02-the-ask-user-tool.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,10 +84,10 @@ model calls ask_user -> ToolCall.ask(questions) -> chat/inputRequested on the ch
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-host-tool-asks-the-person.md](task-01-a-host-tool-asks-the-person.md).
+- **Done so far:** both tasks are implemented. A host tool asks the person with `ToolCall.ask`, which sends `chat/inputRequested` on the tool's chat under a `host-ask:` id and returns the answers; `chat/inputCompleted` settles that request in the host and never reaches `session.answer`, and a turn that ends or stops cancels it as `cancel`. `ask_user` is in `hostTools()`, with cofold's input, and a Claude session is not handed it, so it keeps its own question tool.
+- **Next action:** none; the final checklist's live daemon check is still open.
 - **Open questions:** none.
-- **Watch out for:** the request id must not clash with a backend's ids; prefix it.
+- **Watch out for:** the request id must not clash with a backend's ids, which the `host-ask:` prefix keeps. The suite rewrites `packages/sdk/test/fixtures/wire.jsonl`; restore it with `git checkout -- packages/sdk/test/fixtures/wire.jsonl`.
 
 ## Final verification checklist
 
