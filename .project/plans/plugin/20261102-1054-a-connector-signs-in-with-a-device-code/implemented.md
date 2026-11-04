@@ -27,7 +27,8 @@ ahpw draws the code, the provider's page and the wait, from softov/ahpw #35.
 
 - `connectors-signin.test.ts` 22 cases, `connectors-channel.test.ts` 53, `plugin-validate.test.ts` 30, `tunnel-devtunnel-adapter.test.ts` 11.
 - ahpd #187 passed its 11 CI checks, Windows included, before the merge.
-- The sign-in with a real GitHub account, the restart after 8 hours, the management URL and the `scope` are not verified. They are in [plugin-1054-device-sign-in-checks.md](../../../pending/plugin-1054-device-sign-in-checks.md).
+
+- Softov ran `plugin-1054-device-sign-in-checks.md` on 2026-11-04, and it passed. It covers the sign-in with a real GitHub account, the restart after 8 hours, the management URL and the `scope`.
 
 ## Departures from the plan
 

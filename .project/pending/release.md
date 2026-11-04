@@ -39,7 +39,7 @@ Each check is its own file. Run the ones for features a user meets first:
 - [claude-resume-checks.md](claude-resume-checks.md), [cofold-resume-checks.md](cofold-resume-checks.md) and [pi-resume-checks.md](pi-resume-checks.md).
 - [client-restart-checks.md](client-restart-checks.md) and [update-checks.md](update-checks.md).
 - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
-- [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md), then [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md). Both need Softov's Dev Tunnels sign-in.
+- [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md). The Dev Tunnels sign-in check passed on 2026-11-04.
 - [install-path-checks.md](install-path-checks.md), [macos-checks.md](macos-checks.md) and [daemon-41-windows-checks.md](daemon-41-windows-checks.md), for the install on each system.
 
 The other files in this folder check older plans. They do not block a release.

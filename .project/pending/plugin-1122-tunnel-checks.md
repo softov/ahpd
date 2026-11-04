@@ -6,7 +6,7 @@ plans:
 
 # Check the host's tunnels
 
-plugin/20261102-1122 is on main. devtunnel runs on the Dev Tunnels SDK, with no `devtunnel` CLI, and the host keeps the tunnels at `x-ahpd-tunnels://`. Do [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md) first, so a `devtunnel` connector is signed in.
+plugin/20261102-1122 is on main. devtunnel runs on the Dev Tunnels SDK, with no `devtunnel` CLI, and the host keeps the tunnels at `x-ahpd-tunnels://`. The `devtunnel` connector is signed in: its check passed on 2026-11-04.
 
 ## Set up
 
