@@ -10,7 +10,7 @@ import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { acpAgent, watchSession } from '../src/index.js';
+import { acpAgent, watchedRows, watchSession } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { MACHINE_KEYS } from '../src/plugin.js';
 import { toolsReachable } from '../src/session/opening.js';
@@ -712,10 +712,18 @@ it('lists the sessions the server lists, mapping the fields the contract wants',
     modifiedAt: '2026-01-01T00:00:00.000Z',
     workingDirectories: [uriOf('/tmp/one')],
   });
-  // A row with no title falls back to its id, and one with no timestamp to now.
-  expect(rows?.[1]?.title).toBe('listed-2');
+  // A row with no title is listed untitled, for a client to draw as one, and
+  // one with no timestamp falls back to now.
+  expect(rows?.[1]?.title).toBe('');
   expect(rows?.[1]?.workingDirectories).toEqual([uriOf('/tmp/two'), uriOf('/tmp/two-b')]);
   expect(Number.isNaN(Date.parse(String(rows?.[1]?.createdAt)))).toBe(false);
+});
+
+it('holds a session read back by a load untitled, as an untitled row is listed', async () => {
+  const { agent } = backend(['--replay'], 'acp-loaded-title');
+  await agent.transcript?.('acp-session-unwatched');
+  // A load names no title, and the session's id is no title of its own.
+  expect(watchedRows('acp-loaded-title').find((one) => one.id === 'acp-session-unwatched')?.title).toBe('');
 });
 
 it('lists every page of a catalogue the server did not fit into one answer', async () => {

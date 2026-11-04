@@ -15,7 +15,7 @@ import { uriOf } from '@ahpd/sdk';
 import { piAgent } from '../src/agent.js';
 import { watch } from '../src/catalog.js';
 import { loadPi } from '../src/pi.js';
-import { root, sessionOnDisk } from './fake-pi.js';
+import { answer, root, sessionOnDisk } from './fake-pi.js';
 
 /** The row a listing gives one session, and the row `find` gives for it. */
 async function bothRows(sessionDir: string, name?: string) {
@@ -36,6 +36,22 @@ it('answers a session on disk with the row the listing answers, named or not', a
   const named = await bothRows(join(root, 'named'), 'a title pi kept');
   expect(named.found).toEqual(named.listed);
   expect(named.found?.title).toBe('a title pi kept');
+});
+
+it('lists a session nobody said anything in untitled, found or listed', async () => {
+  const sessionDir = join(root, 'silent');
+  const { SessionManager } = await loadPi();
+  const store = SessionManager.create(root, sessionDir);
+  store.appendModelChange('anthropic', 'claude-opus-5');
+  store.appendMessage(answer([{ type: 'text', text: 'Nothing was asked.' }], 'stop'));
+  const id = store.getSessionId();
+  const agent = piAgent({ sessionDir }, [root]);
+
+  // An empty title, which a client draws as an untitled session, from the
+  // listing and from a find alike.
+  const listed = (await agent.list?.())?.find((one) => one.id === id);
+  expect(listed?.title).toBe('');
+  expect(await agent.find?.(id)).toEqual(listed);
 });
 
 it('answers nothing for an id no directory has', async () => {

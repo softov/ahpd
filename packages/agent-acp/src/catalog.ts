@@ -120,14 +120,16 @@ const listedOf = (session: WatchedSession): Listed => ({
  *
  * ACP carries one timestamp, `updatedAt`, where the contract wants a creation
  * and a modification; the same instant answers both rather than a creation
- * invented out of nothing. A session the server never titled is titled by its
- * id, which is what the reference store does with the same absence.
+ * invented out of nothing. A session the server never titled is listed with an
+ * empty title, which a client draws as an untitled session, as VS Code lists a
+ * provider's session that has no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6141-L6146
  */
 const listedFrom = (info: SessionInfo, now: string): Listed => {
   const at = info.updatedAt ?? now;
   return {
     id: info.sessionId,
-    title: info.title ?? info.sessionId,
+    title: info.title ?? '',
     createdAt: at,
     modifiedAt: at,
     workingDirectories: [info.cwd, ...(info.additionalDirectories ?? [])].map((directory) => uriOf(directory)),
@@ -356,7 +358,8 @@ export async function loadedSession(
     if (handshake.agentCapabilities?.loadSession !== true) return undefined;
     const cwd = placeOf.get(keyOf(provider, id)) ?? options.cwd ?? process.cwd();
     await connection.loadSession({ sessionId: id, cwd, mcpServers: [] });
-    return watchSession({ provider, id, cwd, additional: [], title: id, replay });
+    // A load names no title, so the record holds none, as an untitled row is listed.
+    return watchSession({ provider, id, cwd, additional: [], title: '', replay });
   }
   catch {
     return undefined;

@@ -550,7 +550,10 @@ export interface WatchedSession {
   cwd: string;
   /** Directories beside it, as paths rather than URIs. */
   additional: string[];
-  /** The title the session reports, which is the first thing said until one is set. */
+  /**
+   * The title the session reports, which is the first thing said until one is
+   * set, and empty for a session read back by a load, which names none.
+   */
   title: string;
   /** ISO 8601 timestamp of the first time this process watched it. */
   createdAt: string;
