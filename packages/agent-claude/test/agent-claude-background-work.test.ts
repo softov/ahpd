@@ -316,6 +316,55 @@ it('takes an entry back on a terminal notification alone', async () => {
   expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
 });
 
+/*
+ * The lead turn ends with two shells still running. The turn's parts go with
+ * it, so each row keeps the chat and the command found while its call was open:
+ * a stop of one shell, or a level that drops one, takes back only that row.
+ */
+it('takes back only the stopped shell after the turn that started both has ended', async () => {
+  const { tasks } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 600'), ...shellFrames('t-loop', 'while true; do date; sleep 5; done'));
+  sdk.push(level(
+    { task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 600' },
+    { task_id: 't-loop', task_type: 'local_bash', description: 'a loop' },
+  ));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+  expect(said(tasks, 'ahp-chat:/bg').map((one) => one.id)).toEqual(['shell:t-sleep', 'shell:t-loop']);
+
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'stopped',
+  });
+  await settle();
+  expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
+});
+
+it('takes back only the shell a level drops after the turn has ended, and keeps the other\'s command', async () => {
+  const { tasks } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 600'), ...shellFrames('t-loop', 'while true; do date; sleep 5; done'));
+  sdk.push(level(
+    { task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 600' },
+    { task_id: 't-loop', task_type: 'local_bash', description: 'a loop' },
+  ));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+  const before = tasks.set.length;
+
+  sdk.push(level({ task_id: 't-loop', task_type: 'local_bash', description: 'a loop' }));
+  await settle();
+  expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
+  // Nothing about the loop changed, so nothing about it is said again.
+  expect(tasks.set).toHaveLength(before);
+  expect(said(tasks, 'ahp-chat:/bg').filter((one) => one.id === 'shell:t-loop').map((one) => (one.kind === 'shell' ? one.command : undefined)))
+    .toEqual(['while true; do date; sleep 5; done']);
+});
+
 it('lists a worker\'s own background shell on the worker\'s chat', async () => {
   const { tasks, handed } = await open();
 

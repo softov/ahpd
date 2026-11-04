@@ -51,6 +51,10 @@ export interface TaskInfo {
   toolUseId?: string;
   description?: string;
   startedAt: string;
+  /** The chat the task's row is on, found while its call was open. */
+  chat?: string;
+  /** The line a shell task runs, read from its call while the call was open. */
+  command?: string;
 }
 
 /** What this area offers the rest of the session, and its `Session` methods. */
@@ -452,9 +456,7 @@ export function createWorkers(ctx: SessionContext): Workers {
    * repeats the line. A call whose input is not a command falls back to the
    * description, so the field is always a sentence a client can draw.
    */
-  const shellWork = (id: string, info: TaskInfo, scope: Scope, chat: string): BackgroundTask => {
-    const call = info.toolUseId === undefined ? undefined : scope.parts.get(info.toolUseId)?.toolCall;
-    const command = call === undefined ? undefined : str(bag(call).toolInput);
+  const shellWork = (id: string, info: TaskInfo, chat: string): BackgroundTask => {
     const rowId = `shell:${id}`;
     const label = info.description ?? '';
     const terminal = outputOf(id, rowId, chat, label);
@@ -463,7 +465,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       id: rowId,
       label,
       startedAt: info.startedAt,
-      command: command ?? label,
+      command: info.command ?? label,
       ...(terminal === undefined ? {} : { terminal }),
       stop: stopOf(id),
     };
@@ -506,10 +508,25 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /** One task as a background task, or nothing for a kind not listed. */
-  const workEntry = (id: string, info: TaskInfo, scope: Scope, chat: string): BackgroundTask | undefined => {
-    if (info.type === 'local_bash') return shellWork(id, info, scope, chat);
+  const workEntry = (id: string, info: TaskInfo, chat: string): BackgroundTask | undefined => {
+    if (info.type === 'local_bash') return shellWork(id, info, chat);
     if (info.type === 'local_agent') return subagentWork(id, info);
     return undefined;
+  };
+
+  /**
+   * Keep on a task what its call says while the call is open: the chat its row
+   * goes on, and a shell's command. The lead turn's parts go when the turn
+   * ends, and a task that runs on is still drawn from these.
+   */
+  const pinWork = (info: TaskInfo, toolUseId: string): void => {
+    const scope = scopeOfCall(toolUseId);
+    if (scope === undefined) return;
+    const chat = workChatOf(scope);
+    if (chat !== undefined) info.chat = chat;
+    const call = scope.parts.get(toolUseId)?.toolCall;
+    const command = call === undefined ? undefined : str(bag(call).toolInput);
+    if (command !== undefined) info.command = command;
   };
 
   /**
@@ -532,12 +549,11 @@ export function createWorkers(ctx: SessionContext): Workers {
     const wanted = new Map<string, BackgroundTask[]>();
     for (const id of live) {
       const info = taskInfo.get(id);
-      const call = info?.toolUseId;
-      const scope = call === undefined ? undefined : scopeOfCall(call);
-      if (info === undefined || scope === undefined) continue;
-      const chat = workChatOf(scope);
+      if (info === undefined) continue;
+      if (info.toolUseId !== undefined) pinWork(info, info.toolUseId);
+      const chat = info.chat;
       if (chat === undefined) continue;
-      const entry = workEntry(id, info, scope, chat);
+      const entry = workEntry(id, info, chat);
       if (entry === undefined) continue;
       wanted.set(chat, [...(wanted.get(chat) ?? []), entry]);
     }
@@ -573,11 +589,16 @@ export function createWorkers(ctx: SessionContext): Workers {
     const type = str(message.task_type);
     const call = str(message.tool_use_id);
     const description = str(message.description);
+    // The same call named again keeps what was pinned from it.
+    const was = taskInfo.get(id);
+    const pinned = was !== undefined && was.toolUseId === call ? was : undefined;
     taskInfo.set(id, {
       ...(type !== undefined ? { type } : {}),
       ...(call !== undefined ? { toolUseId: call } : {}),
       ...(description !== undefined ? { description } : {}),
       startedAt: new Date().toISOString(),
+      ...(pinned?.chat !== undefined ? { chat: pinned.chat } : {}),
+      ...(pinned?.command !== undefined ? { command: pinned.command } : {}),
     });
     reconcileWork();
   };
