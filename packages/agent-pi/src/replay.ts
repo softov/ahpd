@@ -17,7 +17,7 @@ import type { Bag, SessionAt } from '@ahpd/sdk';
 import { lookupDirectories } from './catalog.js';
 import { addUsage, callPartOf, mapEvent, readyRow } from './mapping.js';
 import { loadPi } from './pi.js';
-import { MESSAGE_ENTRY } from './types.js';
+import { INTERRUPTED, MESSAGE_ENTRY } from './types.js';
 import type { PiOptions, PiTurn, WatchedTurn } from './types.js';
 
 /** A session rebuilt from its file. */
@@ -249,10 +249,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
   seal();
   if (running) {
     const cut = turns.at(-1) as WatchedTurn;
-    cut.parts.push({
-      kind: 'error',
-      error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
-    });
+    cut.parts.push({ kind: 'error', error: { ...INTERRUPTED } });
     cut.state = 'error';
   }
   /*

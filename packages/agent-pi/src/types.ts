@@ -32,6 +32,18 @@ export const UNTITLED = 'pi session';
 export const MESSAGE_ENTRY = 'ahpd.message';
 
 /**
+ * The error a turn still running when its record is read ends with, as VS
+ * Code's reader ends a turn whose request is still active at the end of its
+ * events: a resumable `executionInterrupted`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7991-L7994
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+ */
+export const INTERRUPTED = {
+  errorType: 'executionInterrupted',
+  message: 'The agent was interrupted before this request finished.',
+} as const;
+
+/**
  * The permission modes every backend offers, in the order a client reads them.
  *
  * The same six `@ahpd/agent-claude` and `@ahpd/agent-cofold` advertise, because
@@ -195,7 +207,8 @@ export interface WatchedTurn {
   startedAt: string;
   message: Bag;
   parts: Bag[];
-  state: 'complete' | 'cancelled' | 'error';
+  /** How the turn ended, or nothing while it runs. */
+  state?: 'complete' | 'cancelled' | 'error';
   duration?: number;
   /** What the turn's last answer used, when pi reported any. */
   usage?: Bag;

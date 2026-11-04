@@ -676,7 +676,7 @@ export function piSession(
   });
 
   /** Seal the turn being watched, which is what makes a transcript turns. */
-  const seal = (state: WatchedTurn['state'], duration: number): void => {
+  const seal = (state: NonNullable<WatchedTurn['state']>, duration: number): void => {
     if (watched === undefined) return;
     watched.state = state;
     watched.duration = Number.isFinite(duration) ? duration : 0;
@@ -1206,7 +1206,7 @@ export function piSession(
       calls: new Map(),
       ownerOf: clientOf,
     };
-    watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[], state: 'complete' };
+    watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
     watchedTurns.push(watched);
     // A turn's start is the chat's `modifiedAt`, as the reducer moves it.
     modified = String(active.startedAt);
@@ -1475,9 +1475,14 @@ export function piSession(
         ownerOf: clientOf,
       };
       // The transcript's own record of the turn, so what the run adds is read
-      // back with it. A turn read from pi's file is there once the file has been.
+      // back with it, running again until this run ends. A turn read from pi's
+      // file is there once the file has been.
       watched = watchedTurns.find((one) => one.turnId === turnId);
-      if (watched !== undefined) watched.parts = parts;
+      if (watched !== undefined) {
+        watched.parts = parts;
+        delete watched.state;
+        delete watched.duration;
+      }
       activity.say('Thinking');
 
       void (async () => {

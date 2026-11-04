@@ -8,6 +8,7 @@
  */
 
 import type { Agent } from '@ahpd/sdk';
+import { INTERRUPTED } from './types.js';
 import type { WatchedSession } from './types.js';
 
 /**
@@ -20,7 +21,13 @@ import type { WatchedSession } from './types.js';
 type Transcript = NonNullable<Awaited<ReturnType<NonNullable<Agent['transcript']>>>>;
 export type TranscriptTurn = Transcript[number];
 
-/** One session's watched or rebuilt turns, in the order they ran. */
+/**
+ * One session's watched or rebuilt turns, in the order they ran.
+ *
+ * A turn with no ending is one still running when the record is read, and it
+ * reads back interrupted, as pi's own file reads such a turn back: in error,
+ * after its parts, VS Code's resumable `executionInterrupted`.
+ */
 export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[] {
   return session.turns.map((watched) => ({
     id: watched.turnId,
@@ -36,9 +43,11 @@ export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[
       text: String(watched.message.text ?? ''),
       origin: watched.message.origin ?? { kind: 'user' },
     },
-    responseParts: watched.parts,
+    responseParts: watched.state === undefined
+      ? [...watched.parts, { kind: 'error', error: { ...INTERRUPTED }, resumable: true }]
+      : watched.parts,
     usage: watched.usage,
-    state: watched.state,
+    state: watched.state ?? 'error',
     ...(watched.duration === undefined ? {} : { duration: watched.duration }),
   })) as TranscriptTurn[];
 }

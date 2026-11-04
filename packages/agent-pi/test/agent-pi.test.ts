@@ -988,6 +988,33 @@ it('has no transcript for a session with no file and no record', async () => {
   expect(await agent.transcript?.('never-opened')).toBeUndefined();
 });
 
+it('reads back a turn that had not ended as interrupted, as pi file reads one back', async () => {
+  /*
+   * VS Code's reader ends a turn whose request is still active at the end of
+   * its events in error, with a resumable `executionInterrupted` part.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+   */
+  const interrupted = {
+    kind: 'error',
+    error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+    resumable: true,
+  };
+  const { session, pi } = opened();
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
+  const running = await agent.transcript?.('pi-session-1');
+  expect(running?.map((one) => one.state)).toEqual(['error']);
+  expect(running?.[0]?.responseParts.at(-1)).toEqual(interrupted);
+  // The live turn holds what it holds; the interruption is the record's reading.
+  expect(((session.chatState().activeTurn as Bag).responseParts as Bag[]).some((part) => part.kind === 'error')).toBe(false);
+  session.close();
+  const closed = await agent.transcript?.('pi-session-1');
+  expect(closed?.map((one) => one.state)).toEqual(['error']);
+  expect(closed?.[0]?.responseParts.at(-1)).toEqual(interrupted);
+});
+
 it('reads back the turns of a session it did watch', async () => {
   const { session } = opened();
   session.sendMessage('t1', 'hello');
