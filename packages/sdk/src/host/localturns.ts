@@ -37,10 +37,22 @@ export interface LocalTurns {
    * That a chat's turn began, or was written down again, under a transcript id:
    * its own id as it starts, and what `onTurnRecorded` says.
    *
+   * `origin` is the message's, where it is not a person's: a turn an
+   * automation began reads back as one after a restart, as it ran.
+   *
    * Kept for as long as the chat is held, for the anchors of the turns it
    * holds, and in the session's folder for a read after a restart.
    */
-  turnRecordedAs(session: string, chat: string, turnId: string, transcriptId: string): void;
+  turnRecordedAs(session: string, chat: string, turnId: string, transcriptId: string, origin?: Bag): void;
+  /**
+   * The message origin a chat's turn began with, where it began with one that
+   * is not a person's.
+   *
+   * Held for the turn still running: a backend that writes the turn under an id
+   * of its own says so when it ends, and the record written then carries the
+   * same origin as the one written as the turn started.
+   */
+  turnOriginOf(chat: string, turnId: string): Bag | undefined;
   /**
    * Keep a command's turn that has ended, as the chat holds it in `turns`.
    *
@@ -126,6 +138,8 @@ const keptOf = (value: Bag): Kept | undefined => {
 interface Recorded {
   transcriptId: string;
   turnId: string;
+  /** The message's origin, where it is not a person's. */
+  origin?: Bag;
 }
 
 /** The folder under a session's own where its chats record the transcript ids their turns began under. */
@@ -133,9 +147,12 @@ const RECORDED = 'recorded';
 
 /** Whether a file holds a record this version wrote. */
 const recordedOf = (value: Bag): Recorded | undefined => {
-  const { version, transcriptId, turnId } = value;
+  const { version, transcriptId, turnId, origin } = value;
   if (version !== 1 || typeof transcriptId !== 'string' || typeof turnId !== 'string') return undefined;
-  return { transcriptId, turnId };
+  // A kind is the whole of an origin the protocol defines, and a value without
+  // one says nothing a client can draw from.
+  const held = bag(origin);
+  return { transcriptId, turnId, ...(typeof held.kind === 'string' ? { origin: held } : {}) };
 };
 
 /** Two numbers added, or the one there is; absent where neither is. */
@@ -210,6 +227,9 @@ const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>, steered = false
 export function createLocalTurns(ctx: HostContext): LocalTurns {
   /** Each held chat's transcript ids, by the id its turns go by while they run. */
   const recordedAs = new Map<string, Map<string, string>>();
+
+  /** Each held chat's message origins, by the id its turns go by while they run. */
+  const originsAs = new Map<string, Map<string, Bag>>();
 
   /** A chat's folder in a session's own, or nothing where the store keeps none. */
   const folderOf = (session: string, chat: string): string | undefined => {
@@ -286,12 +306,19 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     });
   };
 
-  const turnRecordedAs = (session: string, chat: string, turnId: string, transcriptId: string): void => {
+  const turnRecordedAs = (session: string, chat: string, turnId: string, transcriptId: string, origin?: Bag): void => {
     const names = recordedAs.get(chat) ?? new Map<string, string>();
     names.set(turnId, transcriptId);
     recordedAs.set(chat, names);
-    record(session, chat, { transcriptId, turnId });
+    if (origin !== undefined) {
+      const held = originsAs.get(chat) ?? new Map<string, Bag>();
+      held.set(turnId, origin);
+      originsAs.set(chat, held);
+    }
+    record(session, chat, { transcriptId, turnId, ...(origin === undefined ? {} : { origin }) });
   };
+
+  const turnOriginOf = (chat: string, turnId: string): Bag | undefined => originsAs.get(chat)?.get(turnId);
 
   const keepLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
     const at = turns.findIndex((turn) => str(turn.id) === turnId);
@@ -384,9 +411,9 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * holds: a chat from before its record reads as its transcript gives it.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
    */
-  const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[]): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
+  const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[], records: readonly Recorded[] = recordedIn(session, chat)): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
     const joined = new Map<string, string>();
-    const began = new Map(recordedIn(session, chat).map((one) => [one.transcriptId, one.turnId]));
+    const began = new Map(records.map((one) => [one.transcriptId, one.turnId]));
     if (began.size === 0) return { turns: [...turns], joined };
     const out: WireTurn<Turn>[] = [];
     let recorded = false;
@@ -409,6 +436,24 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     return { turns: out, joined };
   };
 
+  /**
+   * A transcript's turns with the message origin the chat recorded for each.
+   *
+   * Applied before `asBegun`, because a turn that folds into the one before it
+   * keeps the earlier turn's message: an origin set after the fold would land
+   * on a turn the chat no longer holds.
+   */
+  const begunWithOrigins = (turns: readonly WireTurn<Turn>[], records: readonly Recorded[]): WireTurn<Turn>[] => {
+    const origins = new Map(records.flatMap((one) =>
+      one.origin === undefined ? [] : [[one.transcriptId, one.origin] as const]));
+    if (origins.size === 0) return [...turns];
+    return turns.map((turn) => {
+      const origin = origins.get(String(turn.id));
+      if (origin === undefined) return turn;
+      return { ...turn, message: { ...bag(turn.message), origin } } as unknown as WireTurn<Turn>;
+    });
+  };
+
   const transcriptOf = async (
     agent: Agent,
     id: string,
@@ -420,7 +465,8 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     // A chat whose turns are all this host's own has no transcript, and reads
     // as the turns it keeps, as a nested session opens from its record.
     if (turns === undefined) return keptIn(session, chat).length > 0 ? withLocalTurns(session, chat, []) : undefined;
-    const begun = asBegun(session, chat, turns);
+    const records = recordedIn(session, chat);
+    const begun = asBegun(session, chat, begunWithOrigins(turns, records), records);
     return withLocalTurns(session, chat, begun.turns, begun.joined);
   };
 
@@ -474,6 +520,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
 
   const forgetChatLocalTurns = (session: string, chat: string): void => {
     recordedAs.delete(chat);
+    originsAs.delete(chat);
     for (const folder of [folderOf(session, chat), recordOf(session, chat)]) {
       if (folder === undefined) continue;
       try { rmSync(folder, { recursive: true, force: true }); }
@@ -515,7 +562,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
   };
 
   return {
-    turnRecordedAs, keepLocalTurn, transcriptOf, withLocalTurns, concreteTurnOf,
+    turnRecordedAs, turnOriginOf, keepLocalTurn, transcriptOf, withLocalTurns, concreteTurnOf,
     forgetLocalTurns, copyLocalTurns, forgetChatLocalTurns, moveChatLocalTurns, keptTurnsOf,
   };
 }

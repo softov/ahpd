@@ -56,6 +56,16 @@ const keptIn = (store: SessionStore, id: string): Bag[] => {
     .sort((a, b) => Number(a.seq) - Number(b.seq));
 };
 
+/** Every record of the transcript ids a chat's turns began under, as the files hold them. */
+const recordsIn = (store: SessionStore, id: string): Bag[] => {
+  const folder = store.attachmentsDir?.(id);
+  const recorded = folder === undefined ? undefined : join(folder, 'recorded');
+  if (recorded === undefined || !existsSync(recorded)) return [];
+  return readdirSync(recorded, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(join(recorded, name), 'utf8')) as Bag);
+};
+
 type Client = { handle(request: unknown): Promise<unknown> };
 
 /** A channel's state, as a subscribe answers it. */
@@ -80,6 +90,14 @@ const say = (client: Client, chat: string, turnId: string, text: string): void =
   void client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  });
+};
+
+/** Send a message as a turn, with the origin it came from. */
+const sayFrom = (client: Client, chat: string, turnId: string, text: string, origin: Bag): void => {
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text, origin } } },
   });
 };
 
@@ -289,6 +307,38 @@ describe('a host started again on the same store', () => {
     }, [said('t1', 'hello there'), said('t4', 'and then')]);
     expect(await turnsOf(client, chat)).toEqual(['t0', 't1', 't2', 't3', 't4']);
     await host.close();
+  });
+
+  it('reads a turn back with the origin it began with', async () => {
+    const { client, host, chat } = await restarted(async (c, p, ch) => {
+      sayFrom(c, ch, 't1', 'triaging', { kind: 'automation' });
+      await ended(p, ch, 't1');
+    }, [said('t1', 'triaging')]);
+    // The transcript says a person wrote it; the record says an automation
+    // began it, and the record is what a read after a restart goes by.
+    expect(((await stateOf(client, chat)).turns as Bag[])[0]?.message).toMatchObject({ origin: { kind: 'automation' } });
+    await host.close();
+  });
+
+  it('reads a record written without an origin as its transcript says', async () => {
+    const dir = join(temp(), 'sessions');
+    const store = fileSessions({ dir });
+    const first = knobs();
+    const before = await opened(first, store);
+    say(before.client, before.chat, 't1', 'hello there');
+    await ended(before.p, before.chat, 't1');
+    // A person's turn is recorded without one, as every record was before an
+    // origin was kept here.
+    expect(recordsIn(store, 'live').map((one) => 'origin' in one)).toEqual([false]);
+    await before.host.close();
+
+    const second = knobs();
+    second.listed = [row('live')];
+    second.transcript = (id) => (id === 'live' ? [said('t1', 'hello there')] : []);
+    const after = await hostAt(second, fileSessions({ dir }));
+    const turn = ((await stateOf(after.client, before.chat)).turns as Bag[])[0];
+    expect(turn?.message).toMatchObject({ origin: { kind: 'user' } });
+    await after.host.close();
   });
 
   it('reads a turn the chat never began back inside the turn before it, and a chat with no record as it is', async () => {
