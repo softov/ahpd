@@ -10,7 +10,7 @@ proxy/06 is on main. The proxy answers every model endpoint of OpenAI and Anthro
 
 ## Set up
 
-Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* turns `httpApi` on. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
+Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* restarts the daemon with `httpApi` on. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
 
 ```bash
 export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token) B=http://127.0.0.1:37537

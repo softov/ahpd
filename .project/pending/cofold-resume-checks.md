@@ -11,15 +11,18 @@ The plan `cofold/20261031-1200-a-failed-cofold-turn-is-resumed` merged in #177, 
 ## Set up
 
 ```bash
+export COFOLD_CONFIG=/home/softov/.config/cofold/config.json
 source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-cofold
 ```
+
+The script moves `XDG_CONFIG_HOME` to the test folder, where there is no cofold file. `COFOLD_CONFIG` points cofold at your own file, which holds the `open_router` provider.
 
 Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `settings.json`, set `"chat.remoteAgentHostsEnabled": true`, and reload the window. Open a cofold session on `ahpd-check`.
 
 ## Steps
 
 1. Send a prompt that works. Expect the turn to end complete.
-2. Give the cofold model a bad key, and send a prompt that reads a file. Expect the turn to fail with a retry control. How to give it a bad key is an open question: see *A bad key*.
+2. Give the cofold model a bad key, and send a prompt that reads a file. Expect the turn to fail with a retry control. *A bad key* says how to give it one.
 3. Put back a good key, and click retry. Expect the same prompt to run again on the conversation of step 1, with the file read again.
 4. Expect the turn to end complete, with the old error part and the new answer in it.
 5. In a new session, make the first turn fail on a bad key. Fix the key, and click retry. Expect the turn to start over in the same workspace.
@@ -28,7 +31,13 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 
 ## A bad key
 
-Not checked yet: where this agent reads its key on a test daemon. Say how you want the key set, or ask me to find it.
+cofold reads its providers and keys from the file `COFOLD_CONFIG` names (`packages/agent-cofold/README.md`, *Options*). To give it a bad key:
+
+1. Copy `/home/softov/.config/cofold/config.json` to `/tmp/cofold-bad.json`, and change the provider's key in the copy.
+2. Stop the test daemon with `ahpd stop`.
+3. Run the *Set up* again with `COFOLD_CONFIG=/tmp/cofold-bad.json`.
+
+To fix the key, run the *Set up* again with your own file.
 
 ## Reply
 

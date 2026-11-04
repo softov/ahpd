@@ -8,13 +8,14 @@ plans:
 
 host/108 is on main (PR 34). A person mints tokens of their own. These checks need a second computer that reaches your daemon on port 37537.
 
+The HTTP API is on already: your `config-dev.json` sets `http`, the old name of `httpApi`. Do not add `httpApi` too, because the daemon refuses a file that holds both names.
+
 ## Set up
 
 Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
 
 ```bash
 cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
-node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=JSON.parse(fs.readFileSync(f,"utf8"));c.httpApi=true;fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
 node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
 ```
 
@@ -23,7 +24,10 @@ In a second terminal on this computer:
 ```bash
 cd /github/ahpd
 ahpd() { node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts "$@" --config-file /home/softov/.config/ahpd/config-dev.json; }
+ahpd user add ana --role member
 ```
+
+The last line adds the person `ana`, whom these checks use. The `member` role holds `proxy:write`.
 
 ## A proxy:write token from another computer
 
