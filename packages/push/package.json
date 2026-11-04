@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/push",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
   "description": "Push notifications for the ahpd daemon: a push: resource provider a phone registers its Expo token with or a browser its Web Push subscription, and the senders that tell a device when a session needs a person",
   "keywords": [

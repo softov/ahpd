@@ -244,7 +244,7 @@ describe('ahpd status, and whether a newer release is out', () => {
     const lines = (await run([])).split('\n');
     expect(lines[0]).toMatch(/^ahpd on ws:\/\/127\.0\.0\.1:1 \(pid \d+\), started /);
     expect(lines[1]).toBe('sessions in /x');
-    expect(lines[2]).toMatch(/^update: @ahpd\/server 9\.9\.9 is on npm, this is \d+\.\d+\.\d+$/);
+    expect(lines[2]).toMatch(/^update: @ahpd\/server 9\.9\.9 is on npm, this is \d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/);
   }, 20000);
   it('says nothing under --no-update-check, CI, NO_UPDATE_NOTIFIER or updateCheck: false', async () => {
     expect((await run(['--no-update-check'])).split('\n')).toHaveLength(3);
