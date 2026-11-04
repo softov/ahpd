@@ -1,6 +1,6 @@
 ---
 title: The nested proxy is a relay
-status: todo
+status: done
 depends: [task-01-the-host-says-the-clients-action.md, task-02-the-queue-waits-for-prerequisites.md]
 layer: sdk
 refs:
@@ -34,4 +34,11 @@ The connection's later actions go on without waiting for that answer.
 ## Resume
 
 - **From 06:** a `!` turn on a session in a machine goes to the proxy like any turn, for the host inside to run.
+- **Done:** steps 1 to 3, at the commit that closes this task; step 4's hold went with `taken` and `awaited` in 01.
+- **The road:** `Session.relay` takes a client's action as sent, and `Start.answer` brings the echo back under its origin.
+- **Admitted first:** a relayed start passes this host's archive check, policy and machine, its client's later actions behind it.
+- **Relayed:** turns, draft, pending messages, the read bit, answers and MCP requests; config, titles and customizations stay this host's.
+- **Queue:** a message this host queues for a relayed chat goes in with no origin, and the drain inside runs it.
+- **Host's own sends:** a turn or stop this host starts itself is still carried from the session's arguments, its attachments now included.
+- **The stop case:** "applies a stop sent right after a start at once" is checked as the stop carried behind the start, as sent.
 

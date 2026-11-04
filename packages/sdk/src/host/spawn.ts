@@ -28,6 +28,7 @@ import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
+import type { Origin } from './state.js';
 
 /**
  * What starting a backend's session is made of.
@@ -991,6 +992,8 @@ export function createSpawn(ctx: HostContext): Spawn {
      * once, when the host says its start there.
      */
     let booking = false;
+    /** The client whose relayed action the action on this road answers, while it is said. */
+    let answering: Origin | undefined;
     const wired: Start = {
       uri,
       chatUri,
@@ -1144,6 +1147,32 @@ export function createSpawn(ctx: HostContext): Spawn {
         dispatch(channel, action);
       },
       /*
+       * The answer of the host that runs this session to a client's action
+       * this backend relayed: its echo, said on this road under the client's
+       * origin, a start's booked here as the start of a turn this host hands a
+       * backend is, or the client's action refused in that host's words.
+       */
+      answer: (channel, action, origin, rejectionReason) => {
+        if (rejectionReason !== undefined) {
+          // A start refused there is no turn, so nothing held against it here stays.
+          if (action.type === 'chat/turnStarted') {
+            ctx.forgetSender(String(action.turnId ?? ''));
+            ctx.forgetKeys(String(action.turnId ?? ''));
+          }
+          const by = [...ctx.connections].find((one) => one.clientId === origin.clientId);
+          if (by === undefined) log(`${uri}: the host running it refused ${String(action.type)}, and its client has gone: ${rejectionReason}`);
+          else ctx.refuse(by.peer, channel === 'chat' ? chatUri : uri, action, origin, rejectionReason);
+          return;
+        }
+        answering = origin;
+        booking = channel === 'chat' && action.type === 'chat/turnStarted';
+        try { wired.emit(channel, action); }
+        finally {
+          answering = undefined;
+          booking = false;
+        }
+      },
+      /*
        * What a backend says is this host's own action, said as the reference
        * host says its agent's: its background work and its session's activity
        * as much as its turns.
@@ -1217,10 +1246,11 @@ export function createSpawn(ctx: HostContext): Spawn {
           const on = bit === Status.IsRead ? action.isRead === true : action.isArchived === true;
           kept.setChatFlags(idOf(uri), chatUri, on ? flags | bit : flags & ~bit);
         }
-        if (sender !== undefined && action.type === 'chat/turnStarted') {
-          kept.setSender(idOf(uri), turn, sender);
-          // On the message as well as the action: the message is what a
-          // chat's state keeps, and a turn read back says its sender there.
+        if (sender !== undefined && action.type === 'chat/turnStarted') kept.setSender(idOf(uri), turn, sender);
+        // A client's start goes out as the client sent it; one of this host's
+        // carries who asked on the message as well as the action: the message
+        // is what a chat's state keeps, and a turn read back says its sender there.
+        if (sender !== undefined && action.type === 'chat/turnStarted' && answering === undefined) {
           const message = (action.message ?? {}) as Bag;
           dispatch(where, asSent({
             ...action,
@@ -1228,7 +1258,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
           }));
         }
-        else dispatch(where, asSent(action));
+        else dispatch(where, asSent(action), answering);
         if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.

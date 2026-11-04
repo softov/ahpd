@@ -151,6 +151,7 @@ export interface Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
+    relay?: () => void,
   ): string | undefined | Promise<string | undefined>;
   /** A turn this host begins itself, with no client's start behind it: said, then sent. */
   startTurn(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined;
@@ -1458,6 +1459,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * cancel after each step of a turn's preparation.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
    *
+   * `relay` stands for a client's start this host carries, once it admits it,
+   * to the host that runs the session, which runs a command as much as a
+   * question and says the start itself: nothing is said or sent here.
+   *
    * A promise only for a turn that had to be asked about, or one in a machine:
    * everything else is answered here and now, which is what keeps the actions of
    * a turn in the order they were already written in.
@@ -1473,6 +1478,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
+    relay?: () => void,
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out, a command's as much as
@@ -1485,7 +1491,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * stop, rather than only saying so.
      */
     if (ctx.refusing !== undefined) return ctx.refusing;
-    const command = commandIn(session, text);
+    const command = relay === undefined ? commandIn(session, text) : undefined;
     if (command !== undefined) {
       const by = sender === undefined ? undefined : ownerFor(sender);
       if (by !== undefined) senders.set(turnId, by);
@@ -1549,9 +1555,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * the same thing, and the only thing that decides it is what the
        * session holds at the moment the turn starts.
        */
-      if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-      else said();
-      void sendTurn(session, turnId, text, model, from, attachments, stopped);
+      if (relay !== undefined) relay();
+      else {
+        if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
+        else said();
+        void sendTurn(session, turnId, text, model, from, attachments, stopped);
+      }
       return undefined;
     };
     /*

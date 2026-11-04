@@ -195,6 +195,7 @@ session channel. A session never needs to know either URI to do it.
 | being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
+| another host's session | `relay?(channel, action, origin?)` |
 | the end | `close()` |
 
 The turn's calls are the ones VS Code's host makes of an agent, under the same
@@ -231,6 +232,18 @@ has the host hand it again on the turn's next action, and a promise of `false`
 when the turn it was meant for ended first, handing it back, which has the host
 steer the turn that runs then with it or run it next. `withdrawSteeringMessage`
 takes back one you took that the model has not read, when a client removes it.
+
+A backend that is the proxy of a session another host runs answers `relay`,
+as the nested proxy of a session in a machine does: a client's action on the
+session's turns, its chat's draft, pending messages and bits, or its MCP
+servers is handed to `relay` as the client sent it, and to nothing else, a
+start once the host has admitted it, as a VS Code relay forwards each frame
+as sent
+([relayTransport.ts L123-L137](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137)).
+The host running the session applies it and echoes it, and you hand that echo,
+or its refusal, to `start.answer` under the client's origin, which answers the
+client. A message the host queues for the chat is handed to `relay` with no
+origin, said already, for the host there to run.
 
 ### Config keys
 

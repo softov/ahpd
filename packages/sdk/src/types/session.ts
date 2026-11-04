@@ -1,6 +1,6 @@
 /** One agent session: its lifecycle, its turns, and what it is waiting for. */
 
-import type { MessageAttachment } from '@microsoft/agent-host-protocol';
+import type { ActionOrigin, MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { FileEdit } from './changes.js';
 import type { BoundTool } from './agent.js';
@@ -543,6 +543,24 @@ export interface Session {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
    */
   channel?(uri: string): SessionChannel | undefined;
+
+  /**
+   * Carry a client's action on this session's chat or session channel to the
+   * host that runs the session, as the client sent it.
+   *
+   * A backend that answers it is the proxy of a session another host runs,
+   * reached as a relay reaches one: this host says nothing of the action and
+   * hands the session nothing else for it, and the host running the session
+   * applies the action and echoes it. The echo comes back through
+   * `Start.answer` under `origin`, which answers the client that sent it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
+   *
+   * A turn's start is admitted here first, its policy and its machine, and
+   * carried once this host admits it. With no `origin` the action is this
+   * host's own, said here already and carried as it is: a message it queues
+   * for the chat, which the host there runs.
+   */
+  relay?(channel: 'session' | 'chat', action: Bag, origin?: ActionOrigin): void;
 
   /**
    * Hand one steering message to the turn that is running.

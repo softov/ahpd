@@ -169,6 +169,21 @@ export const subagentChatUri = (session: string, toolCallId: string): string =>
 /** The client actions a worker's chat takes: answers to what it asked, drafts of them, and a stop. */
 export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled']);
 
+/**
+ * The client actions a session another host runs takes there, through its
+ * backend's `relay`: those of its chat's turns, draft, pending messages and
+ * read bit, and the requests to its MCP servers. Its config and its titles are
+ * this host's, its customizations hold this host's client plugins beside the
+ * backend's, and its lead chat is its default chat, which this host refuses to
+ * archive as any session's.
+ */
+export const RELAYED = new Set([
+  'chat/turnStarted', 'chat/turnCancelled', 'chat/turnResume', 'chat/draftChanged',
+  'chat/pendingMessageSet', 'chat/pendingMessageRemoved', 'chat/queuedMessagesReordered',
+  'chat/toolCallConfirmed', 'chat/inputCompleted', 'chat/inputAnswerChanged', 'chat/isReadChanged',
+  'session/mcpServerStartRequested', 'session/mcpServerStopRequested', 'session/mcpServerBackgroundRequested',
+]);
+
 /** The tool call a worker chat was opened for, or nothing when it is not one. */
 export const toolCallOfSubagentChat = (uri: string): string | undefined => {
   const prefix = 'ahp-chat://subagent/';

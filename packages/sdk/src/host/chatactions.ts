@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -390,6 +390,40 @@ export function chatAction(
   if (worker && !WORKER_ACTIONS.has(type)) {
     refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
     return;
+  }
+  /*
+   * A client's action on a session another host runs, carried there as the
+   * client sent it, whose echo there answers the client, as a relay forwards
+   * each frame as sent: nothing is said of it here. A start is admitted first,
+   * by its session's bits, its policy and its machine, refused in this host's
+   * words where it is not, and the client's later actions wait behind its
+   * admission, so they reach the host there in the order they were sent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2792-L2798
+   */
+  const named = sessions.get(channel);
+  const relaying = worker || !RELAYED.has(type) ? undefined
+    : byChat.get(channel)?.chat ?? (named === undefined ? undefined : leadOf(named));
+  if (relaying?.relay !== undefined) {
+    const kind = byChat.has(channel) ? 'chat' : 'session';
+    if (type !== 'chat/turnStarted') {
+      relaying.relay(kind, action, origin);
+      return;
+    }
+    if ((kept.flags(idOf(relaying.uri)) & Status.IsArchived) !== 0) {
+      no('This session is archived and read-only. Restore the session to continue the conversation.');
+      return;
+    }
+    const message = messageOf(action);
+    const turnId = String(action.turnId ?? '');
+    void fire({ type: 'message', session: relaying.uri, chat: relaying.chatUri, turn: turnId, text: String(message.text ?? '') });
+    return beginTurn(
+      () => beginOrRun(relaying, sessions.get(relaying.uri)?.agent.provider ?? 'This provider', turnId, String(message.text ?? ''),
+        modelIn(message.model), messageFrom(message), connection, undefined, undefined, undefined,
+        () => { relaying.relay?.('chat', action, origin); }),
+      (why) => { no(why); },
+      (why) => { no(why); },
+    );
   }
   /*
    * A message's attachments, written before the action is applied.

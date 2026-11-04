@@ -5,8 +5,10 @@
  * moved into a machine, and the host still owns the session a client sees. So
  * a whole `ahpd` with that backend loaded is started inside the machine, in
  * stdio mode, and this is the outer session that carries it: it speaks AHP to
- * the host inside with `AhpClient`, forwards the client's turns and answers,
- * and emits what the inner host says as the outer session's own actions.
+ * the host inside with `AhpClient`, relays a client's actions as the client
+ * sent them, answering that client with the echo there, carries what the host
+ * out here hands it, and emits what the inner host says as the outer session's
+ * own actions.
  *
  * Two things make it a proxy rather than a second host: the inner turn ids are
  * the outer ones, so a client's optimistic write matches what comes back, and
@@ -42,8 +44,8 @@ import { AhpClient, RpcError } from '@microsoft/agent-host-protocol/client';
 import type { AhpTransport, Subscription, TransportFrame } from '@microsoft/agent-host-protocol/client';
 import { canvasReducer, changesetReducer, chatReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type {
-  CanvasAction, CanvasState, ChangesetAction, ChangesetState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionState, StateAction,
-  TerminalState,
+  ActionOrigin, CanvasAction, CanvasState, ChangesetAction, ChangesetState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionState,
+  StateAction, TerminalState,
 } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from './catalog.js';
 import { posixUriOf, uriOf } from '../resources/fileuri.js';
@@ -56,7 +58,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat } from '../types/session.js';
+import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -485,13 +487,17 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   /**
    * The name this session's client gives itself to the host inside.
    *
-   * The host outside says each client action itself before this session
-   * carries it, so what the host inside says under this client's origin moves
-   * the mirror and goes no further: a second copy would tell the clients
-   * outside of one change twice. A rejection under it is this session's to
-   * log, and a turn the host inside would not start ends in an error out here.
+   * What the host inside says under this client's origin is the echo of what
+   * this session carried. The echo of a client's action `relay` carried is that
+   * client's answer out here, under its own origin, a refusal among them. The
+   * echo of what the host outside said itself and handed this session moves the
+   * mirror and goes no further: a second copy would tell the clients outside of
+   * one change twice, and a turn of the host's the host inside would not start
+   * ends in an error out here.
    */
   const clientId = `ahpd-nested-${id}`;
+  /** The client out here each relayed action answers, by the clientSeq it was carried inside under. */
+  const answers = new Map<number, { channel: 'session' | 'chat'; origin: ActionOrigin }>();
   /** A changeset or a canvas of the host inside that a client out here subscribed to. */
   interface Relay {
     /** Its name inside. */
@@ -542,8 +548,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   };
 
   /**
-   * A client's action, carried to the host inside once the host outside has
-   * said it, and held with `waiting` while the host inside is not up yet.
+   * An action the host outside said and handed this session, carried to the
+   * host inside, and held with `waiting` while the host inside is not up yet.
    *
    * `channel` is the session's, the chat's, or the inner name of a changeset
    * or a canvas this session relays.
@@ -1042,15 +1048,19 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         }
         if (event.type !== 'action') continue;
         const { action, origin, rejectionReason } = event.params;
-        // The echo of what this session carried, said out here already.
+        // The echo of what this session carried, and the client out here it answers when it relayed it.
         const ours = origin?.clientId === clientId;
+        const answering = ours ? answers.get(origin.clientSeq) : undefined;
+        if (answering !== undefined && origin !== undefined) answers.delete(origin.clientSeq);
         /*
-         * A rejection changes nothing in the mirror. A turn the host inside
-         * would not start, which the host out here said, ends in an error.
+         * A rejection changes nothing in the mirror. A relayed action is
+         * refused out here in the words of the host inside; a turn the host
+         * out here said and the host inside would not start ends in an error.
          */
         if (rejectionReason !== undefined) {
           log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
-          if (ours) unstarted(action as unknown as Bag, rejectionReason);
+          if (answering !== undefined) start.answer?.(answering.channel, served(channel, action as unknown as Bag) ?? action as unknown as Bag, answering.origin, rejectionReason);
+          else if (ours) unstarted(action as unknown as Bag, rejectionReason);
           continue;
         }
         /*
@@ -1087,9 +1097,9 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
             if (turn === action.turnId) turn = undefined;
           }
         }
-        if (ours) continue;
         const shown = served(channel, action as unknown as Bag);
-        if (shown !== undefined) start.emit(channel, shown);
+        if (answering !== undefined) start.answer?.(answering.channel, shown ?? action as unknown as Bag, answering.origin);
+        else if (!ours && shown !== undefined) start.emit(channel, shown);
       }
     }
     catch (error) {
@@ -1518,7 +1528,38 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       };
     },
 
-    sendMessage: (turnId: string, text: string, from?: MessageFrom): void => {
+    /*
+     * A client's action carried inside as the client sent it, on the inner
+     * names of the session and its chat, whose echo there answers that client
+     * out here; a host's own, with no client behind it, carried as it is. A
+     * start reopens a session that stopped, as a send does.
+     */
+    relay: (channel: 'session' | 'chat', action: Bag, origin?: ActionOrigin): void => {
+      if (closed || ended !== undefined) {
+        if (origin !== undefined) start.answer?.(channel, action, origin, ended ?? `${provider}'s session in computer://${id} has closed`);
+        return;
+      }
+      if (channel === 'chat' && action.type === 'chat/turnStarted') {
+        turn = String(action.turnId ?? '');
+        turnBegan = Date.now();
+        if (halted !== undefined) {
+          halted = undefined;
+          void reopen('');
+        }
+      }
+      gate(() => {
+        try {
+          const sent = client?.dispatch(channel === 'chat' ? innerChat : innerSession, action as unknown as StateAction);
+          if (origin !== undefined && sent !== undefined) answers.set(sent.clientSeq, { channel, origin });
+        }
+        catch (error) {
+          log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`);
+          if (origin !== undefined) start.answer?.(channel, action, origin, `${provider}'s host inside computer://${id} could not be reached: ${reason(error)}`);
+        }
+      });
+    },
+
+    sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[]): void => {
       turn = turnId;
       turnBegan = Date.now();
       /*
@@ -1534,8 +1575,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       /*
        * Carried as a client of the host inside sends it, as VS Code's client
        * does: the time it starts and a message with its origin, a person's
-       * where the message names none, and the model and agent picked last.
-       * The host inside says it as it came.
+       * where the message names none, its attachments, and the model and
+       * agent picked last. The host inside says it as it came.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L435-L442
        */
@@ -1551,6 +1592,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
           ...(model === undefined ? {} : { model }),
           ...(picked === undefined ? {} : { agent: picked }),
           ...(from?._meta === undefined ? {} : { _meta: from._meta }),
+          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
         },
       });
     },

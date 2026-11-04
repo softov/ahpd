@@ -745,8 +745,9 @@ it('a restart goes on when the host inside it stopped will not go', async () => 
 }, 30_000);
 
 /*
- * A client of the host outside dispatches the turn, which is said out here as
- * that client's own, under the clientSeq it sent, and carried inside.
+ * A client of the host outside dispatches the turn, which is carried inside,
+ * and the echo there answers it out here as that client's own, under the
+ * clientSeq it sent.
  */
 it('gives a turn on a nested session the origin of the client outside that sent it', async () => {
   const inner = innerHost(backend());
@@ -793,9 +794,9 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
 };
 
 /*
- * Every action a client sends a nested session is said out here as that
- * client's own, under the clientSeq it sent, and then carried inside, whose
- * echo of it goes no further than the mirror.
+ * An action a client sends a nested session's chat is carried inside as it was
+ * sent, and the echo there answers it out here as that client's own, under the
+ * clientSeq it sent.
  */
 it('gives a draft on a nested session the origin of the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -816,9 +817,9 @@ it('gives a message queued on a nested session the origin of the client outside 
 });
 
 /*
- * A background request on a nested session is said out here, under the
- * clientSeq its client sent, and carried to the host inside, whose backend
- * makes of it what it does.
+ * A background request on a nested session is carried to the host inside,
+ * whose backend makes of it what it does, and its echo there answers it out
+ * here under the clientSeq its client sent.
  */
 it('answers a background request on a nested session to the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -831,14 +832,14 @@ it('answers a background request on a nested session to the client outside that 
 });
 
 /*
- * A client's read of a nested session's lead chat is said out here and
- * carried to the host inside, which runs the chat, and the chat's bits out
+ * A client's read of a nested session's lead chat is carried to the host
+ * inside, which runs the chat and answers the client, and the chat's bits out
  * here follow what that host says of them: a turn's start and end move the bit
  * once, inside. An archive of the lead chat is refused out here, as any
  * session's default chat's is, and reaches nothing inside.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
  */
-it('carries a read of the lead chat to the host inside, whose bits the chat holds, and refuses an archive of it', async () => {
+it('carries a read of the lead chat to the host inside, which answers it, and refuses an archive of it', async () => {
   const inner = innerHost(backend());
   const { host, client, dispatch, told } = await outside(inner);
   const chat = chatUriFor('ahp-session:/outer');
@@ -917,6 +918,54 @@ it('ends a turn the host inside would not run as the host inside ends it', async
   inner.crash();
   await until(() => told('session/creationFailed').length > 0);
   expect(told('chat/error')).toHaveLength(1);
+  await host.close();
+});
+
+/*
+ * A client's start is carried inside as the client sent it, its message whole:
+ * what it attached and the agent it picked, as a relay forwards a frame.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
+ */
+it('carries a message\'s attachments and agent inside, as the client sent them', async () => {
+  const inner = innerHost(backend());
+  const { host, dispatch, told } = await outside(inner);
+  const message = {
+    origin: { kind: 'user' },
+    text: 'read this',
+    attachments: [{ type: 'simple', label: 'the first paragraph', modelRepresentation: 'It was a dark and stormy night.' }],
+    agent: { uri: 'agent://reviewer' },
+  };
+  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message });
+  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await settleInner();
+  const carried = inner.messages
+    .filter((one) => one.method === 'dispatchAction' && one.params?.action?.type === 'chat/turnStarted')
+    .map((one) => one.params.action.message);
+  expect(carried).toEqual([message]);
+  await host.close();
+});
+
+/*
+ * A stop sent right after a start goes inside behind it as the client sent it,
+ * with the client's own time, and the host inside applies it at once: nothing
+ * out here waits on the start's answer before carrying the stop.
+ */
+it('carries a stop sent right after a start inside behind it, as the client sent it', async () => {
+  const inner = innerHost(backend(30));
+  const { host, dispatch, told } = await outside(inner);
+  void dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
+  void dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 7 });
+  await until(() => told('chat/turnCancelled').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  expect(told('chat/turnCancelled').map((one) => [one.origin, one.rejectionReason, one.action.duration]))
+    .toEqual([[{ clientId: 'window', clientSeq: 2 }, undefined, 7]]);
+  await settleInner();
+  const carried = inner.messages
+    .filter((one) => one.method === 'dispatchAction')
+    .map((one) => [one.params.action.type, one.params.action.duration]);
+  expect(carried).toEqual([['chat/turnStarted', undefined], ['chat/turnCancelled', 7]]);
+  expect(told('chat/turnComplete')).toEqual([]);
   await host.close();
 });
 

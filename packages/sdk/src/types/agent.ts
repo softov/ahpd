@@ -1,6 +1,6 @@
 /** An agent backend, and everything the host asks one for. */
 
-import type { ToolCallConfirmationReason, Turn } from '@microsoft/agent-host-protocol';
+import type { ActionOrigin, ToolCallConfirmationReason, Turn } from '@microsoft/agent-host-protocol';
 import type { CommandShell } from '../access/commandautoapprover.js';
 import type { Bag } from './common.js';
 import type { FileEdit } from './changes.js';
@@ -443,6 +443,13 @@ export interface Start {
    * the host asked for it by. Each is the host's own action, as for `emit`.
    */
   emitOn?: (channel: string, action: Bag) => void;
+  /**
+   * The answer to a client's action `Session.relay` carried: the echo of the
+   * host that runs the session, said under `origin` on the road `emit` takes,
+   * or, with `rejectionReason`, the client's action refused in that host's
+   * words.
+   */
+  answer?: (channel: 'session' | 'chat', action: Bag, origin: ActionOrigin, rejectionReason?: string) => void;
   /**
    * Ask the host for a read-only chat for one of this backend's tool calls.
    *

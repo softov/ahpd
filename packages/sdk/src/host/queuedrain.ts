@@ -8,7 +8,8 @@
  * it; the queue's head becomes a turn of this host's once a turn ends well or
  * a local command ends, steering first, and never while the latest turn is a
  * failure a client can resume. A stop takes the pending steering out and
- * starts nothing.
+ * starts nothing. The pending messages of a chat whose session runs on another
+ * host are that host's to drain.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L29-L326
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md?plain=1#L623-L625
  */
@@ -70,6 +71,12 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     chats.set(chat, one);
     return one;
   };
+  /**
+   * Whether the chat's session runs on another host, whose drain runs the
+   * chat's pending messages: a client's reach it through the session's relay,
+   * and a message this host queues is carried there too.
+   */
+  const relayed = (chat: string): boolean => byChat.get(chat)?.chat.relay !== undefined;
   /** The chat's state still holds a pending message by this id. */
   const pending = (chat: string, id: string): boolean => {
     const state = ctx.stateOf(chat);
@@ -85,6 +92,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L175-L243
    */
   const handSteering = (chat: string): void => {
+    if (relayed(chat)) return;
     const state = ctx.stateOf(chat);
     const steering = state?.steeringMessage as Bag | undefined;
     const kept = chats.get(chat);
@@ -132,6 +140,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L326
    */
   const tryConsume = (chat: string): void => {
+    if (relayed(chat)) return;
     const state = ctx.stateOf(chat);
     const owner = byChat.get(chat);
     if (state === undefined || owner === undefined || state.activeTurn !== undefined) return;
@@ -193,7 +202,9 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     },
     enqueue: (chat, id, text, from, by) => {
       keptOf(chat).senders.set(id, { connection: by?.connection, owner: by?.owner });
-      dispatch(chat, { type: 'chat/pendingMessageSet', kind: 'queued', id, message: ctx.messageOf(text, undefined, from) });
+      const action = { type: 'chat/pendingMessageSet', kind: 'queued', id, message: ctx.messageOf(text, undefined, from) };
+      dispatch(chat, action);
+      if (relayed(chat)) byChat.get(chat)?.chat.relay?.('chat', action);
     },
     takenUp: (chat, turnId) => chats.get(chat)?.admitted.get(turnId),
     /*
@@ -204,6 +215,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
      */
     turnEnded: (chat, action) => {
+      if (relayed(chat)) return;
       const kept = chats.get(chat);
       kept?.admitted.delete(String(action.turnId ?? ''));
       if (action.type === 'chat/turnCancelled') {
