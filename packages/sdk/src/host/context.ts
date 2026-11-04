@@ -57,7 +57,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
-  /** The shells each session's agent runs its commands in, one set a session. */
+  /** The shells each chat's agent runs its commands in, one set a chat. */
   shells: HostShells;
   /** The options `createHost` was given. */
   options: HostOptions;

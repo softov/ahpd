@@ -1,7 +1,7 @@
 /**
  * The shells an agent runs its commands in, and what a command did.
  *
- * The reference host's `ShellManager` keeps one shell per session and hands it
+ * The reference host's `ShellManager` keeps a chat's shells and hands one
  * to a call for as long as the command runs, so a model's commands share a
  * directory and its variables the way a person's do. These are the shapes the
  * manager and the command execution speak, kept apart from the terminal store
@@ -14,7 +14,7 @@ import type { CommandTerminal } from './terminals.js';
 /** The kinds of shell the reference's tool set has a name for. */
 export type ShellType = 'bash' | 'powershell';
 
-/** One shell a session keeps: its own id, the terminal it runs as, and what started it. */
+/** One shell a chat keeps: its own id, the terminal it runs as, and what started it. */
 export interface ManagedShell {
   /** The manager's name for it, which a tool call names when it picks one. */
   id: string;
@@ -61,7 +61,7 @@ export interface ShellClaim {
   opened?: (terminal: CommandTerminal) => void;
 }
 
-/** A session's shells, and what may be done with them. */
+/** A chat's shells, and what may be done with them. */
 export interface Shells {
   /** The program a new shell runs. */
   executable(): string;
