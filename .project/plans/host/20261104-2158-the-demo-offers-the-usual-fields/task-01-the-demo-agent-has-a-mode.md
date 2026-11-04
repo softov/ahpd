@@ -1,6 +1,6 @@
 ---
 title: The demo agent is Agent Demo and has a mode
-status: todo
+status: done
 depends: []
 layer: "examples"
 refs:

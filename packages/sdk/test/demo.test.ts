@@ -123,7 +123,7 @@ it('lists the demo agent with its models before any session', async () => {
     snapshot: { state: { agents: { provider: string; displayName: string; models: { id: string }[] }[] } };
   };
   const one = root.snapshot.state.agents.find((agent) => agent.provider === 'demo');
-  expect(one?.displayName).toBe('Demo');
+  expect(one?.displayName).toBe('Agent Demo');
   expect(one?.models.map((model) => model.id)).toEqual(['demo-fast', 'demo-large', 'demo-small']);
 });
 
@@ -136,6 +136,17 @@ it('reports its session as demo, with the customizations', async () => {
     };
     return opened.snapshot.state.customizations.some((one) => one.name === 'summarize');
   });
+});
+
+it('offers a mode beside the notes fields, as a real host does', async () => {
+  const { client, uri } = await talking();
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { config?: { schema: { properties: Record<string, { title: string }> }; values: Record<string, unknown> } } };
+  };
+  const config = opened.snapshot.state.config;
+  expect(Object.keys(config?.schema.properties ?? {})).toEqual(expect.arrayContaining(['mode', 'ask', 'tone']));
+  expect(config?.schema.properties.mode?.title).toBe('Agent Mode');
+  expect(config?.values.mode).toBe('interactive');
 });
 
 it('lists an automation a client creates', async () => {

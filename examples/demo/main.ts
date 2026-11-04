@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createHost, fileResources, gitBranches, gitChanges, listen, memoryAutomations, shellTerminals } from '@ahpd/sdk';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, listen, memoryAutomations, shellTerminals } from '@ahpd/sdk';
 import { pty } from '../../packages/server/src/pty.js';
 import { demo } from './agent.js';
 
@@ -40,6 +40,8 @@ const host = createHost({
   terminals: shellTerminals(terminalBinding),
   directories: gitBranches(),
   changes: gitChanges(),
+  // A git folder offers isolation and branch on a new session, as on the daemon.
+  worktrees: gitWorktrees(),
   automations: memoryAutomations(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
