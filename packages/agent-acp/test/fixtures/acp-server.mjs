@@ -131,6 +131,13 @@
  * account of the same thing the legacy modes carry: a client sets the mode
  * through `session/set_config_option` rather than `session/set_mode`.
  *
+ * `--refuse-mode` answers every `session/set_mode` with an error of its own,
+ * which is a server that names its modes and stays in the one it is in.
+ *
+ * `--model-thinks` moves the thinking option to `deep` whenever the model is
+ * set to `thorough`, which is a server whose options hang together: the
+ * answer to one value set names another that moved with it.
+ *
  * Three flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
  * conversation, `--no-resume` stops it advertising
@@ -1759,6 +1766,10 @@ const onLine = (line) => {
       return;
 
     case 'session/set_mode':
+      if (process.argv.includes('--refuse-mode')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'The mode is locked' } });
+        return;
+      }
       mode = String(message.params?.modeId ?? mode);
       respond(message.id, {});
       notify({ sessionUpdate: 'current_mode_update', currentModeId: mode });
@@ -1770,6 +1781,7 @@ const onLine = (line) => {
       const asked = String(message.params?.configId ?? '');
       const value = message.params?.value;
       if (asked === 'model') model = String(value ?? model);
+      if (asked === 'model' && model === 'thorough' && process.argv.includes('--model-thinks')) thinking = 'deep';
       if (asked === 'mode') mode = String(value ?? mode);
       if (asked === 'thinking') thinking = String(value ?? thinking);
       if (asked === 'telemetry') telemetry = value === true;

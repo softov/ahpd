@@ -375,6 +375,8 @@ export function createOpening(ctx: SessionContext): Opening {
   const open = (): Promise<{ connection: AcpConnection; sessionId: string }> => {
     if (ctx.opening !== undefined) return ctx.opening;
     ctx.loading = true;
+    // The config every client holds as the open begins.
+    const values = { ...settings };
     const pending = (async () => {
       /*
        * The mode this session asked for, read before the open learns the
@@ -622,9 +624,17 @@ export function createOpening(ctx: SessionContext): Opening {
       return { connection, sessionId: ctx.acpSessionId };
     })();
     ctx.opening = pending;
-    // The replay ends where the open does, whether it worked or not: what the
-    // server said on the way belongs to no turn after this point.
-    const opened = (): void => { ctx.loading = false; };
+    /*
+     * The replay ends where the open does, whether it worked or not: what the
+     * server said on the way belongs to no turn after this point. What the
+     * open learned is said then, where it differs from the config every client
+     * held as it began: the mode, the options and the model the server runs
+     * with, once the mode the session asked for has been sent.
+     */
+    const opened = (): void => {
+      ctx.loading = false;
+      ctx.syncConfig(values);
+    };
     void pending.then(opened, opened);
     return pending;
   };

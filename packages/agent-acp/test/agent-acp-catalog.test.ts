@@ -509,9 +509,10 @@ it('announces a mode the agent moved itself, once', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'announced');
   await runTurn(session, watch, 't1', 'hi');
-  // The mode and the model the session opened with are the ones in force, so
-  // nothing is said until the server moves them.
-  expect(changed(watch)).toEqual([]);
+  // What the server opened with is said once, in one action, because the
+  // session held none of it; after that nothing is said until the server
+  // moves something.
+  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
 
   await runTurn(session, watch, 't2', 'shift');
   // Said again at the same turn, which is the point: the second `shift` moves
@@ -519,7 +520,7 @@ it('announces a mode the agent moved itself, once', async () => {
   // whether anything changed.
   await runTurn(session, watch, 't3', 'shift');
 
-  expect(changed(watch)).toEqual([{ permissionMode: 'code' }, { model: 'thorough' }]);
+  expect(changed(watch).slice(1)).toEqual([{ permissionMode: 'code' }, { model: 'thorough' }]);
   expect(configOf(session).values).toMatchObject({ permissionMode: 'code' });
   expect(session.settings().model).toBe('thorough');
 });
@@ -531,10 +532,11 @@ it('says nothing for a mode the client set itself', async () => {
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
   // The update that follows the request carries back what the client already
-  // knows, so the announcement is the one thing a client is not sent twice.
+  // knows, so the announcement is the one thing a client is not sent twice:
+  // what is said is the open's, once.
   await runTurn(session, watch, 't2', 'hi');
 
-  expect(changed(watch)).toEqual([]);
+  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
   expect(session.settings().permissionMode).toBe('code');
 });
 
@@ -584,10 +586,53 @@ it('leaves a session in the server mode when the one it asked for is not offered
   await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the modes, and one it did not name is a request it would
-  // refuse - so the session opens in the mode the server is in.
+  // refuse, so the session opens in the mode the server is in, and every
+  // client that held the asked one is told so.
   expect(requests(log).some((one) => one.method === 'session/set_mode')).toBe(false);
   expect(session.settings().permissionMode).toBe('ask');
   expect(configOf(session).values.permissionMode).toBe('ask');
+  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
+});
+
+it('says the mode the server stays in when it refuses the one the session asked for', async () => {
+  const { agent, log } = backend(['--refuse-mode']);
+  const { session, watch } = start(agent, 'asked-refused', {
+    settings: { permissionMode: 'code', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The mode was asked for and refused, so the session runs in the server's,
+  // and a client holding the asked one is told the one in force.
+  expect(requests(log).find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
+  expect(session.settings().permissionMode).toBe('ask');
+  expect(changed(watch)).toEqual([{ permissionMode: 'ask' }]);
+});
+
+it('says an option the server moved with a value a client set', async () => {
+  const { agent } = backend(['--model-thinks']);
+  const { session, watch } = start(agent, 'moved-with', {
+    settings: { permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  expect(await session.setConfig?.('model', 'thorough')).toBe(true);
+  // The model is the client's own, which the host said; the thinking the
+  // server moved with it is news, said once.
+  await runTurn(session, watch, 't2', 'hi');
+  expect(changed(watch)).toEqual([{ 'acp.thinking': 'deep' }]);
+  expect(session.settings()['acp.thinking']).toBe('deep');
+});
+
+it('says the model a turn chose and an option the server moved with it', async () => {
+  const { agent } = backend(['--model-thinks']);
+  const { session, watch } = start(agent, 'chosen-with', {
+    settings: { permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  session.changeModel({ id: 'thorough' });
+  await runTurn(session, watch, 't2', 'hi');
+  expect(changed(watch)).toEqual([{ model: 'thorough' }, { 'acp.thinking': 'deep' }]);
 });
 
 it('sends the mode again when the server is opened after a death', async () => {
