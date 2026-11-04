@@ -61,7 +61,7 @@ client chat/pendingMessageSet steering, id of a queued entry -> chatactions -> s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a steered queued message runs once](task-01-a-steered-queued-message-runs-once.md) | todo | - |
+| [01 - a steered queued message runs once](task-01-a-steered-queued-message-runs-once.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -69,12 +69,12 @@ client chat/pendingMessageSet steering, id of a queued entry -> chatactions -> s
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-steered-queued-message-runs-once.md](task-01-a-steered-queued-message-runs-once.md).
+- **Done so far:** task 01 is implemented on 2026-11-04.
+- **Next action:** review, then the check of ahpw's "Send now" on a live session.
 - **Watch out for:** a steer the backend refuses goes on to `session.queue` with kind `steering`.
   That call replaces the entry under the same id, and it keeps working.
 
 ## Final verification checklist
 
-- [ ] A queued message sent again as steering into a running turn is taken once, and no turn starts for it.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk, agent-claude, agent-cofold, agent-pi and bot tests pass.
+- [x] A queued message sent again as steering into a running turn is taken once, and the backend's queued copy is removed.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk, agent-claude, agent-cofold, agent-pi and bot tests pass.
