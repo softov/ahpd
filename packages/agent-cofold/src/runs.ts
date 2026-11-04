@@ -288,7 +288,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
     }
     ctx.handle = live;
     read(live, mapping, turnId);
-    ctx.activity.say('Waiting on you');
     ctx.touch();
   };
 
