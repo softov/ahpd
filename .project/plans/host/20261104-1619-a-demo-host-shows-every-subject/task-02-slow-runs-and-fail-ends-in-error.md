@@ -1,6 +1,6 @@
 ---
 title: slow runs and fail ends in an error
-status: todo
+status: done
 depends: [task-01-the-demo-host-serves-every-subject.md]
 layer: "examples"
 refs:
