@@ -1,7 +1,7 @@
 ---
 title: A queued message sent now runs once
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -61,7 +61,7 @@ client chat/pendingMessageSet steering, id of a queued entry -> chatactions -> s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a steered queued message runs once](task-01-a-steered-queued-message-runs-once.md) | implemented | - |
+| [01 - a steered queued message runs once](task-01-a-steered-queued-message-runs-once.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -69,10 +69,8 @@ client chat/pendingMessageSet steering, id of a queued entry -> chatactions -> s
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented on 2026-11-04.
-- **Next action:** review, then the check of ahpw's "Send now" on a live session.
-- **Watch out for:** a steer the backend refuses goes on to `session.queue` with kind `steering`.
-  That call replaces the entry under the same id, and it keeps working.
+- **Done so far:** task 01 is done, merged in #218 and checked by Softov on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
