@@ -508,6 +508,39 @@ it('titles a call by the subject the run sent, live and read back', async () => 
   expect(callOf((turns?.[0]?.responseParts ?? []) as Bag[])).toMatchObject({ invocationMessage: 'a.ts', pastTenseMessage: 'a.ts' });
 });
 
+/*
+ * A finished call's past tense as VS Code's agents word it: cofold's shell
+ * command as the first line it ran, and a call that failed as failed, live
+ * and read back alike.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
+it('words a finished call as VS Code does, live and read back', async () => {
+  const { root, sweep } = place();
+  mkdirSync(sweep, { recursive: true });
+  const agent = backend(root, scripted([
+    {
+      deltas: [],
+      parts: [
+        { type: 'toolCall', callId: 'c1', name: 'shell_exec', input: { command: 'echo hi\necho again' }, raw: '{"command":"echo hi\\necho again"}' },
+        { type: 'toolCall', callId: 'c2', name: 'read_file', input: { path: 'missing.ts' }, raw: '{"path":"missing.ts"}' },
+      ],
+    },
+    { deltas: [{ type: 'text.delta', text: 'done' }], parts: [{ type: 'text', text: 'done' }] },
+  ]), allowAll());
+  const one = open(agent, 'one', sweep);
+  one.session.sendMessage('t1', 'run it');
+  await until(() => ended(one.view));
+  one.session.close();
+  const turns = await agent.transcript?.('one');
+
+  const worded = (parts: Bag[]): unknown[] => parts
+    .filter((part) => part.kind === 'toolCall')
+    .map((part) => (part.toolCall as Bag).pastTenseMessage);
+  const expected = [{ markdown: 'Ran `echo hi`' }, '"read_file" failed'];
+  expect(worded(drawn(one.view))).toEqual(expected);
+  expect(worded((turns?.[0]?.responseParts ?? []) as Bag[])).toEqual(expected);
+});
+
 it('shows live the parts its transcript rebuilds, in the order the model wrote them', async () => {
   // A model that thinks, calls a tool, thinks again and answers.
   const { live, read } = await played([

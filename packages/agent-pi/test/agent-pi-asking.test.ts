@@ -120,28 +120,36 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   expect(callIn(parts, 'c2')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
 });
 
+/*
+ * A call runs titled by what it runs on, and once it is done says what it did
+ * as VS Code's agents word a call's past tense: a shell command as the first
+ * line it ran, a call that failed as failed, and any other call by its line.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
 it.each([
-  ['bash', { command: 'ls -la' }, 'ls -la'],
-  ['powershell', { command: 'Get-ChildItem' }, 'Get-ChildItem'],
-  ['read', { path: 'a.ts' }, 'a.ts'],
-  ['edit', { path: 'a.ts', edits: [] }, 'a.ts'],
-  ['write', { path: 'b.ts', content: '' }, 'b.ts'],
-  ['grep', { pattern: 'TODO' }, 'TODO'],
-  ['find', { pattern: '*.ts' }, '*.ts'],
-  ['ls', { path: 'src' }, 'src'],
-  ['ls', {}, '.'],
-  ['mystery', { anything: 1 }, 'mystery'],
-])('draws a live %s call by what it runs on, while it runs and once it is done', async (name, input, said) => {
+  ['bash', { command: 'ls -la\npwd' }, 'ls -la\npwd', false, { markdown: 'Ran `ls -la`' }],
+  ['powershell', { command: 'Get-ChildItem' }, 'Get-ChildItem', false, { markdown: 'Ran `Get-ChildItem`' }],
+  ['bash', { command: 'false' }, 'false', true, '"bash" failed'],
+  ['read', { path: 'a.ts' }, 'a.ts', false, 'a.ts'],
+  ['read', { path: 'gone.ts' }, 'gone.ts', true, '"read" failed'],
+  ['edit', { path: 'a.ts', edits: [] }, 'a.ts', false, 'a.ts'],
+  ['write', { path: 'b.ts', content: '' }, 'b.ts', false, 'b.ts'],
+  ['grep', { pattern: 'TODO' }, 'TODO', false, 'TODO'],
+  ['find', { pattern: '*.ts' }, '*.ts', false, '*.ts'],
+  ['ls', { path: 'src' }, 'src', false, 'src'],
+  ['ls', {}, '.', false, '.'],
+  ['mystery', { anything: 1 }, 'mystery', false, 'mystery'],
+])('draws a live %s call by what it runs on while it runs, and by what it did once it is done', async (name, input, said, isError, done) => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', name, input);
   expect(last('chat/toolCallReady')?.invocationMessage).toBe(said);
-  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError: false });
-  expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(said);
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError });
+  expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toEqual(done);
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: said, pastTenseMessage: said });
+  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: said, pastTenseMessage: done });
 });
 
 it('draws an asked call by what it runs on, and keeps the tool in its question', async () => {

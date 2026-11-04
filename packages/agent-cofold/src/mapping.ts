@@ -19,7 +19,7 @@ import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
 import { bag, str, withToolCallDuration } from '@ahpd/sdk';
-import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
+import { contributorOf, describe, intentionOf, pastTenseOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -731,14 +731,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
-            call.pastTenseMessage = describe(held.shown, held.subject);
+            call.pastTenseMessage = pastTenseOf(held.name, held.shown, held.subject, !event.isError);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
             // How long it ran, as cofold measured it from its start.
             call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), event.durationMs);
             meta = call._meta === undefined ? undefined : bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta)]);
+          return only([toolCompleteAction(turnId, event.callId, held?.name ?? event.name, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta)]);
         }
 
         /*
@@ -759,14 +759,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
           call.success = false;
-          call.pastTenseMessage = describe(held.shown, held.subject);
+          call.pastTenseMessage = pastTenseOf(held.name, held.shown, held.subject, false);
           call.error = { message: event.reason };
           // A refusal can land before the call ever reached `running`; the
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
             : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.owner, held.subject)];
-          actions.push(toolCompleteAction(turnId, event.callId, held.shown, event.reason, true, held.subject));
+          actions.push(toolCompleteAction(turnId, event.callId, held.name, held.shown, event.reason, true, held.subject));
           return only(actions);
         }
 

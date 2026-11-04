@@ -1,5 +1,5 @@
 import type { Bag, OnWire } from '@ahpd/sdk';
-import { bag, str } from '@ahpd/sdk';
+import { appendEscapedMarkdownInlineCode, bag, str, truncate } from '@ahpd/sdk';
 import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMarkdown } from '@microsoft/agent-host-protocol';
 
 /**
@@ -152,19 +152,6 @@ const filled = (value: unknown): string | undefined => (typeof value === 'string
 
 const md = (markdown: string): StringOrMarkdown => ({ markdown });
 
-/** VS Code's `truncate`: the first `max` characters and `…`. */
-const truncate = (value: string, max: number): string => (value.length <= max ? value : `${value.slice(0, max)}…`);
-
-/**
- * VS Code's `appendEscapedMarkdownInlineCode`: inline code whose fence is one
- * backtick longer than any run in the text, padded when the text starts or
- * ends with a backtick.
- */
-const code = (text: string): string => {
-  const fence = '`'.repeat(Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length)) + 1);
-  return text.startsWith('`') || text.endsWith('`') ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
-};
-
 /** VS Code's `escapeMarkdownLinkLabel`. */
 const label = (text: string): string => text.replace(/[\\\]]/g, '\\$&');
 
@@ -293,7 +280,7 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
-      return first ? md(`Running ${code(truncate(first, 80))}`) : 'Running shell command';
+      return first ? md(`Running ${appendEscapedMarkdownInlineCode(truncate(first, 80))}`) : 'Running shell command';
     }
     case 'BashOutput': return 'Reading shell output';
     case 'KillBash': return 'Kill shell command';
@@ -307,11 +294,11 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
     case 'TodoWrite': return 'Update todo list';
     case 'Grep': {
       const pattern = filled(input.pattern);
-      return pattern !== undefined ? md(`Search for ${code(truncate(pattern, 80))}`) : 'Search files';
+      return pattern !== undefined ? md(`Search for ${appendEscapedMarkdownInlineCode(truncate(pattern, 80))}`) : 'Search files';
     }
     case 'Glob': {
       const pattern = filled(input.pattern);
-      return pattern !== undefined ? md(`Find files matching ${code(truncate(pattern, 80))}`) : 'Find files';
+      return pattern !== undefined ? md(`Find files matching ${appendEscapedMarkdownInlineCode(truncate(pattern, 80))}`) : 'Find files';
     }
     case 'WebFetch': {
       const url = filled(input.url);
@@ -319,7 +306,7 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
     }
     case 'Skill': {
       const skill = filled(input.skill);
-      return skill !== undefined ? md(`Running skill ${code(truncate(skill, 80))}`) : 'Running skill';
+      return skill !== undefined ? md(`Running skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Running skill';
     }
     case 'TaskCreate': {
       const subject = filled(input.subject);
@@ -353,7 +340,7 @@ export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
-      return first ? md(`Ran ${code(truncate(first, 80))}`) : 'Ran shell command';
+      return first ? md(`Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}`) : 'Ran shell command';
     }
     case 'BashOutput': return 'Read shell output';
     case 'WebFetch': {
@@ -364,7 +351,7 @@ export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
     case 'Agent': return 'Ran subagent';
     case 'Skill': {
       const skill = filled(input.skill);
-      return skill !== undefined ? md(`Ran skill ${code(truncate(skill, 80))}`) : 'Ran skill';
+      return skill !== undefined ? md(`Ran skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Ran skill';
     }
     default: return lineOf(name, input);
   }

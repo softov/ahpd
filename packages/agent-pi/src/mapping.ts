@@ -22,7 +22,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
-import { bag, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
+import { appendEscapedMarkdownInlineCode, bag, toolCallDurationMs, truncate, withToolCallDuration } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
 /** The prose part this turn already holds under its id. */
@@ -314,6 +314,21 @@ export function describe(name: string, input: Bag): string {
 }
 
 /**
+ * What a finished call did, as VS Code's agents word a call's past tense: a
+ * call that failed as failed, a shell command as the first line it ran, and
+ * any other call by the line it ran on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
+export function pastTenseOf(call: PiCall, success: boolean): string | { markdown: string } {
+  if (!success) return `"${call.displayName}" failed`;
+  const command = call.toolName === 'bash' || call.toolName === 'powershell' ? call.input?.command : undefined;
+  const first = typeof command === 'string' && command !== '' ? command.split('\n')[0] : undefined;
+  return first === undefined
+    ? call.said ?? call.displayName
+    : { markdown: `Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}` };
+}
+
+/**
  * A call's row, moved as the `tool_call` hook moves it before the tool runs.
  *
  * `extra` is what the hook decided: `confirmed: 'not-needed'` for a call that
@@ -409,7 +424,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const when = at ?? Date.now();
       const opened = startCall(turn, event.toolCallId, event.toolName, when);
       const call = turn.calls.get(event.toolCallId);
-      if (call !== undefined) call.said = describe(event.toolName, bag(event.args));
+      if (call !== undefined) {
+        call.input = bag(event.args);
+        call.said = describe(event.toolName, call.input);
+      }
       // A row the model's stream opened was announced there, so the start is
       // held for the row and has no action of its own here.
       if (opened.length === 0) stampStart(rowOf(turn, event.toolCallId), when);
@@ -453,7 +471,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       };
       const result: Bag = {
         success,
-        pastTenseMessage: said,
+        pastTenseMessage: pastTenseOf(call, success),
         ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
         ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
       };

@@ -137,6 +137,8 @@ export interface PiCall {
   displayName: string;
   /** What the call runs on, as its row is titled once pi names its arguments. */
   said?: string;
+  /** The arguments pi named for the call, which its past tense reads. */
+  input?: Bag;
 }
 
 /** The running turn, and what has been opened inside it. */

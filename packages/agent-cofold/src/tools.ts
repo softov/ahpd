@@ -11,6 +11,7 @@
 
 import { createTool } from '@cofold/agents';
 import type { Tool } from '@cofold/agents';
+import { appendEscapedMarkdownInlineCode, truncate } from '@ahpd/sdk';
 import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /**
@@ -266,6 +267,19 @@ export const toolInputOf = (name: string, input: unknown, subject?: string): str
 export const describe = (name: string, subject?: string): string => subjectIn(subject) ?? name;
 
 /**
+ * What a finished call did, as VS Code's agents word a call's past tense: a
+ * call that failed as failed, cofold's shell command as the first line it ran,
+ * which its subject is, and any other call by the line it ran on. `name` is the
+ * tool's, `shown` the name its row draws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
+export const pastTenseOf = (name: string, shown: string, subject: string | undefined, success: boolean): string | { markdown: string } => {
+  if (!success) return `"${shown}" failed`;
+  const first = name === 'shell_exec' ? subjectIn(subject)?.split('\n')[0] : undefined;
+  return first === undefined ? describe(shown, subject) : { markdown: `Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}` };
+};
+
+/**
  * The response part a tool call holds in a snapshot.
  *
  * The client's reducer builds the same part from `chat/toolCallStart`, so
@@ -357,6 +371,7 @@ export const toolCompleteAction = (
   turnId: string,
   callId: string,
   name: string,
+  shown: string,
   content: string,
   isError: boolean,
   subject?: string,
@@ -367,7 +382,7 @@ export const toolCompleteAction = (
   toolCallId: callId,
   result: {
     success: !isError,
-    pastTenseMessage: describe(name, subject),
+    pastTenseMessage: pastTenseOf(name, shown, subject, !isError),
     ...(content !== '' ? { content: [{ type: 'text', text: content }] } : {}),
     ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
   },
