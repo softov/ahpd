@@ -161,6 +161,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
       if (ended) ctx.sendNext();
     }
     hold();
+    if (mapped.doing !== undefined) ctx.activity.say(mapped.doing);
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
   };
 

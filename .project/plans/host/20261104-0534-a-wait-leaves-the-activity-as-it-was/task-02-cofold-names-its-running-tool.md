@@ -1,6 +1,6 @@
 ---
 title: cofold names its running tool
-status: todo
+status: implemented
 depends:
   - task-01-no-agent-says-waiting-on-you.md
 layer: "agent-cofold"
@@ -46,3 +46,6 @@ A live run and a replayed run say the same lines.
 - `pnpm --filter @ahpd/agent-cofold test` passes from the repository root.
 
 ## Resume
+
+- **Done so far:** every step.
+- **Watch out for:** a cofold tool of its own is not in `ctx.offered`, so its line is its tool name and subject, such as `read_file a.txt`.

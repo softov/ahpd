@@ -437,6 +437,25 @@ it('reads a file through the files capability', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('names the tool it runs, and goes back to Thinking when it completes', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('read_file', { path: 'a.txt' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+  });
+  session.begin('t1', 'read it');
+  await when(() => ended(v));
+
+  const said = v.of('chat', 'chat/activityChanged').map((one) => one.activity);
+  const named = said.indexOf('read_file a.txt');
+  // The turn begins thinking, the row names what runs while it runs, and the
+  // call's end is the model thinking again - then a finished turn says none.
+  expect(named).toBeGreaterThan(-1);
+  expect(said.slice(named + 1)).toEqual(['Thinking', undefined]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('fetches a page through the web capability', async () => {
   const dir = place();
   const { session, v } = await open({
@@ -820,6 +839,9 @@ it('says no times for a call the run refused before it ran', () => {
 
   expect(refused.actions.map((one) => one.type)).toEqual(['chat/toolCallReady', 'chat/toolCallComplete']);
   expect(refused.actions.every((one) => (one._meta as Bag | undefined)?.['ahpd.startedAt'] === undefined)).toBe(true);
+  // A call that never ran leaves the model thinking rather than naming a tool
+  // that was refused.
+  expect(refused.doing).toBe('Thinking');
   // The kind is still there: it is what the call is drawn as, and it was never
   // a time.
   expect((parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
