@@ -28,7 +28,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and pu
   - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md), on Windows and macOS. It passed on Linux.
   - [claude-resume-checks.md](claude-resume-checks.md), [cofold-resume-checks.md](cofold-resume-checks.md) and [pi-resume-checks.md](pi-resume-checks.md).
   - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
-  - [client-restart-checks.md](client-restart-checks.md) and [update-checks.md](update-checks.md).
+  - [update-checks.md](update-checks.md).
   - [install-path-checks.md](install-path-checks.md), [macos-checks.md](macos-checks.md) and [daemon-41-windows-checks.md](daemon-41-windows-checks.md), for the install on each system.
   - The grant role editor in ahpw: the subjects of #205, such as `operation`, `tunnel` and `client`, show and save. No file yet.
 

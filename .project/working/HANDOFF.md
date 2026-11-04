@@ -84,7 +84,7 @@ Current progress and pending items only, as of 2026-11-04.
 - daemon/41 on Windows: [pending/daemon-41-windows-checks.md](../pending/daemon-41-windows-checks.md).
 - host/123: [pending/host-123-engines-checks.md](../pending/host-123-engines-checks.md).
 - host/122: [pending/host-122-agent-records-checks.md](../pending/host-122-agent-records-checks.md).
-- proxy/05: [pending/proxy-05-model-checks.md](../pending/proxy-05-model-checks.md).
+- proxy/05: its checks passed on 2026-11-04.
 - proxy/06: [pending/proxy-06-endpoint-checks.md](../pending/proxy-06-endpoint-checks.md).
 - plugin/63: [pending/plugin-63-model-list-checks.md](../pending/plugin-63-model-list-checks.md).
 - proxy/04: icon curation, and [pending/proxy-04-move-config-dev.md](../pending/proxy-04-move-config-dev.md).
