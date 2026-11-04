@@ -1,11 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { idOf, mergeLogicalTurnUsage } from '@ahpd/sdk';
+import { idOf, mergeLogicalTurnUsage, reason } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
-import { failureOf } from './failure.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { hostHoldsTasks, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
@@ -1136,15 +1135,11 @@ export function createQuery(ctx: SessionContext): Query {
        */
       if (ctx.gone !== undefined) return;
       /*
-       * What the CLI never starting reads as, rather than what the SDK says
-       * about this host.
-       *
-       * A spawn failure arrives with the SDK's own words for it - the bundled
-       * binary's path, the libc it wanted, the errno - and none of that is
-       * something a person can act on. `failureOf` answers the short message
-       * for those and leaves every other error's message alone.
+       * The failure in its own words, a CLI that never started included, as
+       * VS Code's host ends a send that failed with the error's own message.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
        */
-      died(failureOf(error));
+      died(reason(error));
     }
     /*
      * A stream that ended without a result, which fails the turn it was

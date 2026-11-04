@@ -1,10 +1,10 @@
+import { reason } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { forgetSession } from '../catalog.js';
 import { BEFORE_TOKEN, FAILOVER, loginsOf, REFUSED } from '../logins.js';
 import type { Login } from '../logins.js';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
-import { failureOf } from './failure.js';
 
 /** What this area offers the rest of the session. */
 export interface Logins {
@@ -300,7 +300,7 @@ export function createLogins(ctx: SessionContext): Logins {
         // Stopped before the delete, so nothing writes the conversation back.
         await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
         if (ctx.agentId !== undefined) {
-          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, failureOf);
+          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, reason);
         }
         if (ctx.closed) return { started: false, ...(failed === undefined ? {} : { failed }) };
       }
