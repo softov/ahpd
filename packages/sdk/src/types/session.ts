@@ -641,6 +641,23 @@ export interface Session {
    * and this host refuses steering for that backend with that as the reason.
    */
   steer?(id: string, text: string, attachments?: MessageAttachment[], from?: MessageFrom): boolean;
+  /**
+   * Let go of every steering message the chat holds that its agent has not
+   * taken in, handed to it or waiting, saying each one gone with
+   * `chat/pendingMessageRemoved`, and start nothing.
+   *
+   * What a turn that ends cancelled leaves: the host calls this once the
+   * backend has had the stop. The reference host takes every pending steering
+   * entry out at a cancel, those handed off and not yet consumed included,
+   * without draining what is queued. A backend that runs its chat on another
+   * host leaves it to that host, which lets go at its own stop.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
+   *
+   * Optional. For a backend without it, the host takes the steering message
+   * the chat shows out itself.
+   */
+  clearSteering?(): void;
 
   /**
    * Start a turn with what was said, optionally naming a model.
@@ -658,6 +675,14 @@ export interface Session {
    *
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
+   *
+   * The turn's start is said in this call, before anything the backend waits
+   * on to begin it, as the reference host applies a client's start at once and
+   * its agent prepares the turn after; a start said later is said by the host
+   * as the client sent it, and the backend's own start of the turn is not said
+   * again. A stop of a turn the backend has not begun yet reaches `cancel`, and
+   * the turn begins nothing.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
    *
    * A turn handed while another runs takes that one's place: its start is said
    * at once, so every client holds it as the chat's turn, as the protocol's
@@ -742,13 +767,27 @@ export interface Session {
    * Take one back, while it is still waiting, and say it gone with
    * `chat/pendingMessageRemoved`.
    *
-   * A queued message, or a steering message the agent has not been handed or
-   * has handed back. One the agent holds stays with it and nothing is said:
-   * the host refuses the removal while a turn runs, as the protocol has a host
-   * reject a removal it can no longer honor after the handoff.
+   * A queued message, or a steering message while the chat holds no running
+   * turn: one the agent has not been handed, has handed back, or holds for a
+   * turn that is over, which the backend takes back as far as it can. A
+   * steering message while a turn runs goes to `withdraw` instead.
    * https://github.com/microsoft/agent-host-protocol/blob/ff7d6a1c7b4f5e47925d3ce1c3bcf685266a6d49/docs/specification/chat-channel.md#steering-messages
    */
   unqueue(id: string): void;
+  /**
+   * Take back the steering message the running turn was handed, and say it
+   * gone with `chat/pendingMessageRemoved`.
+   *
+   * Optional. The reference host lets a client remove steering handed to its
+   * provider only where the provider can withdraw it, and refuses the removal
+   * otherwise before the provider hears of it. So a backend that cannot take a
+   * steering message back from its agent leaves this out, and the host refuses
+   * the removal while the chat holds a running turn, in the reference's words.
+   * A backend that runs its chat on another host carries the removal there,
+   * where that host decides.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
+   */
+  withdraw?(id: string): void;
   /**
    * What somebody is part-way through typing.
    *
@@ -759,17 +798,18 @@ export interface Session {
   /** Reorder what is waiting. Anything not named keeps its place behind what is. */
   reorder(order: string[]): void;
   /**
-   * A client's read or archived bit for the chat, carried to the host that
-   * runs the chat, which answers the client.
+   * A client's read or archived bit for the chat, or for the session the chat
+   * leads, carried to the host that runs it, which answers the client.
    *
    * A backend that runs its chat on another host takes it, as the proxy of a
-   * session in a machine does: that host is the one producer of the chat's
-   * state, and its `chat/isReadChanged` and `chat/isArchivedChanged` are the
-   * chat's bits here. True when the backend carried it. A backend that leaves
-   * it out has its chat's bits kept by this host.
+   * session in a machine does: that host is the one producer of the session's
+   * and the chat's state, and its `session/isReadChanged`,
+   * `session/isArchivedChanged`, `chat/isReadChanged` and
+   * `chat/isArchivedChanged` are the bits here. True when the backend carried
+   * it. A backend that leaves it out has its bits kept by this host.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
    */
-  flag?(bit: 'read' | 'archived', on: boolean): boolean;
+  flag?(bit: 'read' | 'archived', on: boolean, of: 'chat' | 'session'): boolean;
 
   /**
    * Answer a tool call the agent is waiting on.

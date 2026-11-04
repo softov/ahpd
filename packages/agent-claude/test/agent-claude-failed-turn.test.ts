@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import { bag } from '@ahpd/sdk';
+import { bag, Status } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -25,12 +25,15 @@ const sdk = vi.hoisted(() => {
     /** Every prompt the CLIs were handed, and the uuid it carried. */
     said: [] as unknown[],
     uuids: [] as (string | undefined)[],
+    /** A model the CLI will not switch to. */
+    refused: undefined as string | undefined,
     reset() {
       state.held = [];
       state.wake = undefined;
       state.queries = [];
       state.said = [];
       state.uuids = [];
+      state.refused = undefined;
     },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
@@ -72,7 +75,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       },
       interrupt: async () => {},
       setPermissionMode: async () => {},
-      setModel: async () => {},
+      setModel: async (id?: string) => {
+        if (id !== undefined && id === sdk.refused) throw new Error(`no model named ${id}`);
+      },
       applyFlagSettings: async () => {},
       toggleMcpServer: async () => {},
       reconnectMcpServer: async () => {},
@@ -409,6 +414,54 @@ it('starts nothing queued behind a failed turn, and the head once a client takes
 });
 
 /*
+ * A turn whose model the CLI refuses fails, and the turn handed behind it goes
+ * on, as the reference host hands each start to its agent and its Claude agent
+ * sends them one after another; the queue waits, as the drain starts nothing
+ * after a failure.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+ */
+it('begins the turn handed behind a turn whose model the CLI refused, and nothing queued', async () => {
+  sdk.reset();
+  sdk.refused = 'no-such-model';
+  const { session, chat } = live();
+  await settle();
+  const first = '0c3b5d2e-7f41-4a6b-9c8d-1e2f3a4b5c6d';
+  session.begin(first, 'one');
+  await settle();
+  session.begin('t2', 'two', { id: 'no-such-model' });
+  session.begin('t3', 'three');
+  session.queue('waiting', 'four');
+  await settle();
+  sdk.push({ ...result, is_error: false, terminal_reason: 'completed', result: 'done', user_message_uuid: first });
+  await settle();
+  expect(sdk.said.map(String)).toContain('three');
+  expect(sdk.said.map(String)).not.toContain('four');
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => one.turnId)).toEqual(['t2']);
+  // The turn t3 took the place of is in no history, and its failure is not the chat's.
+  sdk.push({ ...result, is_error: false, terminal_reason: 'completed', result: 'done', user_message_uuid: sdk.uuids.at(-1) });
+  await settle();
+  expect(((session.chatState() as Bag).turns as Bag[]).map((turn) => turn.id)).toEqual(['t3']);
+  expect(session.status() & Status.Error).toBe(0);
+});
+
+/*
+ * A turn sent while the one in front of it switches its model waits to be said
+ * until that one is; when the switch is refused, it is said and begun then.
+ */
+it('says and begins a turn sent while the turn in front of it switched to a model the CLI refused', async () => {
+  sdk.reset();
+  sdk.refused = 'no-such-model';
+  const { session, chat } = live();
+  await settle();
+  session.begin('t1', 'one', { id: 'no-such-model' });
+  session.begin('t2', 'two');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1', 't2']);
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => one.turnId)).toEqual(['t1']);
+  expect(sdk.said.map(String)).toEqual(['two']);
+});
+
+/*
  * Nothing starts behind a failure a client can resume, a message queued after it
  * included, as the reference host's drain holds the queue there.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
@@ -431,4 +484,23 @@ it('starts nothing behind a failure a client can resume, a message queued after 
   await settle();
   expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
   expect(((session.chatState() as Bag).queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
+});
+
+/*
+ * A turn's start is said as it is begun, before the model it names is
+ * switched to, as the reference host applies a client's start at once and its
+ * agent prepares the turn after; a stop during the switch ends the turn, and
+ * the CLI is sent nothing of it.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
+ */
+it('says a turn\'s start before it switches the model, and a stop during the switch sends the CLI nothing', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.begin('t1', 'one', { id: 'another-model' });
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
+  session.cancel('t1');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnCancelled').map((one) => one.turnId)).toEqual(['t1']);
+  expect(sdk.said).toEqual([]);
 });

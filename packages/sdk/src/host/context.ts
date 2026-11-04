@@ -295,12 +295,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   lifeOf: (uri: string) => object;
   /** The sessions being restarted now, by their own uri. */
   restarting: Map<string, Promise<void>>;
-  /**
-   * A stop that waits for the start of the turn it names, by its chat's
-   * channel, settled once the stop is applied or refused. Every other dispatch
-   * on that chat waits for it.
-   */
-  ahead: Map<string, Promise<void>>;
   /** What this host has learned about each backend, by the id clients name it by. */
   learned: Map<string, Learned>;
   /** The lead chat of a held session, when it has one. */
@@ -358,20 +352,20 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   dispatch: (channel: string, given: Record<string, unknown>, origin?: Origin | undefined) => void;
   /**
-   * The dispatch being applied, handed to a backend that says it back when it
-   * is ready.
-   *
-   * `chat/turnStarted` under the turn it names and `chat/pendingMessageSet`
-   * under the queued message's id, each on the channel the dispatch came on,
-   * go out carrying the client's origin, however long the backend takes;
-   * nothing else does. A dispatch the backend already said back owes nothing.
+   * The dispatch being applied, for work it waits on past this tick: the
+   * function returned runs that work as the same dispatch, so what the work
+   * says is matched as its echo, and a backend that relays it takes it. A
+   * turn's own check, and a machine's catch-up, hand a turn on this way.
    */
-  owe: (type: 'chat/turnStarted' | 'chat/pendingMessageSet', name: string) => void;
+  later: () => (work: () => void) => void;
   /**
-   * Settled once the start of `turnId` that a backend owes on `channel` is
-   * said or refused, or nothing when no backend owes one.
+   * The dispatch being applied, said as its client sent it, where it is the
+   * one `named` names and nothing has answered it or taken it: the reference
+   * host applies a client's action and emits it at once, and hands it to its
+   * agent after.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
    */
-  startOwed: (channel: string, turnId: string) => Promise<void> | undefined;
+  sayUnanswered: (named: Record<string, unknown>) => void;
   /**
    * The client's dispatch `action`, said on `channel`, says back: the one
    * being applied, when `action` is on its channel, of its kind and names

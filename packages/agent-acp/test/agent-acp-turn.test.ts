@@ -7,8 +7,9 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf, uriOf } from '@ahpd/sdk';
-import type { Bag, HostTool } from '@ahpd/sdk';
+import type { Bag, HostTool, Ran, Session, Start } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { gitChanges } from '../../sdk/src/sessions/changes.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -850,6 +851,37 @@ it('takes a !command sent as a turn during a turn, said at once, and a stop of i
   // The turn t2 took the place of ends in no client's state, and t2's command never runs.
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't1')).toBe(false);
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't2')).toBe(false);
+});
+
+/*
+ * A command running as the chat's turn that a turn sent after it took the
+ * place of ends in no history, failed or not, as the reducer keeps none of the
+ * turn it replaced, and the turn that took its place runs once it is over.
+ */
+it('keeps no history of a !command turn a turn sent after it took the place of', async () => {
+  const actions: Bag[] = [];
+  const session: Session = acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' }).create({
+    uri: 'ahp-session:/replaced',
+    chatUri: 'ahp-chat:/replaced',
+    settings: {},
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: (_channel, action) => { actions.push(action); },
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    trusted: () => true,
+  } satisfies Start);
+  let done: (ran: Ran) => void = () => {};
+  session.ran?.('t1', 'make', () => new Promise<Ran>((resolve) => { done = resolve; }));
+  await until(() => actions.some((one) => one.type === 'chat/toolCallStart' && one.turnId === 't1'));
+  session.begin('t2', 'hello');
+  done({ success: false, said: 'Exited 2', output: '', code: 2 });
+  try {
+    await until(() => actions.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't2'));
+    const turns = ((session.chatState() as Bag).turns ?? []) as Bag[];
+    expect(turns.map((turn) => turn.id)).toEqual(['t2']);
+  }
+  finally {
+    await session.close();
+  }
 });
 
 /*

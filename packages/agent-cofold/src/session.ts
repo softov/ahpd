@@ -175,6 +175,8 @@ export function cofoldSession(
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
   const untaken: SessionContext['untaken'] = [];
+  /** The steering messages handed to the run whose submit has not settled. */
+  const submitting = new Set<string>();
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
@@ -218,6 +220,7 @@ export function cofoldSession(
     modified: new Date().toISOString(),
     closed: false,
     opening: undefined,
+    stopping: new Set<string>(),
     refused: undefined,
     steering: undefined,
     untaken,
@@ -378,7 +381,10 @@ export function cofoldSession(
         start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
         ctx.touch();
       }
-      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) return;
+      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) {
+        if (ctx.opening !== undefined) ctx.stopping.add(turnId);
+        return;
+      }
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.stop('the client stopped the turn');
@@ -397,7 +403,7 @@ export function cofoldSession(
      * settles once the message is in the transcript, which is when it is taken
      * out. A submit the run rejects, because it settled before a step read the
      * message, leaves it in `untaken`, a turn of its own once the chat is idle;
-     * after a run a client stopped it waits as the queue does.
+     * a stop lets go of it, through `clearSteering`.
      * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
      *
      * A correction with something attached is read the way a turn's own message
@@ -417,12 +423,14 @@ export function cofoldSession(
       ctx.steering = { id, message };
       start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
       ctx.touch();
+      submitting.add(id);
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
         : partsFor(text, attachments, ctx.takesImages())
           .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
       void submitted.then(
         () => {
+          submitting.delete(id);
           // Read by the model, so it stays the run's whatever a client asked;
           // one a client took back is gone from every client already.
           if (ctx.withdrawn.delete(id)) return;
@@ -431,7 +439,8 @@ export function cofoldSession(
           ctx.touch();
         },
         () => {
-          // Taken back by a client while the run held it, so it never runs.
+          submitting.delete(id);
+          // Taken back by a client, or let go of at a stop, so it never runs.
           if (ctx.withdrawn.delete(id)) return;
           ctx.untaken.push({
             id,
@@ -443,6 +452,26 @@ export function cofoldSession(
         },
       );
       return true;
+    },
+
+    /*
+     * Every steering message the run has not read, let go of once a turn ends
+     * cancelled, and nothing started: those the run still holds, dropped when
+     * it gives them back, those it gave back to be turns of their own, and
+     * those waiting in the queue to be.
+     */
+    clearSteering: () => {
+      const gone = [...submitting];
+      for (const id of submitting) ctx.withdrawn.add(id);
+      submitting.clear();
+      gone.push(...ctx.untaken.splice(0).map((left) => left.id));
+      for (const held of queued.filter((one) => one.steering === true)) {
+        queued.splice(queued.indexOf(held), 1);
+        gone.push(String(held.id));
+      }
+      ctx.steering = undefined;
+      for (const id of gone) start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+      if (gone.length > 0) ctx.touch();
     },
 
     // Held by the session, so two people on one chat see each other's.
