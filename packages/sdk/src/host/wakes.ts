@@ -1,6 +1,7 @@
 import { idOf } from '../sessions/catalog.js';
 import type { MessageFrom } from '../types/session.js';
 import type { StoredChat } from '../types/sessions.js';
+import type { Owner } from '../types/usage.js';
 import type { HostContext } from './context.js';
 
 /**
@@ -22,6 +23,15 @@ export interface Wakes {
   startWakes(): void;
   /** Stop the clock, for a host that is closing. */
   stopWakes(): void;
+  /**
+   * Start a turn on a chat as a wake does: held, queued behind a turn that is
+   * running, and acting as `sender`.
+   *
+   * The wake clock is not touched. The end of an async command begins a turn
+   * the same way and must leave the chat's wake where the model set it, so
+   * this is what a wake and a command's end both call.
+   */
+  beginWakeTurn(session: string, chat: string, prompt: string, sender: Owner | undefined): Promise<void>;
 }
 
 /** `setTimeout` will not wait longer than this, so a longer wait is done in instalments. */
@@ -82,6 +92,19 @@ export function createWakes(ctx: HostContext): Wakes {
    * leaves it there.
    */
   const begin = async (id: string, chat: string, wake: NonNullable<StoredChat['wake']>): Promise<void> => {
+    await beginWakeTurn(id, chat, wake.prompt, wake.sender);
+    // The wake it fired, and not one set again since.
+    const still = stored(id, chat);
+    if (still?.at === wake.at && still.prompt === wake.prompt) record(id, chat, undefined);
+  };
+
+  /**
+   * Start a turn on a chat, as a wake does.
+   *
+   * The body of a wake and of an async command's end, which differ only in
+   * whether a stored wake is cleared afterwards.
+   */
+  const beginWakeTurn = async (id: string, chat: string, prompt: string, sender: Owner | undefined): Promise<void> => {
     const name = byChat.get(chat)?.uri ?? ctx.nameOf(id);
     const release = ctx.hold(name);
     try {
@@ -106,21 +129,18 @@ export function createWakes(ctx: HostContext): Wakes {
        * before `beginOrRun` returns, and a tool inside it would then find
        * nobody had sent it.
        */
-      const acting = wake.sender;
+      const acting = sender;
       // A chat that is busy takes it as a queued message of this host's, which
       // the queue drain starts once the chat runs nothing.
-      if (busy) ctx.enqueue(woken.chat.chatUri, turnId, wake.prompt, from, { owner: acting });
+      if (busy) ctx.enqueue(woken.chat.chatUri, turnId, prompt, from, { owner: acting });
       else {
         if (acting !== undefined) senders.set(turnId, acting);
-        const refused = await ctx.beginOrRun(woken.chat, provider, turnId, wake.prompt, undefined, from);
+        const refused = await ctx.beginOrRun(woken.chat, provider, turnId, prompt, undefined, from);
         if (refused !== undefined) {
           if (acting !== undefined) senders.delete(turnId);
           throw new Error(refused);
         }
       }
-      // The wake it fired, and not one set again since.
-      const still = stored(id, chat);
-      if (still?.at === wake.at && still.prompt === wake.prompt) record(id, chat, undefined);
     } finally {
       release();
     }
@@ -172,5 +192,5 @@ export function createWakes(ctx: HostContext): Wakes {
     disarm();
   };
 
-  return { setWake, startWakes, stopWakes };
+  return { setWake, startWakes, stopWakes, beginWakeTurn };
 }

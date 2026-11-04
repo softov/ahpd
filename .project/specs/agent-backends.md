@@ -273,6 +273,19 @@ THEN the tools are not offered, and a backend keeps its own shell.
 The reason: the reference host's terminal tool takes the place of the harness's own.
 A backend that kept both would run the model's commands in a shell the person cannot watch.
 
+### An async command is a background row that wakes the session
+
+WHEN a model calls the shell tool with `mode=async`
+THEN the call is answered at once with the shell id, and with no output
+AND that shell stays busy until the command ends, so the next call opens another
+AND the command is a background row on the chat, with the command and the terminal it runs in
+AND `vscode/stopBackgroundWork` interrupts it, and the row goes once the command has really ended
+AND the end begins a turn that names the command, its exit code and the end of its output, as a wake's turn is begun
+AND that turn acts as the person whose turn started the command, queues behind a turn that is running, and leaves the chat's wake as it was.
+WHEN the mode is `sync` or absent
+THEN the call waits for the command and answers with its output, as it always has.
+The reason: the reference host's description promises `mode=async` and its own tool does not build it, and a client draws a command that outlives its call as background work.
+
 ### A terminal that a tool result names stays
 
 WHEN a tool result names a terminal that the host opened, or an output that a backend kept with `Start.terminalOutputs`

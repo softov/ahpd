@@ -319,9 +319,14 @@ export const shellTools = (executable: string = shellOf()): HostTool[] => {
             return true;
           },
         });
-        void shells.start(ref.shell, command)
-          .finally(() => { rows.remove(id); ref.release(); })
-          .catch(() => { /* a call already answered has nowhere to say it could not start */ });
+        /*
+         * The row goes and the shell is let go when the command has ended,
+         * before the chat is woken with it: a wake that ran first would read
+         * a row still saying the work is going.
+         */
+        const done = (): void => { rows.remove(id); ref.release(); };
+        void shells.start(ref.shell, command, done)
+          .catch(() => { done(); /* a call already answered has nowhere to say it could not start */ });
         return asyncAnswer(ref.shell);
       }
       let release = true;
