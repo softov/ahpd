@@ -2050,21 +2050,23 @@ export function createHost(options: HostOptions): Host {
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
         log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
-        if (!connections.has(connection)) return;
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };
       /**
        * The client's queue, extended by one step for the dispatch in `params`.
        *
-       * A step whose connection left while it waited is dropped: there is
-       * nobody to answer or echo it to. A step that fails is refused to the
-       * client, as any other action this host will not apply.
+       * A step runs whatever became of the connection that sent it, as the
+       * reference host runs a client's queued dispatch: its answer goes to
+       * every client of its channel, and a client that comes back reads it in
+       * its replay. A step that fails is refused to the client, as any other
+       * action this host will not apply.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12649
        */
       conn.applyNow = applyDispatch;
       const behind = (params: Record<string, unknown>, origin: Origin, step: () => Promise<void> | undefined): void => {
         const client = queuedAs();
-        const next = (dispatchQueues.get(client) ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
+        const next = (dispatchQueues.get(client) ?? Promise.resolve()).then(step).catch((error: unknown) => {
           refuseFailed(params, origin, error);
         });
         dispatchQueues.set(client, next);

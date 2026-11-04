@@ -623,6 +623,28 @@ it('begins a turn that waited on a restart after its connection left', async () 
 });
 
 /*
+ * A dispatch that waited is applied whatever became of the connection that
+ * sent it, and every client of its channel is told, as VS Code's host runs a
+ * client's queued dispatch.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12649
+ */
+it('applies a dispatch that waited on a restart after its connection left', async () => {
+  const { host, client, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  const q = peer();
+  const other = host.accept(q);
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  await other.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 4, action: { type: 'chat/draftChanged', draft: { text: 'half', origin: { kind: 'user' } } } } });
+  await settle();
+  client.close();
+  machine.made('m1');
+  await settle();
+  expect(notesOf(q).filter((note) => note.action.type === 'chat/draftChanged').map((note) => [note.origin?.clientId, note.origin?.clientSeq]))
+    .toEqual([['probe', 4]]);
+});
+
+/*
  * A backend that throws as it is handed the turn ends the turn in an error in
  * its words, as VS Code's host ends a turn whose send throws.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336

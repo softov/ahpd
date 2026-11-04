@@ -206,7 +206,7 @@ export function chatAction(
   const { connection } = conn;
   const { refuse } = ctx;
   const {
-    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
+    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig,
     contributedDefaults, decided,
     described, dispatch, drafts, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
@@ -449,10 +449,7 @@ export function chatAction(
     const uri = sessionFor(channel);
     const message = messageOf(action);
     if (needsWriting(message, kept, idOf(uri))) {
-      return settledMessage(message, uri).then((settled) => {
-        if (!connections.has(connection)) return;
-        return conn.applyNow({ ...params, action: { ...action, message: settled } }, origin);
-      });
+      return settledMessage(message, uri).then((settled) => conn.applyNow({ ...params, action: { ...action, message: settled } }, origin));
     }
   }
   /*
@@ -513,7 +510,7 @@ export function chatAction(
   if (running !== undefined) {
     return running.then((failure) => {
       if (failure !== undefined) refuse(connection.peer, channel, action, origin, failure);
-      else if (connections.has(connection)) return conn.applyNow(params, origin);
+      else return conn.applyNow(params, origin);
       return undefined;
     });
   }
@@ -559,7 +556,6 @@ export function chatAction(
     // `past` reads the catalogue first, which is what lists it, under the one
     // name the session is published by.
     return past(idOf(sessionFor(channel))).then(() => {
-      if (!connections.has(connection)) return;
       if (known()) keep();
       else no(`${channel} is not a session here`);
     });
@@ -586,7 +582,6 @@ export function chatAction(
     const release = hold(uri);
     return wake(uri, channel, connection).then(
       () => {
-        if (!connections.has(connection)) return;
         if (!byChat.has(channel) && !sessions.has(channel)) {
           no(`${channel} is not a chat of ${uri}`);
           return;
@@ -681,7 +676,6 @@ export function chatAction(
     const release = hold(uri);
     return wake(uri, channel, connection).then(
       () => {
-        if (!connections.has(connection)) return;
         if (!byChat.has(channel) && !sessions.has(channel)) {
           nothing();
           return;

@@ -46,7 +46,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    agents, byChat, cancelRun, changed, changesetAt, channelKind, connections, daemonKey, decided, declaresConfigKey,
+    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, past, permitted, presence, relayed, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, summaryMoved, terminals, toolDefinitions,
@@ -274,7 +274,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       return past(id).then(() => {
-        if (ctx.connections.has(connection) && ctx.nameOf(id) === owning) mark();
+        if (ctx.nameOf(id) === owning) mark();
       });
     }
     /*
@@ -807,7 +807,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
       return past(idOf(sessionFor(channel))).then(() => {
-        if (!connections.has(connection)) return;
         if (knownChat()) return conn.applyNow(params, origin);
         const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
           : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
@@ -907,7 +906,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        */
       if (!knownSession(sessionFor(channel))) {
         return past(idOf(sessionFor(channel))).then(() => {
-          if (connections.has(connection) && knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
+          if (knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
         });
       }
       // The session's own bits, kept beside it and never seen by a backend.
@@ -955,7 +954,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       return past(idOf(uri)).then(() => {
-        if (ctx.connections.has(connection) && ctx.nameOf(idOf(uri)) === uri) flag();
+        if (ctx.nameOf(idOf(uri)) === uri) flag();
       });
     }
     const terminal = terminals.get(channel);
