@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { idOf } from '@ahpd/sdk';
+import { idOf, steerQuote } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
@@ -785,8 +785,18 @@ export function createQuery(ctx: SessionContext): Query {
          * prompt it cancels ends `cancelled`.
          */
         if (type === 'command_lifecycle') {
-          const owed = ctx.owed.get(str(message.command_uuid) ?? '');
+          const uuid = str(message.command_uuid) ?? '';
+          const owed = ctx.owed.get(uuid);
           const state = str(message.state);
+          /*
+           * A steering message the CLI took in shows in the turn it steers,
+           * quoted, at the point the CLI took it in: the same point the
+           * transcript records it at, under the same uuid, so the turn read
+           * back holds the part the live turn held.
+           */
+          if (owed?.steering === true && state === 'started' && owed.cli !== 'started') {
+            ctx.addPart(ctx.mainScope, steerQuote(uuid, str(owed.message.text) ?? ''));
+          }
           if (owed !== undefined && (state === 'queued' || state === 'started')) owed.cli = state;
           continue;
         }

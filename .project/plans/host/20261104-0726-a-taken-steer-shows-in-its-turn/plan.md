@@ -50,9 +50,10 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 | --- | --- | --- |
 | The bot chat and Claude show a taken steer; cofold and pi wait until each is checked | Softov, 2026-11-04, "bot chat and claude, once others validate we also do that" | 01, 02 |
 | The steer is a markdown quote of the message, `> ` before each line, in the turn it went into, after the parts said before it | Softov, 2026-11-04, chose "A quote in the turn" | 01, 02 |
-| The quote part's id is `steer:<message id>`, and it carries no `_meta` | (defaulted: a markdown part has no `_meta`, and the strict schema refuses an extra key) | 01, 02 |
-| A Claude steer shows when ahpd hands it to the CLI, which is when it leaves the queue | (defaulted: VS Code's pipeline says `steering_consumed` at the same moment) | 02 |
-| The Claude reader puts a `queued_command` frame inside an open turn back as the same quote | (defaulted: the frame is where the CLI took the steer in) | 02 |
+| The quote part carries no `_meta`, and `steerQuote` in `@ahpd/sdk` builds it for both packages | (defaulted: a markdown part has no `_meta`, and the strict schema refuses an extra key) | 01, 02 |
+| A Claude steer shows live when the CLI says it started it, which is where the transcript records it | Softov, 2026-11-04, chose "When the CLI takes it in" | 02 |
+| The quote's id is `steer:<uuid>`, the uuid ahpd handed the steer to the CLI with, live and read back | (defaulted: the CLI names the steer by that uuid in its frames and its transcript) | 02 |
+| The Claude reader puts a message the SDK marks `isQueuedCommand` inside an open turn back as the same quote | (defaulted: the SDK gives the `queued_command` frame as that message) | 02 |
 
 ## Proposed architecture
 
@@ -65,8 +66,8 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the bot chat shows a steer](task-01-the-bot-chat-shows-a-steer.md) | todo | - |
-| [02 - Claude shows a steer it took in](task-02-claude-shows-a-steer-it-took-in.md) | todo | - |
+| [01 - the bot chat shows a steer](task-01-the-bot-chat-shows-a-steer.md) | implemented | - |
+| [02 - Claude shows a steer it took in](task-02-claude-shows-a-steer-it-took-in.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -75,13 +76,15 @@ Claude steer handed to the CLI -> quote part in the turn it steered -> chat/resp
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-bot-chat-shows-a-steer.md](task-01-the-bot-chat-shows-a-steer.md).
+- **Done so far:** both tasks are implemented on 2026-11-04. The changed tests fail without the change.
+- **Next action:** review, then the check by hand: steer Ember while it counts, and see the quote in both chats, live and after a reload.
 - **Watch out for:** a bot back session's steer carries the context block before the person's words.
   The Claude quote shows the prompt as the CLI got it.
+- **Not checked:** a steer the CLI ran after the turn's last answer is a prompt of its own in the transcript.
+  The host's turn record folds it back into the turn it steered, and no test reads the quote after that fold.
 
 ## Final verification checklist
 
-- [ ] A bot chat steer shows as a quote in the open turn, live and after a reload.
-- [ ] A Claude steer shows as a quote in its turn when ahpd hands it to the CLI, and again when the transcript is read back.
+- [x] A bot chat steer shows as a quote in the open turn, live and after a reload.
+- [x] A Claude steer shows as a quote in its turn when the CLI takes it in, and again when the transcript is read back.
 - [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the bot and agent-claude tests pass.
