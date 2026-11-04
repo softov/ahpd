@@ -426,7 +426,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       handle,
       openedAt: new Date().toISOString(),
       command: [request.command, ...(request.args ?? [])].join(' '),
-      ...(typeof request.outputByteLimit === 'number' ? { limit: request.outputByteLimit } : {}),
+      ...(typeof request.outputByteLimit === 'number' ? { outputByteLimit: request.outputByteLimit } : {}),
     };
     terminals.set(handle.uri, held);
     const gone = (): void => {
@@ -449,10 +449,18 @@ export function createHandlers(ctx: SessionContext): Handlers {
   const terminalOutput = async (request: TerminalOutputRequest): Promise<TerminalOutputResponse> => {
     const held = terminalOf(request.terminalId);
     const said = held.handle.output();
-    const limit = held.limit;
-    // The protocol truncates from the beginning to stay within the limit,
-    // which keeps the tail: what a person watching wants is the end of it.
-    const output = limit === undefined || said.output.length <= limit ? said.output : said.output.slice(-limit);
+    const limit = held.outputByteLimit;
+    /*
+     * At most `outputByteLimit` bytes, cut from the beginning at a character
+     * boundary, as ACP has a client retain them: the tail is kept, which is
+     * what a person watching wants, and a cut that would split a character
+     * skips its continuation bytes.
+     * https://agentclientprotocol.com/protocol/terminals
+     */
+    const bytes = Buffer.from(said.output, 'utf8');
+    let from = limit === undefined || bytes.length <= limit ? 0 : bytes.length - limit;
+    while (from < bytes.length && ((bytes[from] ?? 0) & 0xc0) === 0x80) from += 1;
+    const output = from === 0 ? said.output : bytes.subarray(from).toString('utf8');
     return {
       output,
       truncated: output.length !== said.output.length,

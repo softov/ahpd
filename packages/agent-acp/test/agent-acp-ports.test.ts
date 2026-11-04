@@ -313,6 +313,22 @@ it('refuses a permission and a question asked with no turn running, and an empty
   expect(said).toEqual([]);
 });
 
+it('hands back at most outputByteLimit bytes of output, cut at a character boundary', async () => {
+  // Four bytes each: a cut that counted characters would keep twice the limit.
+  const output = `start ${'\u{1F600}'.repeat(4)}`;
+  const terminals = new Map([['t1', { handle: { output: () => ({ output }) }, outputByteLimit: 10, openedAt: '', command: 'x' }]]);
+  const handlers = createHandlers({
+    emit: () => {}, provider: 'acp', start: {}, where: tmpdir(), doing: () => {}, touch: () => {},
+    seeds: [], replay: [], permissions: new Map(), terminals, elicitations: new Map(), options: {},
+  } as unknown as SessionContext);
+  const read = await handlers.terminalOutput({ sessionId: 's', terminalId: 't1' } as never);
+  // The last two characters, eight bytes: a third would cross the limit, and
+  // half of one is no character.
+  expect(read.output).toBe('\u{1F600}'.repeat(2));
+  expect(Buffer.byteLength(read.output, 'utf8')).toBeLessThanOrEqual(10);
+  expect(read.truncated).toBe(true);
+});
+
 it('asks the person, and answers with the once option they chose', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'ask me first');

@@ -28,8 +28,8 @@ export interface Waiting {
  */
 export interface HeldTerminal {
   handle: OpenedTerminal;
-  /** The byte limit the request that opened it asked for. */
-  limit?: number;
+  /** The most bytes of output a read hands back, as the request that opened it asked. */
+  outputByteLimit?: number;
   /** Whether the process has exited. */
   exited?: boolean;
   /** When the host opened it, as the row's `startedAt`. */
