@@ -89,13 +89,14 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 | A finished command's output is its `command` part's `output` | (defaulted: on main a marked command is a `command` part with its own output) | 02 |
 | The output for the model is cut to 60 KB, the number the description says | Softov, 2026-10-27, "builds what they promise" | 02 |
 | Each tool acts as the person who sent the turn, with the grant of the client terminal method it matches | [code://packages/sdk/src/host/gate.ts#L85-L86](../../../../packages/sdk/src/host/gate.ts#L85-L86) | 03 |
+| A chat keeps its own shells, and a new shell starts in the chat's first working directory | [copilotAgent.ts#L6606](https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L6606), one `ShellManager` for each chat | 02 |
 | An agent's shell opens through the same open block as `heldTerminals`, and the two copies become one | (defaulted: a third copy is on the fork) | 02 |
 
 ## Proposed architecture
 
 - **Data flow** - the tool's input goes to the shell manager, which writes the command to a shell and returns the command's output.
 - **Event flow** - `opened` fires when a shell is given to a call. The backend sends `chat/toolCallContentChanged` with the terminal.
-- **State flow** - the shell manager holds the session's shells, each idle, busy or exited, with the call it serves.
+- **State flow** - the shell manager holds each chat's shells, each idle, busy or exited, with the call it serves.
 - **Layer responsibilities** - `@ahpd/sdk`: the call context, the shell manager, the command execution and the tools · the backends: pass the call and show the terminal.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/terminals.ts`](../../../../packages/sdk/src/host/terminals.ts)
 
@@ -103,9 +104,9 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | todo | - |
-| [02 - an agent's shells run its commands](task-02-an-agents-shells-run-its-commands.md) | todo | 01 |
-| [03 - the six tools behind the switch](task-03-the-six-tools-behind-the-switch.md) | todo | 01, 02 |
+| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | implemented | - |
+| [02 - an agent's shells run its commands](task-02-an-agents-shells-run-its-commands.md) | implemented | 01 |
+| [03 - the six tools behind the switch](task-03-the-six-tools-behind-the-switch.md) | implemented | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -116,13 +117,26 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-host-tool-knows-its-call.md](task-01-a-host-tool-knows-its-call.md), which needs nothing from plan A.
+- **Done so far:** tasks 01, 02 and 03, on `host/20261103-1620-the-agent-terminal-tool`.
+  - A host tool's `run` gets its call id and an `opened` callback.
+  - Claude, pi and cofold put the terminal on the call, and keep it in the completion.
+  - A marked `bash` replaces the own shell of Claude and pi. Claude reads `mcp__ahp__bash` lines by the terminal rules.
+  - Each chat has a shell manager. It reuses an idle shell, skips a busy one and drops an exited one.
+  - A new shell opens through the one open block that `commanded` and `heldTerminals` use.
+  - A command ends at its `D` mark, the sentinel, the alternate screen, the shell's exit or its timeout.
+  - The output is the `command` part, cut to 60 KB.
+  - A shell for a session in a machine runs through `computers.how`.
+  - The six tools are offered behind `enableCustomTerminalTool`, never on Windows and never without a terminal store.
+  - Each tool checks the grant of the client terminal method it matches.
+  - `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md` describe the tools.
+- **Next action:** none in this plan. No gate covers the daemon run of the final checklist: a Claude session that runs `bash` with the switch on.
 - **Open questions:** none.
-- **Watch out for:** do not merge the fork branch. Its `shells.ts` counts output; main reads a `command` part.
+- **Watch out for:**
+  - Do not merge the fork branch. Its `shells.ts` counts output, and main reads a `command` part.
+  - A store with no screen answers `whenAltBuffer` at once. So the execution reads `isInAltBuffer()` when that wait settles.
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] The sdk, server, agent-claude, agent-pi, agent-cofold and agent-acp suites pass, one at a time.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
+- [x] The sdk, server, agent-claude, agent-pi, agent-cofold and agent-acp suites pass, one at a time.
 - [ ] On a test daemon with `enableCustomTerminalTool` on, a Claude session runs `bash`, and the call shows the terminal while the command runs.

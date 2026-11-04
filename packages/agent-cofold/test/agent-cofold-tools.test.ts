@@ -266,6 +266,45 @@ it('lets a host tool keep the name it shares with a capability\'s', async () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('gives a host tool its call id, and puts the terminal it opened on the call', async () => {
+  const dir = place();
+  const terminal = { uri: 'ahp-terminal://shell/chat/c1', isPty: true };
+  let seen: string | undefined;
+  const mine: BoundTool = {
+    definition: { name: 'mine', description: 'The host\'s own.', inputSchema: { type: 'object' } },
+    run: async (_input, call) => {
+      seen = call?.toolCallId;
+      call?.opened?.(terminal);
+      return 'ran it';
+    },
+  };
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('mine', {})] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    hostTools: [mine],
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'run it');
+  await when(() => ended(v));
+
+  // The id the call carries on every chat action is the one the tool is told.
+  expect(seen).toBe('c1');
+  const block = { type: 'terminal', resource: terminal.uri, title: 'Terminal', isPty: true };
+  const changed = v.of('chat', 'chat/toolCallContentChanged').find((action) => action.toolCallId === 'c1');
+  expect(changed?.content).toEqual([block]);
+  // The completion replaces the call's content, so the terminal it showed
+  // while it ran is carried into the result.
+  expect((completeFor(v, 'c1')?.result as Bag).content).toEqual([
+    block,
+    { type: 'text', text: 'ran it' },
+  ]);
+  const turn = (session.chatState().turns as Bag[])[0] as Bag;
+  const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
+  expect((part?.toolCall as Bag).content).toEqual([block, { type: 'text', text: 'ran it' }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 /*
  * The name cofold's own question tool has, given to the host's.
  *

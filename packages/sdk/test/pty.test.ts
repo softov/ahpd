@@ -365,6 +365,16 @@ describe('a shell under a pseudoterminal', () => {
     expect(terminal.state().content.filter((part) => part.type === 'command')).toHaveLength(2);
   });
 
+  it('names two commands that start in one millisecond apart', () => {
+    const { spawn, say } = fakePty();
+    const { seen } = opened(spawn);
+    // One chunk, so both marks are read in the same millisecond.
+    say(`${osc('133;C')}one\r\n${osc('133;D;0')}${osc('133;C')}two\r\n${osc('133;D;0')}`);
+    const ids = seen.filter((one) => one.type === 'terminal/commandExecuted').map((one) => (one as { commandId?: string }).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   it('keeps the last 200,000 characters, whole parts from the front first', () => {
     const { spawn, say } = fakePty();
     const { terminal } = opened(spawn);

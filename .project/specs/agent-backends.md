@@ -253,6 +253,19 @@ AND `Start.toolsServer` opens an MCP endpoint for the host tools, when the host 
 AND `Start.terminalOutputs` keeps an output under a key of the backend, when the session store keeps a folder for the session.
 The reason: a session that asked for a machine must not run the agent's commands on the host. A machine path is not a folder the host has - decision [an-acp-agents-terminal-in-a-machine-runs-in-the-machine](../decisions/an-acp-agents-terminal-in-a-machine-runs-in-the-machine.md).
 
+### A backend takes the host's shell, or keeps its own
+
+WHEN the root config sets `enableCustomTerminalTool`, the host is not Windows, and the host has a terminal store
+THEN `Start.tools` carries `bash`, `read_bash`, `write_bash`, `bash_shutdown`, `list_bash` and the other shell's primary, each marked `overridesBuiltInTool`
+AND a backend with a tool of the same name replaces its own tool with the host's
+AND Claude disallows `Bash` and aliases it to `mcp__ahp__bash`
+AND pi drops its own `bash` and `powershell` for the host's
+AND a call of one shows the terminal it opened through `opened`, and keeps it in the content of `chat/toolCallComplete`.
+WHEN any of the three is not so
+THEN the tools are not offered, and a backend keeps its own shell.
+The reason: the reference host's terminal tool takes the place of the harness's own.
+A backend that kept both would run the model's commands in a shell the person cannot watch.
+
 ### `ask_user` reaches every backend but Claude
 
 WHEN the host contributes its `ask_user` tool

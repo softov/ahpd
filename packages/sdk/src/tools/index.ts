@@ -1,6 +1,7 @@
 import type { HostTool } from '../types/host.js';
 import { sessionTools, wakeupTool } from './session.js';
 import { artifactTools } from './artifacts.js';
+import { shellTools } from './shell.js';
 import { askUserTool } from './askuser.js';
 
 /**
@@ -12,9 +13,11 @@ import { askUserTool } from './askuser.js';
  * beside it, and the terminals the person is watching. The session tools are
  * the reference host's nine, by name and by schema (`session.ts`), and
  * the artifact tools its three (`artifacts.ts`), so a skill written
- * against that host works here; the four after them are this host's own:
- * two read-only, `schedule_wakeup`, which wakes the calling chat later, and
- * `ask_user`, which asks the person in the chat and waits for the answer.
+ * against that host works here; the six shell tools its agent terminal tool
+ * offers (`shell.ts`), which `contributingTo` withholds until the root config
+ * turns them on; and the four after them are this host's own: two read-only,
+ * `schedule_wakeup`, which wakes the calling chat later, and `ask_user`, which
+ * asks the person in the chat and waits for the answer.
  *
  * ```ts
  * createHost({ path, agents, tools: hostTools() });
@@ -55,5 +58,8 @@ export const hostTools = (): HostTool[] => [
     },
   },
   wakeupTool(),
+  // The agent terminal tool, withheld by `contributingTo` until the root
+  // config turns it on and never under Windows.
+  ...shellTools(),
   askUserTool(),
 ];

@@ -11,7 +11,7 @@
 
 import { createTool } from '@cofold/agents';
 import type { Tool } from '@cofold/agents';
-import type { Bag, BoundTool } from '@ahpd/sdk';
+import type { Bag, BoundTool, CommandTerminal } from '@ahpd/sdk';
 
 /**
  * cofold's own input-schema type, read off its factory.
@@ -103,6 +103,13 @@ export interface ClientToolCall {
  */
 export interface ClientToolRelay {
   call(call: ClientToolCall): Promise<string>;
+  /**
+   * The terminal a host tool opened for a call, as soon as it is showing.
+   *
+   * Absent where nothing here draws the call, and then the tool is told no
+   * `opened` at all rather than a callback that goes nowhere.
+   */
+  opened?(callId: string, terminal: CommandTerminal): void;
 }
 
 /**
@@ -139,7 +146,15 @@ export const cofoldTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Reco
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);
     }
-    return await bound.run(input);
+    /*
+     * The call's id is the one its row carries, and `opened` is how a tool
+     * that starts a terminal shows it on that row while it runs.
+     */
+    const opened = relay?.opened;
+    return await bound.run(input, {
+      toolCallId: ctx.callId,
+      ...(opened === undefined ? {} : { opened: (terminal) => { opened(ctx.callId, terminal); } }),
+    });
   },
 });
 
@@ -361,15 +376,21 @@ export const toolCompleteAction = (
   isError: boolean,
   subject?: string,
   meta?: Bag,
-): Bag => ({
-  type: 'chat/toolCallComplete',
-  turnId,
-  toolCallId: callId,
-  result: {
-    success: !isError,
-    pastTenseMessage: describe(name, subject),
-    ...(content !== '' ? { content: [{ type: 'text', text: content }] } : {}),
-    ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
-  },
-  ...(meta !== undefined ? { _meta: meta } : {}),
-});
+  /** The terminals the call showed while it ran, which the completion keeps. */
+  terminals?: Bag[],
+): Bag => {
+  const kept = terminals ?? [];
+  const shown = [...kept, ...(content === '' ? [] : [{ type: 'text', text: content }])];
+  return {
+    type: 'chat/toolCallComplete',
+    turnId,
+    toolCallId: callId,
+    result: {
+      success: !isError,
+      pastTenseMessage: describe(name, subject),
+      ...(shown.length === 0 ? {} : { content: shown }),
+      ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
+    },
+    ...(meta !== undefined ? { _meta: meta } : {}),
+  };
+};

@@ -1,9 +1,9 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
-import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
+import type { StringOrMarkdown, ToolResultTerminalContent } from '@microsoft/agent-host-protocol';
 import { z } from 'zod';
 import { createClientCalls, toMcpContent } from '@ahpd/sdk';
-import type { Bag, BoundTool, ClientCallAnswer, ClientCalls } from '@ahpd/sdk';
-import { str } from './common.js';
+import type { Bag, BoundTool, ClientCallAnswer, ClientCalls, CommandTerminal, OnWire } from '@ahpd/sdk';
+import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
@@ -63,6 +63,13 @@ export const contributed = (
   tools: BoundTool[],
   /** Hand a call to the client that provides it, and wait for what it says. */
   byClient: (tool: BoundTool, input: Bag, extra: unknown) => Promise<Claimed>,
+  /**
+   * A host tool's terminal, as it opens.
+   *
+   * Told with the call's id, and answers what to tell the tool when it opens a
+   * terminal, or nothing when the call is not one this backend can show.
+   */
+  openedFor?: (toolCallId: string) => ((terminal: CommandTerminal) => void) | undefined,
 ): unknown => createSdkMcpServer({
   name: 'ahp',
   version: '1.0.0',
@@ -115,7 +122,24 @@ export const contributed = (
           };
         }
         try {
-          return { content: [{ type: 'text' as const, text: await one.run?.(input) ?? '' }] };
+          /*
+           * The call's id, where the CLI named it, so a host tool that ties
+           * something to the call - a shell's claim, a terminal a client
+           * watches - names the same call a client reads in
+           * `chat/toolCallStart`. `opened` is how a tool that starts a
+           * terminal shows it on the call while it runs.
+           */
+          const toolCallId = namedBy(extra);
+          const opened = toolCallId === undefined ? undefined : openedFor?.(toolCallId);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: await one.run?.(input, {
+                ...(toolCallId === undefined ? {} : { toolCallId }),
+                ...(opened === undefined ? {} : { opened }),
+              }) ?? '',
+            }],
+          };
         }
         catch (error: unknown) {
           // The message, not a throw: an MCP tool that rejects is a transport
@@ -182,6 +206,22 @@ export interface ClientTools {
   releaseCalls: (why: string) => void;
   /** Run one tool where the client that provides it lives, and wait for it. */
   ranByClient: (tool: BoundTool, input: Bag, extra: unknown) => Promise<Claimed>;
+  /**
+   * The terminal a host tool showed on a call, by the call's id.
+   *
+   * Kept until the result is mapped, because a completion replaces the call's
+   * whole content: the term block has to be carried into it or the shell
+   * closes the moment the command ends.
+   */
+  openedTerminals: Map<string, OnWire<ToolResultTerminalContent>>;
+  /**
+   * What a host tool is told when it opens a terminal for a call.
+   *
+   * Puts the terminal on the call and says so, as a `!` command does, and
+   * keeps it for the completion. Nothing for a call this backend does not
+   * hold, which is a tool call made outside a turn it can draw.
+   */
+  openedFor: (toolCallId: string) => (terminal: CommandTerminal) => void;
   /** The one place this chat's client calls are held, for the snapshot and above. */
   calls: ClientCalls;
   methods: {
@@ -477,6 +517,38 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     return { answer: await calls.wait(joined.id), callId: joined.id };
   };
 
+  /** The terminal blocks host tools showed on their calls, by the call's id. */
+  const openedTerminals = new Map<string, OnWire<ToolResultTerminalContent>>();
+
+  /**
+   * The terminal a host tool opened for a call, put on the call as it opens.
+   *
+   * The same block a `!` command's call carries, and the same change: onto the
+   * call and into the action from one object, with no `_meta`, which the
+   * reducer would put in place of the call's. The block is kept for the
+   * completion, which replaces the call's whole content.
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+   */
+  const openedFor = (toolCallId: string): ((terminal: CommandTerminal) => void) => (terminal) => {
+    const block: OnWire<ToolResultTerminalContent> = {
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    };
+    openedTerminals.set(toolCallId, block);
+    const scope = ctx.scopeOfCall(toolCallId);
+    const part = scope?.parts.get(toolCallId);
+    if (scope === undefined || part === undefined) return;
+    bag(part.toolCall).content = [block];
+    ctx.emitOn(scope, {
+      type: 'chat/toolCallContentChanged',
+      turnId: scope.turn?.id,
+      toolCallId,
+      content: [block],
+    });
+  };
+
   /** One change of tools, sent to the CLI: `setTools` says when, and why in two declarations. */
   const retool = async (offered: BoundTool[]): Promise<boolean> => {
     const next = takes(offered);
@@ -487,7 +559,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const removed: Record<string, Bag> = { ...ctx.declared };
     delete removed.ahp;
     const declared: Record<string, Bag> = { ...removed };
-    if (next.length > 0) declared.ahp = contributed(next, ranByClient) as Bag;
+    if (next.length > 0) declared.ahp = contributed(next, ranByClient, openedFor) as Bag;
     try {
       if (ctx.declared.ahp !== undefined) {
         await ctx.handle.setMcpServers(removed as never);
@@ -587,5 +659,5 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
   };
 
-  return { clientToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, calls, methods };
+  return { clientToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, openedTerminals, openedFor, calls, methods };
 }

@@ -5,7 +5,7 @@ import type { CommandShell } from '../access/commandautoapprover.js';
 import type { Bag } from './common.js';
 import type { FileEdit } from './changes.js';
 import type { WireTurn } from './wire.js';
-import type { Emit, Handed, PlanUpdate, Session, SubagentChat, SubagentRequest } from './session.js';
+import type { CommandTerminal, Emit, Handed, PlanUpdate, Session, SubagentChat, SubagentRequest } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Account, Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
@@ -72,6 +72,25 @@ export interface ToolEffects {
 }
 
 /**
+ * What a backend knows about the call it is running a host tool for.
+ *
+ * The harness names a call when it starts one, and a host tool that ties
+ * something to the call - a shell's claim, a terminal a client watches - reads
+ * it from here. Both are absent where the harness named no call.
+ */
+export interface ToolCallFacts {
+  /** The call's id, as its `chat/toolCallStart` carried it. */
+  toolCallId?: string;
+  /**
+   * Told the terminal as soon as the tool opens one for this call.
+   *
+   * The backend puts it on the call and says so, as it does for a `!` command,
+   * so a client watches the output arrive rather than waiting for the end.
+   */
+  opened?: (terminal: CommandTerminal) => void;
+}
+
+/**
  * A tool the host contributes, with the session it was contributed to
  * already bound.
  *
@@ -84,8 +103,13 @@ export interface BoundTool {
   definition: ToolDefinition;
   /**
    * What running it does. Absent for a tool a client runs - see `owner`.
+   *
+   * `call` is what the backend knows about this call: its `toolCallId`, the
+   * id its `chat/toolCallStart` carried, when the backend's harness names the
+   * call to the handler, and `opened`, which a host tool that starts a terminal
+   * tells as soon as it is showing so the backend can put it on the call.
    */
-  run?(input: Record<string, unknown>): Promise<string> | string;
+  run?(input: Record<string, unknown>, call?: ToolCallFacts): Promise<string> | string;
   /**
    * What running it does to the world, carried from the `HostTool` that
    * contributed it. A backend reads this to decide whether to ask a person.
@@ -117,6 +141,13 @@ export interface BoundTool {
    * means the harness's own default applies.
    */
   deferLoading?: boolean;
+  /**
+   * Whether this tool takes the place of the agent's own tool of that name.
+   *
+   * The host's `HostTool.overridesBuiltInTool`, carried here for the same
+   * reason as `deferLoading`. Undefined leaves the harness's tools as they are.
+   */
+  overridesBuiltInTool?: boolean;
 }
 
 /**

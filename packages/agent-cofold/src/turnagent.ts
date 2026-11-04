@@ -286,6 +286,11 @@ export const createTurnAgent = (
       if (!answer.ok) throw new Error(answer.text === '' ? 'The tool failed' : answer.text);
       return readOf(answer);
     },
+    opened: (callId, terminal) => {
+      const mapping = ctx.activeMapping;
+      if (mapping === undefined) return;
+      for (const action of mapping.opened(callId, terminal)) start.emit('chat', action);
+    },
   };
 
   /**

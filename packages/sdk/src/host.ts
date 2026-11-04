@@ -78,6 +78,7 @@ import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
 import { createAsking } from './host/asking.js';
 import { createTerminalMethods, createTerminals } from './host/terminals.js';
+import { createShells } from './host/shells.js';
 import { createOutputs } from './host/outputs.js';
 import { createLocalTurns } from './host/localturns.js';
 import { createAutomations } from './host/automations.js';
@@ -1539,6 +1540,9 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createLifecycle(ctx));
   Object.assign(ctx, createTooling(ctx));
   Object.assign(ctx, createTerminals(ctx));
+  // Under its own name rather than spread flat, because `of` and `forgetSession`
+  // are words other areas could reach for.
+  ctx.shells = createShells(ctx);
   Object.assign(ctx, createOutputs(ctx));
   Object.assign(ctx, createLocalTurns(ctx));
   Object.assign(ctx, createAutomations(ctx));

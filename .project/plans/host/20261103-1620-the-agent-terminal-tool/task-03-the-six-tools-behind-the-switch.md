@@ -1,6 +1,6 @@
 ---
 title: The six tools behind the switch
-status: todo
+status: implemented
 depends:
   - task-01-a-host-tool-knows-its-call.md
   - task-02-an-agents-shells-run-its-commands.md
@@ -53,3 +53,14 @@ Each tool checks the grant of the client terminal method it matches, as the pers
 - `pnpm --filter @ahpd/sdk test` passes.
 
 ## Resume
+
+Built on `build/agents/09cc9b8d`, after tasks 01 and 02.
+`tools/shell.ts` carries the six tools on the task 02 manager, with the reference's schemas and descriptions word for word: `bash` (or `powershell`, by `shellOf()`) plus `read_`, `write_`, `_shutdown` and `list_`, and the other shell's primary answering with the name of the right tool.
+Each is marked `overridesBuiltInTool`; the primary asks `terminal:create`, write `terminal:input`, read `terminal:output`, shutdown `terminal:dispose`, and `list_` asks none, all as the person who sent the turn.
+`enableCustomTerminalTool` is declared in `vscoderootconfig.ts` with `default: false`, and `contributingTo` withholds the six names unless it is `true`, the platform is not Windows, and the host has a terminal store; `hostTools` adds them, and every call's `ToolCall` now has `shells()`.
+A command that goes to the background or enters the alternate screen keeps its shell busy through `hold`.
+A command that times out releases its shell, as in the reference.
+`bash_shutdown` ends a shell and takes its terminal off the root list.
+`test/shell-tools.test.ts` and `test/shell-call-terminal.test.ts` cover the Validation, and `packages/agent-claude/test/agent-claude-host-shell-tool.test.ts` covers Claude's disallowed `Bash` and its `mcp__ahp__bash` alias.
+Docs are `docs/sdk/TERMINALS.md` and `.project/specs/agent-backends.md`.
+One thing task 02 left: a store with no screen answers `whenAltBuffer` at once, so the execution reads `isInAltBuffer()` when the wait settles rather than treating the answer itself as the alternate screen; `shell-manager.test.ts` covers a screenless store running to its sentinel.

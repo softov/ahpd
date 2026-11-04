@@ -188,6 +188,16 @@ export interface Terminal {
    * resolves at once.
    */
   whenAltBuffer(): Promise<void>;
+  /**
+   * Resolves once everything the screen has been fed so far is parsed.
+   *
+   * What a caller waits on before reading a mode the latest output set -
+   * bracketed paste, which a program turns on as it writes its prompt - so a
+   * chunk still being parsed is not read as the mode before it. Without a
+   * screen, or for one whose writes are parsed as they arrive, it resolves at
+   * once.
+   */
+  whenScreenSettled(): Promise<void>;
 }
 
 /**
@@ -258,6 +268,15 @@ export interface Screen {
   isBracketedPasteMode(): boolean;
   /** Resolves when the alternate screen shows, or at once when it already is. */
   whenAltBuffer(): Promise<void>;
+  /**
+   * Resolves once everything written so far is parsed.
+   *
+   * A screen that parses each write as it is fed leaves this out, and a caller
+   * then reads the mode as the screen has it. One that queues its writes - as
+   * an emulator does - answers this so a caller does not read a mode from a
+   * chunk that has not been parsed yet.
+   */
+  whenSettled?(): Promise<void>;
   /** Let it go, once the program has gone. */
   dispose(): void;
 }
