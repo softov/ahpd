@@ -1,6 +1,6 @@
 ---
 title: ahpd config set writes a key
-status: todo
+status: implemented
 depends: [task-01-the-modelapi-key.md]
 layer: server
 refs:
@@ -39,5 +39,5 @@ refs:
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** every step.
+- **Found:** a refusal throws out of `Program.run`, so the cases expect the throw, as `plugin-config.test.ts` does.

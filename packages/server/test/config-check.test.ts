@@ -137,6 +137,13 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ httpApi: { host: '127.0.0.1' } })).toContain('httpApi.port');
   });
 
+  it('refuses modelApi.host without modelApi.port, and a modelApi of another type', () => {
+    expect(refusal({ modelApi: { host: '127.0.0.1' } })).toContain('modelApi.host');
+    expect(refusal({ modelApi: { host: '127.0.0.1' } })).toContain('modelApi.port');
+    expect(refusal({ modelApi: 'on' })).toContain(`${config}: modelApi must be`);
+    expect(refusal({ modelApi: { port: 70000 } })).toBe(`${config}: modelApi.port must be an integer between 0 and 65535`);
+  });
+
   it('refuses a plugins entry that is not a spec', () => {
     expect(refusal({ plugins: [3] })).toContain(`${config}: plugins must be`);
     expect(refusal({ plugins: [{ options: {} }] })).toBe(`${config}: plugins[0].source is required`);
@@ -237,6 +244,13 @@ describe('a valid file', () => {
     expect(folded({ httpApi: false }).httpApi).toBeUndefined();
   });
 
+  it('takes modelApi true as a shared listener, an object as it is, and absent or false as off', () => {
+    expect(folded({ modelApi: true }).modelApi).toEqual({});
+    expect(folded({ modelApi: { port: 0, host: '127.0.0.1' } }).modelApi).toEqual({ port: 0, host: '127.0.0.1' });
+    expect(folded({ modelApi: false }).modelApi).toBeUndefined();
+    expect(folded({ httpApi: true }).modelApi).toBeUndefined();
+  });
+
   it('is under every flag that was typed', () => {
     put({ port: 1, automations: 'memory', paths: ['/from-file'], requireIssuer: true });
     const options = optionsFrom({ configFile: config, port: 2, automations: 'file', paths: ['/typed'], requireIssuer: false });
@@ -288,9 +302,11 @@ describe('the schema', () => {
     }
   });
 
-  it('gives httpApi no flag', () => {
-    expect(Object.keys(flagFields)).not.toContain('httpApi');
-    expect(Object.keys(serverFields)).toContain('httpApi');
+  it('gives httpApi and modelApi no flag', () => {
+    for (const key of ['httpApi', 'modelApi']) {
+      expect(Object.keys(flagFields)).not.toContain(key);
+      expect(Object.keys(serverFields)).toContain(key);
+    }
   });
 
   it('gives usage no flag either', () => {
