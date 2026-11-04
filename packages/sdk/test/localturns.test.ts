@@ -129,7 +129,7 @@ describe('the turns a chat began', () => {
     const back = await read(turns, [said('t1', 'asked'), said('s1', 'and also'), said('t2', 'next')]);
     expect(ids(back)).toEqual(['t1', 't2']);
     expect((back[0]?.message as Bag).text).toBe('asked');
-    expect(prose(back[0])).toEqual(['asked', 'and also']);
+    expect(prose(back[0])).toEqual(['asked', '> and also', 'and also']);
   });
 
   it('reads a turn written again under a new id back as the turn it began as', async () => {
@@ -146,7 +146,7 @@ describe('the turns a chat began', () => {
     turns.turnRecordedAs(LIVE, PEER, 't3', 't3');
     const back = await read(turns, [said('t1', 'old'), said('s1', 'old steer'), said('t3', 'new'), said('s2', 'new steer')]);
     expect(ids(back)).toEqual(['t1', 's1', 't3']);
-    expect(prose(back[2])).toEqual(['new', 'new steer']);
+    expect(prose(back[2])).toEqual(['new', '> new steer', 'new steer']);
   });
 
   it('folds nothing for a chat with no record, nor on a store that keeps no folder', async () => {
