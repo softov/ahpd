@@ -76,7 +76,7 @@ task_notification or background_tasks_changed -> dropTask / noteLive -> reconcil
 
 - **Done so far:** task 01 is implemented on 2026-11-04. The two new cases fail without the change.
 - **Next action:** review, then the check by hand in [claude-0745-background-row-checks.md](../../../pending/claude-0745-background-row-checks.md).
-- **Watch out for:** `shellWork` also reads the command from the part, so a row built after the turn shows the label as its command. Pin both.
+- **Watch out for:** nothing open.
 
 ## Final verification checklist
 
