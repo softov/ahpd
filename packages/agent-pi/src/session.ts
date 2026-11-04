@@ -714,10 +714,10 @@ export function piSession(
    * once the turn is over: as the turn ends, however it ends, and as the
    * session closes under a turn still running, which is what a host that stops
    * does. The turn's first prompt names it, as agent-claude names a turn by its
-   * first echo.
+   * first echo, and only a turn pi was handed has one.
    */
   const namePrompt = (): void => {
-    if (active === undefined || live === undefined || resumed) return;
+    if (active === undefined || live === undefined || resumed || prompted !== String(active.id)) return;
     const prompt = live.promptAfter(promptedAfter);
     if (prompt !== undefined && prompt !== String(active.id)) start.onTurnRecorded?.(String(active.id), prompt);
   };

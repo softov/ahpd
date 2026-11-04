@@ -248,6 +248,21 @@ it('names a turn by its prompt\'s entry when the session closes while the turn r
   expect(recorded).toEqual([['t1', 'entry-prompt']]);
 });
 
+it('names no prompt for a turn stopped before pi had it, after a turn that pi had', async () => {
+  // The prompt after where the turn before began is the turn before's.
+  const recorded: [string, string][] = [];
+  const { session, pi } = opened({ onTurnRecorded: (turnId, entryId) => { recorded.push([turnId, entryId]); } });
+  pi.setLeaf('entry-before');
+  pi.setPrompted('entry-prompt');
+  session.sendMessage('t1', 'hello');
+  await settled();
+  session.sendMessage('t2', 'again');
+  session.abort();
+  await settled();
+  expect(pi.asked.filter((one) => one.kind === 'prompt')).toHaveLength(1);
+  expect(recorded).toEqual([['t1', 'entry-prompt']]);
+});
+
 it('names no turn whose prompt pi has no entry for', async () => {
   const recorded: [string, string][] = [];
   const { session } = opened({ onTurnRecorded: (turnId, entryId) => { recorded.push([turnId, entryId]); } });
