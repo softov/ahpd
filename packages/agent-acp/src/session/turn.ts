@@ -1,7 +1,6 @@
 import type { ContentBlock, StopReason, Usage } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
 import { partsOf, titleFrom } from '@ahpd/sdk';
-import { closePlan } from '../mapping.js';
 import type { AcpConnection } from '../types.js';
 import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
@@ -67,7 +66,6 @@ export function createTurn(ctx: SessionContext): Turn {
       },
       state: 'complete',
       updates: [],
-      ...(start.plan === true ? { hostPlan: true } : {}),
     };
     doing('Thinking');
   };
@@ -148,16 +146,9 @@ export function createTurn(ctx: SessionContext): Turn {
       if (ctx.record !== undefined && !ctx.record.turns.includes(ctx.watchedTurn)) ctx.record.turns.push(ctx.watchedTurn);
       ctx.watchedTurn = undefined;
     }
-    // Nothing in the protocol says when the agent has finished writing a plan,
-    // so the turn ending is what closes the call it is held in.
-    if (ctx.mapping !== undefined) {
-      const closing = closePlan(ctx.mapping);
-      // Before the closing actions go out: what they name is background work if
-      // its terminal still runs, and every other running terminal is named by
-      // the turn's end rather than by a call.
-      ctx.settleTerminals(closing);
-      for (const action of closing) emit('chat', action);
-    }
+    // A terminal still running when the turn ends is background work, which
+    // the turn's end names.
+    if (ctx.mapping !== undefined) ctx.settleTerminals();
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
     ctx.active = undefined;
@@ -376,7 +367,6 @@ export function createTurn(ctx: SessionContext): Turn {
         parts: turn.responseParts as Bag[],
         calls: new Map(),
         opening: [],
-        ...(start.plan === true ? { hostPlan: true } : {}),
         reach: {
           within: inside,
           changed: (path, before) => {

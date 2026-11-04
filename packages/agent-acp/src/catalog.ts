@@ -195,8 +195,6 @@ export function watchSession(fields: {
   replay?: SessionUpdate[];
   /** The turns the host already held, for a resume no replay was sent for. */
   seed?: Bag[];
-  /** Whether the host draws this session's Plan call, so a replay does not. */
-  hostPlan?: boolean;
 }): WatchedSession {
   const at = new Date().toISOString();
   const known = watched.get(keyOf(fields.provider, fields.id));
@@ -205,7 +203,7 @@ export function watchSession(fields: {
     known.additional = fields.additional;
     if (fields.title !== '') known.title = fields.title;
     known.modifiedAt = at;
-    prepend(known, fields.replay ?? [], at, fields.hostPlan === true);
+    prepend(known, fields.replay ?? [], at);
     hold(known, fields.seed ?? []);
     return known;
   }
@@ -221,7 +219,7 @@ export function watchSession(fields: {
     held: [],
   };
   watched.set(keyOf(fields.provider, fields.id), created);
-  prepend(created, fields.replay ?? [], at, fields.hostPlan === true);
+  prepend(created, fields.replay ?? [], at);
   hold(created, fields.seed ?? []);
   return created;
 }
@@ -249,9 +247,9 @@ function hold(session: WatchedSession, seed: Bag[]): void {
  * process watching, so a second load is saying the same conversation again and
  * putting it in would read as one happening twice.
  */
-function prepend(session: WatchedSession, replay: SessionUpdate[], at: string, hostPlan: boolean): void {
+function prepend(session: WatchedSession, replay: SessionUpdate[], at: string): void {
   if (replay.length === 0 || session.turns.length > 0) return;
-  session.turns.push(...replayedTurns(replay, at, hostPlan));
+  session.turns.push(...replayedTurns(replay, at));
 }
 
 /** One watched session, or nothing when this process never opened it. */

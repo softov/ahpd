@@ -56,14 +56,13 @@ export interface Handlers {
   killTerminal(request: KillTerminalRequest): Promise<KillTerminalResponse>;
   releaseTerminal(request: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse>;
   /**
-   * The turn's end: the terminals its closing actions named, and every other
-   * one still running.
+   * The turn's end: every terminal still running.
    *
    * A terminal is background work once the call that made it has ended, and a
    * turn ending is the last moment a call can name one. What no call named is
    * still a shell the agent left running.
    */
-  settleTerminals(closing: Bag[]): void;
+  settleTerminals(): void;
   settlePermissions(): void;
   confirm: Session['confirm'];
 }
@@ -200,8 +199,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     }
   };
 
-  const settleTerminals = (closing: Bag[]): void => {
-    for (const action of closing) noteCall(bag(action));
+  const settleTerminals = (): void => {
     // A terminal no call named is still work: the agent opened a shell and the
     // turn is over, and the process it started is not. The command line is the
     // only label there is, because no call carried a title for it.

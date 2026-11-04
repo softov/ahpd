@@ -48,14 +48,6 @@ export const callPartOf = (turn: { parts: Bag[] }, callId: string): Bag | undefi
   turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === callId);
 
 /**
- * The id of the turn's plan call.
- *
- * Named rather than numbered, because a turn keeps one plan for as long as the
- * agent sends plans and a second one would have to be told apart from it.
- */
-const planId = (turnId: string): string => `${turnId}:plan`;
-
-/**
  * The part a chunk of one kind appends to, with the action that announces it
  * when this chunk opens it.
  *
@@ -360,12 +352,6 @@ const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Ba
 const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] =>
   call.status === 'completed' || call.status === 'failed' ? closed(turn, call, content, actions, at) : shown(turn, call, content, actions);
 
-/** The content a call's held part carries, which is what its completion repeats. */
-const heldContent = (part: Bag | undefined): Bag[] => {
-  const content = part === undefined ? undefined : bag(part.toolCall).content;
-  return Array.isArray(content) ? content as Bag[] : [];
-};
-
 /**
  * One diff, as the file edit a client draws and as an entry in the changeset.
  *
@@ -416,19 +402,6 @@ const contentText = (blocks: Bag[]): string =>
   blocks.filter((block) => block.type === 'text').map((block) => String(block.text ?? '')).join('\n');
 
 /**
- * One plan entry, as a line of the plan.
- *
- * A checkbox says whether the entry is done, and the status is written out
- * where a checkbox cannot say it, because an entry that is running is not an
- * entry that is waiting either.
- */
-const entryLine = (entry: PlanEntry): string => {
-  const done = entry.status === 'completed';
-  const where = done || entry.status === 'pending' ? '' : ` (${entry.status})`;
-  return `- [${done ? 'x' : ' '}] ${entry.content}${where}`;
-};
-
-/**
  * One plan entry as the host reads it.
  *
  * The protocol's entry is already the host's shape: `content` is the text, and
@@ -441,45 +414,6 @@ const planEntryOf = (entry: PlanEntry): HarnessPlanEntry => ({
   status: entry.status,
   priority: entry.priority,
 });
-
-/**
- * The turn's one plan, as the call that holds it.
- *
- * A plan is something the agent writes rather than streams, so it is a call:
- * one for the whole turn, opened by the first plan and rewritten by every one
- * after it. The protocol sends the whole list each time rather than a change to
- * it, so there is nothing to append and each update replaces what the call
- * shows - an update carrying no entries replacing it with nothing. Nothing in
- * the protocol says when the agent has finished writing a plan, so the call is
- * completed by the turn ending, with the last plan as its result.
- */
-const plan = (turn: AcpTurn, entries: PlanEntry[]): Bag[] => {
-  const call = callOf(turn, { toolCallId: planId(turn.turnId), title: 'Plan', name: 'plan' });
-  const first = call.readied === false;
-  call.status = 'in_progress';
-  const content: Bag[] = entries.map((entry) => ({ type: 'text', text: entryLine(entry) }));
-  bag(callPartOf(turn, call.toolCallId)?.toolCall).content = content;
-  return [
-    // The row, and the ready that says nobody is ever going to be asked about
-    // a plan - a question is a question about a tool, and a plan is not one.
-    ...(first ? opened(turn, call) : []),
-    ...(first ? [ready(turn, call, undefined)] : []),
-    { type: 'chat/toolCallContentChanged', turnId: turn.turnId, toolCallId: call.toolCallId, content },
-  ];
-};
-
-/**
- * The turn's plan, completed as the turn ends.
- *
- * A plan is the one row the protocol never closes itself, so the turn ending is
- * what closes it - with the last plan the agent wrote as what it returned.
- */
-export function closePlan(turn: AcpTurn): Bag[] {
-  const call = turn.calls.get(planId(turn.turnId));
-  if (call === undefined) return [];
-  call.status = 'completed';
-  return closed(turn, call, heldContent(callPartOf(turn, call.toolCallId)), []);
-}
 
 /**
  * One update's actions, in the order they must be sent.
@@ -585,15 +519,18 @@ export function mapUpdate(
     }
 
     /*
-     * The agent's plan, as the turn's one call for it, and as the session's
-     * plan in the host.
+     * The agent's plan, as the session's plan in the host.
+     *
+     * A plan update is no call the agent made, so it is drawn as no row of the
+     * chat: VS Code shows a plan only as the tool call its harness made, as
+     * Claude's TodoWrite, and its Codex mapping draws nothing for Codex's
+     * `turn/plan/updated`. The list goes to the host, which is how the plan it
+     * keeps moves.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
      */
     case 'plan':
       planUpdate?.({ turn: turn.turnId, tool: 'plan', entries: update.entries.map(planEntryOf) });
-      // A turn holds one Plan call, and the host draws the one a plugin gives
-      // the lines for. The entries still go up, because they are how that
-      // list moves; only the bridge's own call is left out.
-      return turn.hostPlan === true ? [] : plan(turn, update.entries);
+      return [];
 
     /*
      * Everything else - a user echo, a mode or command catalogue - is a variant

@@ -441,14 +441,6 @@ export interface AcpReach {
 export interface AcpTurn {
   /** The turn the client began. */
   turnId: string;
-  /**
-   * Whether the host draws this turn's Plan call itself.
-   *
-   * A plan update is still handed to the host through `planUpdate`, because
-   * that is how the list the host draws changes; the call drawn from the
-   * entries is the one this suppresses, so a turn holds one Plan call.
-   */
-  hostPlan?: boolean;
   /** Every response part this turn holds, shared with the session's snapshot. */
   parts: Bag[];
   /** Tool calls this turn opened, by the server's own id. */
@@ -502,8 +494,6 @@ export interface AcpTurn {
 export interface WatchedTurn {
   /** The turn the client began. */
   turnId: string;
-  /** Whether the host drew this turn's Plan call, kept so a replay agrees. */
-  hostPlan?: boolean;
   /** ISO 8601 timestamp, taken from the action the turn began with. */
   startedAt: string;
   /** What began the turn, as the transcript reports it. */

@@ -611,7 +611,6 @@ export function createOpening(ctx: SessionContext): Opening {
         title: ctx.title,
         replay,
         seed: start.seed ?? [],
-        ...(start.plan === true ? { hostPlan: true } : {}),
       });
       /*
        * The record has it now, and this list must not keep it: a server that

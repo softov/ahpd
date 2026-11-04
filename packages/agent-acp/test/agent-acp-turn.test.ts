@@ -310,65 +310,19 @@ it('opens a part for a message that is only whitespace, and streams each chunk a
     .toEqual(['t1:0', 't1:1', 't1:3', 't1:4']);
 });
 
-it('holds the plan in one call, which each update rewrites and the turn closes', async () => {
+it('draws no call of its own for a plan, which no call of the agent\'s carried', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'plan it');
   await until(() => ended(p, chatUri));
 
-  // One row for two plans: opened and readied by the first, rewritten by each
-  // one after it, and completed by the turn ending rather than by an update.
-  const plan = actions(p, chatUri).filter((e) => e.action.toolCallId === 't1:plan'
-    && String(e.action.type).startsWith('chat/toolCall'));
-  expect(plan.map((e) => e.action.type)).toEqual([
-    'chat/toolCallStart',
-    'chat/toolCallReady',
-    'chat/toolCallContentChanged',
-    'chat/toolCallContentChanged',
-    'chat/toolCallComplete',
-  ]);
-  // Nothing in the protocol says when the agent has finished writing a plan,
-  // so the call is still running when the second one arrives and completes
-  // after both.
-  expect(plan[2]?.action.content).toEqual([
-    { type: 'text', text: '- [ ] Read the file (in_progress)' },
-    { type: 'text', text: '- [ ] Write the answer' },
-  ]);
-  expect(plan[4]?.action.result).toMatchObject({
-    success: true,
-    content: [
-      { type: 'text', text: '- [x] Read the file' },
-      { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-    ],
-  });
-
-  /*
-   * The client's own fold, which is what the screen is drawn from: one part,
-   * holding the last plan, which the snapshot has to agree with.
-   */
-  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
-  for (const one of actions(p, chatUri)) {
-    state = chatReducer(state, one.action as unknown as ChatAction);
-  }
-  const parts = state.turns.flatMap((turn) => turn.responseParts) as { kind: string; toolCall?: {
-    toolCallId: string; toolName?: string; status?: string; success?: boolean; content?: unknown;
-  } }[];
-  const held = parts.filter((part) => part.kind === 'toolCall' && part.toolCall?.toolCallId === 't1:plan');
-  expect(held).toHaveLength(1);
-  expect(held[0]?.toolCall).toMatchObject({ toolName: 'plan', status: 'completed', success: true });
-  expect(held[0]?.toolCall?.content).toEqual([
-    { type: 'text', text: '- [x] Read the file' },
-    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-  ]);
-
+  // A plan update is no tool call, so it is no row of the chat, as VS Code
+  // draws nothing for a plan notification that is no tool call.
+  expect(actions(p, chatUri).some((e) => String(e.action.type).startsWith('chat/toolCall'))).toBe(false);
   const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-    snapshot: { state: { turns: { responseParts: { kind: string; toolCall?: { content?: unknown } }[] }[] } };
+    snapshot: { state: { turns: { responseParts: { kind: string }[] }[] } };
   }).snapshot.state.turns[0]?.responseParts ?? [];
-  // The plan call and the words that followed it, which are a part of their own.
-  expect(kept.map((part) => part.kind)).toEqual(['toolCall', 'markdown']);
-  expect(kept[0]?.toolCall?.content).toEqual([
-    { type: 'text', text: '- [x] Read the file' },
-    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-  ]);
+  // The words that followed it, and nothing for the plan.
+  expect(kept.map((part) => part.kind)).toEqual(['markdown']);
 });
 
 it('reports a tool call as start, ready and complete, with its result', async () => {
