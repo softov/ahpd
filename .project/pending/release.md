@@ -4,16 +4,19 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-The last release is `v0.14.0`, of 2026-10-26. Main is `a7b0cfd7`, the merge of #231, which sets every package to `0.15.0-rc.1`. Status at 2026-11-04.
+`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-04.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
-## Left before the tag
+## Left
 
 1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `a7b0cfd7` or later. It wires in #212 to #228.
-2. **The tag.** On Softov's word: `git tag v0.15.0-rc.1 a7b0cfd7` and push it. The run stages each package under `next`. Approve each version on its npm page, `sdk` first. `npm stage publish --tag next` has not run yet, so this run shows whether npm takes it.
+2. **The notes' date.** Date the 0.15.0-rc.1 section of [v0_15.md](../../docs/updates/v0_15.md) 2026-11-04. Set the page's `date` when 0.15.0 is tagged.
+3. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
 
 ## Done
+
+- **The release.** Run 41892315275 staged all 13 packages under `next`, and Softov approved them on 2026-11-04. `npm view` gives `next: 0.15.0-rc.1` and `latest: 0.14.0` for each. `@ahpd/server@next` installs in an empty folder and says `0.15.0-rc.1`.
 
 - **The bump.** #231 sets `0.15.0-rc.1` in every published package. The update test takes a pre-release version.
 - **A dry run.** Run 41876504603 on the bump branch: tests, build, pack and ranges pass, and the channel is `next`.
@@ -38,9 +41,3 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 - The move of the repository to `ahpio/ahpd`, proposed for after the release and not decided. It needs each package's `repository.url`, the 13 npm trusted publishers, and the docs links, then an rc from the new place.
 - MayCXC's `host/124-an-agents-shell-is-a-terminal-the-person-sees` is not merged. Main has its features from the four host/20261103-1620 plans.
 - `plans.mjs` lists the `active` and `draft` plans. None is needed for the release.
-
-## After the tag
-
-1. Watch the release run. A red run is reported as red.
-2. Check that `npm view @ahpd/sdk dist-tags` shows `next: 0.15.0-rc.1` and `latest: 0.14.0`.
-3. Release ahpw on the candidate.
