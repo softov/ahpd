@@ -645,9 +645,16 @@ export function piSession(
         activity.say(`Waiting on you: ${displayName}`);
       });
     }
+    /*
+     * A refused call is not readied to run, and no client is asked to run it:
+     * pi blocks it and closes it failed, as VS Code's host answers a call its
+     * permissions deny without readying it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1726-L1734
+     */
+    if (decided !== undefined) return decided;
     ready({ confirmed: 'not-needed' });
     openClientCall(id, event.toolName, turnId, describe(displayName, input), input);
-    return decided;
+    return undefined;
   };
 
   const schemaOf = (): Bag => ({

@@ -426,6 +426,28 @@ it('names the mode in a refusal rather than asking anybody', async () => {
   expect(session.status()).toBe(Status.InProgress);
 });
 
+/*
+ * A call the mode refuses is not readied to run, and a client is never asked
+ * to run it: pi blocks it and it closes failed, as VS Code's host answers a
+ * call its permissions deny without readying it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1726-L1734
+ */
+it('closes a refused call failed, never readied to run and never handed to its client', async () => {
+  const bound: BoundTool = { definition: { name: 'editor__write', title: 'write' }, owner: 'editor', effects: { writes: true } };
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'plan' }, tools: [bound] } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const answer = await driveCall(pi, 'c1', 'editor__write', { path: 'a.txt' });
+  expect(answer?.block).toBe(true);
+  // Nothing says the call runs, and no client was asked to run it.
+  expect(sent.filter((one) => one.action.type === 'chat/toolCallReady')).toEqual([]);
+  expect(sent.filter((one) => one.action.type === 'session/inputNeededSet')).toEqual([]);
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'editor__write', result: String(answer?.reason), isError: true });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'completed', success: false });
+});
+
 it('advertises the six permission modes, defaulting to default', () => {
   const agent = piAgent({}, [root]);
   const properties = ((agent.schema?.() as Bag).properties as Bag);
