@@ -124,8 +124,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
     asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
     // A failed turn can be put back when there is a point to cut to: the last
     // message of the turn before, or, for a conversation's first turn, no
-    // session at all. A turn read back after a restart has no point, so it is
-    // not one this process can resume.
+    // session at all. A turn before it that nobody named a point for is one
+    // this process cannot cut back to.
     canCut: () => {
       const before = turns.at(-1);
       return before === undefined || ctx.points.has(String(before.id));
@@ -461,8 +461,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const before = turns.at(-1);
     const point = before === undefined ? undefined : ctx.points.get(String(before.id));
     /*
-     * A turn read back after a restart has no entry in `points`, and a
-     * conversation this process did not watch run cannot be cut back to. The
+     * A turn before it with no entry in `points` is one nobody named a point
+     * for, and a conversation cannot be cut back to a point nobody named. The
      * turn goes back into the history rather than running on a conversation it
      * cannot be taken out of. Past this point a point is absent only when
      * there is no turn before, which is a conversation starting over.

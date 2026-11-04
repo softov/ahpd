@@ -81,6 +81,11 @@ export function cofoldSession(
    * their own.
    */
   held?: Held,
+  /**
+   * Where each turn of the conversation this session resumes ended, as the
+   * backend's last read of it named them, by turn id.
+   */
+  seedEnds?: ReadonlyMap<string, string>,
 ): Session {
   const provider = options.provider ?? 'cofold';
   /**
@@ -168,15 +173,22 @@ export function cofoldSession(
    */
   const pending = new Map<string, OpenRequest>();
   /**
-   * Where each watched turn ended, in cofold's own message ids.
+   * Where each turn ended, in cofold's own message ids.
    *
    * `forkPoint` and `endPoint` are asked synchronously and a store read is
-   * not, so the id is read once when the turn ends - before the client is told
-   * it ended - and kept here for the two methods to answer from. A turn this
-   * process did not watch has no entry, which is what makes the host offer no
-   * cut at it: a point nobody can name is worse than none.
+   * not, so the id is read once when a watched turn ends - before the client
+   * is told it ended - and kept here for the two methods to answer from. A turn
+   * the session opens with takes the point the backend's read of the store
+   * named for it, through the turn a fork or a rewind cuts at. A turn with no
+   * entry is one nobody named a point for, which makes the host offer no cut
+   * at it: a point nobody can name is worse than none.
    */
   const points = new Map<string, string>();
+  const seeded = new Set((start.seed ?? []).map((turn) => String(turn.id)));
+  for (const [turnId, point] of seedEnds ?? []) {
+    if (seeded.has(turnId)) points.set(turnId, point);
+    if (point === (start.forkAt ?? start.rewindAt)) break;
+  }
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
@@ -285,13 +297,13 @@ export function cofoldSession(
     },
     agentId: () => sessionId,
     /*
-     * Where a fork and a rewind cut, in cofold's own message ids.
-     *
-     * A turn this process did not watch run has no entry: it was read back off
-     * a transcript, and cofold names a run's span rather than a turn's, so the
-     * point is not something this session can promise. Answering nothing is
-     * what makes the host offer no cut at that turn rather than offer one that
+     * Where a fork and a rewind cut, in cofold's own message ids: the last
+     * message of the turn, as the run that wrote it recorded it or the read of
+     * the store named it, as an agent that offers a fork forks at any turn that
+     * ended, restored ones included. A turn nobody named a point for answers
+     * nothing, which makes the host offer no cut at it rather than one that
      * fails when it is used.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L882-L888
      */
     forkPoint: (turnId) => points.get(turnId),
     endPoint: (turnId) => points.get(turnId),

@@ -197,16 +197,51 @@ it('rewinds the same conversation to a turn, dropping what followed', async () =
   expect(await questions(agent, id)).toEqual(['question one', 'question two', 'question four']);
 });
 
-it('answers no point for a turn this session did not watch', async () => {
-  const { agent, one, sweep } = await threeTurns();
-  // Read back off the store rather than watched, which is what a restart has.
-  const readBack = open(agent, 'one', sweep, { resume: String(one.session.agentId()) });
-  expect(readBack.session.forkPoint?.('t1')).toBeUndefined();
-  expect(readBack.session.endPoint?.('t1')).toBeUndefined();
+/*
+ * An agent that offers a fork forks at any turn that ended, restored ones
+ * included, as VS Code's Copilot restores each turn under the boundary its
+ * fork and truncate cut at.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L882-L888
+ */
+it('answers, for a turn read back after a restart, the point the run that wrote it ended at', async () => {
+  const { root, agent, one, sweep } = await threeTurns();
+  const id = String(one.session.agentId());
+  const watched = ['t1', 't2', 't3'].map((turn) => pointOf(one.session.forkPoint?.(turn)));
+  await one.session.close();
+
+  // A restart: a fresh backend reads the conversation and resumes it on what
+  // it read, in the host's order.
+  const again = backend(root, createFakeModel({ script: [{ text: 'answer four' }], stream: true }));
+  const seed = (await again.transcript?.(id)) ?? [];
+  expect(seed.map((turn) => turn.id)).toEqual(['t1', 't2', 't3']);
+  const readBack = open(again, 'one', sweep, { resume: id, seed });
+  expect(seed.map((turn) => readBack.session.forkPoint?.(String(turn.id)))).toEqual(watched);
+  expect(seed.map((turn) => readBack.session.endPoint?.(String(turn.id)))).toEqual(watched);
   expect(readBack.session.forkPoint?.('nobody')).toBeUndefined();
   // The capability is the backend's; the point is the session's, and a host
   // offers the control only when both are there.
-  expect(agent.chats?.fork).toBe(true);
+  expect(again.chats?.fork).toBe(true);
+
+  // A fork at a turn read back copies the conversation through it.
+  const forked = open(again, 'one', sweep, { resume: id, forkAt: pointOf(readBack.session.forkPoint?.('t2')) });
+  const target = String(forked.session.agentId());
+  await waitTurns(again, target, 2);
+  expect(await questions(again, target)).toEqual(['question one', 'question two']);
+  expect(await questions(agent, id)).toEqual(['question one', 'question two', 'question three']);
+});
+
+it('answers no point for a turn handed in a seed no read of the store named', async () => {
+  const { root, one, sweep } = await threeTurns();
+  const id = String(one.session.agentId());
+  await one.session.close();
+  // The turns come from one backend's read, and the session from another
+  // that read nothing.
+  const reader = backend(root, createFakeModel({ script: [], stream: true }));
+  const seed = (await reader.transcript?.(id)) ?? [];
+  const fresh = backend(root, createFakeModel({ script: [], stream: true }));
+  const unnamed = open(fresh, 'one', sweep, { resume: id, seed });
+  expect(unnamed.session.forkPoint?.('t1')).toBeUndefined();
+  expect(unnamed.session.endPoint?.('t1')).toBeUndefined();
 });
 
 it('refuses a session asked to fork and rewind at once', async () => {

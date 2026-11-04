@@ -175,6 +175,8 @@ interface Building {
   commanded: boolean;
   /** Whether this turn holds a compaction notice, which stands for the command's own output. */
   compacted: boolean;
+  /** The id of the last message read into this turn, which is where it ended. */
+  end: string;
 }
 
 /**
@@ -201,8 +203,12 @@ const eventsOf = async (store: Store, sessionId: string, runId: string): Promise
  *
  * The store is the only input, so a session read here is the same conversation
  * a resumed session appends to rather than a second rendering of it.
+ *
+ * `ends` is given where each turn ended, by its id: the last message read into
+ * it, which a fork copies through and a rewind keeps, as a live turn's run
+ * records its last message. A paused run's turn has not ended and names none.
  */
-export async function turnsOf(store: Store, sessionId: string): Promise<TranscriptTurn[]> {
+export async function turnsOf(store: Store, sessionId: string, ends?: Map<string, string>): Promise<TranscriptTurn[]> {
   const messages = await store.sessions.listMessages({ sessionId });
   const runs = await store.runs.list({ sessionId });
 
@@ -305,9 +311,15 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     ...(turn.duration !== undefined ? { duration: turn.duration } : {}),
   });
 
+  /** A finished turn into the read, and where it ended into `ends`, unless its run is paused. */
+  const close = (turn: Building): void => {
+    turns.push(sealed(turn));
+    if (!interrupted.has(turn.id)) ends?.set(turn.id, turn.end);
+  };
+
   /** Open a turn for a message; the previous one is finished by definition. */
   const begin = (message: Message, origin: 'user' | 'agent'): void => {
-    if (open !== undefined) turns.push(sealed(open));
+    if (open !== undefined) close(open);
     const ran = model.get(message.id);
     open = {
       id: message.id,
@@ -326,6 +338,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       duration: duration.get(message.id),
       commanded: message.source === 'command',
       compacted: false,
+      end: message.id,
     };
   };
 
@@ -341,7 +354,10 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
      * and the reply that follows it is its answer.
      */
     // A prompt command's expanded text belongs to the turn its typed line began.
-    if (message.source === 'skill') continue;
+    if (message.source === 'skill') {
+      if (open !== undefined) open.end = message.id;
+      continue;
+    }
     if (message.role === 'user' && message.source !== 'system' && message.source !== 'summary' && message.source !== 'notice') {
       begin(message, 'user');
       continue;
@@ -371,6 +387,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       if (open === undefined) begin({ ...message, parts: [] }, 'agent');
       const live = open;
       if (live === undefined) continue;
+      live.end = message.id;
       if (message.source === 'notice' && live.compacted) continue;
       const summary = message.source === 'summary';
       const said = summary ? compactionNotice(compacted.get(message.id), { asked: live.commanded }) : textOf(message);
@@ -383,6 +400,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       ensure(message);
       const live = open;
       if (live === undefined) continue;
+      live.end = message.id;
       for (const [index, part] of message.parts.entries()) {
         const id = `${message.id}:${index}`;
         if (part.type === 'text') {
@@ -413,6 +431,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     ensure(message);
     const live = open;
     if (live === undefined) continue;
+    live.end = message.id;
     for (const part of message.parts) {
       if (part.type !== 'toolResult') continue;
       const held = live.calls.get(part.callId);
@@ -426,6 +445,6 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     }
   }
 
-  if (open !== undefined) turns.push(sealed(open));
+  if (open !== undefined) close(open);
   return turns;
 }

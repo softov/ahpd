@@ -480,6 +480,18 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
    */
   const store = storeOf(options);
   /*
+   * Where each turn of a conversation ended, as the last read of it named it,
+   * by the conversation's id.
+   *
+   * A session names the end of a turn it watched from the run that wrote it,
+   * and the turns a resumed session opens with were written by runs it never
+   * watched. The host reads the conversation before it resumes it, so the read
+   * names them and the session that resumes it starts from them, as the Claude
+   * backend's sessions start from what its read of a transcript named. Each
+   * read of a conversation replaces what an earlier one named.
+   */
+  const readEnds = new Map<string, ReadonlyMap<string, string>>();
+  /*
    * The harness configuration, read once for this backend.
    *
    * It is the same file the harness reads, so a person who has already chosen
@@ -914,7 +926,10 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     transcript: async (id) => {
       const record = await store.sessions.get({ sessionId: id });
       if (record === undefined) return undefined;
-      return await turnsOf(store, id);
+      const ends = new Map<string, string>();
+      const turns = await turnsOf(store, id, ends);
+      readEnds.set(id, ends);
+      return turns;
     },
     /*
      * The session runs a cofold agent: a turn becomes `run()`'s event stream
@@ -943,6 +958,10 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
         (settings, credentials) => connectionsOf(options, settings, credentials, harness)
           .flatMap((connection) => knownCatalogue(connection)),
         held,
+        // Where the turns it opens with ended, for a session that carries a
+        // conversation on, a fork's copy included: a fork keeps the message ids
+        // it copies.
+        start.resume === undefined ? undefined : readEnds.get(start.resume),
       );
     },
   };

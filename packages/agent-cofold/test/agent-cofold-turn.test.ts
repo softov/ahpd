@@ -1406,8 +1406,8 @@ it('answers no for a resume the session cannot make', async () => {
   await expect(open([done('t1')]).resumeTurn?.('t1')).rejects.toThrow();
   // The newest turn failed, and its error does not offer a resume.
   await expect(open([done('t1'), failed('t2', false)]).resumeTurn?.('t2')).rejects.toThrow();
-  // It offers one, but only to a process that watched the turn before it run:
-  // this one was read back off a seed, so there is no point to cut to.
+  // It offers one, but only where the turn before it has a point to cut to:
+  // this one came in a seed no read of the store named a point for.
   await expect(open([done('t1'), failed('t2', true)]).resumeTurn?.('t2')).rejects.toThrow();
   // Closed.
   const closed = open([failed('t1', true)]);
