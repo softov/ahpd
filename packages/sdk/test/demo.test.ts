@@ -192,6 +192,13 @@ it('stops a slow turn on cancel, and streams nothing after it', async () => {
   expect(reduced(p, chatUri).turns[0]?.state).toBe('cancelled');
 });
 
+it('titles a session from its first slow or fail, as notes titles one', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  say(client, chatUri, 'fail');
+  await until(() => actions(p, uri).some((a) => a.type === 'session/titleChanged'));
+  expect(actions(p, uri).find((a) => a.type === 'session/titleChanged')?.title).toBe('fail');
+});
+
 it('ends a fail turn with an error, and the session shows it', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'fail');

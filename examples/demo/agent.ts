@@ -67,6 +67,9 @@ export function demo(options: DemoOptions): Agent {
     let activity: string | undefined;
     /** Whether the last turn ended in an error, which the status says until the next turn. */
     let failed = false;
+    /** The title a first `slow` or `fail` gave the session, as `notes` titles one from its first message. */
+    let named: string | undefined;
+    const title = (): string => named ?? inner.title();
 
     const doing = (what: string | undefined): void => {
       if (activity === what) return;
@@ -86,6 +89,10 @@ export function demo(options: DemoOptions): Agent {
     const keep = (turn: Bag): void => { inner.allTurns().push(turn); };
 
     const opened = (turnId: string, text: string): Bag => {
+      if (named === undefined && inner.allTurns().length === 0 && text) {
+        named = text.slice(0, 60);
+        start.emit('session', { type: 'session/titleChanged', title: named });
+      }
       const startedAt = new Date().toISOString();
       start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
       return { id: turnId, startedAt, message: { text }, responseParts: [] };
@@ -138,14 +145,18 @@ export function demo(options: DemoOptions): Agent {
       agentId: () => id,
       activity: () => activity ?? inner.activity(),
       status,
+      title,
       sessionState: () => ({
         ...inner.sessionState(),
         provider: 'demo',
+        title: title(),
+        chats: [{ resource: start.chatUri, title: title() }],
         status: status(),
         ...(activity !== undefined ? { activity } : {}),
       }),
       chatState: () => ({
         ...inner.chatState(),
+        title: title(),
         status: status(),
         ...(own !== undefined ? { activeTurn: own } : {}),
         ...(activity !== undefined ? { activity } : {}),
