@@ -1,7 +1,7 @@
 ---
 title: A background row outlives its turn
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -66,7 +66,7 @@ task_notification or background_tasks_changed -> dropTask / noteLive -> reconcil
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a background row outlives its turn](task-01-a-background-row-outlives-its-turn.md) | implemented | - |
+| [01 - a background row outlives its turn](task-01-a-background-row-outlives-its-turn.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,12 +74,11 @@ task_notification or background_tasks_changed -> dropTask / noteLive -> reconcil
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented on 2026-11-04. The two new cases fail without the change.
-- **Next action:** review, then the check by hand in [claude-0745-background-row-checks.md](../../../pending/claude-0745-background-row-checks.md).
-- **Watch out for:** nothing open.
+- **Done so far:** built in #221, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
 - [x] After a turn ends with two shells running, a stop of one removes only its row.
 - [x] After a turn ends, a level that drops one shell removes only its row, and the other keeps its command.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude and sdk tests pass.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude and sdk tests pass.

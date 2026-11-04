@@ -1,6 +1,6 @@
 ---
 title: A background row outlives its turn
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

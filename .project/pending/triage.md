@@ -13,7 +13,6 @@ Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e
 Restart the daemon on main first. Do them from the top down.
 
 - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - 20 min, three host/20261103-1620 plans.
-- [claude-0745-background-row-checks.md](claude-0745-background-row-checks.md) - 5 min.
 - [host-109-ember-checks.md](host-109-ember-checks.md) - 5 min.
 - [plugin-45-p2-review.md](plugin-45-p2-review.md) - 5 min, and the owner choice.
 - [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
