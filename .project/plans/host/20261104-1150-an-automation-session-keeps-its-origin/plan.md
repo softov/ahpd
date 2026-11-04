@@ -75,7 +75,7 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - the store keeps the automation origin](task-01-the-store-keeps-the-origin.md) | implemented | - |
-| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | todo | - |
+| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -84,9 +84,9 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 
 ## Resume state
 
-- **Done so far:** [task-01](task-01-the-store-keeps-the-origin.md) is implemented.
-The store keeps a session's automation origin beside its record, the host writes and clears it with `origins`, and the catalogue reads the store for a session `origins` does not hold.
-- **Next action:** [task-02-a-turn-keeps-its-origin.md](task-02-a-turn-keeps-its-origin.md).
+- **Done so far:** both tasks are implemented.
+A session's automation origin is in the store and read back after a restart, and each turn's record holds the message origin it began with, put back on the transcript's turn before the fold.
+- **Next action:** none; `implemented.md` records what was verified.
 - **Watch out for:** `onTurnRecorded` records a turn again under a new id; carry the origin to that record.
 
 ## Final verification checklist
