@@ -53,6 +53,8 @@ export interface MappedEvent {
   opened?: OpenRequest;
   /** The request this event settled; the session drops it. */
   settled?: string;
+  /** The activity this event says, when it says one: what the session is doing now. */
+  doing?: string;
 }
 
 /** What one turn's mapping was told, and what it reads as the turn runs. */
@@ -249,6 +251,18 @@ const questionOf = (question: AskQuestion): Bag => {
   };
 };
 
+/**
+ * One line for a tool that is running, as Claude's `busyWith` shapes it.
+ *
+ * The name alone says too little, so the subject the call resolved goes beside
+ * it. Whitespace is collapsed and the line is cut, because an activity is one
+ * line a client draws in a row rather than a place prose is read.
+ */
+const doingLine = (name: string, subject?: string): string => {
+  const what = subject === undefined ? '' : subject.trim();
+  return (what === '' ? name : `${name} ${what}`).replace(/\s+/g, ' ').slice(0, 80);
+};
+
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, parts } = options;
   /**
@@ -399,8 +413,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
     return { type: 'session/inputNeededRemoved', id: held.entryId };
   };
 
-  /** The actions one event means, with nothing else. */
-  const only = (actions: Bag[]): MappedEvent => ({ actions });
+  /** One event's actions, and the activity it says when it says one. */
+  const only = (actions: Bag[], doing?: string): MappedEvent =>
+    (doing === undefined ? { actions } : { actions, doing });
 
   /**
    * What one event means, on its own.
@@ -718,7 +733,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
             _meta: bag(call._meta),
-          }]);
+          }], doingLine(options.displayNameOf(held.name), held.subject));
         }
 
         case 'tool.completed': {
@@ -738,7 +753,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? event.at, event.at, event.durationMs));
             meta = bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta, shownTerminals)]);
+          return only(
+            [toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta, shownTerminals)],
+            'Thinking',
+          );
         }
 
         /*
@@ -755,7 +773,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * client to close. The refusal still reaches the model as the tool
            * result cofold appends; it is not a row a client was ever shown.
            */
-          if (held === undefined) return only([]);
+          if (held === undefined) return only([], 'Thinking');
           open.delete(event.callId);
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
@@ -768,7 +786,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             ? []
             : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner, held.subject)];
           actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.subject));
-          return only(actions);
+          return only(actions, 'Thinking');
         }
 
         case 'run.finished': {

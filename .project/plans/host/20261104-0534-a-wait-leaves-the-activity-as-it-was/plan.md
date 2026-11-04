@@ -79,8 +79,8 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - no agent says waiting on you](task-01-no-agent-says-waiting-on-you.md) | todo | - |
-| [02 - cofold names its running tool](task-02-cofold-names-its-running-tool.md) | todo | 01 |
+| [01 - no agent says waiting on you](task-01-no-agent-says-waiting-on-you.md) | implemented | - |
+| [02 - cofold names its running tool](task-02-cofold-names-its-running-tool.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -89,13 +89,13 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-no-agent-says-waiting-on-you.md](task-01-no-agent-says-waiting-on-you.md).
-- **Watch out for:** ACP's abort handler says `Thinking` after a question is cancelled; it stays. Claude's answer path at `asking.ts:693` stays.
+- **Done so far:** both tasks are implemented on 2026-11-04. Each new test fails without its change.
+- **Next action:** review, then the PR.
+- **Watch out for:** a cofold tool of its own is named by its tool name, such as `read_file a.txt`, as its tool call row is. A replayed cofold run says the last tool line it replays.
 
 ## Final verification checklist
 
-- [ ] `rg -n "Waiting on you" packages examples` finds nothing.
-- [ ] Each of the four agents has a test that reads the activity while a confirmation waits.
-- [ ] A cofold test reads the tool line on `tool.started` and `Thinking` after `tool.completed` and `tool.denied`.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the tests of agent-claude, agent-pi, agent-acp and agent-cofold pass.
+- [x] `rg -n "Waiting on you" packages/*/src examples` finds nothing.
+- [x] Each of the four agents has a test that reads the activity while a confirmation waits.
+- [x] A cofold test reads the tool line on `tool.started` and `Thinking` after `tool.completed` and `tool.denied`.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the tests of agent-claude, agent-pi, agent-acp and agent-cofold pass.
