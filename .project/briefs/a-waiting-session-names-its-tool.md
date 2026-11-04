@@ -3,7 +3,11 @@ title: A waiting session names its tool, not the wait
 created: 2026-11-04
 refs:
   - git://f9e99b34 - the commit of ahpd the facts were checked at
-  - "[code://packages/agent-claude/src/session/asking.ts#L369-L373](../../packages/agent-claude/src/session/asking.ts#L369-L373) - `displayName` is the tool's display name, and the confirmation title is `Run <displayName>?`"
+  - "[code://packages/agent-claude/src/session/asking.ts#L369-L373](../../packages/agent-claude/src/session/asking.ts#L369-L373) - agent-claude sets no activity when an `AskUserQuestion` call waits for an answer ([`code://packages/agent-claude/src/session/asking.ts#L348`](../../packages/agent-claude/src/session/asking.ts#L348)).
+- After an answer to a confirmation, agent-claude sets the activity to the tool it runs on approve, and to `Thinking` on deny ([`code://packages/agent-claude/src/session/asking.ts#L693`](../../packages/agent-claude/src/session/asking.ts#L693)).
+- `displayName` is the tool's display name, and the confirmation title is `Run <displayName>?`"
+  - "[code://packages/agent-claude/src/session/asking.ts#L348-L358](../../packages/agent-claude/src/session/asking.ts#L348-L358) - an `AskUserQuestion` call raises its question and sets no activity"
+  - "[code://packages/agent-claude/src/session/asking.ts#L693](../../packages/agent-claude/src/session/asking.ts#L693) - after an answer, the activity is the tool it runs on approve, and `Thinking` on deny"
   - "[code://packages/agent-claude/src/session/asking.ts#L439](../../packages/agent-claude/src/session/asking.ts#L439) - the activity becomes `Waiting on you: <displayName>` when a tool call waits for a confirmation"
   - "[code://packages/agent-cofold/src/runs.ts#L291](../../packages/agent-cofold/src/runs.ts#L291) - `reopen` sets the activity to `Waiting on you` after it replays a paused run"
   - "[code://packages/agent-cofold/src/runs.ts#L105-L106](../../packages/agent-cofold/src/runs.ts#L105-L106) - `apply`, which every live and replayed run event goes through, and which clears the activity on `run.finished`"
@@ -46,10 +50,7 @@ Softov chose to change the text in ahpd, so that the status is the only "waiting
 
 - In agent-claude, the activity on a tool confirmation is `Approve <displayName>`.
 - In agent-cofold, `apply` sets the activity to `Approve <displayName>` on `approval.requested`, live or replayed, with the mapping's `displayName`.
+- In agent-cofold, once an approval ends, the activity is the tool it runs on approve, and `Thinking` on deny, as in agent-claude. Softov, 2026-11-04: "Same as Claude".
+- In agent-cofold, a question sets no activity, live or replayed, as in agent-claude. Softov, 2026-11-04: "what claude does".
 - `reopen` no longer sets `Waiting on you`. A replayed approval sets its own activity through `apply`.
 - A test in each agent checks the activity while a confirmation waits.
-
-## Open points
-
-- What the cofold activity says once an approval ends. agent-claude says the tool it runs on approve, and `Thinking` on deny ([`code://packages/agent-claude/src/session/asking.ts#L693`](../../packages/agent-claude/src/session/asking.ts#L693)).
-- What the activity says while a cofold question waits. Today it is `Waiting on you` after a restart, and unchanged on a live run.
