@@ -10,10 +10,10 @@ plugin/20261102-1122 is on main. devtunnel runs on the Dev Tunnels SDK, with no 
 
 ## Set up
 
-1. Name the signed-in connector in the devtunnel plugin's options in `config-dev.json`. Put its id in place of `<id>`:
+1. Name the signed-in connector in the devtunnel plugin's options in `config-dev.json`. Its id is `devtunnel`, the file `~/.config/ahpd/connectors/devtunnel.json`:
 
 ```bash
-node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=JSON.parse(fs.readFileSync(f,"utf8"));const p=c.plugins.find((one)=>String(one.source??one.name).includes("tunnel-devtunnel"));p.options={...p.options,connector:process.argv[1]};fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")' <id>
+node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=JSON.parse(fs.readFileSync(f,"utf8"));const p=c.plugins.find((one)=>String(one.source??one.name).includes("tunnel-devtunnel"));p.options={...p.options,connector:process.argv[1]};fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")' devtunnel
 ```
 
 2. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
