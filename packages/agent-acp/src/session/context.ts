@@ -88,7 +88,7 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   turns: Bag[];
   /** What the host offered until the server reports its own. */
   seeds: Bag[];
-  /** The commands the server last advertised, as customizations. */
+  /** The commands the server last advertised, as the built-in skills container a client draws. */
   commands: Bag[];
   /**
    * The modes the server named, once it has.

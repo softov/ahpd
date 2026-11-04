@@ -651,17 +651,27 @@ it('sends the mode again when the server is opened after a death', async () => {
   expect(configOf(session).values.permissionMode).toBe('code');
 });
 
-it('reports a command the server advertises as a customization', async () => {
+it('reports a command the server advertises as a built-in skill', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'commands');
   await runTurn(session, watch, 't1', 'hi');
 
-  // A child of the one directory that holds the server's commands, which is
-  // where the protocol holds a prompt.
-  const commands = session.customizations().find((one) => one.id === 'directory:commands');
-  expect(commands).toMatchObject({ type: 'directory', contents: 'prompt', enabled: true, writable: false });
-  const plan = (commands?.children as Bag[] | undefined)?.find((one) => one.name === 'plan');
-  expect(plan).toMatchObject({ type: 'prompt', id: 'command:plan', enabled: true, description: 'Draft a plan' });
+  // A skill in the one read-only built-in container, as VS Code's Claude
+  // agent publishes its runtime's commands, with the input hint as the
+  // argument hint a composer draws.
+  const builtin = session.customizations().find((one) => one.id === 'agent-builtin:/skills');
+  expect(builtin).toMatchObject({
+    type: 'directory', uri: 'agent-builtin:/skills', name: 'builtin', contents: 'skill',
+    enabled: true, writable: false, load: { kind: 'loaded' },
+  });
+  expect(builtin?.children).toEqual([{
+    type: 'skill',
+    id: 'agent-builtin:/skill/plan',
+    uri: 'agent-builtin:/skill/plan',
+    name: 'plan',
+    description: 'Draft a plan',
+    _meta: { 'ahpd.argumentHint': 'What to plan' },
+  }]);
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);
 });

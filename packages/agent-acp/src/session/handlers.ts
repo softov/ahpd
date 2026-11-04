@@ -94,39 +94,46 @@ export function createHandlers(ctx: SessionContext): Handlers {
   const { emit, provider, start, where, doing, touch, seeds, replay, permissions, terminals, elicitations } = ctx;
 
   /**
-   * One command the server offers, as the customization a client draws.
+   * One command the server offers, as the skill a client draws.
    *
-   * ACP commands are the slash surface, which is a prompt leaf rather than a
-   * file: there is no path behind one, so the URI names the command itself
-   * rather than pretending a file exists. The input hint is carried as an
+   * A runtime's slash commands are skills, as VS Code's Claude agent publishes
+   * the commands its runtime reports and as the spec classes a slash command:
+   * a skill whose URI is the `agent-builtin:` one VS Code mints for a skill no
+   * file stands behind, its id that URI. The input hint is carried as an
    * argument hint, which is what a composer puts beside the name, under
-   * `_meta['ahpd.argumentHint']`: `PromptCustomization` declares `description`
+   * `_meta['ahpd.argumentHint']`: `SkillCustomization` declares `description`
    * and no argument hint.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L90-L123
    */
-  const commandLeaf = (command: AvailableCommand): Bag => ({
-    type: 'prompt',
-    id: `command:${command.name}`,
-    name: command.name,
-    uri: `acp-command:${provider}/${command.name}`,
-    enabled: true,
-    ...(command.description === '' ? {} : { description: command.description }),
-    ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
-  });
+  const commandLeaf = (command: AvailableCommand): Bag => {
+    const uri = `agent-builtin:/skill/${encodeURIComponent(command.name)}`;
+    return {
+      type: 'skill',
+      id: uri,
+      uri,
+      name: command.name,
+      ...(command.description === '' ? {} : { description: command.description }),
+      ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
+    };
+  };
 
   /*
-   * The server's commands, as the protocol holds prompts: the children of a
+   * The server's commands, as the protocol holds skills: the children of a
    * container, never customizations of their own. They are the server's and
-   * no folder a client could write into, so one read-only directory holds
-   * them, under the URI their own `acp-command:` URIs extend.
+   * no folder a client could write into, so they sit in VS Code's one
+   * read-only built-in skills container, loaded, under the URI its skills'
+   * own URIs share.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L112-L123
    */
   const commandsIn = (leaves: Bag[]): Bag[] => (leaves.length === 0 ? [] : [{
     type: 'directory',
-    id: 'directory:commands',
-    uri: `acp-command:${provider}`,
-    name: 'commands',
-    contents: 'prompt',
+    id: 'agent-builtin:/skills',
+    uri: 'agent-builtin:/skills',
+    name: 'builtin',
     enabled: true,
+    contents: 'skill',
     writable: false,
+    load: { kind: 'loaded' },
     children: leaves,
   }]);
 
