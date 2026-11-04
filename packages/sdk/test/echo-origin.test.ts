@@ -142,9 +142,8 @@ it('gives a turn its origin when the backend says it began after an await', asyn
 });
 
 it('gives each chat its own turn\'s origin when two chats start a turn of the same id', async () => {
-  // Both turns are owed before either backend says one began, and a client
-  // names its own turns, so the two share an id and only the chat tells them
-  // apart.
+  // Both turns are said before either backend begins one, and a client names
+  // its own turns, so the two share an id and only the chat tells them apart.
   const { agent, release } = gated(echo({ path: dir, pace: 0 }));
   const { host, p, client, dispatch } = await serving(agent);
   const other = 'ahp-session:/two';
@@ -160,8 +159,6 @@ it('gives each chat its own turn\'s origin when two chats start a turn of the sa
     method: 'dispatchAction',
     params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'two' } } },
   });
-  // The second is applied once the first is answered: the client's answers
-  // go out in the order it sent its actions.
   release();
   await until(() => p.heard.some((one) => one.channel === CHAT && one.action.type === 'chat/turnStarted'), 'the first start');
   await settle();
@@ -231,9 +228,8 @@ it.each([
 });
 
 /**
- * The window back on a second connection, watching the chat, while the start
- * it sent on the first is still owed by the backend: a client holds what it
- * sent pending across a reconnect, so its stop names that turn.
+ * The window back on a second connection, watching the chat, while the turn it
+ * started on the first has not begun in its backend: its stop names that turn.
  */
 const reconnected = async (host: ReturnType<typeof createHost>) => {
   const q = listening();
@@ -246,12 +242,13 @@ const reconnected = async (host: ReturnType<typeof createHost>) => {
 };
 
 /*
- * A stop of a turn whose start its backend owes waits for that start, and
- * then stops the turn. The reference host applies a client's start at once and
- * drops a send whose turn was cancelled before the agent had it.
+ * A turn's start is said when the host hands it on, so a stop of a turn its
+ * backend has not begun stops it at once, and the backend is told. The
+ * reference host applies a client's start at once and drops a send whose turn
+ * was cancelled before the agent had it.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
  */
-it('stops a turn whose start its backend owed when the stop came, once the backend says the start', async () => {
+it('stops a turn its backend has not begun, its start said when it was handed on, and tells the backend', async () => {
   const { agent, release } = gated(echo({ path: dir, pace: 20 }));
   const told: string[] = [];
   const stopping: Agent = {
@@ -272,19 +269,24 @@ it('stops a turn whose start its backend owed when the stop came, once the backe
   await until(() => told.length > 0 || q.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn\'s end');
   await settle();
 
-  // The turn starts once and ends at the stop, in every client's state.
+  // The turn was said before the window came back, and ends at the stop, in every client's state.
   const said = q.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1'
     && ['chat/turnStarted', 'chat/turnCancelled', 'chat/turnComplete'].includes(String(one.action.type)))
     .map((one) => [one.action.type, one.origin]);
   expect(said).toEqual([
-    ['chat/turnStarted', { clientId: 'window', clientSeq: 1 }],
     ['chat/turnCancelled', { clientId: 'window', clientSeq: 2 }],
   ]);
   expect(told).toEqual(['t1']);
   await host.close();
 });
 
-it('says a stop as sent, and stops nothing, once its backend refuses the start the stop waited for', async () => {
+/*
+ * A backend that takes a start to answer later, as a relay does, leaves the
+ * turn out of the chat until it answers: a stop sent meanwhile names no turn
+ * the chat holds and is said as sent, and the start is refused as the backend
+ * refuses it.
+ */
+it('says a stop of a start its backend took and has not answered as sent, and the start as refused', async () => {
   const base = echo({ path: dir, pace: 0 });
   const refusals: (() => void)[] = [];
   const refusing: Agent = {
@@ -294,7 +296,8 @@ it('says a stop as sent, and stops nothing, once its backend refuses the start t
       return {
         ...session,
         begin: (turnId: string) => {
-          refusals.push(() => { start.handed?.({ type: 'chat/turnStarted', turnId })?.refuse('Not now'); });
+          const held = start.handed?.({ type: 'chat/turnStarted', turnId });
+          refusals.push(() => { held?.refuse('Not now'); });
         },
       };
     },
@@ -305,28 +308,89 @@ it('says a stop as sent, and stops nothing, once its backend refuses the start t
   const { q, dispatch: again } = await reconnected(host);
 
   await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  await settle();
-  for (const refuse of refusals.splice(0)) refuse();
   await until(() => q.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
+  for (const refuse of refusals.splice(0)) refuse();
+  await until(() => q.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the refusal');
 
   const said = q.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1')
     .map((one) => ({ action: one.action, origin: one.origin, refused: one.rejectionReason }));
   expect(said).toEqual([
-    { action: expect.objectContaining({ type: 'chat/turnStarted', turnId: 't1' }), origin: { clientId: 'window', clientSeq: 1 }, refused: 'Not now' },
     { action: { type: 'chat/turnCancelled', turnId: 't1' }, origin: { clientId: 'window', clientSeq: 2 }, refused: undefined },
+    { action: expect.objectContaining({ type: 'chat/turnStarted', turnId: 't1' }), origin: { clientId: 'window', clientSeq: 1 }, refused: 'Not now' },
   ]);
   await host.close();
 });
 
 /*
- * A turn another window sends while the stop waits comes after the stop. The
- * reference host applies a client's action when it comes and matches a stop
- * to the active turn then, so in the order the first turn, its stop, the
- * second turn, the stop ends the first, which is cancelled in the history.
+ * A turn's start is said when the host hands it to its backend, before a
+ * backend that begins it later has begun it, as the reference host applies a
+ * client's start and emits it at once.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('says a turn\'s start when it is handed on, before its backend has begun it', async () => {
+  const { agent, release } = gated(echo({ path: dir, pace: 0 }));
+  const { host, p, dispatch } = await serving(agent);
+  p.heard.length = 0;
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await settle();
+  expect(p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => [one.action.turnId, one.origin]))
+    .toEqual([['t1', { clientId: 'window', clientSeq: 1 }]]);
+  release();
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
+  // The backend's own start of the turn, once it begins it, is not said again.
+  expect(p.heard.filter((one) => one.action.type === 'chat/turnStarted')).toHaveLength(1);
+  await host.close();
+});
+
+/*
+ * A stop sent on the connection that started the turn comes before a turn
+ * another window sends after it, however long the backend takes to begin the
+ * first: the reference host applies each client's action when it comes, so
+ * in the order the first turn, its stop, the second turn, the stop ends the
+ * first, which is cancelled in the history.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
+ */
+it('stops the turn a stop on its own connection names before a turn another window sent after the stop', async () => {
+  const { agent, release } = gated(echo({ path: dir, pace: 20 }));
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1' });
+  const r = listening();
+  const other = host.accept(r);
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await other.handle({ method: 'subscribe', params: { channel: CHAT } });
+  await other.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'seven eight' } } },
+  });
+  await settle();
+  release();
+  await settle();
+  release();
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't2'), 'the second turn\'s end');
+
+  const said = p.heard.filter((one) => one.channel === CHAT && ['chat/turnStarted', 'chat/turnCancelled'].includes(String(one.action.type)))
+    .map((one) => [one.action.type, one.action.turnId, one.origin]);
+  expect(said).toEqual([
+    ['chat/turnStarted', 't1', { clientId: 'window', clientSeq: 1 }],
+    ['chat/turnCancelled', 't1', { clientId: 'window', clientSeq: 2 }],
+    ['chat/turnStarted', 't2', { clientId: 'other', clientSeq: 1 }],
+  ]);
+  const held = await other.handle({ method: 'subscribe', params: { channel: CHAT } }) as { snapshot: { state: Bag } };
+  expect((held.snapshot.state.turns as Bag[]).map((turn) => [turn.id, turn.state])).toEqual([['t1', 'cancelled'], ['t2', 'complete']]);
+  await host.close();
+});
+
+/*
+ * A turn another window sends after a stop sent on a second connection comes
+ * after the stop. The reference host applies a client's action when it comes
+ * and matches a stop to the active turn then, so in the order the first turn,
+ * its stop, the second turn, the stop ends the first, which is cancelled in
+ * the history.
  * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480
  * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
  */
-it('stops the turn a waiting stop names before a turn another window sent after the stop', async () => {
+it('stops the turn a stop on a second connection names before a turn another window sent after the stop', async () => {
   const { agent, release } = gated(echo({ path: dir, pace: 20 }));
   const told: string[] = [];
   const stopping: Agent = {
@@ -356,10 +420,10 @@ it('stops the turn a waiting stop names before a turn another window sent after 
   release();
   await until(() => q.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't2'), 'the second turn\'s end');
 
+  // The first turn was said before the window came back.
   const said = q.heard.filter((one) => one.channel === CHAT && ['chat/turnStarted', 'chat/turnCancelled'].includes(String(one.action.type)))
     .map((one) => [one.action.type, one.action.turnId, one.origin]);
   expect(said).toEqual([
-    ['chat/turnStarted', 't1', { clientId: 'window', clientSeq: 1 }],
     ['chat/turnCancelled', 't1', { clientId: 'window', clientSeq: 2 }],
     ['chat/turnStarted', 't2', { clientId: 'other', clientSeq: 1 }],
   ]);
@@ -571,10 +635,10 @@ it('answers a draft sent after a turn start after that start', async () => {
   await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
   await dispatch(2, { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' } } });
   await settle();
-  // The start is the backend's to say, and it has not begun the turn yet.
-  expect(p.heard.some((one) => one.origin !== undefined)).toBe(false);
+  // The start is said when it is handed on, before the backend has begun the turn.
+  expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
   release();
-  await until(() => p.heard.some((one) => one.origin?.clientSeq === 2), 'the draft');
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
   expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
   await host.close();
 });

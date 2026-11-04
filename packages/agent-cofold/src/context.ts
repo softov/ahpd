@@ -142,6 +142,12 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   opening: Promise<void> | undefined;
   /**
+   * The turns a client stopped while they waited on `opening`: the host said
+   * each one's start when it handed it on, so the stop ended it in every
+   * client's state, and it begins nothing once the lookup has settled.
+   */
+  stopping: Set<string>;
+  /**
    * Why the cut this session was asked for did not happen.
    *
    * A session whose fork or rewind failed does not fall back to an ordinary

@@ -220,6 +220,7 @@ export function cofoldSession(
     modified: new Date().toISOString(),
     closed: false,
     opening: undefined,
+    stopping: new Set<string>(),
     refused: undefined,
     steering: undefined,
     untaken,
@@ -380,7 +381,10 @@ export function cofoldSession(
         start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
         ctx.touch();
       }
-      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) return;
+      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) {
+        if (ctx.opening !== undefined) ctx.stopping.add(turnId);
+        return;
+      }
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.stop('the client stopped the turn');

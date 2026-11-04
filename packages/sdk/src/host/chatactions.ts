@@ -203,7 +203,7 @@ export function chatAction(
   const { connection } = conn;
   const { refuse } = ctx;
   const {
-    admitted, ahead, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
+    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
     contributedDefaults, decided,
     described, dispatch, drafts, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
@@ -404,26 +404,6 @@ export function chatAction(
   const running = restarting.get(sessionFor(channel));
   if (running !== undefined) {
     return conn.bounded(running, `${channel} starting again`).then(
-      () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
-      (error: unknown) => {
-        refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
-      },
-    );
-  }
-  /*
-   * A chat where a stop waits for the start of the turn it names applies what
-   * comes after it once the stop is applied, from any connection.
-   *
-   * The reference host applies a client's action when it comes and matches a
-   * stop to the active turn then, so a turn sent after the stop takes the
-   * stopped turn's place only once the stop has ended it. The wait is
-   * returned, so this connection's later dispatches go behind it in `waiting`.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
-   */
-  const stop = ahead.get(channel);
-  if (stop !== undefined) {
-    return conn.bounded(stop, `${channel} stopping a turn that starts`).then(
       () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
       (error: unknown) => {
         refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
@@ -700,12 +680,14 @@ export function chatAction(
         refuse(connection.peer, channel, action, origin, attached.refusal);
         break;
       }
-      // Said back by the backend, now or once it is ready to begin.
-      ctx.owe('chat/turnStarted', turnId);
-      beginTurn(
-        beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments),
-        (why) => refuse(connection.peer, channel, action, origin, why),
-      );
+      /*
+       * Said when it is handed on, by the backend or as the client sent it;
+       * a turn that waits on its own check first holds this connection's next
+       * dispatch until it is handed on.
+       */
+      const begun = beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, attached.attachments);
+      beginTurn(begun, (why) => refuse(connection.peer, channel, action, origin, why));
+      if (begun instanceof Promise) return begun.then(() => undefined, () => undefined);
       break;
     }
     /**
@@ -1376,12 +1358,12 @@ export function chatAction(
      * its backend said. A stop stops the turn its `turnId` names, which the
      * protocol requires it to carry.
      *
-     * A stop of a turn whose start a backend owes waits for that start. The
-     * reference host applies a client's start at once, and a cancel that comes
-     * before the send reaches the agent drops the send; here the start is the
-     * backend's to say, so the stop is applied again once the start is said,
-     * and stops that turn, or once it is refused, and stops nothing. The wait
-     * is returned, so this connection's later dispatches go behind it.
+     * A client's start is said when it is handed to its backend, as the
+     * reference host applies a client's start at once, so the turn a stop names
+     * is the held running turn from then. A backend that has not begun the
+     * turn yet is told to stop it all the same, and begins nothing of it, as a
+     * cancel that comes before the reference host's send reaches the agent
+     * drops the send.
      * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486
      * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
      *
@@ -1397,31 +1379,23 @@ export function chatAction(
      */
     case 'chat/turnCancelled': {
       if (activeHeld === undefined || typeof action.turnId !== 'string' || action.turnId !== String(activeHeld.id ?? '')) {
-        const starting = typeof action.turnId === 'string' && action.turnId !== '' ? ctx.startOwed(channel, action.turnId) : undefined;
-        if (starting !== undefined) {
-          // Held in `ahead` until it is applied, so what comes after it on the chat waits for it.
-          const applied: Promise<void> = conn.bounded(starting, `${channel} starting ${String(action.turnId)}`).then(
-            () => {
-              if (ahead.get(channel) === applied) ahead.delete(channel);
-              return conn.applyNow(params, origin);
-            },
-            (error: unknown) => {
-              if (ahead.get(channel) === applied) ahead.delete(channel);
-              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
-            },
-          );
-          ahead.set(channel, applied);
-          return applied;
-        }
-        dispatch(channel, action, origin);
+        /*
+         * A chat that runs on another host has the stop matched there, as a
+         * relay forwards a client's messages to the host running the session:
+         * the start it names may still be on its way back from that host.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+         */
+        if (!worker && session.flag !== undefined && typeof action.turnId === 'string' && action.turnId !== '') session.cancel(action.turnId);
+        if (ctx.unanswered()) dispatch(channel, action, origin);
         break;
       }
       if (!worker) {
         // The stop is said when it is taken, and the backend running the turn
-        // it names is told after.
+        // it names, or about to begin it, is told after.
         const turn = String(activeHeld.id ?? '');
         stopped(activeHeld, action.duration);
-        if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
+        const running = ((session.chatState() as Bag).activeTurn as Bag | undefined)?.id;
+        if (running === undefined || String(running) === turn) session.cancel(turn);
         break;
       }
       /*
@@ -1523,23 +1497,21 @@ export function chatAction(
         ? message.model
         : {}) as Record<string, unknown>;
       const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-      // Said back by the backend, now or once the turn's check has answered.
-      ctx.owe('chat/pendingMessageSet', id);
-      beginTurn(
-        beginOrRun(
-          session,
-          provider,
-          crypto.randomUUID(),
-          String(message.text ?? ''),
-          modelIn(model),
-          messageFrom(message),
-          connection,
-          id,
-          read.attachments,
-          kind,
-        ),
-        (why) => refuse(connection.peer, channel, action, origin, why),
+      // Said when it is handed on, now or once the turn's check has answered.
+      const queuedOn = beginOrRun(
+        session,
+        provider,
+        crypto.randomUUID(),
+        String(message.text ?? ''),
+        modelIn(model),
+        messageFrom(message),
+        connection,
+        id,
+        read.attachments,
+        kind,
       );
+      beginTurn(queuedOn, (why) => refuse(connection.peer, channel, action, origin, why));
+      if (queuedOn instanceof Promise) return queuedOn.then(() => undefined, () => undefined);
       break;
     }
     /**
