@@ -226,6 +226,18 @@ export function createParts(ctx: SessionContext): Parts {
 
   const openTurn = (scope: Scope = ctx.mainScope, opening?: { id: string; message: Bag; queuedMessageId?: string }): Bag => {
     if (scope.turn) return scope.turn;
+    /*
+     * The summary a background task's end left for the turn it wakes.
+     *
+     * The CLI starts a turn when a notification arrives while nothing runs,
+     * and that turn answers the notification rather than the person: its
+     * message is the task's summary, drawn as one muted line. A notification
+     * that arrived inside a turn left none here, and a turn that opens with
+     * something else - a person's prompt, a steering message answered late -
+     * takes what was left with it.
+     */
+    const notice = scope === ctx.mainScope ? ctx.pendingSummary : undefined;
+    if (scope === ctx.mainScope) ctx.pendingSummary = undefined;
     // A turn the client did not begin: the agent spoke first, which happens on
     // a resumed session. Better an id of our own than a turn with none. Or it
     // answers the steering messages a turn that ended left with the CLI, and
@@ -237,11 +249,14 @@ export function createParts(ctx: SessionContext): Parts {
     const opened = {
       id: opening?.id ?? `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
-      // The agent spoke first, so the message in front of this turn is its
-      // own. `Message.origin` is required and used to be left off entirely.
-      message: opening === undefined
-        ? { text: '', origin: { kind: 'agent' } }
-        : opening.message as WireTurn<ActiveTurn>['message'],
+      // A notice is the system's, a turn nobody opened is the agent's own,
+      // and everything else says who sent it. `Message.origin` is required and
+      // used to be left off entirely.
+      message: opening !== undefined
+        ? opening.message as WireTurn<ActiveTurn>['message']
+        : notice !== undefined
+          ? { text: notice, origin: { kind: 'systemNotification' } }
+          : { text: '', origin: { kind: 'agent' } },
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;

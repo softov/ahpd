@@ -1,6 +1,6 @@
 ---
 title: The live turn is a notice
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -37,4 +37,14 @@ The message is `{ text: summary, origin: { kind: 'systemNotification' } }`.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the agent-claude tests pass.
 
 ## Resume
+
+- **Done so far:** the session context holds one `pendingSummary` beside `background`.
+A terminal `task_notification` that arrives while no main-scope turn is open sets it from `summary`; one that arrives inside a turn sets nothing.
+`openTurn` gives a main-scope turn without an opening that summary as a `systemNotification` message, and clears it for every main-scope turn that opens.
+- **Next action:** [task-02-the-restored-turn-is-a-notice.md](task-02-the-restored-turn-is-a-notice.md).
+- **Open questions:** none.
+- **Watch out for:** `claude-folded-steer.jsonl` carries a `task_notification` inside the running turn, and `claude-subagent-background.jsonl` carries one after the lead turn's result; only the second leaves a pending summary.
+The agent-claude suite passes with both.
+
+Files changed by this task: `packages/agent-claude/src/session/workers.ts`, `packages/agent-claude/src/session/parts.ts`, `packages/agent-claude/src/session/query.ts`, `packages/agent-claude/test/agent-claude-background-work.test.ts`.
 

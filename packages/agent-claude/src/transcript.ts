@@ -432,11 +432,22 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         continue;
       }
 
+      /*
+       * A task's end, which the CLI saves as a user frame with origin
+       * `task-notification`: its message is the task's own summary, one line,
+       * and its origin says the system made it, as the live turn's does. The
+       * summary is an element of the text; a frame without one, or with an
+       * empty one, keeps its whole text rather than open a turn with nothing.
+       */
+      const notice = str(bag(frame.origin).kind) === 'task-notification';
+      const summary = notice ? /<summary>([\s\S]*?)<\/summary>/.exec(said)?.[1]?.trim() : undefined;
       const opened: WireTurn<Turn> = {
         id: str(frame.uuid) ?? `u${built.length}`,
         startedAt: at,
         // Who produced it, which `Message` requires and this never sent.
-        message: { text: said, origin: { kind: 'user' } },
+        message: notice
+          ? { text: summary === undefined || summary === '' ? said : summary, origin: { kind: 'systemNotification' } }
+          : { text: said, origin: { kind: 'user' } },
         responseParts: [],
         // A turn out of a transcript is one that already happened, so it is
         // complete by definition. `Turn.state` is required and used to be

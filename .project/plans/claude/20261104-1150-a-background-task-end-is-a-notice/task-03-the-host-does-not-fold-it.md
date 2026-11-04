@@ -1,6 +1,6 @@
 ---
 title: The host does not fold a notice
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -30,4 +30,12 @@ The chat shows it after a restart as it showed it live.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk tests pass.
 
 ## Resume
+
+- **Done so far:** `asBegun` keeps a turn whose message origin is `systemNotification` out of the join, as it keeps a local turn, so the notice the chat did not begin reads back as a turn of its own.
+The comment on `asBegun` names the notice turn.
+- **Next action:** none; the plan is implemented.
+- **Open questions:** none.
+- **Watch out for:** `begunWithOrigins` runs before the fold and rewrites only a turn the chat recorded; a notice turn has no record, so its origin survives to the check.
+
+Files changed by this task: `packages/sdk/src/host/localturns.ts`, `packages/sdk/test/host-local-turns.test.ts`.
 
