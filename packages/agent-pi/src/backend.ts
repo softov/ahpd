@@ -41,6 +41,12 @@ export interface PiBackend {
   /** Run a turn. The promise spans the whole run. */
   prompt(text: string, images?: ImageContent[]): Promise<void>;
   /**
+   * Hand the next turn words the model reads and nobody is shown: pi's own
+   * custom message, delivered with that turn's run and kept out of its
+   * transcript, which is pi's way for words beside a prompt.
+   */
+  sendCustomMessage(content: string): Promise<void>;
+  /**
    * Put a message into the turn that is already running, answering with what
    * pi did with it: queued for the turn, or handled by an extension.
    */
@@ -410,6 +416,10 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
     }),
     steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }),
+    sendCustomMessage: (content) => session.sendCustomMessage(
+      { customType: 'ahpd.instructions', content, display: false },
+      { deliverAs: 'nextTurn' },
+    ),
     clearSteering: () => { session.clearQueue(); },
     abort: () => session.abort(),
     models,

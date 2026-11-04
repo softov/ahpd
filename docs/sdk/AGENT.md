@@ -215,9 +215,13 @@ A turn handed while another runs is a send of its own, which you run once the
 work in front of it is done, as VS Code's agents run each send after the one
 before it; `abort` drops every turn handed behind the one it stops. The turn's
 `options.instructions()` is what the host has to say on that turn, asked when
-the turn begins, and goes into that turn's prompt, as each of VS Code's agents
-puts the instructions its host contributes for a send
-([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)).
+the turn begins, and reaches that turn by the runtime's own channel for words
+beside a prompt where it has one, as each of VS Code's agents delivers the
+instructions its host contributes for a send
+([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)):
+cofold's system prompt, pi's custom message, which nobody is shown, and for an
+ACP server, whose prompt carries nothing beside its blocks, the prompt itself,
+ahead of the words.
 
 The chat's pending messages, queued and steering, are the host's, as VS Code's
 host holds them

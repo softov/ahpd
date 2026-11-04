@@ -470,19 +470,19 @@ it('leaves the model off a turn that has none', async () => {
 });
 
 /*
- * What the host has to say on a turn goes into that turn's prompt, ahead of
- * the words, as the reference agents put the instructions their host
- * contributes for a send.
+ * What the host has to say on a turn reaches that turn by pi's own custom
+ * message, as the reference agents deliver the instructions their host
+ * contributes for a send, and the prompt holds the person's words alone.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
  */
-it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said', async () => {
+it('hands the send\'s instructions to that turn by pi\'s custom message, and prompts the words alone', async () => {
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello', undefined, undefined, { instructions: () => ['Report back to the chat this came from.', ' '] });
   await settled();
   session.sendMessage('t2', 'again');
   await settled();
-  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text))
-    .toEqual(['Report back to the chat this came from.\n\nhello', 'again']);
+  expect(pi.asked.filter((one) => one.kind === 'prompt' || one.kind === 'customMessage').map((one) => [one.kind, one.text ?? one.content]))
+    .toEqual([['customMessage', 'Report back to the chat this came from.'], ['prompt', 'hello'], ['prompt', 'again']]);
 });
 
 it('steers the running turn with pi\'s own steer', async () => {

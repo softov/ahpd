@@ -117,6 +117,9 @@ export function fakePi() {
       if (steers !== undefined) throw steers;
       return 'queued';
     },
+    sendCustomMessage: async (content) => {
+      asked.push({ kind: 'customMessage', content });
+    },
     // pi says its queue emptied, as `clearQueue` does.
     clearSteering: () => {
       asked.push({ kind: 'clearSteering' });

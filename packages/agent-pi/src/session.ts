@@ -1103,10 +1103,9 @@ export function piSession(
    * Its preparation reads whether it was stopped after each of its steps, and
    * a turn stopped while it prepared sends pi nothing and ends cancelled, as
    * the reference host checks for a cancel after each step of a turn's
-   * preparation. What the host has to say on the turn goes ahead of the words
-   * in its prompt, since pi takes nothing beside a prompt but the instructions
-   * it was opened with, as every reference agent puts the instructions its
-   * host contributes for a send into that turn's prompt.
+   * preparation. What the host has to say on the turn reaches that turn by
+   * pi's own custom message, as every reference agent delivers the
+   * instructions its host contributes for a send on that turn.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2316
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
    */
@@ -1215,8 +1214,15 @@ export function piSession(
           }
           if (stopped()) return;
         }
-        const asked = await promptFor(told.length === 0 ? text : `${told.join('\n\n')}\n\n${text}`, attachments, backend.takesImages());
+        const asked = await promptFor(text, attachments, backend.takesImages());
         if (stopped()) return;
+        /*
+         * What the host has to say on this turn, by pi's own channel for words
+         * beside a prompt: a custom message the model reads with this turn's
+         * run and nobody is shown, so the prompt, and the transcript read back,
+         * hold the person's words alone.
+         */
+        if (told.length > 0) await backend.sendCustomMessage(told.join('\n\n'));
         promptedAfter = backend.leaf();
         prompted = turnId;
         await backend.prompt(asked.text, asked.images);
