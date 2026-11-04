@@ -50,7 +50,7 @@ session opens -> rulesIn -> markdownUnder -> statSync and readdir per folder
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a folder is walked once](task-01-a-folder-is-walked-once.md) | todo | - |
+| [01 - a folder is walked once](task-01-a-folder-is-walked-once.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -58,12 +58,12 @@ session opens -> rulesIn -> markdownUnder -> statSync and readdir per folder
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-folder-is-walked-once.md](task-01-a-folder-is-walked-once.md).
+- **Done so far:** task 01 is implemented on 2026-11-04. Without the change, the loop case fails in 0.3 s.
+- **Next action:** review.
 - **Open questions:** none.
-- **Watch out for:** the test must not hang the suite when the fix is reverted; give it a timeout.
+- **Watch out for:** nothing open.
 
 ## Final verification checklist
 
-- [ ] `pnpm --filter @ahpd/agent-claude test` passes, run alone.
-- [ ] `pnpm typecheck` and `pnpm lint` pass.
+- [x] `pnpm --filter @ahpd/agent-claude test` passes, run alone.
+- [x] `pnpm typecheck` and `pnpm boundary` pass.
