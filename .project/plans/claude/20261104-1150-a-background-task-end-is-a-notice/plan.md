@@ -69,7 +69,7 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | todo | - |
+| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | implemented | - |
 | [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | todo | - |
 | [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | todo | - |
 
@@ -80,9 +80,9 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-live-turn-is-a-notice.md](task-01-the-live-turn-is-a-notice.md).
-- **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn.
+- **Done so far:** task 01 is implemented. The live turn a background task's end wakes opens with the task's summary and origin `systemNotification`.
+- **Next action:** [task-02-the-restored-turn-is-a-notice.md](task-02-the-restored-turn-is-a-notice.md).
+- **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn and leaves no pending summary.
 
 ## Final verification checklist
 
