@@ -1,7 +1,7 @@
 ---
 title: An automation session keeps its origin after a restart
 domain: host
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -74,8 +74,8 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the store keeps the automation origin](task-01-the-store-keeps-the-origin.md) | todo | - |
-| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | todo | - |
+| [01 - the store keeps the automation origin](task-01-the-store-keeps-the-origin.md) | implemented | - |
+| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -84,12 +84,14 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-store-keeps-the-origin.md](task-01-the-store-keeps-the-origin.md).
+- **Done so far:** both tasks are implemented.
+A session's automation origin is in the store and read back after a restart.
+Each turn's record holds the message origin it began with, put back on the transcript's turn before the fold.
+- **Next action:** none; `implemented.md` records what was verified.
 - **Watch out for:** `onTurnRecorded` records a turn again under a new id; carry the origin to that record.
 
 ## Final verification checklist
 
-- [ ] After a restart, the summary of a session a run made names the automation and the run.
-- [ ] After a restart, the first turn of that session has message origin `automation`.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
+- [x] After a restart, the summary of a session a run made names the automation and the run.
+- [x] After a restart, the first turn of that session has message origin `automation`.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.

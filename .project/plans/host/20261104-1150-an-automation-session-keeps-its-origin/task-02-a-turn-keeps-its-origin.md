@@ -1,6 +1,6 @@
 ---
 title: A restored turn keeps its message origin
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -42,4 +42,15 @@ A read after a restart gives each recorded turn that origin back.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
 
 ## Resume
+
+- **Done so far:** a `Recorded` file holds an optional `origin`, kept only when it is an object with a string `kind`.
+`turnRecordedAs` writes it, and spawn passes a started message's origin when its kind is not `user`.
+`onTurnRecorded` carries the origin to the record under the backend's id.
+`transcriptOf` sets each recorded origin on its transcript turn before `asBegun` folds them.
+- **Next action:** none; `implemented.md` records what was verified.
+- **Open questions:** none.
+- **Watch out for:** [claude/20261104-1150-a-background-task-end-is-a-notice](../claude/20261104-1150-a-background-task-end-is-a-notice/plan.md) builds on this branch and changes `asBegun`.
+The origin is applied before the fold, so a turn folded into one before it keeps the earlier message's origin.
+
+Files changed by this task: `packages/sdk/src/host/localturns.ts`, `packages/sdk/src/host/spawn.ts`, `packages/sdk/test/host-local-turns.test.ts`.
 
