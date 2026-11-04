@@ -164,6 +164,36 @@ it('answers the same steering message sent again, and hands it to the backend on
 });
 
 /*
+ * A queued message sent again under its id as steering, as VS Code's "Send
+ * Immediately" sends it: the running turn takes it, and the backend's queued
+ * copy is taken out, so it does not run again as a turn of its own.
+ */
+it('steers a queued message sent again as steering, and takes it out of the queue once', async () => {
+  const { p, chatUri, steers, unqueued, steer, queue } = await running();
+  await queue(2, 'look there');
+  await settle();
+  await steer(3, 'look there');
+  await settle();
+
+  expect(steers).toEqual([{ id: 's1', text: 'look there' }]);
+  expect(unqueued).toEqual(['s1']);
+  expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3)?.rejectionReason).toBeUndefined();
+});
+
+/*
+ * A steering message under a fresh id takes nothing out of the queue: only the
+ * queued message it was sent as is the one it replaces.
+ */
+it('takes nothing out of the queue for a steering message under a fresh id', async () => {
+  const { unqueued, steers, steer } = await running();
+  await steer(2, 'stop that');
+  await settle();
+
+  expect(steers.map((one) => one.id)).toEqual(['s1']);
+  expect(unqueued).toEqual([]);
+});
+
+/*
  * "Hosts MUST reject edits ... that they can no longer honor after handoff",
  * in the reference host's words.
  */

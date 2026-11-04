@@ -1482,8 +1482,22 @@ export function chatAction(
        * has an active turn.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L193-L195
        */
-      if (kind === 'steering' && activeHeld !== undefined
-        && session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
+      if (kind === 'steering' && activeHeld !== undefined) {
+        /*
+         * A queued message sent again under its id as steering, which is how a
+         * client turns a message that waits into a correction, as VS Code's
+         * "Send Immediately" does. The backend holds the queued one in its own
+         * queue, so it is taken out once the running turn has the steer, or it
+         * would run again as a turn of its own when that turn ends.
+         * https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2541-L2554
+         */
+        const waiting = (Array.isArray(chatHeld.queuedMessages) ? chatHeld.queuedMessages as Bag[] : [])
+          .some((one) => String(one.id ?? '') === id && String(one.kind ?? 'queued') === 'queued');
+        if (session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) {
+          if (waiting) session.unqueue(id);
+          break;
+        }
+      }
       /*
        * A queued message, or a steering message with no turn running to steer.
        *
