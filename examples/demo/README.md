@@ -35,3 +35,4 @@ A cancel stops `slow`.
 | Customizations | a skill, `summarize`, and a prompt, `tidy`. Neither does anything |
 | Automations | held in memory, as `memoryAutomations` holds them. A restart forgets them |
 | Status | running while `slow` streams, and in error after `fail` until the next turn |
+| Terminals | under a pseudoterminal, as the daemon's are, so a shell shows its prompt. Where `node-pty` does not load, on pipes |

@@ -1,6 +1,6 @@
 ---
 title: The demo's shells get the daemon's pseudoterminal
-status: todo
+status: done
 depends: []
 layer: "examples"
 refs:

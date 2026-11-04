@@ -1,7 +1,7 @@
 ---
 title: The demo host's shells run under a pseudoterminal
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -41,7 +41,7 @@ pnpm demo -> examples/demo/main.ts -> pty() -> shellTerminals({ pty }) -> a shel
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The demo's shells get the daemon's pseudoterminal](task-01-the-demo-shells-get-a-pty.md) | todo | - |
+| [01 - The demo's shells get the daemon's pseudoterminal](task-01-the-demo-shells-get-a-pty.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -49,12 +49,12 @@ pnpm demo -> examples/demo/main.ts -> pty() -> shellTerminals({ pty }) -> a shel
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-04.
-- **Next action:** [task-01-the-demo-shells-get-a-pty.md](task-01-the-demo-shells-get-a-pty.md).
+- **Done so far:** planned and built 2026-11-04; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `pty()` probes `node-pty` in a child process first, so the demo starts a moment later.
 
 ## Final verification checklist
 
-- [ ] `pnpm demo` on a scratch port, and `ahpc terminal new` then `terminal send`: `terminal watch` shows a prompt and the echoed command.
-- [ ] The repository's typecheck and tests pass.
+- [x] `pnpm demo` on a scratch port, and `ahpc terminal new` then `terminal send`: `terminal watch` shows a prompt and the echoed command.
+- [x] The repository's typecheck and tests pass.
