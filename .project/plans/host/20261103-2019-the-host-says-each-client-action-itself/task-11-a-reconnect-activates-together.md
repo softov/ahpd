@@ -1,6 +1,6 @@
 ---
 title: A reconnect activates its channels together
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -26,4 +26,8 @@ An action reaches the client live or in the replay, never both.
 - Add to `packages/sdk/test/host-handshake.test.ts`: the client gets an action once when the host says it during a later read.
 
 ## Resume
+
+- **Done:** steps 1 and 2, at the commit that closes this task, with the case above.
+- **The snapshot answer:** taken after the channels join, as VS Code refreshes each one once the batch is active.
+- **Found on the way:** every backend said a client's draft again after the host had; fixups of 07 and 08 hold it silently.
 

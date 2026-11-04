@@ -416,6 +416,59 @@ describe('a client that dropped, coming back', () => {
     expect(result.actions.map((held) => held.action.type)).toContain('chat/turnStarted');
   });
 
+  /*
+   * The channels a client comes back for join together once every one is read,
+   * so an action said while a later one is read reaches it once, in the
+   * replay, as the reference host activates a reconnect's subscriptions
+   * together.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1577-L1583
+   */
+  it('hands an action said while a later channel is read once, in the replay', async () => {
+    let reached = (): void => {};
+    const reading = new Promise<void>((done) => { reached = done; });
+    let release = (): void => {};
+    const gate = new Promise<void>((done) => { release = done; });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [claude({ paths: ['/home/softov'] })],
+      ...machine(),
+      channels: {
+        'x-slow': {
+          by: 'probe',
+          scheme: 'x-slow',
+          channel: { grant: 'session:read', snapshot: async () => { reached(); await gate; return {}; } },
+        },
+      },
+    });
+    const chat = chatUriFor('ahp-session:/live');
+    const other = host.accept(peer());
+    await other.handle(hello(['0.9.0'], { clientId: 'other' }));
+    await other.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const first = peer();
+    const a = host.accept(first);
+    await a.handle(hello(['0.9.0']));
+    await a.handle({ method: 'subscribe', params: { channel: chat } });
+    await settle();
+    const upTo = actions(first).at(-1)?.serverSeq ?? 0;
+    a.close();
+
+    const p = peer();
+    const back = host.accept(p);
+    await back.handle(hello(['0.9.0']));
+    const coming = back.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: upTo, subscriptions: [chat, 'x-slow://one'] },
+    }) as Promise<{ type: string; actions: { action: { type: string } }[] }>;
+    await reading;
+    await other.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'half a thought' } } } });
+    release();
+    const result = await coming;
+    expect(result.type).toBe('replay');
+    const live = actions(p, chat).filter((one) => one.action.type === 'chat/draftChanged');
+    const replayed = result.actions.filter((one) => one.action.type === 'chat/draftChanged');
+    expect([live.length, replayed.length]).toEqual([0, 1]);
+  });
+
   it('names the channels it cannot resume rather than failing the whole thing', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
