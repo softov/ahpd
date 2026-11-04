@@ -1,15 +1,26 @@
 import type { Bag } from '../types/common.js';
 
+/** The `_meta` key that names the steering message a steer part shows. */
+const STEER = 'ahpd.steer';
+
 /**
  * A message steered into a turn, as that turn shows it once the turn took it
- * in: the words quoted, so a reader tells them from the answer around them.
+ * in: a harness notice with the message text, because the protocol has no
+ * part for a person's words inside a turn.
  *
- * A markdown part, because the protocol has no part for a steer, and one with
- * no `_meta`, which a markdown part does not declare. The id names the steering
- * message, so a turn read back holds the same part the live turn held.
+ * A `systemNotification` part has no id, so `_meta` names the steering
+ * message, and a turn read back finds the part the live turn held.
  */
-export const steerQuote = (id: string, text: string): Bag => ({
-  id: `steer:${id}`,
-  kind: 'markdown',
-  content: text.split('\n').map((line) => `> ${line}`).join('\n'),
+export const steerPart = (id: string, text: string): Bag => ({
+  kind: 'systemNotification',
+  content: text,
+  _meta: { [STEER]: id },
 });
+
+/** The steering message a part shows, or `undefined` for any other part. */
+export const steerOf = (part: Bag): string | undefined => {
+  const meta = part['_meta'];
+  if (part['kind'] !== 'systemNotification' || typeof meta !== 'object' || meta === null) return undefined;
+  const id = (meta as Bag)[STEER];
+  return typeof id === 'string' ? id : undefined;
+};

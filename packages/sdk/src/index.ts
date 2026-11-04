@@ -148,7 +148,7 @@ export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom, holdsTheQ
 export type { Activity, StatusBits } from './sessions/catalog.js';
 export { tail, older, PAGE } from './sessions/paging.js';
 export { callTimes, withCallTimes, startOf } from './utils/timing.js';
-export { steerQuote } from './sessions/steer.js';
+export { steerOf, steerPart } from './sessions/steer.js';
 export { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from './access/commandautoapprover.js';
 export type {
   CommandApprovalOptions, CommandApprovalResult, CommandShell, CommandSplit, CommandSplitter,

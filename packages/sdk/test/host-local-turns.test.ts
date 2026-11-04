@@ -8,6 +8,7 @@ import {
   resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, settle, wrote,
 } from './support/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
+import { steerOf } from '../src/sessions/steer.js';
 import { uriOf } from '../src/resources/resources.js';
 import { chatUriFor } from '../src/host/channels.js';
 import type { SessionStore } from '../src/types/sessions.js';
@@ -93,6 +94,9 @@ interface Knobs {
   /** The conversations the backend deleted, for a backend that can delete. */
   deleted?: string[];
 }
+
+/** A part as a client shows it: a steer marked as one, any other part by its content. */
+const shownAs = (part: Bag): unknown => (steerOf(part) === undefined ? part.content : `steer: ${String(part.content)}`);
 
 const knobs = (): Knobs => ({ starts: [] });
 
@@ -298,7 +302,7 @@ describe('a host started again on the same store', () => {
     const turns = (await stateOf(ran.client, ran.chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual(['t1', 't2']);
     // Its message stays, quoted before its answer, as a steer's does.
-    expect((turns[0]?.responseParts as Bag[]).map((part) => part.content)).toEqual(['hello there', '> written as its own', 'written as its own']);
+    expect((turns[0]?.responseParts as Bag[]).map(shownAs)).toEqual(['hello there', 'steer: written as its own', 'written as its own']);
     await ran.host.close();
 
     const never = await restarted(async () => {}, held);
@@ -568,7 +572,7 @@ describe('a Claude chat', () => {
     turn.id,
     turn.state,
     (turn.message as Bag).text,
-    (turn.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content),
+    (turn.responseParts as Bag[]).filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined).map(shownAs),
   ]);
   /** A session of the captured CLI session's id, with its chat watched, on a host at `dir`. */
   const sessionOf = async (dir: string, session: string) => {
@@ -699,7 +703,7 @@ describe('a Claude chat', () => {
     await stateOf(after.client, uri);
     const turns = (await stateOf(after.client, chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual([prompt]);
-    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content)).toEqual(['one', '> and then', 'two']);
+    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined).map(shownAs)).toEqual(['one', 'steer: and then', 'two']);
     await after.host.close();
 
     // A store that kept no record of the chat reads it as its transcript gives
@@ -744,8 +748,8 @@ describe('a Claude chat', () => {
     const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
     // Each steer shows quoted in the turn it went into, before its answer.
     expect(live).toEqual([
-      [FIRST, 'complete', ALPHA, ['ALPHA', '> Reply with exactly the word BETA and nothing else.', 'BETA']],
-      [TOOL, 'complete', SLEEP, ['> Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
+      [FIRST, 'complete', ALPHA, ['ALPHA', 'steer: Reply with exactly the word BETA and nothing else.', 'BETA']],
+      [TOOL, 'complete', SLEEP, ['steer: Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
     ]);
     await before.host.close();
     expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual(live);
