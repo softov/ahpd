@@ -1,6 +1,6 @@
 ---
 title: A steered queued message runs once
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:
