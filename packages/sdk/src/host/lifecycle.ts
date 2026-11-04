@@ -422,6 +422,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     if (from !== undefined) ctx.settleRun(uri, { status: 'cancelled' });
     origins.delete(uri);
+    // And from the store, which is where a summary read after a restart finds
+    // it: a session that is gone started nothing.
+    kept.setAutomationOrigin?.(idOf(uri), undefined);
     /*
      * And the rules, which were measuring a session that is no longer here: a
      * turn this process will never see end, and a wake held behind a chat in a
@@ -1950,7 +1953,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * held. What started it, and that it and its chat are read: a session
      * nobody has said anything in has nothing new in it.
      */
-    if (origin !== undefined) origins.set(uri, origin);
+    if (origin !== undefined) {
+      origins.set(uri, origin);
+      // Written down beside the session's record as well, because a summary
+      // read after a restart names what started it.
+      kept.setAutomationOrigin?.(idOf(uri), origin);
+    }
     kept.setFlags(idOf(uri), kept.flags(idOf(uri)) | Status.IsRead);
     startsRead(ctx, uri, chatUriFor(uri));
     // Named before it is announced, when the maker had a name for it: a row

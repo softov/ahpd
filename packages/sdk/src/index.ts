@@ -143,7 +143,7 @@ export type { Membership, Scope, ScopeAnswer } from './usage/scopes.js';
 export { githubIssuer, isIssuerUrl, issuerFrom, issuerKind, oidcIssuer } from './access/issuers.js';
 export type { Fetcher, GitHubIssuerOptions, IssuerKind, OidcIssuerOptions } from './access/issuers.js';
 export type { Issuer, IssuerAnswer } from './types/users.js';
-export type { CreatedBy, NestedRecord, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from './types/sessions.js';
+export type { AutomationOrigin, CreatedBy, NestedRecord, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from './types/sessions.js';
 export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom, holdsTheQueue } from './sessions/catalog.js';
 export type { Activity, StatusBits } from './sessions/catalog.js';
 export { tail, older, PAGE } from './sessions/paging.js';

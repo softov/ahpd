@@ -6,7 +6,7 @@ import { readJson, writeJsonAtomic } from '../utils/jsonfile.js';
 import { asCreatedBy, asOrigin } from './remotesession.js';
 import type { Scope } from '../usage/scopes.js';
 import type { ChangesSummary } from '../types/changes.js';
-import type { CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
+import type { AutomationOrigin, CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
 import type { Owner } from '../types/usage.js';
 import { ownerOf } from '../utils/values.js';
 
@@ -129,6 +129,8 @@ export function memorySessions(): SessionStore & Held {
     setRemoteOrigin: (id, value) => { patch(id, { remoteOrigin: value }); },
     createdBy: (id) => rows.get(id)?.createdBy,
     setCreatedBy: (id, value) => { patch(id, { createdBy: value }); },
+    automationOrigin: (id) => rows.get(id)?.automationOrigin,
+    setAutomationOrigin: (id, value) => { patch(id, { automationOrigin: value }); },
     worktree: (id) => rows.get(id)?.worktree,
     setWorktree: (id, value) => { patch(id, { worktree: value }); },
     autoArchivedAt: (id) => rows.get(id)?.autoArchivedAt,
@@ -234,6 +236,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.chats === undefined ? {} : { chats: held.chats }),
         ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
         ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+        ...(held.automationOrigin === undefined ? {} : { automationOrigin: held.automationOrigin }),
         ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
         ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
         ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
@@ -285,6 +288,19 @@ const nestedOf = (value: unknown): NestedRecord | undefined => {
     modifiedAt: held.modifiedAt,
     workingDirectories: held.workingDirectories.filter((one): one is string => typeof one === 'string'),
   };
+};
+
+/**
+ * A session's automation origin as the file wrote it, or nothing where it is
+ * not one: the one kind an origin has here, and the automation and the run as
+ * strings. Anything else is ignored rather than guessed at, since a summary
+ * names what this says.
+ */
+const automationOriginOf = (value: unknown): AutomationOrigin | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const held = value as { kind?: unknown; automation?: unknown; run?: unknown };
+  if (held.kind !== 'automation' || typeof held.automation !== 'string' || typeof held.run !== 'string') return undefined;
+  return { kind: 'automation', automation: held.automation, run: held.run };
 };
 
 /**
@@ -419,6 +435,7 @@ interface Row {
   chats?: StoredChat[] | undefined;
   remoteOrigin?: RemoteOrigin | undefined;
   createdBy?: CreatedBy | undefined;
+  automationOrigin?: AutomationOrigin | undefined;
   workingDirectory?: string | undefined;
   worktree?: StoredWorktree | undefined;
   autoArchivedAt?: string | undefined;
@@ -441,7 +458,8 @@ const empty = (row: Row): boolean =>
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
-  && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
+  && row.remoteOrigin === undefined && row.createdBy === undefined && row.automationOrigin === undefined
+  && row.worktree === undefined
   && row.autoArchivedAt === undefined && row.changes === undefined;
 
 /**
@@ -482,6 +500,8 @@ interface Saved {
   remoteOrigin?: RemoteOrigin;
   /** The session that made this one, as a window recorded it. */
   createdBy?: CreatedBy;
+  /** What started this session, for one an automation began. */
+  automationOrigin?: AutomationOrigin;
   /** The folder the session works in, as a path. */
   workingDirectory?: string;
   /** The worktree this host made for the session. */
@@ -627,6 +647,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.chats === undefined ? {} : { chats: held.chats }),
       ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
       ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+      ...(held.automationOrigin === undefined ? {} : { automationOrigin: held.automationOrigin }),
       ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
       ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
       ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
@@ -785,6 +806,11 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (origin !== undefined) inner.setRemoteOrigin?.(row.id, origin);
       const createdBy = asCreatedBy(row.createdBy);
       if (createdBy !== undefined) inner.setCreatedBy?.(row.id, createdBy);
+      // What started it, read back only as the one kind of origin a session
+      // record keeps: anything else is ignored rather than guessed at, as every
+      // other field here is.
+      const automationOrigin = automationOriginOf(row.automationOrigin);
+      if (automationOrigin !== undefined) inner.setAutomationOrigin?.(row.id, automationOrigin);
       // A path, and anything that is not a non-empty string is ignored rather
       // than guessed at, as every other field here is.
       if (typeof row.workingDirectory === 'string' && row.workingDirectory !== '') inner.setWorkingDirectory(row.id, row.workingDirectory);
@@ -835,6 +861,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setRemoteOrigin: (id, value) => { touched(id, () => { inner.setRemoteOrigin?.(id, value); }); },
     createdBy: (id) => inner.createdBy?.(id),
     setCreatedBy: (id, value) => { touched(id, () => { inner.setCreatedBy?.(id, value); }); },
+    automationOrigin: (id) => inner.automationOrigin?.(id),
+    setAutomationOrigin: (id, value) => { touched(id, () => { inner.setAutomationOrigin?.(id, value); }); },
     worktree: (id) => inner.worktree(id),
     setWorktree: (id, value) => { touched(id, () => { inner.setWorktree(id, value); }); },
     autoArchivedAt: (id) => inner.autoArchivedAt(id),
