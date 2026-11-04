@@ -20,14 +20,11 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and pu
 
 ## Choices for Softov
 
-- The open problems that a review of 2026-11-03 read from the code. Each one is not reproduced. Fix before the release, or list in the notes as known:
-  - [a-team-key-can-hold-a-grant-its-minter-does-not.md](../problems/a-team-key-can-hold-a-grant-its-minter-does-not.md): a caller with `user:write` gives a team key a grant they do not hold. This is the same class as #204.
-  - [a-removed-teams-keys-work-again-when-the-team-is-added-back.md](../problems/a-removed-teams-keys-work-again-when-the-team-is-added-back.md)
-  - [a-write-only-field-not-marked-secret-is-returned.md](../problems/a-write-only-field-not-marked-secret-is-returned.md)
-  - [the-bot-picker-lists-every-bot-to-any-client.md](../problems/the-bot-picker-lists-every-bot-to-any-client.md)
-  - [a-symlink-loop-in-claude-rules-hangs-the-daemon.md](../problems/a-symlink-loop-in-claude-rules-hangs-the-daemon.md)
-  - [a-minute-limit-for-each-person-is-never-enforced.md](../problems/a-minute-limit-for-each-person-is-never-enforced.md)
-- [an-unreadable-session-file-is-overwritten.md](../problems/an-unreadable-session-file-is-overwritten.md) loses data. It is open from 2026-10-20 and was in 0.14.0 too.
+- The seven open problems of the review of 2026-11-03 and of 2026-10-20 are planned, to fix before the release, on Softov's word of 2026-11-04:
+  - [host/20261104-1505-a-reader-gets-only-what-they-may](../plans/host/20261104-1505-a-reader-gets-only-what-they-may/plan.md)
+  - [claude/20261104-1505-a-rules-walk-visits-a-folder-once](../plans/claude/20261104-1505-a-rules-walk-visits-a-folder-once/plan.md)
+  - [usage/20261104-1505-a-minute-limit-counts-each-person](../plans/usage/20261104-1505-a-minute-limit-counts-each-person/plan.md)
+  - [host/20261104-1505-an-unreadable-session-file-is-kept](../plans/host/20261104-1505-an-unreadable-session-file-is-kept/plan.md)
 
 ## Checks by hand on what this release adds
 
