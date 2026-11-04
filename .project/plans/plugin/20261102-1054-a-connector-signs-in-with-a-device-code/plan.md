@@ -111,7 +111,7 @@ devtunnel open -> refresh now and every 7 hours -> x-ahpd/connectors/secret { id
 ## Resume state
 
 - **Done so far:** all three tasks are built and their gates pass. Task 01 adds the `SignIn` union with the device flow, the host's start, poll and finish, and the adapter row's `flow`. Its cases are seven in `connectors-signin.test.ts`, two registration cases in `plugin-validate.test.ts`, and `PLUGINS.md`. Task 02 adds `x-ahpd/connectors/secret`, with four cases in `connectors-channel.test.ts`. Task 03 adds the `devtunnel` adapter: the device sign-in, the tunnels check, and the seven-hour refresh written back through `secret`. `OpenTunnels` keeps a token for the next plan's tunnel kind, and nine cases in `tunnel-devtunnel-adapter.test.ts` cover it.
-- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. The checks by hand are in [plugin-1054-device-sign-in-checks.md](../../../pending/plugin-1054-device-sign-in-checks.md).
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. Softov checked it by hand on 2026-11-04.
 - **Departures:** the union makes `adapter.signIn` a `CodeSignIn | DeviceSignIn`, so two unlisted test files narrow it through a `signInOf` helper (`packages/agent-claude/test/agent-claude-login-adapter.test.ts`, `packages/server/test/openrouter-signin.test.ts`). A device finish's wait has its own timer at the code's expiry, and an expiry does not cut off a put that is already writing. Task 03's doc landed in `packages/tunnel-devtunnel/README.md`, because `docs/plugins/tunnel-devtunnel.md` only includes that file. `src/index.ts` exports the adapter and `OpenTunnels` though the task's Files did not name it. `packages/server/test/plugin-load.test.ts` also lists the manifest's option keys, so its tunnel-devtunnel row gained `allowAccountChange`.
 - **Open questions:**
   1. Which call answers the account's GitHub login for a token of this app - proposed: `GET https://api.github.com/user`. The adapter uses it, and a real sign-in still confirms it.
@@ -119,9 +119,9 @@ devtunnel open -> refresh now and every 7 hours -> x-ahpd/connectors/secret { id
 
 ## Final verification checklist
 
-- [ ] A person signs in to Dev Tunnels from a client with a device code, and the `devtunnel` connector's row is `ready`.
-- [ ] The vault holds `connector/<id>/token` and `connector/<id>/refresh`, and the record holds `account` and two `$secret` references.
-- [ ] A daemon restarted after more than 8 hours opens the connector, refreshes its token, and the row is `ready`.
-- [ ] A second sign-in on the same connector with the same account keeps the id. With another account it is refused, and with `allowAccountChange` it is accepted.
-- [ ] No log line, error or row carries a token, a refresh token or a device handle.
-- [ ] OpenRouter and claude-login still sign in with a pasted code.
+- [x] A person signs in to Dev Tunnels from a client with a device code, and the `devtunnel` connector's row is `ready`.
+- [x] The vault holds `connector/<id>/token` and `connector/<id>/refresh`, and the record holds `account` and two `$secret` references.
+- [x] A daemon restarted after more than 8 hours opens the connector, refreshes its token, and the row is `ready`.
+- [x] A second sign-in on the same connector with the same account keeps the id. With another account it is refused, and with `allowAccountChange` it is accepted.
+- [x] No log line, error or row carries a token, a refresh token or a device handle.
+- [x] OpenRouter and claude-login still sign in with a pasted code.
