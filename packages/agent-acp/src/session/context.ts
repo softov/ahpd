@@ -98,14 +98,6 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * own schema carries the property without one.
    */
   modes: SessionModeState | undefined;
-  /**
-   * How this session tells its agent the modes the server named.
-   *
-   * The agent's schema lists a preset's modes until a session of it hears the
-   * server's own, so this is where a new session box of the same agent reads
-   * the list the server just gave.
-   */
-  heardModes?: (modes: { id: string; name: string }[]) => void;
   active: Bag | undefined;
   /**
    * The turns handed while the server ran another, in the order they came,

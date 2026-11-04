@@ -178,7 +178,7 @@ it('offers no models before a session, because ACP has no pre-session catalogue'
 it('carries an approvals control on the session, with no enum before a server is asked', () => {
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
-  expect(Object.keys(properties)).toEqual(['permissionMode']);
+  expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
   expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
@@ -512,7 +512,9 @@ it('announces a mode the agent moved itself, once', async () => {
   // What the server opened with is said once, in one action, because the
   // session held none of it; after that nothing is said until the server
   // moves something.
-  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
 
   await runTurn(session, watch, 't2', 'shift');
   // Said again at the same turn, which is the point: the second `shift` moves
@@ -536,7 +538,9 @@ it('says nothing for a mode the client set itself', async () => {
   // what is said is the open's, once.
   await runTurn(session, watch, 't2', 'hi');
 
-  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
   expect(session.settings().permissionMode).toBe('code');
 });
 
@@ -591,13 +595,15 @@ it('leaves a session in the server mode when the one it asked for is not offered
   expect(requests(log).some((one) => one.method === 'session/set_mode')).toBe(false);
   expect(session.settings().permissionMode).toBe('ask');
   expect(configOf(session).values.permissionMode).toBe('ask');
-  expect(changed(watch)).toEqual([{ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false }]);
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
 });
 
 it('says the mode the server stays in when it refuses the one the session asked for', async () => {
   const { agent, log } = backend(['--refuse-mode']);
   const { session, watch } = start(agent, 'asked-refused', {
-    settings: { permissionMode: 'code', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+    settings: { permissionMode: 'code', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
 
@@ -611,7 +617,7 @@ it('says the mode the server stays in when it refuses the one the session asked 
 it('says an option the server moved with a value a client set', async () => {
   const { agent } = backend(['--model-thinks']);
   const { session, watch } = start(agent, 'moved-with', {
-    settings: { permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
 
@@ -626,7 +632,7 @@ it('says an option the server moved with a value a client set', async () => {
 it('says the model a turn chose and an option the server moved with it', async () => {
   const { agent } = backend(['--model-thinks']);
   const { session, watch } = start(agent, 'chosen-with', {
-    settings: { permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
 
@@ -1108,7 +1114,7 @@ it('keeps a value set on a session that has not run a turn, and sends it when th
 it('runs with the server value when a kept one is not offered, and says so', async () => {
   const { agent, log } = backend();
   const { session, watch } = start(agent, 'unopened-unoffered', {
-    settings: { permissionMode: 'ask', model: 'fast', 'acp.telemetry': false },
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false },
   });
 
   expect(await session.setConfig?.('acp.thinking', 'shallow')).toBe(true);

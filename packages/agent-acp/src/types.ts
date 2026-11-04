@@ -95,9 +95,9 @@ export interface AcpOptions {
   /**
    * The approval modes this agent's server is known to name.
    *
-   * A preset carries the modes its agent's own source lists, so a client draws
-   * a picker before any session of the agent has opened. A session that hears
-   * its server's modes replaces this list in the agent.
+   * A preset carries the modes its agent's own source lists, and the agent's
+   * schema draws them as a picker. The modes a session's server offers are
+   * that session's own `availableApprovalModes`.
    */
   modes?: { id: string; name: string }[];
   /**

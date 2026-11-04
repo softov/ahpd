@@ -75,11 +75,14 @@ it('carries an approvals control on the session, with the named model as the def
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const schema = agent.schema();
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  expect(Object.keys(properties)).toEqual(['permissionMode']);
+  expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
   expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
   // The server's modes are unknown until a session asks it, so there is no
-  // enum here; a session that has asked reports the learned one instead.
+  // enum here; a session that has asked reports them as its own, read-only.
   expect(properties.permissionMode?.enum).toBeUndefined();
+  expect(properties.availableApprovalModes).toEqual({
+    type: 'array', title: 'Available Permissions', readOnly: true, items: { type: 'string', title: 'Permission Mode' },
+  });
   /*
    * The model is not a control, because it belongs to the turn rather than to
    * the conversation - but the configured id is still the default a client is

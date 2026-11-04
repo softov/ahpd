@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, Session } from '@ahpd/sdk';
 import type { AcpConnection } from '../types.js';
@@ -40,17 +41,19 @@ export function createConfig(ctx: SessionContext): Config {
    */
   let listedModels: { id: string; name: string }[] | undefined;
 
-  /** Remember the modes the server named, and where it currently sits. */
+  /**
+   * Remember the modes the server named, and where it currently sits.
+   *
+   * The ids the server offers are this session's `availableApprovalModes`,
+   * as VS Code's Copilot agent reports the approval modes its session may
+   * take, said with the rest of what the open learned.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L171
+   */
   const learnModes = (state: SessionModeState | null | undefined): void => {
     if (state === null || state === undefined) return;
     ctx.modes = { ...state };
     settings.permissionMode = state.currentModeId;
-    /*
-     * The server's list is the agent's from here, so the next new session box
-     * of this agent offers it rather than the preset's, and a server that has
-     * moved its modes is what a client draws next.
-     */
-    ctx.heardModes?.(state.availableModes.map((one) => ({ id: one.id, name: one.name })));
+    settings.availableApprovalModes = state.availableModes.map((one) => one.id);
   };
 
   /** The option a model choice is set through, when the server named one. */
@@ -97,6 +100,9 @@ export function createConfig(ctx: SessionContext): Config {
     if (list === null || list === undefined) return;
     offers = [...list];
     for (const option of offers) settings[keyOf(option)] = option.currentValue;
+    // A `mode` option's values are the modes the session may take.
+    const mode = modeOption();
+    if (mode !== undefined) settings.availableApprovalModes = choicesOf(mode).map((one) => one.value);
   };
 
   /**
@@ -131,7 +137,7 @@ export function createConfig(ctx: SessionContext): Config {
    * open learned once the open is over.
    */
   const configChanged = (key: string, value: unknown): void => {
-    if (settings[key] === value) return;
+    if (isDeepStrictEqual(settings[key], value)) return;
     settings[key] = value;
     if (!ctx.loading) emit('session', { type: 'session/configChanged', config: { [key]: value } });
   };
@@ -146,6 +152,8 @@ export function createConfig(ctx: SessionContext): Config {
    */
   const offersChanged = (list: SessionConfigOption[]): void => {
     for (const option of list) configChanged(keyOf(option), option.currentValue);
+    const mode = list.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
+    if (mode !== undefined) configChanged('availableApprovalModes', choicesOf(mode).map((one) => one.value));
   };
 
   /**
@@ -170,7 +178,7 @@ export function createConfig(ctx: SessionContext): Config {
    */
   const syncConfig = (held: Record<string, unknown>): void => {
     const moved = Object.fromEntries(Object.entries(settings)
-      .filter(([key, value]) => held[key] !== value && !setting.includes(key)));
+      .filter(([key, value]) => !isDeepStrictEqual(held[key], value) && !setting.includes(key)));
     if (Object.keys(moved).length > 0) emit('session', { type: 'session/configChanged', config: moved });
   };
 
