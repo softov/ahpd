@@ -1,7 +1,7 @@
 ---
 title: A turn says its context and its plan limits
 domain: claude
-status: active
+status: implemented
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -67,6 +67,9 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 | The plan limits are kept in the connector's health, in memory, as the last call is | (defaulted: the sibling pattern) | 02 |
 | An empty `quotaSnapshots` means the login has no plan limits; an absent one means unknown | (defaulted: one key, two clear states) | 02 |
 | A late or failed breakdown leaves the turn's usage without it | (defaulted: a turn never waits on a figure) | 01 |
+| A session on the CLI's own sign-in keeps its plan limits for itself; only a login's limits reach the connector's health | (defaulted in review: the CLI's own account has no id the host holds) | 02 |
+| A note with only `quotaSnapshots` records no call | (defaulted in review: a call that never happened is not a last call) | 02 |
+| `extra_usage` rides the weekly snapshot, or the session one when there is no week | (defaulted in build: VS Code's shape has no window for credits) | 02 |
 | The plan limits of Codex and Copilot wait for a later brief | Softov, 2026-11-04, brief Answers | - |
 
 ## Proposed architecture
@@ -92,12 +95,12 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 ## Resume state
 
 - **Done so far:** task 01, a turn says its context; task 02, a login says its plan limits.
-- **Next action:** [implemented.md](implemented.md), then the plan is `implemented`.
+- **Next action:** none; the plan is `implemented`.
 - **Watch out for:** a turn must not wait on `getContextUsage`; put a short time limit on it.
 
 ## Final verification checklist
 
 - [ ] A Claude model row has a `maxContextWindow` after a turn on that model.
-- [ ] A Claude turn's usage has `contextAttribution` with entries, and `ahpd.context` with the window, the limit, the free space, the buffer and the deferred tools.
-- [ ] A Claude turn on a login with a plan has `quotaSnapshots` with `session` and `weekly`, and the connector's health has the same.
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
+- [x] A Claude turn's usage has `contextAttribution` with entries, and `ahpd.context` with the window, the limit, the free space, the buffer and the deferred tools.
+- [x] A Claude turn on a login with a plan has `quotaSnapshots` with `session` and `weekly`, and the connector's health has the same.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the sdk and agent-claude tests pass.
