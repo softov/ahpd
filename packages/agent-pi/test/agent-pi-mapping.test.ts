@@ -201,26 +201,17 @@ it('tells "this event says nothing about activity" from "it is idle now"', () =>
 // When a call ran ----------------------------------------------------------
 
 /*
- * When a pi tool call started and ended, live and replayed.
+ * How long a pi tool call ran, live and replayed.
  *
- * The protocol gives a call no time of its own, so the times ride in its
- * `_meta`, stamped from this plugin's clock live and from pi's own entries on a
- * replay. An action carrying a `_meta` replaces the call's whole bag, so the
- * ready, the approval and the completion each carry them again.
+ * The protocol gives a call no time of its own, so how long it ran rides its
+ * `_meta` at its completion, under the key VS Code's client reads it from:
+ * measured on this plugin's clock live and from pi's own entries on a replay.
  */
 
 /** The `_meta` an action carries, or an empty bag for one that carries none. */
 const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
-
-it('says when a live call started and ended, on its ready and its complete', async () => {
+it('says how long a live call ran at its completion, and nothing of its times before', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
@@ -228,27 +219,26 @@ it('says when a live call started and ended, on its ready and its complete', asy
   await driveCall(pi, 'c1', 'bash', { command: 'ls' });
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
   const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 'c1')?.action;
-  const ready = for1('chat/toolCallReady');
-  const complete = for1('chat/toolCallComplete');
-  expect(metaOf(ready)['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-  expect(timed(complete)).toBe(true);
+  expect(for1('chat/toolCallReady')?._meta).toBeUndefined();
+  expect(metaOf(for1('chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(timed(callIn(parts, 'c1'))).toBe(true);
+  expect(callIn(parts, 'c1')?._meta).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
-it('says when a call started, on the start pi opened the row for', async () => {
+it('measures a call from when pi began running it, on a row the model opened', async () => {
   const one = turn();
   const message = { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } }] };
   mapEvent(one, { type: 'message_update', message, assistantMessageEvent: { contentIndex: 0, partial: message, type: 'toolcall_start' } } as unknown as AgentSessionEvent);
-  // The model's stream names the call; pi runs it afterwards, which is when the
-  // start is stamped - the start action has been sent by then and cannot say.
+  // The model's stream names the call; pi runs it afterwards, which is when it
+  // started.
   const opened_ = mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} }, 1_700_000_000_000);
   expect(opened_).toEqual([]);
-  expect(metaOf(one.parts[0]?.toolCall as Bag)['ahpd.startedAt']).toBe('2023-11-14T22:13:20.000Z');
+  expect((one.parts[0]?.toolCall as Bag)._meta).toBeUndefined();
+  const ended_ = mapEvent(one, { type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false }, 1_700_000_002_500);
+  expect(metaOf(ended_.find((action) => action.type === 'chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': 2_500 });
 });
 
-it('starts an approved call when it was approved, and says none for a denied one', async () => {
+it('measures an approved call from its approval, and a denied one not at all', async () => {
   let now = 1_700_000_000_000;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
@@ -262,12 +252,13 @@ it('starts an approved call when it was approved, and says none for a denied one
   const approved = now;
   session.confirm('c1', true);
   await waiting;
-  const confirmed = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c1')?.action;
-  // The question waited for a person, which is not work: the start is the
-  // approval's, not the one the asked ready already carried.
-  expect(metaOf(sent.find((one) => one.action.type === 'chat/toolCallReady' && one.action.toolCallId === 'c1')?.action)['ahpd.startedAt'])
-    .toBe(new Date(asked).toISOString());
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(new Date(approved).toISOString());
+  now += 2_000;
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
+  const complete = sent.find((one) => one.action.type === 'chat/toolCallComplete' && one.action.toolCallId === 'c1')?.action;
+  // The question waited for a person, which is not work: the call ran from its
+  // approval, not from the ready that asked.
+  expect(approved - asked).toBe(30_000);
+  expect(metaOf(complete)['vscode.toolCallDurationMs']).toBe(2_000);
 
   session.sendMessage('t2', 'again');
   await settled();
@@ -275,16 +266,14 @@ it('starts an approved call when it was approved, and says none for a denied one
   await settled();
   session.confirm('c2', false);
   await refused;
-  const denied = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c2')?.action;
-  expect(metaOf(denied)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(denied)['ahpd.durationMs']).toBeUndefined();
-  // And the snapshot the person would read says the same.
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c2', toolName: 'bash', result: 'blocked', isError: true });
+  // A call refused never ran, so nothing says how long it ran.
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
+  expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('vscode.toolCallDurationMs');
   clock.mockRestore();
 });
 
-it('gives a replayed call the times of the entries that ran it', async () => {
+it('measures a replayed call between the entries that ran it', async () => {
   const { replayEntries } = await import('../src/replay.js');
   const call = { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } };
   const entries: Bag[] = [
@@ -301,11 +290,7 @@ it('gives a replayed call the times of the entries that ran it', async () => {
   const { turns } = replayEntries(entries as never);
   const row = callIn(turns[0]!.parts, 'c1') as Bag;
   // pi's own times, not the moment this process read the file.
-  expect(row._meta).toMatchObject({
-    'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
-    'ahpd.endedAt': '2020-01-01T00:00:09.500Z',
-    'ahpd.durationMs': 4500,
-  });
+  expect(row._meta).toEqual({ 'vscode.toolCallDurationMs': 4500 });
 });
 
 it('never writes a bare timing key on a pi tool call', async () => {

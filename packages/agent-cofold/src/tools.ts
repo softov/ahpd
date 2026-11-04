@@ -350,8 +350,8 @@ export const toolReadyAction = (
  * `success` is the failure flag, and the content is the one block a client
  * reads. A failed call keeps its content in `error.message` as well, because
  * that is where a client looks for the reason. `meta` is the call's whole
- * `_meta`, which the client's replaces: a call that ran has to carry its times
- * here as well as where it started.
+ * `_meta`, which the client's replaces: a call that ran carries how long it ran
+ * here, beside the kind it started with.
  */
 export const toolCompleteAction = (
   turnId: string,

@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
+import { activityOf, bag, createClientCalls, idFor, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
@@ -34,7 +34,7 @@ import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, untime } from './mapping.js';
+import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -403,7 +403,7 @@ export function piSession(
       if (part !== undefined) {
         Object.assign(bag(part.toolCall), { status: 'cancelled', reason: 'skipped' });
         // The question was cancelled, so the call never ran: the start
-        // `tool_execution_start` stamped is taken off with it.
+        // `tool_execution_start` gave it is forgotten with it.
         untime(bag(part.toolCall));
       }
       emit('session', { type: 'session/inputNeededRemoved', id });
@@ -599,8 +599,7 @@ export function piSession(
         toolInput: JSON.stringify(input),
         ...contributor,
         ...extra,
-        // The whole bag, because an action's `_meta` replaces the call's: the
-        // start `tool_execution_start` stamped is what the row holds.
+        // The whole bag, because an action's `_meta` replaces the call's.
         ...(row?._meta === undefined ? {} : { _meta: row._meta }),
       });
     };
@@ -1462,10 +1461,7 @@ export function piSession(
          * that came before the question: the wait for a person is not work. A
          * call refused never runs, so it loses the start it was given.
          */
-        times = approved
-          ? withCallTimes(bag(row._meta), callTimes(Date.now()))
-          : untime(row);
-        row._meta = times;
+        times = approved ? stampStart(row, Date.now()) : untime(row);
       }
       emit('chat', {
         type: 'chat/toolCallConfirmed',

@@ -1497,20 +1497,12 @@ const toolCallUpdate = (toolCallId: string, status: string): SessionUpdate =>
 /** The `_meta` an action about a call carries. */
 const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
-
 /** Every chat action one tool call was sent, in the order it was sent. */
 const forCall = (watch: Watcher, toolCallId: string): Bag[] => watch.actions
   .map((one) => one.action)
   .filter((action) => action.toolCallId === toolCallId);
 
-it('says when a call started and ended, and reads back with the same numbers', async () => {
+it('says how long a call ran at its completion, and reads back with the same number', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'times');
   await runTurn(session, watch, 't1', 'fetch it later');
@@ -1518,39 +1510,31 @@ it('says when a call started and ended, and reads back with the same numbers', a
   const sent = forCall(watch, 'call-later');
   const ready = sent.find((one) => one.type === 'chat/toolCallReady');
   const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
-  // Announced `pending` and started by a later update, so what the ready
-  // carries is when the call began and no end yet.
-  expect(typeof metaOf(ready)['ahpd.startedAt']).toBe('string');
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-  expect(timed(complete)).toBe(true);
-  const times = metaOf(complete);
-  const from = Date.parse(times['ahpd.startedAt'] as string);
-  const until_ = Date.parse(times['ahpd.endedAt'] as string);
-  expect(until_).toBeGreaterThanOrEqual(from);
-  expect(times['ahpd.durationMs']).toBe(until_ - from);
+  // The duration is said at the completion, on the key VS Code's client reads,
+  // and nothing about the call's times before it.
+  expect(sent.filter((one) => one !== complete).every((one) => metaOf(one)['vscode.toolCallDurationMs'] === undefined)).toBe(true);
+  expect(Object.keys(metaOf(ready)).filter((key) => key.startsWith('ahpd.'))).toEqual([]);
+  expect(metaOf(complete)['vscode.toolCallDurationMs']).toEqual(expect.any(Number));
 
   // The same call, read back out of what this process kept.
   const turns = await agent.transcript?.(String(session.agentId()));
   const parts = turns?.[0]?.responseParts as Bag[];
   const held = parts.map((one) => one.toolCall as Bag | undefined).find((call) => call?.toolCallId === 'call-later');
-  expect(held?._meta).toEqual(times);
+  expect(held?._meta).toEqual(metaOf(complete));
 });
 
-it('starts a call at the first update about it, and ends it at the one that finished it', () => {
+it('measures a call from the first update about it to the one that finished it', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   mapUpdate(turn, toolCall('c1', 'pending'), 1_000);
   mapUpdate(turn, toolCallUpdate('c1', 'in_progress'), 2_000);
   mapUpdate(turn, toolCallUpdate('c1', 'completed'), 5_000);
 
-  const held = metaOf(turn.parts[0]?.toolCall as Bag);
   // The later update is what the agent began the call on, but the first word
   // about it is what the call started at.
-  expect(held['ahpd.startedAt']).toBe(new Date(1_000).toISOString());
-  expect(held['ahpd.endedAt']).toBe(new Date(5_000).toISOString());
-  expect(held['ahpd.durationMs']).toBe(4_000);
+  expect(metaOf(turn.parts[0]?.toolCall as Bag)).toEqual({ 'vscode.toolCallDurationMs': 4_000 });
 });
 
-it('stamps a call whose row a permission question opened at its first update', () => {
+it('measures a call whose row a permission question opened from its first update', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   // The row a `session/request_permission` opened, left the way the session
   // leaves it for the mapping to find: a call nobody has heard anything about.
@@ -1563,22 +1547,20 @@ it('stamps a call whose row a permission question opened at its first update', (
     status: 'in_progress',
     content: [{ type: 'content', content: { type: 'text', text: 'working' } }],
   } as unknown as SessionUpdate, 3_000);
-  const held = metaOf(turn.parts[0]?.toolCall as Bag);
-  expect(held['ahpd.startedAt']).toBe(new Date(3_000).toISOString());
-  // The row is already open, so no start action goes out and the first action
-  // sent for the call is what carries the times.
+  // The row is already open, so no start action goes out, and a running call
+  // says nothing of its times.
   expect(sent.map((one) => one.type)).toEqual(['chat/toolCallContentChanged']);
-  expect(metaOf(sent[0])['ahpd.startedAt']).toBe(held['ahpd.startedAt']);
+  expect(sent[0]?._meta).toBeUndefined();
+  const done = mapUpdate(turn, toolCallUpdate('c1', 'completed'), 3_500);
+  expect(metaOf(done.find((one) => one.type === 'chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': 500 });
 });
 
-it('times a call that arrives already finished as one moment', () => {
+it('measures a call that arrives already finished as one moment', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   const sent = mapUpdate(turn, toolCall('c1', 'completed'), 7_000);
   const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
   const held = metaOf(turn.parts[0]?.toolCall as Bag);
-  expect(held['ahpd.startedAt']).toBe(new Date(7_000).toISOString());
-  expect(held['ahpd.endedAt']).toBe(held['ahpd.startedAt']);
-  expect(held['ahpd.durationMs']).toBe(0);
+  expect(held).toEqual({ 'vscode.toolCallDurationMs': 0 });
   expect(metaOf(complete)).toEqual(held);
 });
 

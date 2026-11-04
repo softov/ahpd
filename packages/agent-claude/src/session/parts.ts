@@ -1,5 +1,5 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { callTimes, startOf, statusOf, withCallTimes } from '@ahpd/sdk';
+import { statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
 import { bag } from './common.js';
 import type { Scope, SessionContext } from './context.js';
@@ -41,11 +41,11 @@ export interface Parts {
   addPart: (scope: Scope, part: Bag) => void;
   /** Hold a tool call for the snapshot, without announcing it. */
   holdPart: (turn: Bag, part: Bag) => void;
-  /** A call's bag with its start stamped. */
+  /** Hold when a call started running, and hand back its bag. */
   stampStart: (call: Bag, at?: number) => Bag;
-  /** A call's bag with its end stamped. */
+  /** Put how long a call ran on its bag, and hand the bag back. */
   stampEnd: (call: Bag, at?: number) => Bag;
-  /** A call's bag with the times taken off. */
+  /** Forget a call's start, for a call that never ran, and hand back its bag. */
   untimed: (call: Bag) => Bag;
   /** Record a failure as a part of a turn, and hand the part back. `resumable` says a client may ask for the turn again. */
   addFailure: (turn: Bag, why: string, resumable?: boolean) => Bag;
@@ -277,28 +277,27 @@ export function createParts(ctx: SessionContext): Parts {
   };
 
   /**
-   * A call's bag with its start stamped, when it began running.
+   * When each call began running, on this plugin's clock, by the call.
    *
-   * The plugin's own clock, and stamped onto the call rather than onto the
-   * action announcing it: an action carrying a `_meta` replaces the call's
-   * whole bag, so a call that is asked about after this one is stamped again
-   * at its approval and every later action has to carry the times again.
+   * What the duration said at the call's completion is measured from, on its
+   * `_meta` as VS Code's host says it. A call asked about is started again at
+   * its approval, so the wait for a person is not counted.
    */
+  const started = new WeakMap<Bag, number>();
+
   const stampStart = (call: Bag, at = Date.now()): Bag => {
-    call._meta = withCallTimes(bag(call._meta), callTimes(at));
+    started.set(call, at);
     return bag(call._meta);
   };
 
-  /** A call's bag with its end stamped, measured from the start it holds. */
   const stampEnd = (call: Bag, at = Date.now()): Bag => {
-    call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
+    call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), toolCallDurationMs(started.get(call), at));
+    started.delete(call);
     return bag(call._meta);
   };
 
-  /** A call's bag with the times taken off, for a call that never ran. */
   const untimed = (call: Bag): Bag => {
-    const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(call._meta);
-    call._meta = Object.keys(rest).length > 0 ? rest : undefined;
+    started.delete(call);
     return bag(call._meta);
   };
 

@@ -18,7 +18,7 @@
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
+import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
@@ -682,11 +682,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
           /*
-           * The call starts when cofold says it started, which for a call a
-           * person was asked about is after they allowed it.
-           */
-          call._meta = withCallTimes(bag(call._meta), callTimes(event.at));
-          /*
            * Built here rather than through `toolReadyAction`, because an
            * approved call has to keep saying a person allowed it: the same
            * action with `not-needed` would draw the approval as one nobody
@@ -700,7 +695,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
-            _meta: bag(call._meta),
+            ...(call._meta === undefined ? {} : { _meta: bag(call._meta) }),
           }]);
         }
 
@@ -715,8 +710,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             call.pastTenseMessage = describe(held.name, held.subject);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
-            call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? event.at, event.at, event.durationMs));
-            meta = bag(call._meta);
+            // How long it ran, as cofold measured it from its start.
+            call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), event.durationMs);
+            meta = call._meta === undefined ? undefined : bag(call._meta);
           }
           return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta)]);
         }

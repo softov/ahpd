@@ -714,19 +714,14 @@ it('draws a shell call as a terminal, with its command as the intention', async 
 
   const turn = (session.chatState().turns as Bag[])[0] as Bag;
   const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
-  expect((part?.toolCall as Bag)._meta).toEqual({
-    toolKind: 'terminal',
-    'ahpd.startedAt': expect.any(String),
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
+  expect((part?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
   expect((part?.toolCall as Bag).intention).toBe('echo hi');
   expect((part?.toolCall as Bag).toolInput).toBe('echo hi');
   expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
-it('says when a call started and ended, on its ready and its complete', async () => {
+it('says how long a call ran at its completion, as cofold measured it', async () => {
   const dir = place();
   const { session, v } = await open({
     script: [{ toolCalls: [call('shell_exec', { command: 'echo hi' })] }, { text: 'done' }],
@@ -737,31 +732,15 @@ it('says when a call started and ended, on its ready and its complete', async ()
   session.sendMessage('t1', 'run it');
   await when(() => ended(v));
 
-  const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
-  const started = (ready?._meta as Bag | undefined)?.['ahpd.startedAt'];
-  expect(typeof started).toBe('string');
-  expect((ready?._meta as Bag)['ahpd.endedAt']).toBeUndefined();
   // The kind a shell call is drawn by has to survive: an action's `_meta`
-  // replaces the whole bag rather than adding to it.
-  expect((ready?._meta as Bag).toolKind).toBe('terminal');
+  // replaces the whole bag rather than adding to it. Nothing of the call's
+  // times is said before it completes.
+  const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
+  expect(ready?._meta).toEqual({ toolKind: 'terminal' });
+  expect(completeFor(v, 'c1')?._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 
-  const complete = completeFor(v, 'c1');
-  expect(complete?._meta).toMatchObject({
-    toolKind: 'terminal',
-    'ahpd.startedAt': started,
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
-  // cofold measured the call itself, so the duration is its own rather than
-  // the span between the two events, which also carries what it did around the
-  // call. It still fits inside them.
-  const times = complete?._meta as Bag;
-  const span = Date.parse(times['ahpd.endedAt'] as string) - Date.parse(times['ahpd.startedAt'] as string);
-  expect(times['ahpd.durationMs']).toBeLessThanOrEqual(span);
-
-  // And no call says its times under a name of its own.
-  const bare = ['startedAt', 'endedAt', 'durationMs'];
-  expect(v.notes.every((note) => bare.every((key) => ((note.action._meta ?? {}) as Bag)[key] === undefined))).toBe(true);
+  // And no call says its times under a key of this host's own.
+  expect(v.notes.every((note) => Object.keys((note.action._meta ?? {}) as Bag).every((key) => !key.startsWith('ahpd.')))).toBe(true);
   rmSync(dir, { recursive: true, force: true });
 });
 

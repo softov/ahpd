@@ -147,7 +147,7 @@ export type { CreatedBy, NestedRecord, RemoteOrigin, SessionStore, StoredChat, S
 export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom, holdsTheQueue } from './sessions/catalog.js';
 export type { Activity, StatusBits } from './sessions/catalog.js';
 export { tail, older, PAGE } from './sessions/paging.js';
-export { callTimes, withCallTimes, startOf } from './utils/timing.js';
+export { toolCallDurationMs, withToolCallDuration } from './utils/timing.js';
 export { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from './access/commandautoapprover.js';
 export type {
   CommandApprovalOptions, CommandApprovalResult, CommandShell, CommandSplit, CommandSplitter,

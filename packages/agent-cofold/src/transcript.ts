@@ -11,8 +11,8 @@
  * record, the way Claude's transcript reader reads Claude's.
  *
  * The run log is read beside the messages for the two facts a message does not
- * carry: a tool call's timing, which is in its `tool.started` and
- * `tool.completed` events, and the request a paused run is waiting on, which
+ * carry: how long a tool call ran, which its `tool.completed` event measured,
+ * and the request a paused run is waiting on, which
  * `Store.requests` holds. Everything else comes from the messages themselves,
  * in the order cofold appended them, because a transcript that reorders a tool
  * call and its answer is a conversation read wrong.
@@ -21,7 +21,7 @@
 import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { bag, callTimes, str } from '@ahpd/sdk';
+import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { compactionNotice } from './mapping.js';
 import { describe, toolMetaOf } from './tools.js';
 
@@ -40,13 +40,6 @@ export type TranscriptTurn = Transcript[number];
 type WireMessage = TranscriptTurn['message'];
 type WireUsage = NonNullable<TranscriptTurn['usage']>;
 type WireState = TranscriptTurn['state'];
-
-/** How a tool call moved, as its events recorded it. */
-interface Timing {
-  startedAt?: string;
-  endedAt?: string;
-  durationMs?: number;
-}
 
 /** What a run is waiting on, by the call it is about. */
 interface Waiting {
@@ -98,36 +91,24 @@ const inputOf = (call: ToolCallPart): string | undefined => {
 };
 
 /**
- * The times a restored call ran at, in the `ahpd.` names.
- *
- * A run that recorded a result but no `tool.started` still says how long the
- * call took, so its start is its end less that; a call with only a start keeps
- * that alone, and one with neither says nothing.
- */
-const timesOf = (timing: Timing | undefined): Bag => {
-  if (timing === undefined) return {};
-  const end = timing.endedAt;
-  if (end === undefined) return timing.startedAt === undefined ? {} : callTimes(timing.startedAt);
-  const start = timing.startedAt ?? (timing.durationMs === undefined ? undefined : Date.parse(end) - timing.durationMs);
-  return callTimes(start ?? end, end, timing.durationMs);
-};
-
-/**
  * The part a tool call holds between its proposal and its result.
  *
  * A call with no result and no open request is left `running`: nothing in the
  * store says it finished, and inventing a completion would draw a spinner that
  * stopped for a reason nobody recorded. A call a paused run is waiting on is
  * `pending-confirmation`, which is what a client draws a question from.
+ *
+ * `durationMs` is how long the call ran, as cofold's completion measured it,
+ * for a call that completed.
  */
 const callPartOf = (
   call: ToolCallPart,
-  timing: Timing | undefined,
+  durationMs: number | undefined,
   waiting: Waiting | undefined,
   subject: string | undefined,
 ): Bag => {
   const written = inputOf(call);
-  const meta: Bag = { ...toolMetaOf(call.name), ...timesOf(timing) };
+  const meta: Bag = withToolCallDuration(toolMetaOf(call.name), durationMs) ?? {};
   const held: Bag = {
     toolCallId: call.callId,
     toolName: call.name,
@@ -135,11 +116,11 @@ const callPartOf = (
     invocationMessage: invocationOf(call, waiting, subject),
     ...(written !== undefined ? { toolInput: written } : {}),
     /*
-     * AHP's tool-call states have no field for when a call ran or how long it
-     * took, and the events measured both, so they ride the provider metadata
-     * rather than being dropped or flattened into a field that means something
-     * else. The kind goes with them: an action's `_meta` replaces the whole
-     * bag, so a restored call that lost it would draw as a generic tool.
+     * How long it ran rides the call's `_meta` under VS Code's key, as VS
+     * Code's restored history carries it, and the kind goes with it: an
+     * action's `_meta` replaces the whole bag, so a restored call that lost it
+     * would draw as a generic tool.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1459
      */
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
@@ -218,8 +199,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const messages = await store.sessions.listMessages({ sessionId });
   const runs = await store.runs.list({ sessionId });
 
-  /** When each call ran, by call id, gathered once from every run's events. */
-  const timing = new Map<string, Timing>();
+  /** How long each completed call ran, by call id, gathered once from every run's events. */
+  const durations = new Map<string, number>();
   /**
    * What each call acts on, by call id, from the `tool.proposed` that named it.
    *
@@ -251,8 +232,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     /*
      * The events are read before anything about the run is recorded, so a run
      * that a rewind removed mid-read leaves nothing behind: no usage, no
-     * ending, no model, no duration, and none of the timing, subjects or
-     * compaction numbers its events carried.
+     * ending, no model, no duration, and none of the call durations, subjects
+     * or compaction numbers its events carried.
      */
     const events = await eventsOf(store, sessionId, run.runId);
     if (events === undefined) continue;
@@ -273,21 +254,12 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       if (Number.isFinite(spent) && spent >= 0) duration.set(run.inputMessageId, spent);
     }
 
-    /** The moment each call started, so its completion can carry a start too. */
-    const started = new Map<string, string>();
     for (const event of events) {
-      if (event.type === 'tool.started') started.set(event.callId, event.at);
       if (event.type === 'tool.proposed' && event.subject !== undefined) subject.set(event.callId, event.subject);
       if (event.type === 'context.compacted') {
         compacted.set(event.messageId, { before: event.estimatedTokens, after: event.afterTokens });
       }
-      if (event.type !== 'tool.completed') continue;
-      const at = started.get(event.callId);
-      timing.set(event.callId, {
-        ...(at !== undefined ? { startedAt: at } : {}),
-        endedAt: event.at,
-        durationMs: event.durationMs,
-      });
+      if (event.type === 'tool.completed') durations.set(event.callId, event.durationMs);
     }
 
     if (run.status !== 'awaiting' || run.pendingRequestId === undefined) continue;
@@ -400,7 +372,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         } else if (part.type === 'reasoning') {
           live.parts.push({ id, kind: 'reasoning', content: part.text });
         } else if (part.type === 'toolCall') {
-          const held = callPartOf(part, timing.get(part.callId), waiting.get(part.callId), subject.get(part.callId));
+          const held = callPartOf(part, durations.get(part.callId), waiting.get(part.callId), subject.get(part.callId));
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);

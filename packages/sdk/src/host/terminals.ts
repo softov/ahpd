@@ -4,7 +4,7 @@ import { localPath } from '../resources/fileuri.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { BANG, CLOSING, need } from './common.js';
 import { textOf } from './outputs.js';
-import { callTimes } from '../utils/timing.js';
+import { toolCallDurationMs, withToolCallDuration } from '../utils/timing.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
 import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, Ran, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
@@ -170,9 +170,9 @@ export function createTerminals(ctx: HostContext): Terminals {
    * has: a `terminal` call shown as `Terminal`, running at once since the person
    * typed it, its terminal named as soon as it opens, and completed with how
    * the command ended, a non-zero exit with no error and a command that could
-   * not run with its error; then the turn completes whatever the command did,
-   * which starts the chat's queue, as the reference host's local command ends
-   * its turn.
+   * not run with its error, and how long it ran on the call's `_meta`; then the
+   * turn completes whatever the command did, which starts the chat's queue, as
+   * the reference host's local command ends its turn.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L158
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L222
    *
@@ -195,7 +195,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     const toolCallId = crypto.randomUUID();
     const began = Date.now();
     say({ type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal', displayName: 'Terminal', intention: command });
-    say({ type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, toolInput: command, confirmed: 'not-needed', _meta: callTimes(began) });
+    say({ type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, toolInput: command, confirmed: 'not-needed' });
     // The block a client opens the command's terminal from, with `isPty` where the terminal's state says it.
     const terminalOf = (terminal: CommandTerminal): Bag => ({
       type: 'terminal',
@@ -227,7 +227,8 @@ export function createTerminals(ctx: HostContext): Terminals {
       }),
     ).then((result) => {
       const ended = Date.now();
-      say({ type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: callTimes(began, ended) });
+      const _meta = withToolCallDuration(undefined, toolCallDurationMs(began, ended));
+      say({ type: 'chat/toolCallComplete', turnId, toolCallId, result, ...(_meta === undefined ? {} : { _meta }) });
       say({ type: 'chat/turnComplete', turnId, duration: Math.max(0, ended - began) });
       if (road !== undefined) return;
       ctx.keepLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);

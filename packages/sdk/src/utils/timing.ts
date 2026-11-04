@@ -1,20 +1,19 @@
 import type { Bag } from '../types/common.js';
 
 /**
- * When a tool call ran, in the bag every action of that call carries.
+ * How long a tool call ran, on the call's `_meta` under VS Code's key.
  *
- * The protocol gives a tool call no time of its own, so its times ride in its
- * `_meta` and the plugin that ran the call is the one that stamps them - a
- * live one from the harness's own times where it has them, and from the
- * plugin's clock where it does not. An action carrying a `_meta` replaces the
- * call's whole bag, so the times are built here and merged into whatever the
- * call already has, and every plugin goes through these three.
+ * The protocol gives a tool call no time of its own. VS Code's host puts the
+ * milliseconds from a call's start to its completion on the call's `_meta` as
+ * `vscode.toolCallDurationMs` when the call completes, and VS Code's client
+ * draws the duration from that key. So the plugin that ran a call says it
+ * there, at the call's completion: the harness's own measure where it has one,
+ * and otherwise the span between the times the plugin held for the start and
+ * the end.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentToolCallMeta.ts#L26-L28
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L9866-L9868
  */
-
-/** The keys a call's times are written on, spelled once here. */
-const STARTED = 'ahpd.startedAt';
-const ENDED = 'ahpd.endedAt';
-const DURATION = 'ahpd.durationMs';
+const DURATION = 'vscode.toolCallDurationMs';
 
 /**
  * A time in epoch milliseconds, whether it was given as that or as an ISO
@@ -28,31 +27,24 @@ const epochOf = (at: unknown): number | undefined => {
 };
 
 /**
- * The times of a tool call, in a bag.
- *
- * With no end the call is still running and only its start is said. The
- * duration is the one the harness measured, since that is the truer one, and
- * otherwise the difference of the two times.
+ * The milliseconds from a call's start to its completion, as VS Code's
+ * `getToolCallDurationMs` measures them: nothing where either time is unknown
+ * or the completion comes before the start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/agentToolCallMeta.ts#L29-L33
  */
-export function callTimes(start: number | string, end?: number | string, durationMs?: number): Bag {
-  const from = epochOf(start) ?? Date.now();
-  const to = end === undefined ? undefined : epochOf(end);
-  const times: Bag = { [STARTED]: new Date(from).toISOString() };
-  if (to === undefined) return times;
-  return {
-    ...times,
-    [ENDED]: new Date(to).toISOString(),
-    [DURATION]: Math.max(0, durationMs ?? to - from),
-  };
+export function toolCallDurationMs(startedAt: number | string | undefined, completedAt: number | string | undefined): number | undefined {
+  const from = epochOf(startedAt);
+  const to = epochOf(completedAt);
+  if (from === undefined || to === undefined || to < from) return undefined;
+  return to - from;
 }
 
-/** A call's bag with the times merged into it, so `toolKind` and the reference's `subagent*` keys stay. */
-export function withCallTimes(meta: Bag | undefined, times: Bag): Bag {
-  return { ...meta, ...times };
-}
-
-/** A call's start read back as epoch milliseconds, so a plugin holding only the bag can time the end. */
-export function startOf(meta: unknown): number | undefined {
-  if (typeof meta !== 'object' || meta === null) return undefined;
-  return epochOf((meta as Bag)[STARTED]);
+/**
+ * A completed call's bag with its duration merged in, so `toolKind` and the
+ * reference's `subagent*` keys stay: an action carrying a `_meta` replaces the
+ * call's whole bag. A duration nobody measured leaves the bag as it was.
+ */
+export function withToolCallDuration(meta: Bag | undefined, durationMs: number | undefined): Bag | undefined {
+  if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return meta;
+  return { ...meta, [DURATION]: durationMs };
 }

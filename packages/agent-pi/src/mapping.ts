@@ -24,7 +24,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
-import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { bag, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
 /** The prose part this turn already holds under its id. */
@@ -40,34 +40,37 @@ const partOf = (turn: PiTurn, id: string): Bag | undefined =>
 export const callPartOf = (turn: { parts: Bag[] }, id: string): Bag | undefined =>
   turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === id);
 
-/** A tool call's row, which is where the times are kept between the events. */
+/** A tool call's row, which is what its start is held by between the events. */
 const rowOf = (turn: PiTurn, id: string): Bag | undefined => bag(callPartOf(turn, id)?.toolCall);
 
 /**
- * A call's bag with its start stamped, which is when pi began running it.
+ * When pi began running each call, by its row, on this plugin's clock.
  *
- * Written on the row rather than onto the action that announced it, because
- * the model's stream opens a call before pi runs it and the action that
- * carries the times then is the one the hook sends. Answers the bag, for the
- * action that goes out with it.
+ * What the duration said at the call's completion is measured from, on its
+ * `_meta` as VS Code's host says it. A call asked about is started again when
+ * a person allows it, so the wait is not counted.
  */
-const stampStart = (row: Bag | undefined, at: number): Bag | undefined => {
+const started = new WeakMap<Bag, number>();
+
+/** Hold when pi began running a call, and answer its bag for the action that goes out with it. */
+export const stampStart = (row: Bag | undefined, at: number): Bag | undefined => {
   if (row === undefined) return undefined;
-  row._meta = withCallTimes(bag(row._meta), callTimes(at));
-  return bag(row._meta);
+  started.set(row, at);
+  return row._meta === undefined ? undefined : bag(row._meta);
 };
 
-/** A call's bag with its end stamped, measured from the start it holds. */
+/** Put how long a call ran on its row, measured from the start held for it. */
 const stampEnd = (row: Bag | undefined, at: number): void => {
   if (row === undefined) return;
-  row._meta = withCallTimes(bag(row._meta), callTimes(startOf(row._meta) ?? at, at));
+  const meta = withToolCallDuration(row._meta === undefined ? undefined : bag(row._meta), toolCallDurationMs(started.get(row), at));
+  if (meta !== undefined) row._meta = meta;
+  started.delete(row);
 };
 
-/** A call's bag with the times taken off, for a call that never ran. */
-export const untime = (row: Bag): Bag => {
-  const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(row._meta);
-  row._meta = Object.keys(rest).length > 0 ? rest : undefined;
-  return bag(row._meta);
+/** Forget a call's start, for a call that never ran, and answer its bag. */
+export const untime = (row: Bag): Bag | undefined => {
+  started.delete(row);
+  return row._meta === undefined ? undefined : bag(row._meta);
 };
 
 /** Everything a tool result says, as the one string a client shows. */
@@ -399,9 +402,8 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const opened = startCall(turn, event.toolCallId, event.toolName, when);
       const call = turn.calls.get(event.toolCallId);
       if (call !== undefined) call.said = describe(event.toolName, bag(event.args));
-      // A row the model's stream opened was announced there, so the start has
-      // no action of its own here: it rides on the held row, and the hook's
-      // ready carries it when the hook moves that row.
+      // A row the model's stream opened was announced there, so the start is
+      // held for the row and has no action of its own here.
       if (opened.length === 0) stampStart(rowOf(turn, event.toolCallId), when);
       return opened;
     }

@@ -16,7 +16,7 @@
 
 import { normalize } from 'node:path';
 import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
-import { bag, callTimes, hostPathOf, str, strings, uriOf, withCallTimes } from '@ahpd/sdk';
+import { bag, hostPathOf, str, strings, toolCallDurationMs, uriOf, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
@@ -222,12 +222,10 @@ const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[]
 };
 
 /**
- * A call's times, as the `_meta` an action about it carries.
+ * A call's bag, as the `_meta` an action about it carries.
  *
- * The start is the receive time of the first update about the call and the end
- * the receive time of the one that finished it, both on this plugin's clock:
- * ACP carries no time of its own. An action's `_meta` replaces the call's whole
- * bag, so every action sent after the start carries them again.
+ * An action's `_meta` replaces the call's whole bag, so every action that
+ * carries one carries all of it again.
  */
 const metaOf = (turn: AcpTurn, call: AcpCall): Bag => {
   const held = callPartOf(turn, call.toolCallId);
@@ -239,27 +237,28 @@ const metaOf = (turn: AcpTurn, call: AcpCall): Bag => {
 /**
  * The start a call's first update about it gives it.
  *
- * The first word about a call is what starts it, whichever update that is: a
+ * The receive time of the first word about a call, on this plugin's clock,
+ * since ACP carries no time of its own; whichever update that is: a
  * `tool_call` holding the agent still deciding has started it, and so has the
  * `tool_call_update` of a call whose `tool_call` went missing. A row a
- * permission request opened is no different, and the request itself stamps
- * nothing. A call that arrives already finished is stamped twice over by the
- * one update that carries both.
+ * permission request opened is no different, and the request itself starts
+ * nothing. A call that arrives already finished starts and ends in the one
+ * update that carries both.
  */
-const stampStart = (turn: AcpTurn, call: AcpCall, at?: number): void => {
+const stampStart = (call: AcpCall, at?: number): void => {
   if (at === undefined || call.startedAt !== undefined) return;
   call.startedAt = at;
-  const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-  held._meta = withCallTimes(bag(held._meta), callTimes(at));
 };
 
 /**
- * The end a call's finishing update gives it, kept beside the start.
+ * How long a call ran, on its `_meta`, from its start to the receive time of
+ * the update that finished it.
  */
 const stampEnd = (turn: AcpTurn, call: AcpCall, at?: number): void => {
   if (at === undefined) return;
   const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-  held._meta = withCallTimes(bag(held._meta), callTimes(call.startedAt ?? at, at));
+  const meta = withToolCallDuration(held._meta === undefined ? undefined : bag(held._meta), toolCallDurationMs(call.startedAt, at));
+  if (meta !== undefined) held._meta = meta;
 };
 
 /**
@@ -513,7 +512,7 @@ export function mapUpdate(
     case 'tool_call': {
       const call = callOf(turn, update);
       call.status = update.status ?? 'pending';
-      stampStart(turn, call, at);
+      stampStart(call, at);
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(...running(turn, call, call.input));
@@ -532,7 +531,7 @@ export function mapUpdate(
       const call = callOf(turn, update);
       if (update.status !== undefined && update.status !== null) call.status = update.status;
       const input = inputOf(call, update);
-      stampStart(turn, call, at);
+      stampStart(call, at);
       const actions = known ? [] : opened(turn, call);
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.

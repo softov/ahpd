@@ -159,14 +159,6 @@ const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 const actionOf = (sent: Bag[], type: string, id: string): Bag | undefined =>
   sent.find((one) => one.type === type && one.toolCallId === id);
 
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
-
 /** The same calls read back from a transcript, with any frames that follow them. */
 async function restored(content: Bag[] = calls, after: Record<string, unknown>[] = []): Promise<Map<string, Bag>> {
   sdk.frames = [
@@ -399,13 +391,12 @@ it('gives a confirmation card the row line, not the CLI\'s title', async () => {
 });
 
 /*
- * When a tool call ran, live and restored.
+ * How long a tool call ran, live and restored.
  *
- * The protocol gives a call no time of its own, so the times ride in its
- * `_meta` and this plugin's clock stamps them: the ready for a call nobody is
- * asked about, the approval for one that is, and the result for the end. An
- * action carrying a `_meta` replaces the call's whole bag, so every action
- * after the start has to carry them again.
+ * The protocol gives a call no time of its own, so how long it ran rides its
+ * `_meta` at its completion, under the key VS Code's client reads it from, on
+ * this plugin's clock: from the ready for a call nobody is asked about, or the
+ * approval for one that is, to its result.
  */
 
 const bash = { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls -la', description: 'List files' } };
@@ -415,26 +406,18 @@ const result = (id: string, uuid: string): Record<string, unknown> => ({
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'a b c' }] },
 });
 
-it('says when a live call started, and when it ended', async () => {
+it('says how long a live call ran at its completion, and nothing of its times before', async () => {
   const { held, ready, sent } = await live([...opened, result('toolu_bash', 'u2')]);
   const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
-  // The start is said at the ready, before there is any end to say.
-  expect(metaOf(ready.get('toolu_bash'))['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(metaOf(ready.get('toolu_bash'))['ahpd.endedAt']).toBeUndefined();
-  // And both, with how long it took, on the completion and on the call itself.
-  expect(timed(complete)).toBe(true);
-  expect(timed(held.get('toolu_bash'))).toBe(true);
-  expect(metaOf(complete)).toMatchObject({
-    'ahpd.startedAt': metaOf(complete)['ahpd.startedAt'],
-    'ahpd.durationMs': expect.any(Number),
-  });
-  expect(Date.parse(metaOf(complete)['ahpd.endedAt'] as string))
-    .toBeGreaterThanOrEqual(Date.parse(metaOf(complete)['ahpd.startedAt'] as string));
-  // The kind a shell call carries rides along rather than being replaced.
-  expect(metaOf(complete).toolKind).toBe('terminal');
+  // The ready carries the kind alone.
+  expect(metaOf(ready.get('toolu_bash'))).toEqual({ toolKind: 'terminal' });
+  // The completion and the call itself carry how long it ran, beside the kind
+  // a shell call carries, on the key VS Code's client reads.
+  expect(metaOf(complete)).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
+  expect(metaOf(held.get('toolu_bash'))).toEqual(metaOf(complete));
 });
 
-it('carries the times on the progress a running call says', async () => {
+it('says no times on the progress a running call says', async () => {
   const frames = [
     ...opened,
     { type: 'system', parent_tool_use_id: null, uuid: 's1', subtype: 'task_progress', tool_use_id: 'toolu_bash', summary: 'Listing files' },
@@ -442,16 +425,14 @@ it('carries the times on the progress a running call says', async () => {
   ];
   const { sent } = await live(frames);
   const progress = actionOf(sent, 'chat/toolCallContentChanged', 'toolu_bash');
-  expect(metaOf(progress).progressMessage).toBe('Listing files');
-  expect(metaOf(progress)['ahpd.startedAt']).toEqual(expect.any(String));
-  // And the progress line is gone with the completion, which keeps the times.
-  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash')).progressMessage).toBeUndefined();
+  expect(metaOf(progress)).toEqual({ toolKind: 'terminal', progressMessage: 'Listing files' });
+  // And the progress line is gone with the completion, which says the duration.
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
-it('starts an approved call when it was approved, not at the ready before the question', async () => {
+it('measures an approved call from when it was approved, not from the ready before the question', async () => {
   let now = 1_700_000_000_000;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
-  const openedAt = new Date(now).toISOString();
   let held: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { held = resolve; });
   const { sent, session } = await live(opened, () => {
@@ -459,18 +440,14 @@ it('starts an approved call when it was approved, not at the ready before the qu
     void sdk.canUseTool?.('Bash', bash.input, { toolUseID: 'toolu_bash' });
   });
   now += 30_000;
-  const approvedAt = new Date(now).toISOString();
   session.confirm('toolu_bash', true);
   await settle();
-  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
-  expect(metaOf(sent.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === 'toolu_bash'))['ahpd.startedAt']).toBe(openedAt);
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(approvedAt);
   // The completion measures from the approval, not from the ready.
   sdk.pushed.push(result('toolu_bash', 'u2'));
   now += 1000;
   held?.();
   await settle();
-  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))['ahpd.durationMs']).toBe(1000);
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))['vscode.toolCallDurationMs']).toBe(1000);
   clock.mockRestore();
   sdk.hold = Promise.resolve();
 });

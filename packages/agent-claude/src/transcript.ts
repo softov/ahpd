@@ -1,7 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
-import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
+import { bag, str, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -286,6 +286,8 @@ const INTERRUPTED = '[Request interrupted by user';
 function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
+  /** When each call started, by id, as its own `tool_use` frame says: what its duration is measured from. */
+  const startedAt = new Map<string, string>();
   /** The calls a result was written for, by id. */
   const resulted = new Set<string>();
   /*
@@ -399,8 +401,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
             open.responseParts = [...(open.responseParts as Bag[]), part];
           }
         }
-        // When it ended, on the frame that carries its result.
-        call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
+        // How long it ran, to the frame that carries its result, on its `_meta`
+        // as VS Code's restored history carries it.
+        const meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), toolCallDurationMs(startedAt.get(callId), at));
+        if (meta !== undefined) call._meta = meta;
       }
       // A frame of tool results is part of the turn the prompt opened, so the
       // turn ends when the last of them was written.
@@ -483,7 +487,8 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const name = str(block.name) ?? 'tool';
         const given = bag(block.input);
         const input = toolInputOf(name, given);
-        const meta = withCallTimes(toolMetaOf(name), callTimes(at));
+        const meta = toolMetaOf(name);
+        startedAt.set(id, at);
         /*
          * Checked against the state it claims to be in, at the moment it is
          * built.
@@ -503,8 +508,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
           status: 'completed',
           ...(input !== undefined ? { toolInput: input } : {}),
           // The kind a live call carries, so a transcript read back off
-          // disk draws its shell commands as shell commands, and when the call
-          // started, which its own `tool_use` frame says.
+          // disk draws its shell commands as shell commands.
           ...(meta ? { _meta: meta } : {}),
           /*
            * Required on a completed call, all four of them.

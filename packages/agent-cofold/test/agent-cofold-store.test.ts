@@ -499,16 +499,13 @@ it('rebuilds a turn with its text, its reasoning and its tool call in order', as
   expect(call).toMatchObject({ toolCallId: 'call-1', toolName: 'lookup', status: 'completed', success: true });
   expect(call.pastTenseMessage).toBe('lookup');
   expect(call.content).toEqual([{ type: 'text', text: 'found x' }]);
-  // The timing rides `_meta`: AHP's tool-call states have no duration field.
-  expect(call._meta).toMatchObject({
-    'ahpd.startedAt': expect.any(String),
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
+  // How long it ran rides `_meta` under VS Code's key: AHP's tool-call states
+  // have no duration field.
+  expect(call._meta).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
   expect(parts[3]?.content).toBe('found it');
 });
 
-it('rebuilds a call whose run recorded a result but no start, with a start it worked back', async () => {
+it('rebuilds a call whose run recorded a result but no start, with the duration its result measured', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({
     script: [
@@ -538,17 +535,8 @@ it('rebuilds a call whose run recorded a result but no start, with a start it wo
 
   const parts = ((await agent.transcript?.('one'))?.[0]?.responseParts ?? []) as Bag[];
   const call = parts.find((one) => one.kind === 'toolCall')?.toolCall as Bag;
-  // The end and the duration are both on file, so the start is the end less
-  // the duration: three times rather than two and a gap.
-  expect(call._meta).toMatchObject({
-    toolKind: 'terminal',
-    'ahpd.startedAt': expect.any(String),
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
-  const meta = call._meta as Bag;
-  expect(Date.parse(meta['ahpd.endedAt'] as string) - Date.parse(meta['ahpd.startedAt'] as string))
-    .toBe(meta['ahpd.durationMs']);
+  // The completion measured the call, so the duration needs no start.
+  expect(call._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
 it('answers undefined for a session the store does not know and empty for one with nothing said', async () => {
