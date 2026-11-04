@@ -1,0 +1,76 @@
+---
+title: The checks by hand that wait, in order
+---
+
+# The checks by hand that wait, in order
+
+Every file in this folder is a check by hand. This file lists each one once, with who runs it and what it needs first. When a check passes, delete its file and its line here, in the same commit.
+
+Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e0e.
+
+## Softov, on this machine
+
+Restart the daemon on main first. Do them in this order.
+
+1. [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - 30 min, the four host/20261103-1620 plans.
+2. [bot-steer-checks.md](bot-steer-checks.md) - 10 min.
+3. [claude-0745-background-row-checks.md](claude-0745-background-row-checks.md) - 5 min.
+4. [host-109-ember-checks.md](host-109-ember-checks.md) - 5 min.
+5. [plugin-45-p2-review.md](plugin-45-p2-review.md) - 5 min, and the owner choice.
+6. [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
+7. [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
+8. [session-picker-checks.md](session-picker-checks.md) - 10 min.
+9. [host-123-engines-checks.md](host-123-engines-checks.md) - 10 min.
+10. [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
+11. [host-114-turn-cut-checks.md](host-114-turn-cut-checks.md) - 15 min, a Claude session with more than 50 turns.
+12. [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min.
+13. [host-122-agent-records-checks.md](host-122-agent-records-checks.md) - 15 min, steps 3 and 4.
+14. [plugin-71-sign-in-checks.md](plugin-71-sign-in-checks.md) - 15 min, an OpenRouter account.
+15. [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
+16. [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client.
+17. [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
+18. [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) - 30 min. Set the plugin's `connector` option to `devtunnel` first.
+19. [plugin-view-checks.md](plugin-view-checks.md) - 15 min, after plugin-1122.
+20. [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md) - 20 min, a second GitHub account, and an 8-hour wait for step 8.
+21. [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox.
+22. [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
+23. [vscode-checks.md](vscode-checks.md) - 40 min.
+24. [claude-resume-checks.md](claude-resume-checks.md) - 30 min, VS Code. Step 2 needs a way to give a bad key.
+25. [cofold-resume-checks.md](cofold-resume-checks.md) - 30 min, VS Code.
+26. [pi-resume-checks.md](pi-resume-checks.md) - 20 min, VS Code. A pi agent record may be needed first.
+27. [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
+28. [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, and users `alice` and `bob`.
+29. [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
+
+## Claude can run these on a test daemon
+
+Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
+
+- [usage-2011-meta-checks.md](usage-2011-meta-checks.md) - 10 min, curl only.
+- [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, one call through the proxy.
+- [proxy-05-model-checks.md](proxy-05-model-checks.md) - 10 min, curl only.
+- [proxy-06-endpoint-checks.md](proxy-06-endpoint-checks.md) - 20 min, curl only. It needs an `openai` and an `anthropic` connector, which do not exist yet.
+- [client-restart-checks.md](client-restart-checks.md) - 5 min. Softov watches ahpc reconnect.
+- [install-path-checks.md](install-path-checks.md) - 20 min. Steps 1, 2 and 4 to 6 use sudo and a test user. Step 3 is Softov at a GNOME login.
+
+## Softov's decision, nothing to run
+
+- [acp-19-records-follow-up.md](acp-19-records-follow-up.md) - a question about acp/19.
+- [plugin-58-icon-curation.md](plugin-58-icon-curation.md) - which icons to keep.
+
+## Another machine
+
+- [windows-machine-paths-checks.md](windows-machine-paths-checks.md) - the Windows 10 VM with Docker Desktop, 30 min.
+- [daemon-41-windows-checks.md](daemon-41-windows-checks.md) - Windows with Bun 1.3.14 and 1.3.13, 45 min.
+- [devcontainer-checks.md](devcontainer-checks.md) - VS Code on Windows, after plugin-1122, 45 min.
+- [daemon-31-service-checks.md](daemon-31-service-checks.md) - a Mac, the launchd sections, 25 min.
+- [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
+- [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.
+- [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - a Proxmox node, not named yet, 45 min.
+
+## Blocked
+
+- [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a hub refuses a node older than 0.14.1, and main is 0.14.0. Step 3's `ahpd restart` also fails on a hub that runs in the foreground: stop it with Ctrl+C and start it again.
+- [update-checks.md](update-checks.md) - needs a published version newer than 0.14.0. A release candidate goes to `next`, so use `ahpd update --version <rc>`.
+- [host-100-p2-review.md](host-100-p2-review.md) - fails until the problem `a-claude-session-from-vs-code-has-no-owner` is fixed.
+- [release.md](release.md) - its facts are from before #213 to #221, and it waits on the checks it names.
