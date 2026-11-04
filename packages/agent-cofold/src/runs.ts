@@ -63,7 +63,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // A turn a later one took the place of is in no history, as the reducer
     // keeps none of it, and its failure is not the chat's.
     const gone = ctx.replaced.delete(String(turn.id));
-    if (ending === 'error' && !gone) ctx.failed = why === undefined || why === '' ? 'The turn failed' : why;
+    if (ending === 'error' && !gone) ctx.error = why === undefined || why === '' ? 'The turn failed' : why;
     if (ending === 'error' && part !== undefined && Array.isArray(turn.responseParts)) {
       turn.responseParts.push(part);
     }
@@ -227,7 +227,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * cofold session, which is what continuing a finished conversation means.
    */
   const findPaused = async (): Promise<void> => {
-    if (ctx.closed) return;
+    if (ctx.disposed) return;
     const runs = await store.runs.list({ sessionId });
     const newest = runs[0];
     if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
@@ -255,8 +255,8 @@ export const createRuns = (ctx: SessionContext): Runs => {
     const asked = events.findLast((event) => (event.type === 'approval.requested' || event.type === 'input.requested')
       && event.requestId === paused.requestId);
     const afterSeq = asked === undefined ? (events.at(-1)?.seq ?? 0) : asked.seq - 1;
-    const live = resume({ agent: ctx.agentOf(ctx.settings), sessionId, runId: paused.runId, afterSeq });
-    if (ctx.closed) {
+    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq });
+    if (ctx.disposed) {
       live.cancel({ reason: 'the session closed' });
       return true;
     }
@@ -275,7 +275,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     if (paused === undefined) return;
     ctx.paused = undefined;
     const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
-    const live = resume({ agent: ctx.agentOf(ctx.settings), sessionId, runId: paused.runId, afterSeq: events.at(-1)?.seq ?? 0 });
+    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq: events.at(-1)?.seq ?? 0 });
     live.cancel({ reason: 'a new message took its place' });
     await live.outcome.catch(() => undefined);
   };
@@ -286,7 +286,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     status: (): number => statusOf({
       waiting: pending.size > 0,
       active: ctx.active !== undefined,
-      failed: ctx.failed !== undefined,
+      failed: ctx.error !== undefined,
     }),
   };
 };

@@ -59,17 +59,18 @@ export interface Turns {
    */
   resumeTurn: (turnId: string) => boolean;
   /**
-   * Whether the model the running turn was built on takes an image.
+   * Whether the model the running turn was built on takes an image, the
+   * spec's `supportsVision`.
    *
    * Read by `steer`, which has no agent of its own: a correction reaches the
    * model the turn is already running on, and a picture sent to one that
    * refuses images is a turn that fails rather than a correction.
    */
-  takesImages: () => boolean;
+  supportsVision: () => boolean;
 }
 
 export const createTurns = (ctx: SessionContext): Turns => {
-  const { start, options, harness, sessionId, where, store, settings, turns } = ctx;
+  const { start, options, harness, sessionId, where, store, turns } = ctx;
 
   /**
    * Whether the model the turn now running was built on takes an image.
@@ -77,7 +78,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * Set where the agent is built, because that is the one place the adapter in
    * force is known, and read by `steer` for a message sent into that same run.
    */
-  let takesImages = false;
+  let supportsVision = false;
 
   /**
    * The values a turn runs on, and the model reference they resolve to.
@@ -87,7 +88,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * in force, then the plugin option, then the harness file.
    */
   const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {
-    const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
+    const values: Record<string, unknown> = model === undefined ? ctx.values : { ...ctx.values, model: model.id };
     return { values, reference: modelReferenceOf(options, values, harness) };
   };
 
@@ -168,9 +169,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
     from?: MessageFrom,
     attachments?: MessageAttachment[],
   ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
-    if (ctx.closed || ctx.active !== undefined) return undefined;
+    if (ctx.disposed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
-    ctx.failed = undefined;
+    ctx.error = undefined;
     const { values, reference } = valuesFor(model);
     const began = Date.now();
     // No part yet: each is opened when the model starts writing the block it holds.
@@ -250,7 +251,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     }
     // Before the run, so a correction sent the moment the turn appears is read
     // on the model this turn is about to run on.
-    takesImages = agent.model.features.images;
+    supportsVision = agent.model.features.images;
 
     const launch = (prompt: string | ContentPart[]): void => {
       let live: ReturnType<typeof run>;
@@ -295,7 +296,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // A turn somebody else settled while the files were being read is not
         // this call's to start, and not this call's to fail either.
         if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
-        if (ctx.cancelRequested || ctx.closed) {
+        if (ctx.cancelRequested || ctx.disposed) {
           await ctx.apply(mapping, turnId, stopped(turnId));
           return;
         }
@@ -423,7 +424,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * drops them with the prompt. The host said the client's resume.
    */
   const resumeTurn = (turnId: string): boolean => {
-    if (ctx.closed || ctx.active !== undefined || ctx.waiting.length > 0 || ctx.opening !== undefined) return false;
+    if (ctx.disposed || ctx.active !== undefined || ctx.pendingTurns.length > 0 || ctx.opening !== undefined) return false;
     const last = turns.at(-1);
     if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
     const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
@@ -447,7 +448,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       ctx.active = reopened;
       ctx.resumedFrom = resumedFrom;
       ctx.cancelRequested = false;
-      ctx.failed = undefined;
+      ctx.error = undefined;
       const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
       ctx.activeMapping = mapping;
       void ctx.resumePaused(turnId, mapping);
@@ -482,7 +483,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     ctx.active = again;
     ctx.resumedFrom = resumedFrom;
     ctx.cancelRequested = false;
-    ctx.failed = undefined;
+    ctx.error = undefined;
     const message = bag(again.message);
     const named = bag(message.model);
     const id = str(named.id);
@@ -545,9 +546,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
     attachments?: MessageAttachment[],
     options?: TurnOptions,
   ): void => {
-    const shown = ctx.waiting.at(-1)?.turnId ?? (ctx.cancelRequested ? undefined : str(ctx.active?.id));
+    const shown = ctx.pendingTurns.at(-1)?.turnId ?? (ctx.cancelRequested ? undefined : str(ctx.active?.id));
     if (shown !== undefined) ctx.replaced.add(shown);
-    ctx.waiting.push({ turnId, text, model, from, attachments, options });
+    ctx.pendingTurns.push({ turnId, text, model, from, attachments, options });
     sendNext();
   };
 
@@ -571,8 +572,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
       void ctx.opening.then(sendNext, sendNext);
       return;
     }
-    if (ctx.closed || ctx.active !== undefined) return;
-    const next = ctx.waiting.shift();
+    if (ctx.disposed || ctx.active !== undefined) return;
+    const next = ctx.pendingTurns.shift();
     if (next === undefined) return;
     const { turnId, text, model, from, attachments, options } = next;
     if (ctx.refused !== undefined) {
@@ -597,6 +598,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     beginTurn,
     resumeTurn,
     sendNext,
-    takesImages: () => takesImages,
+    supportsVision: () => supportsVision,
   };
 };

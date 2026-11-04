@@ -192,13 +192,13 @@ export function cofoldSession(
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
-   * The config in force, by key.
+   * The config values in force, by key.
    *
    * `session/configChanged` merges into this, and the agent for the next turn
    * is built from it, so a session-mutable key changes what runs rather than
    * being recorded and ignored.
    */
-  const settings: Record<string, unknown> = { ...start.settings };
+  const values: Record<string, unknown> = { ...start.settings };
 
   /*
    * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
@@ -220,22 +220,22 @@ export function cofoldSession(
     editing,
     pending,
     points,
-    settings,
+    values,
     setModifiedAt,
     refreshOptions,
     offered: start.tools ?? [],
     active: undefined,
-    waiting: [] as SessionContext['waiting'],
+    pendingTurns: [] as SessionContext['pendingTurns'],
     replaced: new Set<string>(),
     withdrawn: new Set<string>(),
     handle: undefined,
     activeMapping: undefined,
     cancelRequested: false,
-    failed: undefined,
+    error: undefined,
     title: 'Cofold session',
     provisional: false,
     modified: new Date().toISOString(),
-    closed: false,
+    disposed: false,
     opening: undefined,
     paused: undefined,
     resumedFrom: undefined,
@@ -257,7 +257,7 @@ export function cofoldSession(
    * session. Nothing else in the session reads the store first, so this is the
    * one deferral for all three.
    */
-  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.closed) {
+  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.disposed) {
     const pending = (async (): Promise<void> => {
       await ctx.cut();
       if (start.resume !== undefined) await ctx.findPaused();
@@ -290,9 +290,9 @@ export function cofoldSession(
      * answer a turn, and an empty list is the form of that.
      */
     models: () => {
-      const listed = catalogue(settings, start.credentials ?? {}).map(rowOf);
+      const listed = catalogue(values, start.credentials ?? {}).map(rowOf);
       if (listed.length > 0) return listed;
-      const id = str(settings.model) ?? options.model ?? options.adapter?.modelId;
+      const id = str(values.model) ?? options.model ?? options.adapter?.modelId;
       return id === undefined ? [] : [{ id, name: id }];
     },
     agentId: () => sessionId,
@@ -353,7 +353,7 @@ export function cofoldSession(
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits.
-      config: { schema: start.schema(), values: { ...settings } },
+      config: { schema: start.schema(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -401,11 +401,11 @@ export function cofoldSession(
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
      */
     abort: () => {
-      ctx.waiting.length = 0;
+      ctx.pendingTurns.length = 0;
       ctx.steering = undefined;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
-      ctx.stop('the client stopped the turn');
+      ctx.abort('the client stopped the turn');
     },
 
     /**
@@ -443,7 +443,7 @@ export function cofoldSession(
       ctx.steering = { id, message };
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
-        : partsFor(text, attachments, ctx.takesImages())
+        : partsFor(text, attachments, ctx.supportsVision())
           .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
       return submitted.then(
         () => {
@@ -509,7 +509,7 @@ export function cofoldSession(
       const declared = bag(bag(start.schema()).properties);
       if (declared[key] === undefined) return `${provider}: ${key} is not a config key this backend takes`;
       if (typeof value !== 'string') return `${provider}: ${key} takes a string`;
-      settings[key] = value;
+      values[key] = value;
       return true;
     },
 
@@ -520,11 +520,11 @@ export function cofoldSession(
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     close: () => {
-      ctx.closed = true;
-      ctx.stop('the session closed');
+      ctx.disposed = true;
+      ctx.abort('the session closed');
     },
   };
 }

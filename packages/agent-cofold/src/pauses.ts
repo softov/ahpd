@@ -16,7 +16,7 @@ const DECLINED = 'The person declined this action';
  * already a string or a list is taken as it is, so a caller that hands over
  * cofold's own shape is not unwrapped into nothing.
  */
-const answersOf = (answers: Bag): Record<string, string | string[]> => {
+const answersOf = (given: Bag): Record<string, string | string[]> => {
   /** One value as cofold reads it, or nothing for a shape it would refuse. */
   const valueOf = (value: unknown): string | string[] | undefined => {
     const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
@@ -29,19 +29,20 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
     if (Array.isArray(raw)) return strings(raw);
     return undefined;
   };
-  const said: Record<string, string | string[]> = {};
-  for (const [id, value] of Object.entries(answers)) {
+  const answers: Record<string, string | string[]> = {};
+  for (const [id, value] of Object.entries(given)) {
     const one = valueOf(value);
     // A skipped or shapeless answer is left out rather than sent empty, which
     // cofold's own validation would refuse the whole form for.
-    if (one !== undefined) said[id] = one;
+    if (one !== undefined) answers[id] = one;
   }
-  return said;
+  return answers;
 };
 
 /** What a stopped turn offers the other areas. */
 export interface Pauses {
-  stop: (reason: string) => void;
+  /** Stop the running turn's run, settling what it waits on, as VS Code's agent aborts a turn. */
+  abort: (reason: string) => void;
   /**
    * Answer an approval the owner's rules already allow, and say whether it did.
    *
@@ -98,7 +99,7 @@ export const createPauses = (
    * "The turn was stopped" - and ends the run cancelled, whether the run was
    * working or waiting on a person: one handle serves both.
    */
-  const stopNow = (reason: string): void => {
+  const abortNow = (reason: string): void => {
     // The entries follow the chat's state: the turn's end takes down every
     // entry of the chat that no longer stands.
     for (const held of [...pending.values()]) ctx.activeMapping?.settle(held.requestId);
@@ -106,7 +107,7 @@ export const createPauses = (
     ctx.handle?.cancel({ reason });
   };
 
-  const stop = (reason: string): void => {
+  const abort = (reason: string): void => {
     /*
      * A client-run call is settled here too, even though a stopped turn's
      * abort means the model will not read the result: the entry must not
@@ -122,12 +123,12 @@ export const createPauses = (
      * nothing. It waits for the same opening every turn waits for and then
      * stops whatever handle that left behind.
      */
-    const waiting = ctx.opening;
-    if (waiting !== undefined) {
-      void waiting.then(() => stopNow(reason), () => stopNow(reason));
+    const opening = ctx.opening;
+    if (opening !== undefined) {
+      void opening.then(() => abortNow(reason), () => abortNow(reason));
       return;
     }
-    stopNow(reason);
+    abortNow(reason);
   };
 
   /**
@@ -168,7 +169,7 @@ export const createPauses = (
   };
 
   return {
-    stop,
+    abort,
     autoApprove,
     methods: {
       /**
@@ -188,11 +189,11 @@ export const createPauses = (
         if (held === undefined) return false;
         const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
         /*
-         * The tool's name as the entry was built with it. A question rebuilt by
-         * a replay may still carry the session choice, so the rule is read here
-         * rather than assumed from the options.
+         * The tool's name as the request was built with it. A question rebuilt
+         * by a replay may still carry the session choice, so the rule is read
+         * here rather than assumed from the options.
          */
-        const called = bag(held.entry.toolCall).toolName;
+        const called = bag(held.request.toolCall).toolName;
         const matched = typeof called === 'string' && start.getAutoApproval?.('tool', ruleName(ctx.offered, called)) === 'ask';
         /*
          * A decline ends the call without a result, so the file it announced as

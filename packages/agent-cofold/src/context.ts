@@ -9,7 +9,7 @@ import type { Pauses } from './pauses.js';
 import type { Turns } from './turns.js';
 
 /** A turn handed while a run held another: what `sendMessage` was handed. */
-export interface Waiting {
+export interface PendingTurn {
   turnId: string;
   text: string;
   model?: Chosen | undefined;
@@ -59,7 +59,8 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
    */
   withdrawn: Set<string>;
-  settings: Record<string, unknown>;
+  /** The config values in force, by key, which the next turn's agent is built from. */
+  values: Record<string, unknown>;
   /**
    * Set the chat's `modifiedAt`, where the protocol's reducer sets it and
    * nowhere else: to a turn's start as it starts, and to its start plus its
@@ -89,10 +90,11 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    * The turns handed while a run held another, in the order they came, each
    * run once the turn in front of it is over: one run reads the session at a
    * time, as the reference agent runs each send after the one before it. The
-   * host said each start, so the turn it took the place of runs on here.
+   * host said each start, so the turn it took the place of runs on here. VS
+   * Code's Copilot agent holds such sends as its pending turns.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    */
-  waiting: Waiting[];
+  pendingTurns: PendingTurn[];
   /** The turns a later one took the place of, which run on and end in no history. */
   replaced: Set<string>;
   /**
@@ -108,13 +110,14 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   activeMapping: TurnMapping | undefined;
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   cancelRequested: boolean;
-  /** What the last turn failed with, or nothing. Cleared when a turn starts. */
-  failed: string | undefined;
+  /** The error the last turn failed with, or nothing. Cleared when a turn starts. */
+  error: string | undefined;
   title: string;
   /** Whether the title is one a local command suggested, which the first real message replaces. */
   provisional: boolean;
   modified: string;
-  closed: boolean;
+  /** Whether the session was disposed, after which no turn starts. */
+  disposed: boolean;
   /**
    * Whether the session's cut, and the lookup of a run a restart left paused,
    * are still being made.

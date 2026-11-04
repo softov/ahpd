@@ -149,10 +149,10 @@ const callPartOf = (
  * subscription already holds. `content` and `error` are where a client looks
  * for what happened, and a failed call keeps both.
  */
-const completeCall = (held: Bag, result: ToolResultPart, said: string): void => {
+const completeCall = (held: Bag, result: ToolResultPart, pastTenseMessage: string): void => {
   held.status = 'completed';
   held.success = !result.isError;
-  held.pastTenseMessage = said;
+  held.pastTenseMessage = pastTenseMessage;
   held.confirmed = held.confirmed ?? 'not-needed';
   if (result.content !== '') held.content = [{ type: 'text', text: result.content }];
   if (result.isError) held.error = { message: result.content === '' ? 'The tool failed' : result.content };
@@ -166,8 +166,8 @@ interface Building {
   parts: Bag[];
   /** The calls of this turn, by call id, so a result finds the part it closes. */
   calls: Map<string, Bag>;
-  /** What each of those calls runs on, by call id, which its result is titled by too. */
-  said: Map<string, string>;
+  /** Each of those calls' invocation message, what it runs on, by call id, which its result is titled by too. */
+  invocationMessages: Map<string, string>;
   usage: WireUsage | undefined;
   state: WireState;
   duration: number | undefined;
@@ -332,7 +332,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
       },
       parts: [],
       calls: new Map(),
-      said: new Map(),
+      invocationMessages: new Map(),
       usage: usage.get(message.id),
       state: ending.get(message.id) ?? 'complete',
       duration: duration.get(message.id),
@@ -413,7 +413,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
-          live.said.set(part.callId, describe(part.name, subject.get(part.callId)));
+          live.invocationMessages.set(part.callId, describe(part.name, subject.get(part.callId)));
           live.parts.push({ kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
@@ -441,7 +441,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
         live.parts.push({ kind: 'systemNotification', content: part.content });
         continue;
       }
-      completeCall(held, part, live.said.get(part.callId) ?? part.name);
+      completeCall(held, part, live.invocationMessages.get(part.callId) ?? part.name);
     }
   }
 

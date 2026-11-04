@@ -36,10 +36,11 @@ export interface OpenRequest {
   kind: 'approval' | 'input';
   /** The tool call an approval is about, when the pause named one. */
   callId?: string;
-  /** The entry id a client was told, carried by the set and the removal. */
-  entryId: string;
-  /** The entry itself, held so a subscription snapshot can repeat it. */
-  entry: Bag;
+  /**
+   * The session's input request a client was told of, held so a subscription
+   * snapshot can repeat it; its id is what the set and the removal carry.
+   */
+  request: Bag;
   /** The choices an approval offered, which the person's `selectedOptionId` names one of. */
   options?: Bag[];
 }
@@ -294,7 +295,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * counts them all - but only once it is over. Held here so a client watches
    * the number grow, and sent as it stands rather than only at the end.
    */
-  let spent: Usage = ZERO_USAGE;
+  let usage: Usage = ZERO_USAGE;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
   /*
@@ -396,15 +397,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   /**
    * Take a request down, once.
    *
-   * The entry id is the one the set used, so a client matches the two by it;
-   * a request that is already gone answers nothing, which is what stops the
+   * The id is the one the set used, so a client matches the two by it; a
+   * request that is already gone answers nothing, which is what stops the
    * session's own removal and the resolution event's from being two.
    */
   const settle = (requestId: string): Bag | undefined => {
     const held = requests.get(requestId);
     if (held === undefined) return undefined;
     requests.delete(requestId);
-    return { type: 'session/inputNeededRemoved', id: held.entryId };
+    return { type: 'session/inputNeededRemoved', id: String(held.request.id) };
   };
 
   /** The actions one event means, with nothing else. */
@@ -474,8 +475,8 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // mistaken for this one having been silent.
           textStreamed = true;
           reasoningStreamed = true;
-          spent = addUsage(spent, event.usage);
-          return only([{ type: 'chat/usage', turnId, usage: usageOf(spent, options.model) }]);
+          usage = addUsage(usage, event.usage);
+          return only([{ type: 'chat/usage', turnId, usage: usageOf(usage, options.model) }]);
         }
         /*
          * The turn folded its own history into a summary.
@@ -638,18 +639,16 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             options: choices,
           });
 
-          const entryId = `approval:${event.requestId}`;
-          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
+          const request: Bag = { id: `approval:${event.requestId}`, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
           const opened: OpenRequest = {
             requestId: event.requestId,
             kind: 'approval',
             callId: event.callId,
-            entryId,
-            entry,
+            request,
             options: choices,
           };
           requests.set(event.requestId, opened);
-          actions.push({ type: 'session/inputNeededSet', request: entry });
+          actions.push({ type: 'session/inputNeededSet', request });
           return { actions, opened };
         }
 
@@ -662,23 +661,21 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
          */
         case 'input.requested': {
-          const entryId = `input:${event.requestId}`;
-          const request: Bag = {
+          const chatRequest: Bag = {
             id: event.requestId,
             message: 'The agent has a question',
             questions: event.questions.map(questionOf),
           };
-          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'chatInput', request };
+          const request: Bag = { id: `input:${event.requestId}`, chat: options.chatUri, kind: 'chatInput', request: chatRequest };
           const opened: OpenRequest = {
             requestId: event.requestId,
             kind: 'input',
             callId: event.callId,
-            entryId,
-            entry,
+            request,
           };
           requests.set(event.requestId, opened);
           return {
-            actions: [{ type: 'chat/inputRequested', request }, { type: 'session/inputNeededSet', request: entry }],
+            actions: [{ type: 'chat/inputRequested', request: chatRequest }, { type: 'session/inputNeededSet', request }],
             opened,
           };
         }
