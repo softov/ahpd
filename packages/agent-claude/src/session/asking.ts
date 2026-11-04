@@ -674,7 +674,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       if (!held) return false;
       const settle = held.settle;
       pending.delete(held.id);
-      ctx.inputNeededRemoved(held.id);
+      // The entry follows the chat's state: the host took it down when it said
+      // the confirmation that moved the call.
       // The call's own conversation, a worker's chat or the lead's, whose held
       // call moves with the confirmation the host said there.
       const scope = ctx.scopeOfCall(toolCallId) ?? ctx.mainScope;
@@ -768,7 +769,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const held = pending.get(requestId);
       if (!held) return false;
       pending.delete(requestId);
-      ctx.inputNeededRemoved(requestId);
+      // The entry follows the chat's state: the host took it down when it said
+      // the completion that answered the request.
 
       if (!accepted) {
         held.settle({ behavior: 'deny', message: 'The person declined to answer' });

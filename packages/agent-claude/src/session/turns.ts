@@ -503,11 +503,12 @@ export function createTurns(ctx: SessionContext): Turns {
       stops += 1;
       handed.length = 0;
       // A turn blocked on a person is stopped by answering no, not by leaving
-      // a promise nobody will settle. All of them, not the last one.
+      // a promise nobody will settle. All of them, not the last one. Their
+      // entries follow the chat's state: the host said the stop that ended the
+      // turn and took down every entry that no longer stands.
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
-        ctx.inputNeededRemoved(one.id);
       }
       // And the previews those questions were carrying. A call that will never
       // run leaves no file to show, so the text the host was holding goes with

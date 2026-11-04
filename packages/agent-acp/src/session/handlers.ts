@@ -824,7 +824,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const open = elicitations.get(requestId);
     if (open === undefined) return false;
     elicitations.delete(requestId);
-    emit('session', { type: 'session/inputNeededRemoved', id: requestId });
+    // The entry follows the chat's state: the host took it down when it said
+    // the completion that answered the request.
     const content = contentOf(answers, open.fields, open.typed);
     open.settle(accepted
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
@@ -876,17 +877,14 @@ export function createHandlers(ctx: SessionContext): Handlers {
    *
    * The protocol asks a client that stops a turn to answer what its server is
    * still blocked on, so the server is not left waiting on a person who has
-   * already said stop. Each entry takes its input-needed row with it: the
-   * question was asked and has now been answered, and a client still drawing it
-   * is offering a decision nobody can make.
-   *
-   * The settle is what a close does here, which is why both go through this.
+   * already said stop. The input-needed rows follow the chat's state: the host
+   * said the stop that ended the turn, and takes down every row of the chat
+   * that no longer stands, as VS Code's host keeps a session's entries by its
+   * chats' state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L120-L130
    */
   const settlePermissions = (): void => {
-    for (const held of permissions.values()) {
-      emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
-      held.settle('cancelled');
-    }
+    for (const held of permissions.values()) held.settle('cancelled');
     permissions.clear();
   };
 
@@ -904,7 +902,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const held = permissions.get(toolCallId);
     if (held === undefined) return false;
     permissions.delete(toolCallId);
-    emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
+    // The entry follows the chat's state: the host took it down when it said
+    // the confirmation that moved the call.
     const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
     const part = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     if (part !== undefined) {

@@ -110,7 +110,10 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   // reducer does (channels-chat/reducer.ts L172-L211 at v1.0.0).
   expect(sent.filter((one) => one.action.type === 'chat/toolCallConfirmed'
     && one.action.approved === false)).toHaveLength(0);
-  expect(sent.filter((one) => one.action.type === 'session/inputNeededRemoved')).toHaveLength(2);
+  // The entries follow the chat's state: the host took the first down with
+  // the confirmation it said and the second with the stop, so this session
+  // takes none down itself.
+  expect(sent.filter((one) => one.action.type === 'session/inputNeededRemoved')).toHaveLength(0);
   expect(session.status()).not.toBe(Status.InputNeeded);
   const turns = session.chatState().turns as Bag[];
   const parts = turns[turns.length - 1]?.responseParts as Bag[];

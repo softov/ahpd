@@ -787,15 +787,15 @@ it('closes a question the SDK cancels', async () => {
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_ask_cancelled')).toHaveLength(1);
 });
 
-it('removes an entry once when an answer came before the abort', async () => {
+it('takes no entry down for a confirmation, which the host takes down by the chat\'s state, nor at an abort after it', async () => {
   const { sent, session, abort } = await abortable('Bash', { command: 'ls' }, 'toolu_both');
   session.confirm('toolu_both', true);
   await settle();
   abort();
   await settle();
-  // The abort reaches a question the answer already took away, and adding
-  // nothing is the whole of what it does.
-  expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_both')).toHaveLength(1);
+  // The host said the confirmation that moved the call, and took the entry
+  // down with it; the abort reaches a question the answer already took away.
+  expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_both')).toHaveLength(0);
 });
 
 /*

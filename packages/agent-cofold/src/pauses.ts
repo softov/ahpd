@@ -99,10 +99,9 @@ export const createPauses = (
    * working or waiting on a person: one handle serves both.
    */
   const stopNow = (reason: string): void => {
-    for (const held of [...pending.values()]) {
-      const removal = ctx.activeMapping?.settle(held.requestId);
-      if (removal !== undefined) start.emit('session', removal);
-    }
+    // The entries follow the chat's state: the turn's end takes down every
+    // entry of the chat that no longer stands.
+    for (const held of [...pending.values()]) ctx.activeMapping?.settle(held.requestId);
     pending.clear();
     ctx.handle?.cancel({ reason });
   };
@@ -203,8 +202,9 @@ export const createPauses = (
          */
         if (!approved && held.callId !== undefined) ctx.settleEdit(held.callId);
         pending.delete(held.requestId);
-        const removal = ctx.activeMapping?.settle(held.requestId);
-        if (removal !== undefined) start.emit('session', removal);
+        // The entry follows the chat's state: the host took it down when it
+        // said the confirmation that moved the call.
+        ctx.activeMapping?.settle(held.requestId);
 
         /*
          * The row in this session's own snapshot moves with the decision.
@@ -241,8 +241,9 @@ export const createPauses = (
         const held = pending.get(requestId);
         if (held === undefined || held.kind !== 'input') return false;
         pending.delete(requestId);
-        const removal = ctx.activeMapping?.settle(requestId);
-        if (removal !== undefined) start.emit('session', removal);
+        // The entry follows the chat's state: the host took it down when it
+        // said the completion that answered the request.
+        ctx.activeMapping?.settle(requestId);
         route(accepted
           ? { type: 'answer', requestId, answers: answersOf(answers) }
           : { type: 'deny', requestId, reason: DECLINED });

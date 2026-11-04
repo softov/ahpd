@@ -546,6 +546,13 @@ All four are held in a map keyed by id, never in one slot: the CLI calls
 `canUseTool` per tool call, and an agent that fires two in parallel asks twice
 before either is answered.
 
+An entry is taken down by the chat's state, as VS Code's host keeps a session's
+entries by its chats: once a chat action said on the chat leaves an entry's call
+or question no longer waiting, the host says its `session/inputNeededRemoved`.
+So a client's confirmation, answer or stop takes the entries it settles down as
+the host says it, and the backend that is then handed it takes down none of its
+own.
+
 ### What a model row says
 
 `SessionModelInfo` carries `id`, `provider`, `name` and a per-model

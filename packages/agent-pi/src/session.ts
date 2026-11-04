@@ -395,8 +395,14 @@ export function piSession(
    * it does here, and the reference host's chat draws a call its turn left
    * behind as skipped rather than as one a person turned down.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   *
+   * A stop's entries follow the chat's state: the host said the stop that
+   * ended the turn and took down every entry of the chat that no longer
+   * stands, as VS Code's host keeps a session's entries by its chats' state. A
+   * close ends no turn, so `takeDown` takes each entry down here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L120-L130
    */
-  const releasePending = (why: string): void => {
+  const releasePending = (why: string, takeDown: boolean): void => {
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
       const part = mapping === undefined ? undefined : callPartOf(mapping, id);
@@ -406,7 +412,7 @@ export function piSession(
         // `tool_execution_start` gave it is forgotten with it.
         untime(bag(part.toolCall));
       }
-      emit('session', { type: 'session/inputNeededRemoved', id });
+      if (takeDown) emit('session', { type: 'session/inputNeededRemoved', id });
       held.settle({ block: true, reason: why });
     }
   };
@@ -1430,7 +1436,7 @@ export function piSession(
       // told the calls failed rather than left waiting on a stopped turn.
       calls.release('The turn was stopped');
       // A question nobody can answer any more is answered the same way.
-      releasePending('The turn was stopped');
+      releasePending('The turn was stopped', false);
       // The turn is closed on pi's settle rather than here, so what it had
       // already said stays in the transcript.
       void live?.abort().catch(() => { finish('cancelled'); });
@@ -1450,7 +1456,8 @@ export function piSession(
       const held = pending.get(toolCallId);
       if (held === undefined) return false;
       pending.delete(toolCallId);
-      emit('session', { type: 'session/inputNeededRemoved', id: held.id });
+      // The entry follows the chat's state: the host took it down when it said
+      // the confirmation that moved the call.
       const toolCall = bag(held.entry.toolCall);
       const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
       if (part !== undefined) {
@@ -1546,7 +1553,7 @@ export function piSession(
     close: () => {
       closed = true;
       calls.release('The turn was stopped');
-      releasePending('The turn was stopped');
+      releasePending('The turn was stopped', true);
       unsubscribe?.();
       unsubscribe = undefined;
       namePrompt();
