@@ -1,7 +1,7 @@
 ---
 title: A demo host shows every subject
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -64,8 +64,8 @@ pnpm demo -> examples/demo/main.ts -> createHost(demo agent, files, terminals, b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The demo host serves every subject](task-01-the-demo-host-serves-every-subject.md) | todo | - |
-| [02 - slow runs and fail ends in an error](task-02-slow-runs-and-fail-ends-in-error.md) | todo | 01 |
+| [01 - The demo host serves every subject](task-01-the-demo-host-serves-every-subject.md) | done | - |
+| [02 - slow runs and fail ends in an error](task-02-slow-runs-and-fail-ends-in-error.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -74,13 +74,13 @@ pnpm demo -> examples/demo/main.ts -> createHost(demo agent, files, terminals, b
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-04.
-- **Next action:** [task-01-the-demo-host-serves-every-subject.md](task-01-the-demo-host-serves-every-subject.md).
+- **Done so far:** planned and built 2026-11-04; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `notes` writes its notes into its folder, which is the folder the host serves, so a `write` is a git change there.
 
 ## Final verification checklist
 
-- [ ] `pnpm demo -- --port 9210 --path <scratch>` starts, and `ahpc --host ws://127.0.0.1:9210 session list` answers.
-- [ ] The tests in `packages/sdk/test/demo.test.ts` pass.
-- [ ] The repository's typecheck and tests pass.
+- [x] `pnpm demo -- --port 9210 --path <scratch>` starts, and `ahpc --host ws://127.0.0.1:9210 session list` answers.
+- [x] The tests in `packages/sdk/test/demo.test.ts` pass.
+- [x] The repository's typecheck and tests pass.

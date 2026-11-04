@@ -21,6 +21,8 @@
     "echo:bun": "bun --watch --conditions development examples/echo/main.ts",
     "notes": "node --watch --conditions development --import ./scripts/dev.mjs examples/notes/main.ts",
     "notes:bun": "bun --watch --conditions development examples/notes/main.ts",
+    "demo": "node --watch --conditions development --import ./scripts/dev.mjs examples/demo/main.ts",
+    "demo:bun": "bun --watch --conditions development examples/demo/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "boundary": "node scripts/boundary.mjs",
     "i18n": "node tools/i18n-check.mjs",

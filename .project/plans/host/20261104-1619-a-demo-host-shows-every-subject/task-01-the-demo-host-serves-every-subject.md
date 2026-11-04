@@ -1,6 +1,6 @@
 ---
 title: The demo host serves every subject
-status: todo
+status: done
 depends: []
 layer: "examples"
 refs:
