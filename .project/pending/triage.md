@@ -10,37 +10,36 @@ Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e
 
 ## Softov, on this machine
 
-Restart the daemon on main first. Do them in this order.
+Restart the daemon on main first. Do them from the top down.
 
-1. [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - 30 min, the four host/20261103-1620 plans.
-2. [bot-steer-checks.md](bot-steer-checks.md) - 10 min.
-3. [claude-0745-background-row-checks.md](claude-0745-background-row-checks.md) - 5 min.
-4. [host-109-ember-checks.md](host-109-ember-checks.md) - 5 min.
-5. [plugin-45-p2-review.md](plugin-45-p2-review.md) - 5 min, and the owner choice.
-6. [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
-7. [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
-8. [session-picker-checks.md](session-picker-checks.md) - 10 min.
-9. [host-123-engines-checks.md](host-123-engines-checks.md) - 10 min.
-10. [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
-11. [host-114-turn-cut-checks.md](host-114-turn-cut-checks.md) - 15 min, a Claude session with more than 50 turns.
-12. [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min.
-13. [host-122-agent-records-checks.md](host-122-agent-records-checks.md) - 15 min, steps 3 and 4.
-14. [plugin-71-sign-in-checks.md](plugin-71-sign-in-checks.md) - 15 min, an OpenRouter account.
-15. [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
-16. [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client.
-17. [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
-18. [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) - 30 min. Set the plugin's `connector` option to `devtunnel` first.
-19. [plugin-view-checks.md](plugin-view-checks.md) - 15 min, after plugin-1122.
-20. [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md) - 20 min, a second GitHub account, and an 8-hour wait for step 8.
-21. [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox.
-22. [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
-23. [vscode-checks.md](vscode-checks.md) - 40 min.
-24. [claude-resume-checks.md](claude-resume-checks.md) - 30 min, VS Code. Step 2 needs a way to give a bad key.
-25. [cofold-resume-checks.md](cofold-resume-checks.md) - 30 min, VS Code.
-26. [pi-resume-checks.md](pi-resume-checks.md) - 20 min, VS Code. A pi agent record may be needed first.
-27. [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
-28. [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, and users `alice` and `bob`.
-29. [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
+- [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - 20 min, three host/20261103-1620 plans.
+- [claude-0745-background-row-checks.md](claude-0745-background-row-checks.md) - 5 min.
+- [host-109-ember-checks.md](host-109-ember-checks.md) - 5 min.
+- [plugin-45-p2-review.md](plugin-45-p2-review.md) - 5 min, and the owner choice.
+- [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
+- [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
+- [session-picker-checks.md](session-picker-checks.md) - 10 min.
+- [host-123-engines-checks.md](host-123-engines-checks.md) - 10 min.
+- [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
+- [host-114-turn-cut-checks.md](host-114-turn-cut-checks.md) - 15 min, a Claude session with more than 50 turns.
+- [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min.
+- [host-122-agent-records-checks.md](host-122-agent-records-checks.md) - 15 min, steps 3 and 4.
+- [plugin-71-sign-in-checks.md](plugin-71-sign-in-checks.md) - 15 min, an OpenRouter account.
+- [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
+- [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client.
+- [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
+- [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) - 30 min. Set the plugin's `connector` option to `devtunnel` first.
+- [plugin-view-checks.md](plugin-view-checks.md) - 15 min, after plugin-1122.
+- [plugin-1054-device-sign-in-checks.md](plugin-1054-device-sign-in-checks.md) - 20 min, a second GitHub account, and an 8-hour wait for step 8.
+- [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox.
+- [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
+- [vscode-checks.md](vscode-checks.md) - 40 min.
+- [claude-resume-checks.md](claude-resume-checks.md) - 30 min, VS Code. Step 2 needs a way to give a bad key.
+- [cofold-resume-checks.md](cofold-resume-checks.md) - 30 min, VS Code.
+- [pi-resume-checks.md](pi-resume-checks.md) - 20 min, VS Code. A pi agent record may be needed first.
+- [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
+- [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, and users `alice` and `bob`.
+- [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
 
 ## Claude can run these on a test daemon
 
