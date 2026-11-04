@@ -139,6 +139,16 @@ const keyOf = (row: Policy, measure: Measure, pool: LimitPool, user?: string): s
   return pool === 'each' && user !== undefined ? `${key}/user:${user}` : key;
 };
 
+/**
+ * The measure a key is kept in: the segment before `/user:<id>` on an `each`
+ * key, and the last segment on any other.
+ */
+export const measureOf = (key: string): string => {
+  const member = key.indexOf('/user:');
+  const kept = member === -1 ? key : key.slice(0, member);
+  return kept.slice(kept.lastIndexOf('/') + 1);
+};
+
 /** The prefix every member of an `each` limit adds `user:<id>` to. */
 const memberPrefixOf = (row: Policy, measure: Measure): string =>
   `${baseOf(row)}/${measure}/user:`;
@@ -411,7 +421,7 @@ export const countCall = (keys: Iterable<string>, meter: MinuteMeter | undefined
   const counted = new Set<string>();
   for (const key of keys) {
     if (counted.has(key)) continue;
-    if (!COUNTED_AT_CALL.some((measure) => key.endsWith(`/${measure}`))) continue;
+    if (!(COUNTED_AT_CALL as readonly string[]).includes(measureOf(key))) continue;
     counted.add(key);
     meter.add(key, 1, at);
   }

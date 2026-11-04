@@ -9,7 +9,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { limitsOf } from './charge.js';
+import { limitsOf, measureOf } from './charge.js';
 import { refusalReason } from '../host.js';
 import { periodOf, shown, zoneOf } from './periods.js';
 import type { MinuteMeter } from './minute.js';
@@ -33,17 +33,17 @@ const METERED = ['usd', 'tokens', 'hours'] as const;
 type Metered = typeof METERED[number];
 
 /**
- * The measure a pool key is counted in, read from the end of the key.
+ * The measure a pool key is counted in, read with `measureOf`.
  *
- * `policy:A3/tokens` is counted in `tokens` and `policy:A3/calls` in `calls`,
- * and only the first is a measure the meter keeps: a call is counted when it is
- * allowed, because a call counted at its record lets a burst through.
+ * `policy:A3/tokens` and `policy:A3/tokens/user:alice` are counted in `tokens`,
+ * and `policy:A3/calls` in `calls`. Only the first is a measure the meter keeps:
+ * a call is counted when it is allowed, because a call counted at its record
+ * lets a burst through.
  */
 const meterKey = (pool: string): Metered | undefined => {
-  const slash = pool.lastIndexOf('/');
-  if (slash === -1) return undefined;
-  const last = pool.slice(slash + 1);
-  return METERED.find((one) => one === last);
+  if (!pool.includes('/')) return undefined;
+  const measure = measureOf(pool);
+  return METERED.find((one) => one === measure);
 };
 
 /** What one record costs, in the measures the port reports. */
