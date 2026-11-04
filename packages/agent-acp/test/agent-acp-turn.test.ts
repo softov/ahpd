@@ -594,6 +594,20 @@ it('raises the session entry a client reads when its call starts running', async
   });
 });
 
+it('names a client\'s call in its row by the name the client announced', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  await until(() => ended(p, chatUri));
+
+  // The tool the client has, as VS Code's agents strip their client tool
+  // server's prefix: the row and the entry name the same tool.
+  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'call-client-1');
+  expect(start?.action).toMatchObject({ toolName: 'openFile', contributor: { kind: 'client', clientId: 'a' } });
+  const set = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet');
+  expect((set?.action.request as Bag | undefined)?.toolCall).toMatchObject({ toolName: 'openFile', displayName: start?.action.displayName });
+});
+
 it('opens no entry for a call the agent has not started', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');

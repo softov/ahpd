@@ -19,6 +19,17 @@ import { bag, hostPathOf, str, strings, toolCallDurationMs, uriOf, withToolCallD
 import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
+/**
+ * The prefix every tool of the host's own MCP server is seen under.
+ *
+ * A client's tool rides that server with the host's own, because a server this
+ * plugin points the agent at is the one way an ACP agent can be handed a host
+ * tool at all. So an agent that names the tool it called spells it
+ * `mcp__ahp__<clientId>__<name>`, and one that has its own idea of the name
+ * says it in the title instead.
+ */
+export const HOST_SERVER = 'mcp__ahp__';
+
 /** The text of a content block, or nothing for a kind this bridge does not carry. */
 const textOf = (content: ContentBlock): string | undefined =>
   (content.type === 'text' ? content.text : undefined);
@@ -98,9 +109,18 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
    * some other client's tool is not what the agent said it reached for.
    */
   const owner = turn.ownerOf?.(named, title);
+  /*
+   * A client's tool by the name the client announced it with: the host MCP
+   * server's prefix and the client's own are taken off, as VS Code's agents
+   * strip their client tool server's prefix, so the row names a tool the
+   * client has.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+   */
+  const bare = name.startsWith(HOST_SERVER) ? name.slice(HOST_SERVER.length) : name;
+  const toolName = owner !== undefined && bare.startsWith(`${owner}__`) ? bare.slice(owner.length + 2) : name;
   const call: AcpCall = {
     toolCallId: update.toolCallId,
-    toolName: name,
+    toolName,
     displayName: title,
     readied: false,
     asked: false,
@@ -111,7 +131,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
-      toolName: name,
+      toolName,
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),

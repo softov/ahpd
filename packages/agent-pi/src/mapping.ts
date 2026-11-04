@@ -99,17 +99,25 @@ function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   return turn.calls.get(toolCallId) ?? openCall(turn, toolCallId, toolName);
 }
 
-/** A new row for a call, in the snapshot. */
+/**
+ * A new row for a call, in the snapshot.
+ *
+ * A client's tool is named by the name the client announced, off the
+ * `<clientId>__<name>` pi was offered, as VS Code's agents strip their client
+ * tool server's prefix, so the row names a tool the client has.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+ */
 function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
-  const call: PiCall = { toolCallId, toolName, displayName: toolName };
-  turn.calls.set(toolCallId, call);
   const owner = turn.ownerOf?.(toolName);
+  const shown = owner !== undefined && toolName.startsWith(`${owner}__`) ? toolName.slice(owner.length + 2) : toolName;
+  const call: PiCall = { toolCallId, toolName, displayName: shown };
+  turn.calls.set(toolCallId, call);
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {
       toolCallId,
-      toolName,
-      displayName: toolName,
+      toolName: shown,
+      displayName: shown,
       status: 'streaming',
       ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
     },
@@ -139,7 +147,7 @@ function startCall(turn: PiTurn, toolCallId: string, toolName: string, at?: numb
     type: 'chat/toolCallStart',
     turnId: turn.turnId,
     toolCallId: call.toolCallId,
-    toolName: call.toolName,
+    toolName: call.displayName,
     displayName: call.displayName,
     ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
     ...(meta === undefined ? {} : { _meta: meta }),

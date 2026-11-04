@@ -670,7 +670,7 @@ it('opens a row of its own for a request the agent never reported', async () => 
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({
     toolCallId: 'ahp-mcp-1',
-    toolName: 'a__openFile',
+    toolName: 'openFile',
     contributor: { kind: 'client', clientId: 'a' },
   });
   // The entry names the tool the client announced, not the one the agent was

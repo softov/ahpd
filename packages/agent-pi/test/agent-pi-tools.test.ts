@@ -183,6 +183,24 @@ it('raises the call on the session, and takes the entry down with the answer', a
   expect(needed(session).some((one) => one.id === raised[0]?.id)).toBe(false);
 });
 
+it('names a client\'s call in its row by the name the client announced', async () => {
+  const { session, pi, sent } = opened({
+    tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', { path: '/a.txt' });
+
+  // The tool the client has, as VS Code's agents strip their client tool
+  // server's prefix: the chat's row and the session's entry name one tool.
+  const start = sent.find((one) => one.action.type === 'chat/toolCallStart' && one.action.toolCallId === 'c1')?.action;
+  expect(start).toMatchObject({ toolName: 'open', displayName: 'open', contributor: { kind: 'client', clientId: 'editor' } });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ toolName: 'open', displayName: 'open' });
+});
+
 it('keeps the answer a client gives between the ready and the run', async () => {
   const { session, pi } = opened({
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],

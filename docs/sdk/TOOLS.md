@@ -62,7 +62,7 @@ A call with no session is the agent's own, with no delegation `_meta`, so no tur
 
 ## A client's tools
 
-A client announces them when it becomes active in a session, and this host offers them to the model beside its own. They are named `<clientId>__<name>`, because two clients in one session may both provide `openFile` and the model is offered one list. A client with no id, or a name that is not letters, digits, `_` or `-`, is dropped rather than offered as a tool the model will fail to call.
+A client announces them when it becomes active in a session, and this host offers them to the model beside its own. They are named `<clientId>__<name>`, because two clients in one session may both provide `openFile` and the model is offered one list. A call of one is drawn in its chat under the name its client announced, `openFile`, on every backend. A client with no id, or a name that is not letters, digits, `_` or `-`, is dropped rather than offered as a tool the model will fail to call.
 
 None of them runs here. The call is reported against the client that provides it, and only that client may complete it, which is what unblocks the agent. A client that never answers is one the call is failed on after `clientToolTimeoutMs`: ten minutes, or never when it is `0`. This host hands the number to the backend when the session starts rather than timing a call itself, so what a call waits is one number decided once.
 

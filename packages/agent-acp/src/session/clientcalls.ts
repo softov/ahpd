@@ -1,19 +1,9 @@
 import { createClientCalls as holder } from '@ahpd/sdk';
 import type { Bag, BoundTool, ClientCalls as Held, RunClientTool } from '@ahpd/sdk';
+import { HOST_SERVER } from '../mapping.js';
 import type { AcpCall } from '../types.js';
 import { bag } from './common.js';
 import type { SessionContext } from './context.js';
-
-/**
- * The prefix every tool of the host's own MCP server is seen under.
- *
- * A client's tool rides that server with the host's own, because a server this
- * plugin points the agent at is the one way an ACP agent can be handed a host
- * tool at all. So an agent that names the tool it called spells it
- * `mcp__ahp__<clientId>__<name>`, and one that has its own idea of the name
- * says it in the title instead.
- */
-const PREFIX = 'mcp__ahp__';
 
 /**
  * Where an agent names the call it is making, on a `tools/call`'s `_meta`.
@@ -101,7 +91,7 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    * ever offered.
    */
   const offered = (said: string): BoundTool | undefined => {
-    const bare = said.startsWith(PREFIX) ? said.slice(PREFIX.length) : said;
+    const bare = said.startsWith(HOST_SERVER) ? said.slice(HOST_SERVER.length) : said;
     return ctx.offering.find((one) => one.owner !== undefined && one.definition.name === bare);
   };
 
@@ -119,21 +109,21 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
   /**
    * Ask the client that owns a call to run it.
    *
-   * The call is held under the name the client announced its tool with - not
-   * the `<clientId>__<name>` the model was offered - because that is the name
-   * the client answers to and the name every sentence about the call uses.
+   * The call is held under the name the client announced its tool with, as
+   * the chat's row names it, because that is the name the client answers to
+   * and the name every sentence about the call uses. A tool the offering no
+   * longer holds is no call to ask anybody about.
    */
   const openCall = (call: AcpCall, turnId: string): void => {
     const owner = call.owner;
-    const tool = owner === undefined ? undefined : offered(call.toolName);
-    if (owner === undefined || tool === undefined) return;
+    if (owner === undefined || offered(`${owner}__${call.toolName}`)?.owner !== owner) return;
     calls.open({
       turnId,
       owner,
       toolCall: {
         toolCallId: call.toolCallId,
-        toolName: tool.definition.name.slice(owner.length + 2),
-        displayName: call.toolName,
+        toolName: call.toolName,
+        displayName: call.displayName,
         invocationMessage: call.displayName,
         // Nothing is being asked here: a call that runs at all has cleared its
         // confirmation gate.
@@ -159,16 +149,13 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    * The turn is the running one. A request arriving with no turn behind it is
    * still held, since the entry is what asks, and has no turn to draw it in.
    *
-   * The name is the one the agent was offered, `<clientId>__<name>`, and not
-   * the client's own: this call was never reported, so the only name anything
-   * here has for it is the one on the list the agent called it from - and it
-   * is that name the row is opened under, which is what lets `openCall` find
-   * the offering and hold the call.
+   * The row is named by the client's own name for the tool, as a reported
+   * call's row is.
    */
   const openOwn = (owner: string, name: string, input: string): string => {
     invented += 1;
     const toolCallId = `${OWN_PREFIX}${invented}`;
-    const shown = `${owner}__${name}`;
+    const shown = name;
     const call: AcpCall = {
       toolCallId,
       toolName: shown,

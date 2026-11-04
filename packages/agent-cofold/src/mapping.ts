@@ -183,6 +183,13 @@ const failurePart = (message: string, resumable = false): Bag => ({
 /** One tool call as it is held between its proposal and its result. */
 interface OpenCall {
   name: string;
+  /**
+   * The name the call's row draws: a client's tool by the name the client
+   * announced, off the `<clientId>__<name>` the model was offered, as VS Code's
+   * agents strip their client tool server's prefix.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+   */
+  shown: string;
   input: unknown;
   /**
    * What the call acts on, as cofold resolved it.
@@ -239,6 +246,10 @@ const questionOf = (question: AskQuestion): Bag => {
     ...title,
   };
 };
+
+/** A call's row name: a client's tool by the name the client announced, off the `<clientId>__<name>` it was offered as. */
+const shownName = (name: string, owner: string | undefined): string =>
+  (owner !== undefined && name.startsWith(`${owner}__`) ? name.slice(owner.length + 2) : name);
 
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, parts } = options;
@@ -503,6 +514,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'tool.proposed': {
           const displayName = options.displayNameOf(event.name);
           const owner = options.ownerOf(event.name);
+          const shown = shownName(event.name, owner);
           /*
            * The kind a client routes by and the line it draws, both off the
            * tool's name: a shell call is a terminal running a command rather
@@ -514,17 +526,18 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const intention = intentionOf(event.name, event.subject);
           const held: OpenCall = {
             name: event.name,
+            shown,
             input: event.input,
             subject: event.subject,
             owner,
             readied: false,
             awaited: false,
             invocation: undefined,
-            part: toolCallPart(event.callId, event.name, displayName, owner, meta, intention),
+            part: toolCallPart(event.callId, shown, displayName, owner, meta, intention),
           };
           open.set(event.callId, held);
           parts.push(held.part);
-          return only([toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention)]);
+          return only([toolStartAction(turnId, event.callId, shown, displayName, owner, meta, intention)]);
         }
 
         /*
@@ -540,6 +553,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
           const owner = held?.owner ?? options.ownerOf(event.name);
+          const shown = held?.shown ?? shownName(event.name, owner);
           const meta = toolMetaOf(event.name);
           // The ask carries the input but not the subject, so the one the
           // proposal resolved is what the row keeps, as the live title does.
@@ -548,7 +562,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call: Bag = held === undefined
             ? {
                 toolCallId: event.callId,
-                toolName: event.name,
+                toolName: shown,
                 displayName,
                 ...(intention !== undefined ? { intention } : {}),
                 ...(meta !== undefined ? { _meta: meta } : {}),
@@ -584,7 +598,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            */
           if (held === undefined) {
             parts.push({ kind: 'toolCall', toolCall: call });
-            actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention));
+            actions.push(toolStartAction(turnId, event.callId, shown, displayName, owner, meta, intention));
           } else {
             held.awaited = true;
             held.invocation = prompt;
@@ -666,7 +680,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? describe(held.name, held.subject);
+          call.invocationMessage = held.invocation ?? describe(held.shown, held.subject);
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
@@ -680,7 +694,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? describe(held.name, held.subject),
+            invocationMessage: held.invocation ?? describe(held.shown, held.subject),
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
@@ -696,14 +710,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
-            call.pastTenseMessage = describe(held.name, held.subject);
+            call.pastTenseMessage = describe(held.shown, held.subject);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
             // How long it ran, as cofold measured it from its start.
             call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), event.durationMs);
             meta = call._meta === undefined ? undefined : bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta)]);
+          return only([toolCompleteAction(turnId, event.callId, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta)]);
         }
 
         /*
@@ -724,14 +738,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
           call.success = false;
-          call.pastTenseMessage = describe(held.name, held.subject);
+          call.pastTenseMessage = describe(held.shown, held.subject);
           call.error = { message: event.reason };
           // A refusal can land before the call ever reached `running`; the
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner, held.subject)];
-          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.subject));
+            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.owner, held.subject)];
+          actions.push(toolCompleteAction(turnId, event.callId, held.shown, event.reason, true, held.subject));
           return only(actions);
         }
 

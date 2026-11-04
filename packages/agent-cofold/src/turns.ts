@@ -110,7 +110,13 @@ export const createTurns = (ctx: SessionContext): Turns => {
     chatUri: start.chatUri,
     parts,
     startedAt: began,
-    displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
+    // The title the host offered the tool under, else the name its row draws:
+    // a client's tool by the name the client announced.
+    displayNameOf: (name) => {
+      const tool = ctx.offered.find((one) => one.definition.name === name);
+      const owner = tool?.owner;
+      return tool?.definition.title ?? (owner !== undefined && name.startsWith(`${owner}__`) ? name.slice(owner.length + 2) : name);
+    },
     ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
     cancelled: () => ctx.cancelRequested,
     // The operator's rule, read when a call is put to a person: a matched

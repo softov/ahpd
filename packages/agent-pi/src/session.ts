@@ -580,11 +580,14 @@ export function piSession(
   const askBefore = async (event: ToolCallEvent): Promise<ToolCallEventResult | undefined> => {
     const id = event.toolCallId;
     const input = bag(event.input);
-    const displayName = event.toolName;
     const turnId = active === undefined ? '' : String(active.id);
     const part = mapping === undefined ? undefined : callPartOf(mapping, id);
     const row = part === undefined ? undefined : bag(part.toolCall);
     const owner = mapping?.ownerOf?.(event.toolName);
+    // The name the row draws: a client's tool by the name the client announced.
+    const displayName = owner !== undefined && event.toolName.startsWith(`${owner}__`)
+      ? event.toolName.slice(owner.length + 2)
+      : event.toolName;
     const contributor = owner === undefined
       ? {}
       : { contributor: { kind: 'client' as const, clientId: owner } };
@@ -609,7 +612,7 @@ export function piSession(
       const title = `Run ${displayName}?`;
       return await new Promise<ToolCallEventResult | undefined>((settle) => {
         ready({ confirmationTitle: title });
-        const toolCall = row ?? { toolCallId: id, toolName: event.toolName, displayName };
+        const toolCall = row ?? { toolCallId: id, toolName: displayName, displayName };
         const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
         pending.set(id, {
           id,
