@@ -30,6 +30,7 @@ A session an automation started says so after ahpd restarts. Its summary names t
 - The agent-claude suite passed: 57 files, 547 tests passed.
 - `packages/sdk/test/host-automation-origin.test.ts`: 1 passed.
 - `packages/sdk/test/host-local-turns.test.ts`: 28 passed, including a turn recorded with origin `automation` and a record without an origin.
+- Softov ran the automation origin check of `claude-1150-origin-and-notice-checks.md` on 2026-11-04, and it passed: after a restart, the session still names its automation.
 
 ## Departures from the plan
 

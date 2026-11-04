@@ -87,7 +87,7 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 - **Done so far:** both tasks are implemented.
 A session's automation origin is in the store and read back after a restart.
 Each turn's record holds the message origin it began with, put back on the transcript's turn before the fold.
-- **Next action:** none; `implemented.md` records what was verified.
+- **Next action:** none; `implemented.md` records what was verified. Softov checked it by hand on 2026-11-04.
 - **Watch out for:** `onTurnRecorded` records a turn again under a new id; carry the origin to that record.
 
 ## Final verification checklist

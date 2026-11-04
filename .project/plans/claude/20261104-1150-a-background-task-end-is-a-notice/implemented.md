@@ -31,6 +31,7 @@ The turn a background task's end starts in a Claude session is one notice turn, 
 - `packages/agent-claude/test/agent-claude-transcript.test.ts`: 19 passed, including a notice frame with a `<summary>` and one without.
 - `packages/sdk/test/host-local-turns.test.ts`: 29 passed, including a notice turn after a recorded turn.
 - `packages/agent-claude/test/agent-claude-late-steer.test.ts`: 21 passed, replaying `claude-folded-steer.jsonl` whose `task_notification` arrives inside a running turn.
+- Softov ran the notice turn check of `claude-1150-origin-and-notice-checks.md` on 2026-11-04, and it passed: the notice is one muted line, live and after a restart.
 
 ## Departures from the plan
 
