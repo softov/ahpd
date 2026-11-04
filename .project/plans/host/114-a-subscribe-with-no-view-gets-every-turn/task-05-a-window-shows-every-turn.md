@@ -1,6 +1,6 @@
 ---
 title: A window shows every turn
-status: implemented
+status: done
 depends:
   - task-03-claudes-chat-state-holds-every-turn.md
 layer: docs
