@@ -62,6 +62,7 @@ request -> daemon port or httpApi.port -> /mcp -> proxy (/v1, /models, root mode
 | No migration: a 0.14 config that served model calls through `httpApi` adds `modelApi: true`, and the release notes say so | (defaulted: turning it on by itself would undo the gate) | 03 |
 | The descriptions of `httpApi`, `modelApi` and `modelProxy` are one short sentence each, without "Set in the configuration file only" | Softov, 2026-11-04, "410 fucking chars for a simple description" | 01 |
 | Startup prints `models on http://<host>:<port>` when the model API has a listener of its own | (defaulted: the API and the routes print the same line) | 02 |
+| `ahpd config set <key> <value>` and `ahpd config unset <key>` write a daemon setting, and the update note uses them | Softov, 2026-11-04, chose "Add `ahpd config set`" | 04 |
 
 ## Proposed architecture
 
@@ -75,7 +76,8 @@ request -> daemon port or httpApi.port -> /mcp -> proxy (/v1, /models, root mode
 | --- | --- | --- |
 | [01 - the modelApi key](task-01-the-modelapi-key.md) | todo | - |
 | [02 - the model API is served on its gate](task-02-the-model-api-is-served-on-its-gate.md) | todo | 01 |
-| [03 - the docs say how to turn it on](task-03-the-docs-say-how-to-turn-it-on.md) | todo | 02 |
+| [03 - the docs say how to turn it on](task-03-the-docs-say-how-to-turn-it-on.md) | todo | 02, 04 |
+| [04 - ahpd config set writes a key](task-04-ahpd-config-set-writes-a-key.md) | todo | 01 |
 
 ## Risks and tradeoffs
 
