@@ -337,18 +337,20 @@ this repository a bug.
 [docs/sdk/AHP.md](AHP.md) has the same ground from the host's side, with what this
 host serves and what it does not.
 
-## The two examples
+## The examples
 
-Both are complete, both run, and `createHost` cannot tell either from `claude()`.
+All three are complete, all three run, and `createHost` cannot tell any of them from `claude()`.
 
 | | |
 | --- | --- |
 | [examples/echo](../../examples/echo) | The whole of `Agent` and `Session` with nothing behind it - no model, no subprocess, about two hundred lines. Its README is the contract in the order the host asks for it, and the three rules a session without tools has to keep |
 | [examples/notes](../../examples/notes) | The same with tools: one that runs without asking, one that waits to be allowed, and a question that is not about a tool. Its README is the rules for asking |
+| [examples/demo](../../examples/demo) | `notes` with something on every screen a client draws: models, customizations, automations, a turn that runs for a minute and one that fails. A client's screenshots are drawn from it |
 
 ```bash
 pnpm echo  -- --port 9200
 pnpm notes -- --port 9201
+pnpm demo  -- --port 9210
 ahpc --host ws://127.0.0.1:9201
 ```
 
