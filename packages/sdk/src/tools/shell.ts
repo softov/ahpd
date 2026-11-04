@@ -214,15 +214,37 @@ const zshDescription = (): string => [
   '- NEVER use status as a variable name (it is read-only in zsh). Use exit_code or ret instead',
 ].join('\n');
 
-/** The command and timeout every shell tool takes, as the reference declares them. */
+/**
+ * The command and timeout every shell tool takes, as the reference declares
+ * them.
+ *
+ * `mode` is this host's own field: the reference's description promises
+ * `mode=async` and its schema has no such parameter, so the model is offered
+ * the one its words already describe.
+ */
 const commandSchema = {
   type: 'object' as const,
   properties: {
     command: { type: 'string', description: 'The command to execute' },
     timeout: { type: 'number', description: 'Timeout in milliseconds (default 120000)' },
+    mode: {
+      type: 'string',
+      enum: ['sync', 'async'],
+      description: 'Run the command and answer with its output when it ends (sync, the default), or start it in the background and answer at once with the shell id (async). The end of an async command wakes this session.',
+    },
   },
   required: ['command'],
 };
+
+/** The line a row shows for a command: its first line, which is what a client has room for. */
+const rowLabel = (command: string): string => {
+  const line = command.split(/\r?\n/u, 1)[0]?.trim() ?? '';
+  return line === '' ? 'Shell command' : line;
+};
+
+/** The answer an async command is given: its shell, and what happens next. */
+const asyncAnswer = (shell: ManagedShell): string =>
+  `Shell ID: ${shell.id}\nThe command is running in the background. It is shown as a task in this chat, and this session is woken with its output when it ends.`;
 
 /**
  * The tool set for the shell this host runs.
@@ -260,6 +282,8 @@ export const shellTools = (executable: string = shellOf()): HostTool[] => {
       const shells = shellsOf(at);
       const command = typeof input.command === 'string' ? input.command : failed('Invalid input: command must be a string.');
       const timeoutMs = typeof input.timeout === 'number' ? input.timeout : DEFAULT_SHELL_COMMAND_TIMEOUT_MS;
+      const mode = input.mode ?? 'sync';
+      if (mode !== 'sync' && mode !== 'async') failed('Invalid input: mode must be "sync" or "async".');
       const turnId = at.turn();
       const ref = await shells.acquire({
         chat: at.chat,
@@ -267,6 +291,39 @@ export const shellTools = (executable: string = shellOf()): HostTool[] => {
         ...(at.toolCallId !== undefined ? { toolCallId: at.toolCallId } : {}),
         ...(at.opened === undefined ? {} : { opened: at.opened }),
       });
+      if (mode === 'async') {
+        /*
+         * Answered at once, and the shell stays the call's until the command
+         * ends: the row below is the only thing a client has to watch it by,
+         * and the shell it runs in is not offered to the next command.
+         */
+        const rows = at.background();
+        const id = `shell:${ref.shell.id}`;
+        rows.set({
+          kind: 'shell',
+          id,
+          label: rowLabel(command),
+          startedAt: new Date().toISOString(),
+          command,
+          terminal: ref.shell.terminalUri,
+          /*
+           * The stop is an interrupt. Under a pseudoterminal the byte is the
+           * line discipline's, which signals the foreground group; on pipes
+           * the store turns it into SIGINT itself. The row goes when the
+           * command has really ended, which is the report just below - a row
+           * taken down here would show work gone while it ran.
+           */
+          stop: async () => {
+            if (shells.lifecycle(ref.shell).status !== 'running') return false;
+            shells.send(ref.shell, '\u0003');
+            return true;
+          },
+        });
+        void shells.start(ref.shell, command)
+          .finally(() => { rows.remove(id); ref.release(); })
+          .catch(() => { /* a call already answered has nowhere to say it could not start */ });
+        return asyncAnswer(ref.shell);
+      }
       let release = true;
       try {
         const result = worded(ref.shell, await shells.run(ref.shell, command, timeoutMs), timeoutMs);

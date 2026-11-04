@@ -310,6 +310,29 @@ export function createShells(ctx: HostContext): HostShells {
     };
 
     /**
+     * Start one command, and answer once it has really ended.
+     *
+     * The call that started it is answered at once and keeps its hold on the
+     * shell, which is what keeps the next command off it until this settles.
+     * Nothing else ends the command: not the alternate screen, not a client
+     * narrowing the claim, and not a timeout, because no call waits for an
+     * answer any more.
+     */
+    const start = async (shell: ManagedShell, command: string): Promise<ShellCommandResult> => {
+      const entry = entryOf(shell);
+      if (entry === undefined) throw new Error(`There is no shell ${shell.id}`);
+      await spoken(entry);
+      return await executeShellCommand({
+        terminal: entry.terminal,
+        shellType: shell.shellType,
+        command,
+        untilItEnds: true,
+        listen: (onAction) => listen(entry, onAction),
+        log,
+      });
+    };
+
+    /**
      * Keep a shell held until the command in it ends.
      *
      * The reference waits for the shell's own end-of-command mark, or its exit.
@@ -365,6 +388,7 @@ export function createShells(ctx: HostContext): HostShells {
       shellType: () => shellType,
       acquire,
       run,
+      start,
       hold,
       get: (id) => entries.get(id)?.shell,
       list: () => [...entries.values()].filter(alive).map((entry) => entry.shell),

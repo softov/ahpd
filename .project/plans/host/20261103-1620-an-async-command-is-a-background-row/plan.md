@@ -74,7 +74,7 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | todo | - |
+| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | implemented | - |
 | [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | todo | 01 |
 
 ## Risks and tradeoffs
@@ -84,8 +84,8 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-async-command-is-a-row.md](task-01-an-async-command-is-a-row.md), after the agent terminal tool is built.
+- **Done so far:** task 01 is implemented: `mode` on the shell tool, `Shells.start` on the per-chat manager, `ToolCall.background()` built on the chat's held tasks, the row with its terminal and stop, and `packages/sdk/test/shell-async.test.ts`.
+- **Next action:** [task-02-an-async-commands-end-wakes-the-session.md](task-02-an-async-commands-end-wakes-the-session.md).
 - **Open questions:** none.
 - **Watch out for:** the end of a command must not call `setWake`.
 
