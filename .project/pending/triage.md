@@ -38,7 +38,7 @@ Restart the daemon on main first. Do them from the top down.
 Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 
 - [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, one call through the proxy.
-- [proxy-06-endpoint-checks.md](proxy-06-endpoint-checks.md) - 20 min, curl only. It needs an `openai` and an `anthropic` connector, which do not exist yet.
+- [proxy-06-endpoint-checks.md](proxy-06-endpoint-checks.md) - 10 min, curl only. Steps 1, 3, 4 and 6 are left: the OpenAI key needs credit, and OpenRouter lists no rerank model.
 - [install-path-checks.md](install-path-checks.md) - 20 min. Steps 1, 2 and 4 to 6 use sudo and a test user. Step 3 is Softov at a GNOME login.
 
 ## Softov's decision, nothing to run
