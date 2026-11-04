@@ -63,6 +63,24 @@ it('reports the folder it works in as a URI a host reads back as that folder', (
   }
 });
 
+it('holds the chat\'s modified time where the reducer moves it, a turn\'s start and then its end', async () => {
+  const { session } = opened();
+  session.sendMessage('t1', 'Fix the build');
+  await settled();
+  // The running turn's start, or the ended turn's start plus its duration.
+  const running = (session.chatState() as Bag).activeTurn as Bag | undefined;
+  const last = session.allTurns().at(-1) as Bag | undefined;
+  const at = running !== undefined
+    ? String(running.startedAt)
+    : new Date(Date.parse(String(last?.startedAt)) + Number(last?.duration)).toISOString();
+  expect(session.modifiedAt()).toBe(at);
+
+  // A rename is no turn's start or end, so the time stays.
+  await new Promise((r) => { setTimeout(r, 5); });
+  session.setTitle?.('Named by a person');
+  expect(session.modifiedAt()).toBe(at);
+});
+
 it('holds a title a command suggests until the first message replaces it', async () => {
   const { session, sent } = opened();
   // The host's seed for a `!` command, taken while the session has no title.

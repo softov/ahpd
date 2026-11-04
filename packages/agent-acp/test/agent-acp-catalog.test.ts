@@ -657,6 +657,21 @@ it('sends the mode again when the server is opened after a death', async () => {
   expect(configOf(session).values.permissionMode).toBe('code');
 });
 
+it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'stamped');
+  await runTurn(session, watch, 't1', 'hi');
+  const ended = session.allTurns().at(-1) as Bag;
+  const at = new Date(Date.parse(String(ended.startedAt)) + Number(ended.duration)).toISOString();
+  expect(session.modifiedAt()).toBe(at);
+
+  // A rename and a value set are no turn's start or end, so the time stays.
+  await new Promise((r) => { setTimeout(r, 5); });
+  session.setTitle?.('Named by a person');
+  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
+  expect(session.modifiedAt()).toBe(at);
+});
+
 it('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'outlived');

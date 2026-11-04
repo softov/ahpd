@@ -91,7 +91,7 @@ const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
   options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
 
 export function createHandlers(ctx: SessionContext): Handlers {
-  const { emit, provider, start, where, doing, touch, seeds, replay, permissions, terminals, elicitations } = ctx;
+  const { emit, provider, start, where, doing, seeds, replay, permissions, terminals, elicitations } = ctx;
 
   /**
    * One command the server offers, as the skill a client draws.
@@ -247,7 +247,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
         ctx.provisional = false;
         if (ctx.record !== undefined) ctx.record.title = said;
         emit('session', { type: 'session/titleChanged', title: said });
-        touch();
       }
       return;
     }
@@ -255,13 +254,11 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (update.sessionUpdate === 'current_mode_update') {
       if (ctx.modes !== undefined) ctx.modes = { ...ctx.modes, currentModeId: update.currentModeId };
       ctx.configChanged('permissionMode', update.currentModeId);
-      touch();
       return;
     }
     if (update.sessionUpdate === 'config_option_update') {
       ctx.offersChanged(update.configOptions);
       ctx.learnOffers(update.configOptions);
-      touch();
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {
@@ -660,7 +657,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
     });
     doing('Waiting on you');
-    touch();
     return answered;
   };
 
@@ -822,10 +818,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
       elicitations.delete(id);
       open.settle({ action: 'cancel' });
       doing('Thinking');
-      touch();
     }, { once: true });
     doing('Waiting on you');
-    touch();
     return answered;
   };
 
@@ -863,7 +857,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
       : { action: response === 'cancel' ? 'cancel' : 'decline' });
     doing('Thinking');
-    touch();
     return true;
   };
 
@@ -964,7 +957,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
     doing(approved ? 'Running' : 'Thinking');
-    touch();
     return true;
   };
 

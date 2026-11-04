@@ -88,9 +88,14 @@ export function acpSession(
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
 
-  const touch = (): void => {
-    modified = new Date().toISOString();
-    if (ctx.record !== undefined) ctx.record.modifiedAt = modified;
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => {
+    modified = at;
+    if (ctx.record !== undefined) ctx.record.modifiedAt = at;
   };
 
   /*
@@ -107,7 +112,7 @@ export function acpSession(
     emit,
     where,
     inside,
-    touch,
+    setModifiedAt,
     // What it is doing, on both channels, the way a session mirrors its chat.
     doing: activity.say,
     /*
@@ -219,7 +224,6 @@ export function acpSession(
       ctx.renamed = true;
       ctx.provisional = false;
       if (ctx.record !== undefined) ctx.record.title = said;
-      touch();
     },
     /*
      * A title a local command suggests, taken while the session has none of its
@@ -232,7 +236,6 @@ export function acpSession(
       ctx.provisional = true;
       if (ctx.record !== undefined) ctx.record.title = said;
       emit('session', { type: 'session/titleChanged', title: said });
-      touch();
     },
     modifiedAt: () => modified,
     workingDirectories: () => [uriOf(where)],

@@ -188,7 +188,12 @@ export function cofoldSession(
    */
   const settings: Record<string, unknown> = { ...start.settings };
 
-  const touch = (): void => { ctx.modified = new Date().toISOString(); };
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => { ctx.modified = at; };
 
   const ctx = {
     options,
@@ -204,7 +209,7 @@ export function cofoldSession(
     pending,
     points,
     settings,
-    touch,
+    setModifiedAt,
     refreshOptions,
     offered: start.tools ?? [],
     active: undefined,
@@ -304,7 +309,6 @@ export function cofoldSession(
       ctx.title = said;
       ctx.provisional = true;
       start.emit('session', { type: 'session/titleChanged', title: said });
-      ctx.touch();
     },
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(where)],
@@ -428,7 +432,6 @@ export function cofoldSession(
           if (ctx.withdrawn.delete(id)) return true;
           if (ctx.steering?.id === id) ctx.steering = undefined;
           start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-          ctx.touch();
           return true;
         },
         () => {
@@ -452,7 +455,6 @@ export function cofoldSession(
         ctx.withdrawn.add(id);
         ctx.steering = undefined;
       }
-      ctx.touch();
     },
 
     // The draft the host said, held for the chat's state.

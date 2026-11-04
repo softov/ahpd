@@ -290,14 +290,11 @@ export function piSession(
   let record: WatchedSession | undefined;
   let watched: WatchedTurn | undefined;
 
-  const touch = (): void => { modified = new Date().toISOString(); };
-
   /** A steering message pi read into the turn, taken out of the chat, its hand-off answered `true`. */
   const takenOut = (id: string): void => {
     emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
     answers.get(id)?.(true);
     answers.delete(id);
-    touch();
   };
 
   /**
@@ -641,7 +638,6 @@ export function piSession(
         });
         emit('session', { type: 'session/inputNeededSet', request: entry });
         activity.say(`Waiting on you: ${displayName}`);
-        touch();
       });
     }
     ready({ confirmed: 'not-needed' });
@@ -771,7 +767,13 @@ export function piSession(
       (turn.responseParts as Bag[]).push(part);
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
-    touch();
+    /*
+     * The chat's `modifiedAt` at a turn's end is its start plus its duration,
+     * as the protocol's reducer moves it, and a turn a later one took the
+     * place of ends in no state.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+     */
+    if (!gone) modified = new Date(Date.parse(String(turn.startedAt)) + duration).toISOString();
     // The steering the turn did not read, and the turn handed behind it, which
     // runs whatever the ending: each send is its own.
     handBack();
@@ -861,7 +863,6 @@ export function piSession(
         provisional = false;
         if (record !== undefined) record.title = named;
         emit('session', { type: 'session/titleChanged', title });
-        touch();
         return;
       }
 
@@ -1170,10 +1171,11 @@ export function piSession(
     };
     watched = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[], state: 'complete' };
     watchedTurns.push(watched);
+    // A turn's start is the chat's `modifiedAt`, as the reducer moves it.
+    modified = String(active.startedAt);
 
     titled(text);
     activity.say('Thinking');
-    touch();
     // What the host has to say on this turn, asked now that the turn exists.
     const told = (turnOptions?.instructions?.() ?? []).filter((one) => one.trim() !== '');
     // Whether the turn ended, or a stop came, while it prepared: a stop ends it unsent.
@@ -1264,7 +1266,6 @@ export function piSession(
       // pi keeps a name of its own, so the title survives outside this host -
       // a session renamed here is renamed in `pi` too.
       live?.rename(next);
-      touch();
     },
     /*
      * A title a local command suggests, taken while the session has none of its
@@ -1278,7 +1279,6 @@ export function piSession(
       provisional = true;
       if (record !== undefined) record.title = said;
       emit('session', { type: 'session/titleChanged', title });
-      touch();
     },
     modifiedAt: () => modified,
     workingDirectories: () => [uriOf(where)],
@@ -1430,7 +1430,6 @@ export function piSession(
       watched = watchedTurns.find((one) => one.turnId === turnId);
       if (watched !== undefined) watched.parts = parts;
       activity.say('Thinking');
-      touch();
 
       void (async () => {
         try {
@@ -1505,7 +1504,6 @@ export function piSession(
       // An allowed call is one a client now has to run, so it is asked here.
       if (approved) held.open?.();
       held.settle(approved ? undefined : { block: true, reason: DECLINED });
-      touch();
       return true;
     },
     answer: () => false,

@@ -194,6 +194,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       },
       responseParts: [],
     };
+    ctx.setModifiedAt(String(ctx.active.startedAt));
     /*
      * The first message titles a session nobody has named.
      *
@@ -272,7 +273,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
       }
       ctx.handle = live;
       ctx.read(live, mapping, turnId);
-      ctx.touch();
     };
 
     if (typeof input === 'string') {
@@ -464,7 +464,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const mapping = mappingOn(turnId, kept, began, reference);
     ctx.activeMapping = mapping;
     ctx.doing('Thinking');
-    ctx.touch();
     /*
      * A record that can no longer be used cannot run the turn either, and the
      * turn is open again by now: the sentence ends it rather than leaving a

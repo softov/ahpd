@@ -355,7 +355,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle: done });
         ctx.emitOn(scope, { type: 'chat/inputRequested', request });
         ctx.inputNeededSet(entry);
-        ctx.touch();
         return;
       }
 
@@ -454,7 +453,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
           : result),
       });
       ctx.inputNeededSet(entry);
-      ctx.touch();
     });
   };
 
@@ -722,7 +720,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
         : { behavior: 'deny', message: DECLINED });
-      ctx.touch();
       return true;
     },
 
@@ -750,8 +747,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const request = bag(held.entry.request);
       if (held.answers.size > 0) request.answers = Object.fromEntries(held.answers);
       else delete request.answers;
-      // Not `touch()`: typing is not a change to the conversation, and a
-      // catalogue that reordered itself on every keystroke would be unusable.
       return true;
     },
 
@@ -774,7 +769,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
 
       if (!accepted) {
         held.settle({ behavior: 'deny', message: 'The person declined to answer' });
-        ctx.touch();
         return true;
       }
       const said: Record<string, unknown> = {};
@@ -824,7 +818,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const updated = { questions: held.questions ?? [], answers: said };
       answeredInputs.set(held.id, updated);
       held.settle({ behavior: 'allow', updatedInput: updated });
-      ctx.touch();
       return true;
     },
   };

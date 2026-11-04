@@ -80,7 +80,9 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // here would keep the session reporting `InputNeeded` over nothing.
     pending.clear();
     ctx.cancelRequested = false;
-    ctx.touch();
+    // A turn's end moves the stamp to its start plus its duration, as the
+    // reducer's does; a turn a later one took the place of ends in no state.
+    if (!gone) ctx.setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + Number(turn.duration)).toISOString());
     return true;
   };
 
@@ -291,7 +293,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
     ctx.handle = live;
     read(live, mapping, turnId);
     ctx.activity.say('Waiting on you');
-    ctx.touch();
   };
 
   return {

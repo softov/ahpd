@@ -69,7 +69,7 @@ export function createTurns(ctx: SessionContext): Turns {
    * A message onto the CLI's own input stream, as what it is.
    *
    * Where a turn beginning and a message steering one reach the CLI: the wake
-   * and the touch happen in one place, and a message's attachments become the
+   * happens in one place, and a message's attachments become the
    * blocks the CLI takes whichever way it arrived. A message with none is the
    * string it always was. `uuid` is the id the CLI writes the prompt under and
    * names its answer by, and `owed` is the answer that is to come, held until
@@ -97,7 +97,6 @@ export function createTurns(ctx: SessionContext): Turns {
     });
     ctx.wake?.();
     ctx.wake = undefined;
-    ctx.touch();
   };
 
   /**
@@ -174,9 +173,9 @@ export function createTurns(ctx: SessionContext): Turns {
     turn.duration = Math.max(0, Date.now() - began);
     ctx.turns.push(turn);
     ctx.failed = why;
+    ctx.endedAt(turn);
     ctx.emit('chat', { type: 'chat/error', turnId, duration: turn.duration, part });
     ctx.doing(undefined);
-    ctx.touch();
     sendNext();
   };
 
@@ -292,6 +291,7 @@ export function createTurns(ctx: SessionContext): Turns {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     ctx.active = turn;
+    ctx.setModifiedAt(String(turn.startedAt));
     /*
      * What the host has to say on this turn, asked now that the turn exists.
      *
@@ -422,9 +422,7 @@ export function createTurns(ctx: SessionContext): Turns {
       if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
     },
 
-    // The draft the host said, held for the chat's state. Not `touch()`: typing
-    // is not a change to the conversation, and a catalogue that reordered
-    // itself on every keystroke would be unusable.
+    // The draft the host said, held for the chat's state.
     setDraft: (next) => { ctx.draft = next; },
 
     /*
@@ -477,7 +475,6 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
       ctx.doing('Thinking');
-      ctx.touch();
       const login = ctx.login;
       void (async () => {
         const restarted = await ctx.restartAt(turnId, cut, login);
@@ -549,10 +546,10 @@ export function createTurns(ctx: SessionContext): Turns {
         ctx.settleOpen(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
+        ctx.endedAt(turn);
         ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
       }
       ctx.doing(undefined);
-      ctx.touch();
     },
   };
 

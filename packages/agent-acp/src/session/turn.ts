@@ -27,7 +27,7 @@ export interface Turn {
 }
 
 export function createTurn(ctx: SessionContext): Turn {
-  const { emit, provider, start, inside, turns, doing, touch } = ctx;
+  const { emit, provider, start, inside, turns, doing } = ctx;
 
   /**
    * The first message titles a session nobody has named, and replaces a title
@@ -61,6 +61,7 @@ export function createTurn(ctx: SessionContext): Turn {
       },
       responseParts: [],
     };
+    ctx.setModifiedAt(String(ctx.active.startedAt));
     ctx.watchedTurn = {
       turnId,
       startedAt: String(ctx.active.startedAt),
@@ -174,7 +175,9 @@ export function createTurn(ctx: SessionContext): Turn {
         part: { kind: 'error', error: { errorType: failure.errorType, message } },
       });
     }
-    touch();
+    // A turn's end moves the stamp to its start plus its duration, as the
+    // reducer's does; a turn a later one took the place of ends in no state.
+    if (!gone) ctx.setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + duration).toISOString());
     // The turn handed behind this one runs whatever the ending: each send is its own.
     sendNext();
   };

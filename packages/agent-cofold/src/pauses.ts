@@ -225,7 +225,6 @@ export const createPauses = (
         route(approved
           ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
           : { type: 'deny', requestId: held.requestId, reason: DECLINED });
-        ctx.touch();
         return true;
       },
 
@@ -247,7 +246,6 @@ export const createPauses = (
         route(accepted
           ? { type: 'answer', requestId, answers: answersOf(answers) }
           : { type: 'deny', requestId, reason: DECLINED });
-        ctx.touch();
         return true;
       },
     },

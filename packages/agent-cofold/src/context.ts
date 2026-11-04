@@ -60,7 +60,12 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   withdrawn: Set<string>;
   settings: Record<string, unknown>;
-  touch: () => void;
+  /**
+   * Set the chat's `modifiedAt`, where the protocol's reducer sets it and
+   * nowhere else: to a turn's start as it starts, and to its start plus its
+   * duration as it ends.
+   */
+  setModifiedAt: (at: string) => void;
   /**
    * Read the record again, for a backend opened from one.
    *

@@ -7,8 +7,14 @@ import { summarize } from '../input.js';
 
 /** What this area offers the rest of the session. */
 export interface Parts {
-  /** Record that something happened just now. */
-  touch: () => void;
+  /**
+   * Set the chat's `modifiedAt`, where the protocol's reducer sets it and
+   * nowhere else: to a turn's start as it starts, and to its start plus its
+   * duration as it ends.
+   */
+  setModifiedAt: (at: string) => void;
+  /** Set the chat's `modifiedAt` to where an ended turn leaves it, its start plus its duration. */
+  endedAt: (turn: Bag) => void;
   /** Say what the session is doing, if that has changed. */
   doing: (said: string | undefined) => void;
   /** One line for a tool that is running. */
@@ -52,7 +58,15 @@ export interface Parts {
 }
 
 export function createParts(ctx: SessionContext): Parts {
-  const touch = (): void => { ctx.modified = new Date().toISOString(); };
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => { ctx.modified = at; };
+  const endedAt = (turn: Bag): void => {
+    setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + Number(turn.duration ?? 0)).toISOString());
+  };
 
   /** One line for a tool that is running. The name alone says too little. */
   const busyWith = (name: string, input: Bag): string => {
@@ -335,7 +349,7 @@ export function createParts(ctx: SessionContext): Parts {
   };
 
   return {
-    touch, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
+    setModifiedAt, endedAt, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
     newConversation, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
     stampStart, stampEnd, untimed, addFailure,
     // What it is doing, on both channels, the way a session mirrors its chat.

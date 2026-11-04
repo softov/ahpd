@@ -411,14 +411,11 @@ export function createConfig(ctx: SessionContext): Config {
       const refused = refusalOf(key, value);
       if (refused !== undefined) return refused;
       settings[key] = value;
-      ctx.touch();
       return true;
     }
     setting.push(key);
     try {
-      const taken = await applyConfig(await ctx.open(), key, value);
-      if (taken === true) ctx.touch();
-      return taken;
+      return await applyConfig(await ctx.open(), key, value);
     }
     catch (why: unknown) {
       // An open that failed is this key failing too.

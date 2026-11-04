@@ -276,7 +276,6 @@ export function createQuery(ctx: SessionContext): Query {
           const said = ctx.steering;
           ctx.steering = undefined;
           ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
-          ctx.touch();
         }
       }
       if (ctx.closed || mine !== bound) return;
@@ -302,10 +301,10 @@ export function createQuery(ctx: SessionContext): Query {
       const part = ctx.addFailure(turn, why);
       ctx.turns.push(turn);
       ctx.active = undefined;
+      ctx.endedAt(turn);
       ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
     }
     ctx.doing(undefined);
-    ctx.touch();
   };
 
   /**
@@ -1010,7 +1009,6 @@ export function createQuery(ctx: SessionContext): Query {
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
             if (turn === undefined) ctx.doing(undefined);
-            ctx.touch();
             ctx.sendNext();
             continue;
           }
@@ -1073,6 +1071,7 @@ export function createQuery(ctx: SessionContext): Query {
               : ctx.addFailure(turn, wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
             ctx.turns.push(turn);
             ctx.active = undefined;
+            ctx.endedAt(turn);
             ctx.ran = undefined;
             ctx.parts.clear();
             ctx.calling.clear();
@@ -1108,7 +1107,6 @@ export function createQuery(ctx: SessionContext): Query {
           // `Status.Error` and into the summary, and the next turn clears it.
           if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
           ctx.doing(undefined);
-          ctx.touch();
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed
@@ -1158,7 +1156,6 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.answering = undefined;
     ctx.steering = undefined;
     if (ctx.active !== undefined) failTurn('Claude SDK stream ended without a result message');
-    ctx.touch();
     ctx.sendNext();
   };
 

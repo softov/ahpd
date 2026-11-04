@@ -271,6 +271,25 @@ it('reports the folder a session works in as a URI a host reads back as that fol
   one.session.close();
 });
 
+it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'stamped', sweep);
+  one.session.sendMessage('t1', 'hello');
+  await until(() => ended(one.view));
+  const last = one.session.allTurns().at(-1) as Bag;
+  const at = new Date(Date.parse(String(last.startedAt)) + Number(last.duration)).toISOString();
+  expect(one.session.modifiedAt()).toBe(at);
+
+  // A provisional title and a steering message taken back are no turn's
+  // start or end, so the time stays.
+  await new Promise((r) => { setTimeout(r, 5); });
+  one.session.withdrawSteeringMessage?.('gone');
+  expect(one.session.modifiedAt()).toBe(at);
+  one.session.close();
+});
+
 it('holds a title a command suggests until the first message replaces it', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
