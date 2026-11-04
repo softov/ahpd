@@ -23,6 +23,8 @@ On 2026-11-04, three cases failed in the Windows job `windows (1/3)`, each once,
 
 #228 does not touch `packages/computer`, and #230 changes two docs pages only. Each case passes on Linux.
 
+The first rerun of #230's `windows (1/3)` failed another way: no case failed, and the unit run hit the `timeout 300` of [`code://.github/workflows/ci.yml`](../../.github/workflows/ci.yml#L104) with exit code 124.
+
 ## Cause
 
 Unknown. Each case waits on a process, a file or a timer, and the Windows runner is slower at each.
