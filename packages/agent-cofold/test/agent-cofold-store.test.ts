@@ -347,8 +347,11 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   // in the person's.
   const { root } = place();
   const home = join(root, 'home');
+  // `os.homedir()` reads `HOME` on POSIX and `USERPROFILE` on Windows.
   const was = process.env.HOME;
+  const wasProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
     const agent = backend(root, model, allowAll());
@@ -369,6 +372,8 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   finally {
     if (was === undefined) delete process.env.HOME;
     else process.env.HOME = was;
+    if (wasProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = wasProfile;
   }
 });
 

@@ -97,8 +97,11 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   // The home the folder is made under is this case's own, so nothing is made
   // in the person's.
   const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  // `os.homedir()` reads `HOME` on POSIX and `USERPROFILE` on Windows.
   const was = process.env.HOME;
+  const wasProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     const start: Start = {
       uri: 'ahp-session:/scratched',
@@ -116,6 +119,8 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   finally {
     if (was === undefined) delete process.env.HOME;
     else process.env.HOME = was;
+    if (wasProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = wasProfile;
     rmSync(home, { recursive: true, force: true });
   }
 });
