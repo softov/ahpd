@@ -134,14 +134,20 @@ describe('vscode/stopBackgroundWork', () => {
     expect(stops()).toBe(1);
   });
 
-  it('answers false when the stop rejects', async () => {
+  /*
+   * VS Code lets its runtime's rejection through, failing the request.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3444
+   */
+  it('fails the request when the stop rejects, as VS Code\'s', async () => {
     const { client, chat, seam, report } = await opened();
     report();
     seam().set(chat, shell({ stop: async () => { throw new Error('the harness is gone'); } }));
     await settle();
 
-    expect(await call(client, 'vscode/stopBackgroundWork', { chat, id: 'shell:1' }))
-      .toEqual({ result: { stopped: false } });
+    // Thrown as it is, which the wire answers as an internal error.
+    const answer = await call(client, 'vscode/stopBackgroundWork', { chat, id: 'shell:1' });
+    expect(answer).not.toHaveProperty('result');
+    expect(answer).toMatchObject({ message: 'the harness is gone' });
   });
 
   it('answers false for an unknown chat, an unknown id and a task with nothing to stop', async () => {

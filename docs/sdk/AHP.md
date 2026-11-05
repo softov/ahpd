@@ -1046,9 +1046,10 @@ and restores the session first, refusing one it cannot restore with -32001.
 `vscode/stopBackgroundWork` takes `{ chat, id }` and calls the stop the
 backend that reported the task gave - the row says it may be stopped under
 `_meta['vscode.stopBackgroundWork']`, and the answer is `{ stopped }`.
-An unknown chat, an unknown id, a task with nothing to stop and a stop that
-threw are the same `false`, because a client shows the same thing after each;
-an empty id or a `chat` that is not an AHP chat URI is `-32602`. The row is
+An unknown chat, an unknown id and a task with nothing to stop are the same
+`false`, because a client shows the same thing after each, and a stop that
+throws fails the request, as VS Code's host lets its runtime's rejection
+through; an empty id or a `chat` that is not an AHP chat URI is `-32602`. The row is
 left where it is, and the backend's own `remove` takes it down when the work
 has ended. The request needs `chat:cancel`.
 `getNetworkDiagnosticsInfo` reports the version the daemon gave, the platform,
