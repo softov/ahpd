@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { canvasResource } from './channels.js';
 import { isWebUrl } from '../weburl.js';
 import type { CanvasReference, CanvasState } from '@microsoft/agent-host-protocol';
@@ -199,6 +200,10 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     callable();
     check('updateCanvas', by, state);
     if (one.by !== by) throw new Error(`plugin ${by}: ${resource} was opened by ${one.by}`);
+    // A state the canvas holds already says nothing, as the reference installs
+    // and says a state only when it is not the one it holds.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1192-L1197
+    if (isDeepStrictEqual(one.state, state)) return;
     one.state = structuredClone(state);
     ctx.dispatch(resource, { type: 'canvas/stateChanged', canvas: one.state });
   };

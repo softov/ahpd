@@ -125,6 +125,23 @@ describe('the store', () => {
     expect(last?.action.canvases).toBeUndefined();
   });
 
+  /*
+   * The reference installs and says a canvas's state only when it is not the
+   * one it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1192-L1197
+   */
+  it('says nothing for an update that leaves the state as it was, and says one that moves it', () => {
+    const { store, said } = recording();
+    const resource = store.open(CHAT, STATE, 'fixture');
+    const before = said.length;
+    store.update(resource, { ...STATE }, 'fixture');
+    expect(said.slice(before)).toEqual([]);
+    store.update(resource, { ...STATE, title: 'Board, moved' }, 'fixture');
+    expect(said.slice(before)).toEqual([
+      { channel: resource, action: { type: 'canvas/stateChanged', canvas: { ...STATE, title: 'Board, moved' } } },
+    ]);
+  });
+
   it('refuses an update or a close from a plugin that did not open the canvas', () => {
     const { store } = recording();
     const resource = store.open(CHAT, STATE, 'one');
