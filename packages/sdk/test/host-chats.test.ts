@@ -1407,8 +1407,10 @@ describe('more than one chat in a session', () => {
         client.handle({ method: 'moveChat', params: { channel, destination } });
 
       // The chat the session hands out, which the protocol says MUST NOT move.
+      // Each refusal is VS Code's: its words, and its reason in `data`.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
       await expect(ask(first, { kind: 'session', session: LIVE }))
-        .rejects.toThrow(/cannot be moved/);
+        .rejects.toMatchObject({ code: -32602, message: `Chat ${first} can't be moved.`, data: { reason: 'notMovable' } });
       /*
        * A chat this host is not running, which is not a chat at all here.
        *
@@ -1427,12 +1429,12 @@ describe('more than one chat in a session', () => {
       // A session it is not in, which is a move between sessions - and this
       // host is not running that session, so there is nowhere to put it.
       await expect(ask(PEER, { kind: 'session', session: 'ahp-session:/elsewhere' }))
-        .rejects.toThrow(/is not a session this host is running/);
+        .rejects.toMatchObject({ message: 'Session ahp-session:/elsewhere is not available.', data: { reason: 'destinationNotFound' } });
       // Itself as its own anchor, and an anchor this session does not hold.
       await expect(ask(PEER, { kind: 'session', session: LIVE, after: PEER }))
-        .rejects.toThrow(/cannot be placed after itself/);
+        .rejects.toMatchObject({ message: 'A chat can\'t be placed after itself.', data: { reason: 'invalidAnchor' } });
       await expect(ask(PEER, { kind: 'session', session: LIVE, after: 'ahp-chat:/nowhere' }))
-        .rejects.toThrow(/is not a chat in/);
+        .rejects.toMatchObject({ message: `Chat ahp-chat:/nowhere is not a visible chat of ${LIVE}.`, data: { reason: 'invalidAnchor' } });
 
       // A rejection is a rejection: no action and no reordering, so a client
       // that was told no holds the list it already had.
@@ -1461,7 +1463,7 @@ describe('more than one chat in a session', () => {
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: THIRD, destination: { kind: 'session', session: LIVE } },
-      })).rejects.toThrow(/cannot be moved/);
+      })).rejects.toThrow(/can't be moved/);
       expect(reorders(p, LIVE)).toEqual([]);
 
       // And it is the turn rather than the chat: once the words are out, the
@@ -1528,6 +1530,39 @@ describe('more than one chat in a session', () => {
    * folders it was working in. Everything a client holds is what the actions
    * say, and the store is what a restart reads.
    */
+  /*
+   * An unread chat that counts toward its session's read state takes the
+   * unread with it: the destination is unread, and the source, its other
+   * chats read, is read, as VS Code synchronizes them after a move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2131-L2145
+   */
+  it('carries an unread chat\'s unread to the session it moves to, and leaves its source read', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client } = await apart(join(root, 'sessions'), backend([]));
+      const mark = async (channel: string, action: Record<string, unknown>) => {
+        await client.handle({ method: 'dispatchAction', params: { channel, action } });
+        await settle(8);
+      };
+      const lead = (await opened(client, LIVE)).state.defaultChat as string;
+      await mark(lead, { type: 'chat/isReadChanged', isRead: true });
+      await mark(PEER, { type: 'chat/isReadChanged', isRead: false });
+      await mark(TWO, { type: 'session/isReadChanged', isRead: true });
+      const read = async (channel: string): Promise<boolean> =>
+        (Number(((await opened(client, channel)).state as { status?: number }).status) & 32) !== 0;
+      expect(await read(LIVE)).toBe(false);
+      expect(await read(TWO)).toBe(true);
+
+      await client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } });
+      await settle(8);
+      expect(await read(TWO)).toBe(false);
+      expect(await read(LIVE)).toBe(true);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('moves a chat into another session, with its turns and its own folders', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
@@ -1714,15 +1749,18 @@ describe('more than one chat in a session', () => {
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: OTHERS } },
-      })).rejects.toThrow(/between providers is not supported yet/);
+      })).rejects.toMatchObject({
+        message: 'Chats can only move between sessions of the same agent. Turn on chats with their own agents to move it to a session of another agent.',
+        data: { reason: 'differentProvider' },
+      });
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: ONBOX } },
-      })).rejects.toThrow(/between computers is not supported yet/);
+      })).rejects.toMatchObject({ message: expect.stringMatching(/between computers is not supported yet/), data: { reason: 'unsupported' } });
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: 'ahp-session:/nowhere' } },
-      })).rejects.toThrow(/is not a session this host is running/);
+      })).rejects.toMatchObject({ message: 'Session ahp-session:/nowhere is not available.', data: { reason: 'destinationNotFound' } });
 
       /*
        * Nothing was started and nothing moved: a refusal that closed the chat
@@ -2317,7 +2355,7 @@ describe('a chat of another backend', () => {
     await expect(second.client.handle({
       method: 'moveChat',
       params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-    })).rejects.toThrow(/another backend cannot move/);
+    })).rejects.toMatchObject({ data: { reason: 'differentProvider' } });
     // And nothing moved: it is still a chat of its session, answering on the
     // backend it runs on.
     const after = await opened(second.client, LIVE);

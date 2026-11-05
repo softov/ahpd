@@ -1,5 +1,5 @@
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
-import { idOf, uriFor } from '../sessions/catalog.js';
+import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { computerId } from '../machines/computers.js';
 import { older } from '../sessions/paging.js';
 import { namesOf } from '../usage/scopes.js';
@@ -10,7 +10,7 @@ import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
-import { startsRead } from './chatactions.js';
+import { readAggregate, sessionFlag, startsRead } from './chatactions.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
@@ -322,6 +322,24 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (ref !== undefined) dispatch(into, { type: 'session/chatAdded', summary: subagentSummary(one, ref) });
     }
     await chatsReordered(into);
+    /*
+     * The read bits, where an unread chat that counts toward its session's
+     * read state moved: a destination that was read is unread now, and a
+     * source that was unread is read once every chat left in it that counts
+     * is, as the reference host synchronizes them after a move. A session
+     * made for the chat starts with the chat's own.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2131-L2145
+     */
+    const counted = readAggregate(ctx, into).find((one) => one.uri === chatUri);
+    if (counted !== undefined && !counted.read) {
+      const left = readAggregate(ctx, found.uri);
+      if ((kept.flags(idOf(found.uri)) & Status.IsRead) === 0 && left.every((one) => one.read)) {
+        sessionFlag(ctx, found.uri, Status.IsRead, true, { type: 'session/isReadChanged', isRead: true });
+      }
+      if (to !== undefined && (kept.flags(idOf(into)) & Status.IsRead) !== 0) {
+        sessionFlag(ctx, into, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
+      }
+    }
     summaryMoved(found.uri);
     summaryMoved(into);
     log(`moved ${chatUri} from ${found.uri} to ${into}`);
@@ -1350,17 +1368,25 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * by `movable`, which answers the client's move control with no room for
        * a reason.
        */
+      /*
+       * Each refusal is the reference's: InvalidParams, its words, and the
+       * `reason` from its fixed set in `data`, for a client to explain it by.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L222-L230
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
+       */
+      const refused = (reason: string, message: string): RpcError => new RpcError(INVALID_PARAMS, message, { reason });
       const serving = chatAgent(held, chatUri);
-      if (serving !== held.agent)
-        throw new RpcError(INVALID_PARAMS, `${chatUri} runs on ${serving.provider}, and a chat of another backend cannot move`);
+      if (serving !== held.agent) {
+        throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
+          + ' Turn on chats with their own agents to move it to a session of another agent.');
+      }
       /*
        * The chat's own answer, which the client was handed before it asked:
        * `movable` is what a move control is drawn from, and a chat that
        * changed under the client between then and now is refused rather than
        * moved from a state nobody was shown.
        */
-      if (!movable(chatUri))
-        throw new RpcError(INVALID_PARAMS, `${chatUri} cannot be moved`);
+      if (!movable(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
       const destination = (typeof params.destination === 'object' && params.destination !== null
         ? params.destination
         : {}) as Record<string, unknown>;
@@ -1373,8 +1399,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // The anchor, which the protocol requires to be another chat of the
       // destination and never the chat itself.
       const anchor = destination.after === undefined ? undefined : String(destination.after);
-      if (anchor !== undefined && anchor === chatUri)
-        throw new RpcError(INVALID_PARAMS, `${chatUri} cannot be placed after itself`);
+      if (anchor !== undefined && anchor === chatUri) throw refused('invalidAnchor', 'A chat can\'t be placed after itself.');
       // A session made for the chat, which has no chats to be placed among yet.
       if (kind === 'newSession') return await movedTo(chatUri, found, held, undefined, anchor);
       /*
@@ -1391,7 +1416,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (!sessionVisible(connection, to)) throw new RpcError(-32001, `Session not found: ${to}`);
       if (to === found.uri) {
         if (anchor !== undefined && !held.chats.has(anchor))
-          throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${found.uri}`);
+          throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${found.uri}.`);
         /*
          * The new order, which is the old one with this chat taken out and put
          * back where it was asked for. First when no anchor was named, which is
@@ -1427,18 +1452,21 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * difference, and refused before anything has been touched.
        */
       const dest = sessions.get(to);
-      if (dest === undefined)
-        throw new RpcError(INVALID_PARAMS, `${to === '' ? 'nowhere' : to} is not a session this host is running`);
-      if (held.agent.provider !== dest.agent.provider)
-        throw new RpcError(INVALID_PARAMS, `a move between providers is not supported yet: ${chatUri} runs on`
-          + ` ${held.agent.provider} and ${to} on ${dest.agent.provider}`);
+      if (dest === undefined) throw refused('destinationNotFound', `Session ${to} is not available.`);
+      if (held.agent.provider !== dest.agent.provider) {
+        throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
+          + ' Turn on chats with their own agents to move it to a session of another agent.');
+      }
+      // Machines are this host's own, so the reference has no word for this
+      // one: its reason is the set's for a move a host does not make.
       const mine = computerId(held.config.computer);
       const theirs = computerId(dest.config.computer);
-      if (mine !== theirs)
-        throw new RpcError(INVALID_PARAMS, `a move between computers is not supported yet: ${chatUri} runs on`
+      if (mine !== theirs) {
+        throw refused('unsupported', `a move between computers is not supported yet: ${chatUri} runs on`
           + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
+      }
       if (anchor !== undefined && !dest.chats.has(anchor))
-        throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${to}`);
+        throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${to}.`);
       return await movedTo(chatUri, found, held, to, anchor);
     },
     /*
