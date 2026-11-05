@@ -1291,7 +1291,7 @@ does not stop the next handler or the action it observed.
 | `session_end` | `session`, `reason` |
 | `session_opened` | `session`, `client` |
 | `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message |
-| `turn_end` | `session`, `chat`, `turn`, `status` (`complete`, `cancelled`, or `error` for a turn that ended in `chat/error`), `error` with that error's message on `error`, and `sender` as on `turn_start` |
+| `turn_end` | `session`, `chat`, `turn`, `status` (`complete`, `cancelled`, or `error` for a turn that ended in `chat/error`), `error` with that error's message and `errorType` with its type on `error`, and `sender` as on `turn_start` |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
 | `plan_update` | `session`, `chat`, `turn`, `harness`, `tool`, `title` when the session has one, `sender` when the host knows who sent the turn, and either `entries` (a whole list) or `change` (one change, with the harness's id where it names one) |

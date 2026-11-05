@@ -1334,6 +1334,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             turn,
             status: 'error',
             error: typeof failure.message === 'string' ? failure.message : 'The turn failed',
+            ...(typeof failure.errorType === 'string' ? { errorType: failure.errorType } : {}),
             ...(sender === undefined ? {} : { sender }),
           });
         }

@@ -128,6 +128,12 @@ export interface TurnEndEvent {
   status: 'complete' | 'cancelled' | 'error';
   /** The message of the `chat/error` that ended it, on `error` only. */
   error?: string;
+  /**
+   * The `errorType` of the `chat/error` that ended it, on `error` only, so a
+   * plugin that carries the failure on carries it whole, as VS Code's host
+   * builds a failed turn's part from the error itself.
+   */
+  errorType?: string;
   /** Who sent it, as `TurnStartEvent.sender` says: the same name or nothing. */
   sender?: Owner;
 }

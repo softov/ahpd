@@ -372,7 +372,7 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
   expect(ended[0]).toMatchObject({ turn: 'turn-c', status: 'cancelled' });
 });
 
-it('fires turn_end error, with the message, when a turn ends in chat/error', async () => {
+it('fires turn_end error, with the message and its type, when a turn ends in chat/error', async () => {
   const { seen, client } = watched({ agents: [failer()] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fail', provider: 'failer' } });
@@ -385,7 +385,7 @@ it('fires turn_end error, with the message, when a turn ends in chat/error', asy
 
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ turn: 'turn-f', status: 'error', error: 'the model refused' });
+  expect(ended[0]).toMatchObject({ turn: 'turn-f', status: 'error', error: 'the model refused', errorType: 'turnFailed' });
 });
 
 it('names who sent each turn, and a queued message keeps its sender when it runs', async () => {
