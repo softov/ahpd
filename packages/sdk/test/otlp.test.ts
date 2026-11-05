@@ -57,6 +57,22 @@ it('subscribes without a snapshot, because the channel is a stream', async () =>
   }
 });
 
+/*
+ * A record reaches every subscription whose band includes its severity, the
+ * level read case-blind, as VS Code's host fans one out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4529-L4558
+ */
+it('sends an INFO line to a debug or trace subscription too, and none to a warn one', async () => {
+  const { client, peer: p } = await connected();
+  for (const channel of ['ahp-otlp://logs/DEBUG', 'ahp-otlp://logs/trace', 'ahp-otlp://logs/warn']) {
+    await client.handle({ method: 'subscribe', params: { channel } });
+  }
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'echo' } });
+
+  const channels = new Set(logs(p).map((one) => one.channel));
+  expect([...channels].sort()).toEqual(['ahp-otlp://logs/DEBUG', 'ahp-otlp://logs/trace']);
+});
+
 it('carries what the host logs as an OTLP request the client can parse', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' } });

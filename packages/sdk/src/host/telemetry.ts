@@ -145,12 +145,22 @@ export function createTelemetry(ctx: HostContext): Telemetry {
         }],
       }],
     };
-    for (const level of ['info', '']) {
-      const channel = level === '' ? LOGS : `${LOGS}/${level}`;
-      for (const connection of connections) {
+    /*
+     * To every logs channel a connection watches whose level the record
+     * reaches, the level read case-blind, under the channel's own name, as VS
+     * Code's host fans a record out to each subscription whose band includes
+     * its severity: an INFO line reaches `trace`, `debug` and `info`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4529-L4558
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/otlp/otlpLogEmitter.ts#L28-L61
+     */
+    const reached = ['trace', 'debug', 'info'];
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        const level = channel.startsWith(`${LOGS}/`) ? channel.slice(LOGS.length + 1).toLowerCase() : undefined;
         // A notification, not an action: it carries no `serverSeq` and moves
         // no state, so it does not belong in the replay buffer.
-        if (connection.watching.has(channel)) connection.peer.notify('otlp/exportLogs', { channel, payload });
+        if (channel === LOGS || (level !== undefined && reached.includes(level)))
+          connection.peer.notify('otlp/exportLogs', { channel, payload });
       }
     }
   };
