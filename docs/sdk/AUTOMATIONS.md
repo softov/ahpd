@@ -316,17 +316,15 @@ Review the commits made to this repository since yesterday morning.
 
 The id is the automation's id in this host's store, bare or as `ahp-automation:/<id>`. The file's `id` and its file name are made from the title, as VS Code makes them. The file holds the title, the message and the schedule, and nothing else: no folder, no provider, no owner, and not whether it is on, because VS Code refuses a file with any key it does not know.
 
-The file holds a schedule VS Code's editor can show, so export refuses an automation it cannot hold and says what:
+The file holds one schedule, as VS Code's editor reads one, so export refuses an automation it cannot hold and says what:
 
 | The automation has | Why it is refused |
 | --- | --- |
 | An event or webhook trigger | The file holds only a schedule |
 | More than one schedule | The file holds one |
-| A cron other than `M H * * *`, `M H * * 1-5` or `M H * * D` | The file holds daily, weekday and weekly schedules |
-| `M * * * *` with `M` other than 0 | The file runs hourly on the hour |
 | `misfirePolicy: skip` | VS Code always catches a missed run up |
 
-An automation with no schedule is written as `kind: manual`. Export keeps the hour and drops the zone: the file says `timeZone: local`, which is the zone of whoever imports it.
+The schedule is written as VS Code's agent host reads one: an automation with no schedule as `kind: manual`; one at any minute of every hour as `kind: hourly`, which runs on the hour where it is imported; a daily, weekday or weekly time, and any other cron expression, as `kind: cron` with the expression. Export keeps the hour and drops the zone: the file says `timeZone: local`, which is the zone of whoever imports it.
 
 Over HTTP it is `GET /api/automation/export/{id}?vscode=true`.
 
@@ -348,7 +346,7 @@ The schedule is read as VS Code reads it, in this host's zone:
 | `kind: hourly` | `0 * * * *` |
 | `kind: cron` | The file's `expression` |
 
-A file VS Code would refuse is refused with VS Code's sentence: an unknown `version`, a key it does not know, a cron its editor cannot show, or a `timeZone` other than `local`.
+A file VS Code would refuse is refused with VS Code's sentence: an unknown `version`, a key it does not know, an `expression` that is not a five-field cron expression, or a `timeZone` other than `local`.
 
 Over HTTP it is `POST /api/automation/import`, with the file's text as the body's `text`, `vscode` as `true`, and the folder as `folder`, which must be absolute. A request names no path on the host, so it cannot read a file there.
 
