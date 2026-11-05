@@ -32,57 +32,70 @@ His example, 2026-11-05: "ACP put the hostTools on plugin while claude put on ag
 ## The table
 
 The table comes from the four `optionsSchema` blocks and from the schema each engine registers at the checked commit.
-An empty cell means the plugin has no such setting.
 
-| Setting | acp | claude | cofold | pi |
-| --- | --- | --- | --- | --- |
-| **Model** | | | | |
-| `model` |  |  | plugin | plugin |
-| `models` |  | record |  |  |
-| `modelSources` |  | record |  |  |
-| `keepCliModels` |  | record |  |  |
-| `baseUrl` |  |  | plugin + record |  |
-| `apiKey` |  |  | plugin + record |  |
-| `resource` |  |  | plugin + record |  |
-| **Prompt and output** | | | | |
-| `instructions` |  |  | plugin + record |  |
-| `outputStyle` |  | record |  |  |
-| `thinking` |  | record |  |  |
-| `autoCompactTokens` |  |  | plugin + record |  |
-| **Host tools** | | | | |
-| `hostTools` | plugin + record |  |  |  |
-| `toolsChanged` | plugin + record |  |  |  |
-| `hostTasks` |  | record |  |  |
-| `enableTasks` |  | record |  |  |
-| `tools` |  |  | plugin + record |  |
-| `strictTools` |  |  | plugin |  |
-| **Process** | | | | |
-| `base` | record, host only |  |  |  |
-| `command` | record, host only |  |  |  |
-| `args` | record, host only |  |  |  |
-| `extraArgs` |  | record, host only |  |  |
-| `install` | record, host only |  |  |  |
-| `page` | record |  |  |  |
-| `env` | record | record |  | record |
-| `cwd` | record, host only |  |  |  |
-| `authenticate` | record |  |  |  |
-| `logins` |  | record |  |  |
-| `handshakeTimeoutMs` |  | plugin |  |  |
-| `workerStop` |  | plugin |  |  |
-| `sandbox` |  | record |  |  |
-| **Folders and trust** | | | | |
-| `paths` |  | plugin |  |  |
-| `honoursTrust` | record |  |  |  |
-| `projectTrust` |  |  |  | plugin + record |
-| `sessionDir` |  |  |  | plugin + record, host only |
-| `store` |  |  | plugin + record, host only |  |
-| `memory` |  |  | plugin + record, host only |  |
-| **Computers** | | | | |
-| `machine` | record, host only |  |  |  |
-| `computerExecutable` |  | plugin |  |  |
-| `computerCli` |  | plugin |  |  |
-| `computerCliFallback` |  | plugin |  |  |
-| `computerConfigDir` |  | plugin | plugin + record, host only |  |
+- ✓ is a setting at that level, and ✓ host is a record field only a host record may set.
+- 🔵 is a setting the harness takes, which ahpd does not offer at that level. *Why each blue circle* gives the fact behind each one.
+- An empty cell is a setting that does not apply there.
+
+| Setting | acp plugin | acp record | claude plugin | claude record | cofold plugin | cofold record | pi plugin | pi record |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Model** | | | | | | | | |
+| `model` |  |  | 🔵 |  | ✓ |  | ✓ |  |
+| `models` |  |  |  | ✓ |  |  |  | 🔵 |
+| `modelSources` |  |  |  | ✓ |  |  |  |  |
+| `keepCliModels` |  |  |  | ✓ |  |  |  |  |
+| `baseUrl` |  |  |  |  | ✓ | ✓ | 🔵 | 🔵 |
+| `apiKey` |  |  |  |  | ✓ | ✓ |  |  |
+| `resource` |  |  |  |  | ✓ | ✓ |  |  |
+| **Prompt and output** | | | | | | | | |
+| `instructions` |  |  | 🔵 | 🔵 | ✓ | ✓ | 🔵 | 🔵 |
+| `outputStyle` |  |  |  | ✓ |  |  |  |  |
+| `thinking` |  |  |  | ✓ |  |  |  | 🔵 |
+| `autoCompactTokens` |  |  |  |  | ✓ | ✓ |  | 🔵 |
+| **Host tools** | | | | | | | | |
+| `hostTools` | ✓ | ✓ | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 |
+| `toolsChanged` | ✓ | ✓ |  |  |  |  |  |  |
+| `hostTasks` |  |  |  | ✓ |  |  |  |  |
+| `enableTasks` |  |  |  | ✓ |  |  |  |  |
+| `tools` |  |  |  |  | ✓ | ✓ |  |  |
+| `strictTools` |  |  |  |  | ✓ |  |  |  |
+| **Process** | | | | | | | | |
+| `base` |  | ✓ host |  |  |  |  |  |  |
+| `command` |  | ✓ host |  |  |  |  |  |  |
+| `args` |  | ✓ host |  |  |  |  |  |  |
+| `extraArgs` |  |  |  | ✓ host |  |  |  |  |
+| `install` |  | ✓ host |  |  |  |  |  |  |
+| `page` |  | ✓ |  |  |  |  |  |  |
+| `env` |  | ✓ |  | ✓ |  |  |  | ✓ |
+| `cwd` |  | ✓ host |  |  |  |  |  |  |
+| `authenticate` |  | ✓ |  |  |  |  |  |  |
+| `logins` |  |  |  | ✓ |  |  |  |  |
+| `handshakeTimeoutMs` |  |  | ✓ |  |  |  |  |  |
+| `workerStop` |  |  | ✓ |  |  |  |  |  |
+| `sandbox` |  |  |  | ✓ |  |  |  |  |
+| **Folders and trust** | | | | | | | | |
+| `paths` |  |  | ✓ |  |  |  |  |  |
+| `honoursTrust` |  | ✓ |  |  |  |  |  |  |
+| `projectTrust` |  |  |  |  |  |  | ✓ | ✓ |
+| `sessionDir` |  |  |  |  |  |  | ✓ | ✓ host |
+| `store` |  |  |  |  | ✓ | ✓ host |  |  |
+| `memory` |  |  |  |  | ✓ | ✓ host |  |  |
+| **Computers** | | | | | | | | |
+| `machine` |  | ✓ host |  |  |  |  |  |  |
+| `computerExecutable` |  |  | ✓ |  |  |  |  |  |
+| `computerCli` |  |  | ✓ |  |  |  |  |  |
+| `computerCliFallback` |  |  | ✓ |  |  |  |  |  |
+| `computerConfigDir` |  |  | ✓ | 🔵 | ✓ | ✓ host |  |  |
+
+## Why each blue circle
+
+- **claude plugin `model`.** The Claude CLI takes a model, and cofold and pi give a plugin-wide default.
+- **pi record `models`, pi `baseUrl`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344).
+- **claude and pi `instructions`.** Claude's SDK takes a prompt to append, and ahpd already sends the host's instructions through it. See [`code://packages/agent-claude/src/session/query.ts#L451`](../../packages/agent-claude/src/session/query.ts#L451). pi's SDK replaces or appends to its system prompt. cofold has `instructions` at both levels.
+- **pi record `thinking`.** pi's `createAgentSession` takes a `thinkingLevel`, and claude has `thinking` on the record.
+- **pi record `autoCompactTokens`.** pi's `SettingsManager` holds compaction settings, and cofold has the field on the record.
+- **claude, cofold and pi `hostTools`.** The host offers its tools to every session. Only acp can turn them off for one plugin or one agent.
+- **claude record `computerConfigDir`.** cofold lets a host record set it, and claude has it at the plugin only.
 
 ## What disagrees
 
@@ -94,6 +107,7 @@ An empty cell means the plugin has no such setting.
 - **Project trust.** acp has `honoursTrust` on the record, and pi has `projectTrust` at both levels. Claude and cofold have none.
 - **Computers.** Claude has four plugin options, the `computer` ones. cofold has `computerConfigDir` at both levels. acp has `machine` on the record. pi has none.
 - **Environment.** acp, claude and pi take `env` on the record. cofold takes `baseUrl`, `apiKey` and `resource` instead.
+- **pi's provider.** A pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`. A base URL and a model list come only from pi's own `models.json`, outside ahpd.
 
 ## Claude's `paths`
 
