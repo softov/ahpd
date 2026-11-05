@@ -100,14 +100,17 @@ it('refuses a token for a server only another connection watches', async () => {
   expect(sdk.mcpDeclared).toEqual([]);
 });
 
-it('refuses a token aimed at a session its connection does not watch', async () => {
-  const { bea, one } = await twoClients();
+/*
+ * VS Code takes a token aimed at an MCP server of an existing session from any
+ * connection, watching it or not.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
+ */
+it('takes a token aimed at a session its connection does not watch, as VS Code\'s', async () => {
+  const { bea } = await twoClients();
   await expect(bea.client.handle({
     method: 'authenticate',
     params: { channel: ROOT, resource: DESK, token: 'desk-bea', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
-  })).rejects.toMatchObject({ code: -32602 });
-  await settle(8);
-  expect(header(one)).toBeUndefined();
+  })).resolves.toEqual({});
 });
 
 /*

@@ -3,6 +3,7 @@ import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
+import { spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -219,41 +220,27 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    * The MCP server a token's `target` names, or the refusal of it.
    *
    * A client that answers one server's sign-in names that server by the
-   * session and the customization id this host published, and the protocol
-   * has the host refuse a target it cannot find with `-32602`. A kind this
-   * host does not know names a consumer it cannot confine the token to, so it
-   * is refused the same way, as the reference host refuses it.
-   *
-   * The resource has to be the one that server waits for: the protocol says
-   * so, and it is the resource this host advertised for it.
-   * https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/docs/specification/authentication.md#L143-L145
-   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L2033-L2048
+   * session and the customization id this host published. Refused, as the
+   * reference host refuses one and in its words, only for a kind other than
+   * an MCP server, and for a target that names no MCP server of a session this
+   * host holds: what the session publishes is both halves, what its backend
+   * reports and the plugins its clients handed it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
    */
-  const aimedAt = (named: unknown, resource: string): Target => {
+  const aimedAt = (named: unknown): Target => {
     const target = bag(named);
     if (target.kind !== 'mcpServer') {
-      throw new RpcError(INVALID_PARAMS, `A target of kind ${JSON.stringify(target.kind ?? null)} is not one this host knows`);
+      throw new RpcError(INVALID_PARAMS, 'Unsupported authentication target kind');
     }
     const session = str(target.session) ?? '';
     const customizationId = str(target.customizationId) ?? '';
-    const held = sessions.get(session);
-    // A session this connection does not watch is not one its tokens are
-    // spent on, whoever else holds it open.
-    if (held !== undefined && watchedAs(connection, session) === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${session} is not a session this connection watches`);
-    }
+    const held = spaceOf(session) === 'chat' ? undefined : sessions.get(session);
     const lead = held === undefined ? undefined : leadOf(held);
-    // Both halves of what the session publishes: what its backend reports,
-    // and the plugins its clients handed it.
     const server = lead === undefined
       ? undefined
       : mcpServerIn([...lead.customizations(), ...clientPluginsOf(session)], customizationId);
     if (server === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId || 'That'} is not an MCP server of ${session || 'a session this host holds'}`);
-    }
-    const state = bag(server.state);
-    if (state.kind !== 'authRequired' || bag(state.resource).resource !== resource) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId} in ${session} is not waiting for a token for ${resource || 'that resource'}`);
+      throw new RpcError(INVALID_PARAMS, 'Authentication target must identify an MCP server in an existing session');
     }
     return { session, customizationId };
   };
@@ -721,7 +708,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * alone, so nothing below treats it as the host's sign-in or as a
        * backend's own credential.
        */
-      const target = params.target === undefined ? undefined : aimedAt(params.target, resource);
+      const target = params.target === undefined ? undefined : aimedAt(params.target);
       /*
        * A backend's own resource, or one of its MCP servers'.
        *
