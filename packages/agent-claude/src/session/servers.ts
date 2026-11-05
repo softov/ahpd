@@ -4,10 +4,15 @@ import type { SessionContext } from './context.js';
 import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
 import { SDK_DEFAULT_MODEL_VALUE } from './config.js';
+import { isHostInjectedMcpServerName } from './clienttools.js';
 import { customizationsOf, rootOf } from './customizations.js';
 import { configDirOf, diskOf, managedDirOf } from './disk.js';
 import { watchFolders } from './watch.js';
 import type { Published } from './customizations.js';
+
+/** The servers the CLI reports, less this session's own in-process two. */
+const reportedServers = (answer: unknown): unknown[] => (Array.isArray(answer) ? answer : [])
+  .filter((raw) => !isHostInjectedMcpServerName(str(bag(raw).name) ?? ''));
 
 /** What this area offers the rest of the session. */
 export interface Servers {
@@ -151,7 +156,7 @@ export function createServers(ctx: SessionContext): Servers {
    * client's start or stop included.
    */
   const refreshMcp = async (): Promise<void> => {
-    const found = await ctx.handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]);
+    const found = await ctx.handle.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
     reported.mcp = found;
     await discover(found);
     for (const raw of found) {
@@ -377,7 +382,7 @@ export function createServers(ctx: SessionContext): Servers {
   const describe = async (): Promise<void> => {
     const [init, mcp, skills, plugins] = await Promise.all([
       ctx.handle.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
-      ctx.handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]),
+      ctx.handle.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]),
       // The only way to know which commands are skills. It re-reads them from
       // disk, which at the start of a session is what one wants anyway.
       ctx.handle.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),

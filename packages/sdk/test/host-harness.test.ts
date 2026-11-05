@@ -684,6 +684,23 @@ describe('turning a customization on and off', () => {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state.customizations.find((one) => one.id === 'mcp:desk');
 
+  /*
+   * The two in-process servers a session declares itself are no
+   * customization: they have no definition a person can act on, as VS Code's
+   * Claude leaves them out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMcpServerNames.ts#L9-L30
+   */
+  it('lists no server of the session\'s own in-process two', async () => {
+    sdk.init = { commands: [] };
+    sdk.mcp = [{ name: 'desk', status: 'connected' }, { name: 'host', status: 'connected' }, { name: 'client', status: 'connected' }];
+    const { client, uri } = await running();
+    await settle(8);
+    const listed = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { customizations: { id: string; type: string }[] } };
+    }).snapshot.state.customizations.filter((one) => one.type === 'mcpServer').map((one) => one.id);
+    expect(listed).toEqual(['mcp:desk']);
+  });
+
   it('switches an MCP server off through the CLI, and reports what it became', async () => {
     const { client, peer: p, uri } = await withServers('connected');
     sdk.mcp = [{ name: 'desk', status: 'disabled' }];

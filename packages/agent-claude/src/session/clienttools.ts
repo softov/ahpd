@@ -62,6 +62,16 @@ export const CLAUDE_CLIENT_MCP_SERVER_NAME = 'client';
 export const CLAUDE_SERVER_TOOL_MCP_SERVER_NAME = 'host';
 
 /**
+ * Whether a server the CLI reports is one of the two in-process servers this
+ * session declares itself, which no customization list carries: they have no
+ * definition a person can act on, and a switch for one would name a server
+ * the CLI has no configuration for. VS Code's Claude leaves them out alike.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMcpServerNames.ts#L9-L30
+ */
+export const isHostInjectedMcpServerName = (name: string): boolean =>
+  name === CLAUDE_CLIENT_MCP_SERVER_NAME || name === CLAUDE_SERVER_TOOL_MCP_SERVER_NAME;
+
+/**
  * One in-process MCP server the CLI can call, carrying `tools`.
  *
  * In-process: `createSdkMcpServer` registers the handlers here rather than
