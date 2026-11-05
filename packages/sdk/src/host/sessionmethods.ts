@@ -1147,6 +1147,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
       if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
         throw new RpcError(INVALID_PARAMS, `${chatUri} is not a chat URI`);
+      /*
+       * A chat on an agent of its own is VS Code's `multipleChatProviders`,
+       * which this host does not advertise, so a request naming one is refused
+       * in VS Code's words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2287-L2289
+       */
+      if (params.provider !== undefined)
+        throw new RpcError(INVALID_PARAMS, 'This host does not support chats with their own agent.');
       if (byChat.has(chatUri))
         throw new RpcError(-32003, `${chatUri} already exists`);
       claimable(chatUri, 'chat');
