@@ -1051,6 +1051,66 @@ describe('a terminal a backend opens', () => {
     await expect(opened.waitForExit()).resolves.toBeDefined();
   });
 
+  /*
+   * VS Code's shell tool claims an agent's terminal with the session, the
+   * chat, the turn and the tool call.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L196-L202
+   */
+  it('claims it with the turn running in its chat and the tool call it runs for', async () => {
+    const held: OpenedTerminal[] = [];
+    const inner = claude({ paths: [tmpdir()] });
+    const agent: Agent = {
+      ...inner,
+      create: (start) => {
+        const session = inner.create(start);
+        const send = session.sendMessage.bind(session);
+        session.sendMessage = (...args: Parameters<typeof send>) => {
+          const opened = start.terminals?.open({ cwd: tmpdir(), command: 'sleep', args: ['30'], toolCallId: 'tc-1' });
+          if (opened !== undefined) held.push(opened);
+          return send(...args);
+        };
+        return session;
+      },
+    };
+    const host = createHost({ path: tmpdir(), agents: [agent], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const uri = 'ahp-session:/claimed';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+    });
+    await settle(8);
+    const listed = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
+      ?.action.terminals as { resource: string; claim?: unknown }[] | undefined;
+    expect(held).toHaveLength(1);
+    expect(listed?.find((one) => one.resource === held[0]?.uri)?.claim)
+      .toEqual({ kind: 'session', session: uri, chat: chatUriFor(uri), turnId: 't1', toolCallId: 'tc-1' });
+    held[0]?.release();
+  });
+
+  it('lists a pseudoterminal a backend opens once its shell has printed', async () => {
+    const held: OpenedTerminal[] = [];
+    const pty = fakePty();
+    const host = createHost({ path: tmpdir(), agents: [opening(held)], ...machine(), terminals: shellTerminals({ pty: pty.spawn }) });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shells', provider: 'claude' } });
+    await settle();
+    const listed = (): boolean => actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .some((e) => (e.action.terminals as { resource: string }[]).some((one) => one.resource === held[0]?.uri));
+    expect(held).toHaveLength(1);
+    expect(listed()).toBe(false);
+    pty.say('$ ');
+    await settle();
+    expect(listed()).toBe(true);
+    held[0]?.release();
+  });
+
   it('says whether a pseudoterminal runs it', async () => {
     const opens = async (held: OpenedTerminal[], pty?: SpawnPty): Promise<void> => {
       const host = createHost({

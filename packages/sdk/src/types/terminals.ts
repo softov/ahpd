@@ -380,6 +380,12 @@ export interface OpenTerminal {
   env?: Record<string, string | undefined>;
   /** Display name. The process's own if none is given. */
   name?: string;
+  /**
+   * The tool call the terminal runs for, which its claim names beside the
+   * turn running in its chat, as VS Code's shell tool claims an agent's
+   * terminal.
+   */
+  toolCallId?: string;
 }
 
 /**

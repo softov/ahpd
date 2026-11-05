@@ -289,10 +289,25 @@ export function createTerminals(ctx: HostContext): Terminals {
       if (ctx.closed) throw new Error(CLOSING);
       const key = crypto.randomUUID();
       const uri = retainedTerminalUri(chatUri, key);
+      /*
+       * Claimed by the session with the chat, the turn running in it and the
+       * tool call the backend named, as VS Code's shell tool claims an
+       * agent's terminal.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L196-L202
+       */
+      const turn = (ctx.stateOf(chatUri)?.activeTurn as Bag | undefined)?.id;
+      let spoke: () => void = () => {};
+      const spoken = new Promise<void>((done) => { spoke = done; });
       const terminal = shells.create({
         uri,
         cwd: asked.cwd,
-        claim: { kind: 'session', session: sessionUri, chat: chatUri },
+        claim: {
+          kind: 'session',
+          session: sessionUri,
+          chat: chatUri,
+          ...(typeof turn === 'string' ? { turnId: turn } : {}),
+          ...(asked.toolCallId !== undefined ? { toolCallId: asked.toolCallId } : {}),
+        },
         command: asked.command,
         ...(asked.args !== undefined ? { args: asked.args } : {}),
         ...(asked.env !== undefined ? { env: asked.env } : {}),
@@ -310,6 +325,7 @@ export function createTerminals(ctx: HostContext): Terminals {
          */
         emit: (_channel, action) => {
           dispatch(uri, action);
+          if ((action as Bag).type === 'terminal/data' || (action as Bag).type === 'terminal/exited') spoke();
           // The root list says whether a terminal is still running, so it is
           // stale the moment one exits and reaches nobody unless it moves. A
           // terminal closed and taken off the list was said as it went.
@@ -327,7 +343,21 @@ export function createTerminals(ctx: HostContext): Terminals {
       // shell cannot tell which half of the host opened it.
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked.cwd });
       log(`opened ${uri} for ${sessionUri}`);
-      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      /*
+       * Listed once the shell has printed or exited or ten seconds passed, as
+       * the reference's terminal manager waits for a pseudoterminal's prompt;
+       * a process on pipes is listed at once, as `createTerminal` lists one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+       */
+      const list = (): void => {
+        if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      };
+      if (terminal.state().isPty === true) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        void Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })])
+          .then(() => { clearTimeout(timer); list(); });
+      }
+      else list();
       return {
         uri,
         ...ptyOf(terminal),
