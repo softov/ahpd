@@ -181,9 +181,9 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' 
         .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...outcome }))
         .catch((error: unknown) => { host.log(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
     },
-    onLimits: (id, quotaSnapshots) => {
+    onLimits: (id, said) => {
       void connection()
-        .then((conn) => conn.request('x-ahpd/connectors/note', { id, quotaSnapshots }))
+        .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...said }))
         .catch((error: unknown) => { host.log(`${name}: the host did not note the plan limits of login ${id}: ${reason(error)}`); });
     },
   };

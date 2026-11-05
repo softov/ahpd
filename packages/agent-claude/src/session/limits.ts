@@ -1,5 +1,5 @@
-import type { QuotaSnapshot, QuotaSnapshots } from '@ahpd/sdk';
-import type { Login } from '../logins.js';
+import type { ConnectorAccount, QuotaSnapshot, QuotaSnapshots } from '@ahpd/sdk';
+import type { Login, PlanNote } from '../logins.js';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -13,7 +13,10 @@ import type { SessionContext } from './context.js';
  * drawing them for the new one. A session on the CLI's own sign-in has no
  * login to share them by, so it keeps its own, and only a login's limits reach
  * the connector's health. A restart forgets them, as it forgets a login's
- * rest, and the first turn fills them again.
+ * rest, and the next handshake fills them again.
+ *
+ * The account's plan type and provider are kept beside them, because they say
+ * whether an account with no windows has no plan or has not been heard from.
  */
 
 /** How long between two usage requests for one login, in milliseconds. */
@@ -22,7 +25,9 @@ const USAGE_MS = 60_000;
 /** What one login's account has said of its plan. */
 interface Plan {
   /** The windows the account reported. Absent until an answer or an event. */
-  snapshots?: QuotaSnapshots;
+  snapshots?: QuotaSnapshots | undefined;
+  /** The plan type and the provider the account named. Absent until it answers. */
+  account?: ConnectorAccount;
   /** When the usage request last ran, or nought when only events have spoken. */
   askedAt: number;
   /** What the host was last told, as text, so an unchanged answer says nothing. */
@@ -50,6 +55,47 @@ const keep = (ctx: SessionContext, plan: Plan): void => {
 
 /** The plan limits a session's turn carries, or nothing when nobody has answered. */
 export const limitsOf = (ctx: SessionContext): QuotaSnapshots | undefined => planOf(ctx)?.snapshots;
+
+/** The plan type and the provider of a session's account, or nothing before it answers. */
+export const accountOf = (ctx: SessionContext): ConnectorAccount | undefined => planOf(ctx)?.account;
+
+/**
+ * Whether an account has no plan limits at all.
+ *
+ * Only an Anthropic account on a plan has them: a cloud provider bills by the
+ * token, and a first-party account with no plan type is an API key's.
+ */
+const planless = (account: ConnectorAccount | undefined): boolean =>
+  account !== undefined && (account.apiProvider !== 'firstParty' || account.subscriptionType === undefined);
+
+/**
+ * The windows a plan holds, or an empty map for an account with no plan limits.
+ *
+ * An event's window is the account's own word that a limit applies, so a
+ * plan that holds one keeps it whatever the account's plan type suggests.
+ */
+const windowsOf = (plan: Plan | undefined, account: ConnectorAccount | undefined): QuotaSnapshots | undefined =>
+  planless(account) && Object.keys(plan?.snapshots ?? {}).length === 0 ? {} : plan?.snapshots;
+
+/**
+ * Keep the plan type and the provider of the account a session signs in to.
+ *
+ * `accountInfo()` also answers the email, the organization and where the
+ * token came from; none of them is kept, so none can leave the host. An answer
+ * with neither field says nothing and changes nothing.
+ */
+export const noteAccount = (ctx: SessionContext, info: unknown): void => {
+  const found = bag(info);
+  const subscriptionType = str(found.subscriptionType);
+  const apiProvider = str(found.apiProvider);
+  if (subscriptionType === undefined && apiProvider === undefined) return;
+  const account: ConnectorAccount = {
+    ...(subscriptionType === undefined ? {} : { subscriptionType }),
+    ...(apiProvider === undefined ? {} : { apiProvider }),
+  };
+  const held = planOf(ctx);
+  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, account, snapshots: windowsOf(held, account) });
+};
 
 /** A finite number, or nothing. A utilization of zero is a measurement. */
 const num = (value: unknown): number | undefined =>
@@ -173,7 +219,7 @@ export const noteLimit = (ctx: SessionContext, info: unknown): void => {
   const snapshot = snapshotOf(utilization, reset);
   if (Object.keys(snapshot).length === 0) return;
   const held = planOf(ctx);
-  publish(ctx, { ...held?.snapshots, [key]: snapshot }, held?.askedAt ?? 0);
+  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, snapshots: { ...held?.snapshots, [key]: snapshot } });
 };
 
 /**
@@ -201,28 +247,37 @@ export const refreshLimits = async (ctx: SessionContext, now: number = Date.now(
     return;
   }
   const found = bag(answer);
-  // The account has no plan limits, which is a real answer and an empty map.
+  /*
+   * No limits to answer with, which is no answer: the events' windows stand,
+   * and only the account's own plan says whether it has none.
+   */
   if (found.rate_limits_available === false) {
-    publish(ctx, {}, now);
+    const after = planOf(ctx);
+    publish(ctx, { ...after, askedAt: now, snapshots: windowsOf(after, after?.account) });
     return;
   }
   const rateLimits = bag(found.rate_limits);
   if (Object.keys(rateLimits).length === 0) return;
-  publish(ctx, quotaSnapshotsOf(rateLimits), now);
+  publish(ctx, { ...planOf(ctx), askedAt: now, snapshots: quotaSnapshotsOf(rateLimits) });
 };
 
 /**
- * Keep the map, and tell the host when a login's map is not what it was told.
+ * Keep the plan, and tell the host when a login's plan is not what it was told.
  *
- * The plugin sends the snapshots with a note, as it sends a call's outcome, so
- * the host keeps them in the connector's health without a message of its own.
- * A session on the CLI's own sign-in has no connector to tell.
+ * The plugin sends the snapshots and the account with a note, as it sends a
+ * call's outcome, so the host keeps them in the connector's health without a
+ * message of its own. A session on the CLI's own sign-in has no connector to
+ * tell, and a plan with neither says nothing.
  */
-const publish = (ctx: SessionContext, snapshots: QuotaSnapshots, askedAt: number): void => {
+const publish = (ctx: SessionContext, plan: Plan): void => {
   const before = planOf(ctx);
-  const text = JSON.stringify(snapshots);
-  keep(ctx, { snapshots, askedAt, sent: text });
+  const said: PlanNote = {
+    ...(plan.snapshots === undefined ? {} : { quotaSnapshots: plan.snapshots }),
+    ...(plan.account === undefined ? {} : { account: plan.account }),
+  };
+  const text = JSON.stringify(said);
+  keep(ctx, { ...plan, sent: text });
   const login = ctx.login;
-  if (login === undefined || text === before?.sent) return;
-  ctx.options.logins?.open.noted(login.id, login.token, snapshots);
+  if (login === undefined || text === before?.sent || Object.keys(said).length === 0) return;
+  ctx.options.logins?.open.noted(login.id, login.token, said);
 };

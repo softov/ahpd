@@ -2,10 +2,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { Bag, QuotaSnapshots } from '@ahpd/sdk';
-import type { Login } from '../src/logins.js';
+import type { Bag, ConnectorAccount, QuotaSnapshots } from '@ahpd/sdk';
+import type { Login, PlanNote } from '../src/logins.js';
 import type { SessionContext } from '../src/session/context.js';
-import { limitsOf, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
+import { limitsOf, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
 
 /*
  * A login says its plan limits.
@@ -91,7 +91,8 @@ function usageAnswer(): Record<string, unknown> {
 
 interface Noted {
   id: string;
-  quotaSnapshots: QuotaSnapshots;
+  quotaSnapshots?: QuotaSnapshots;
+  account?: ConnectorAccount;
 }
 
 interface Fake {
@@ -112,7 +113,7 @@ const ctxOf = (fake: Fake): SessionContext => ({
   options: {
     logins: {
       open: {
-        noted: (id: string, _token: string, quotaSnapshots: QuotaSnapshots) => { fake.noted.push({ id, quotaSnapshots }); },
+        noted: (id: string, _token: string, said: PlanNote) => { fake.noted.push({ id, ...said }); },
       },
     },
   },
@@ -193,7 +194,7 @@ it('keeps one window of an event with the windows already answered', async () =>
   });
   // The event replaced the session window, so the host heard twice.
   expect(fake.noted).toHaveLength(2);
-  expect(fake.noted[1]?.quotaSnapshots.session?.remainingPercentage).toBe(30);
+  expect(fake.noted[1]?.quotaSnapshots?.session?.remainingPercentage).toBe(30);
 });
 
 it('asks the usage request once a minute for each login', async () => {
@@ -220,9 +221,24 @@ it('keeps an empty map for a login whose account has no plan limits', async () =
     usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false, rate_limits: null }),
   });
   const ctx = ctxOf(fake);
+  noteAccount(ctx, { apiProvider: 'bedrock' });
   await refreshLimits(ctx, 1_000);
   expect(limitsOf(ctx)).toEqual({});
-  expect(fake.noted).toEqual([{ id: 'limits-none', quotaSnapshots: {} }]);
+  expect(fake.noted).toEqual([{ id: 'limits-none', quotaSnapshots: {}, account: { apiProvider: 'bedrock' } }]);
+});
+
+it('keeps the events\' windows when the usage request has no limits to answer', async () => {
+  const login: Login = { id: 'limits-unavailable', token: 'token-unavailable' };
+  const fake = fakeOf(login, {
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false, rate_limits: null }),
+  });
+  const ctx = ctxOf(fake);
+  noteLimit(ctx, { rateLimitType: 'seven_day', utilization: 0.25, resetsAt: 1_800_000_000 });
+  await refreshLimits(ctx, 1_000);
+  expect(limitsOf(ctx)).toEqual({
+    weekly: { remainingPercentage: 75, resetDate: new Date(1_800_000_000_000).toISOString() },
+  });
+  expect(fake.noted).toHaveLength(1);
 });
 
 it('says nothing of a login nobody has answered for, or one with no request', async () => {
@@ -253,11 +269,9 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
   const logins = new OpenLogins();
   logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
   const noted: Noted[] = [];
-  logins.onLimits = (id, quotaSnapshots) => { noted.push({ id, quotaSnapshots }); };
+  logins.onLimits = (id, said) => { noted.push({ id, ...said }); };
   sdk.reset();
   sdk.usageAsked = 0;
-  // The event comes before the turn, as the CLI sends it with the first call.
-  sdk.push({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: 'five_hour', utilization: 0.4, resetsAt: 1_800_000_000 } });
 
   const chat: Bag[] = [];
   const session = createSession({
@@ -268,25 +282,11 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     preset: { logins: ['work'] },
     logins: { open: logins, owner: () => 'host' },
   });
-  await settle();
-
-  session.sendMessage('one', 'how much is left');
-  await settle();
-  sdk.push(...answered('one'));
-  await settle();
-
-  // The turn says the window the event named.
-  expect(lastUsage(chat)._meta).toMatchObject({
-    quotaSnapshots: {
-      session: { remainingPercentage: 60, resetDate: new Date(1_800_000_000_000).toISOString() },
-    },
-  });
-
-  // Once the turn ended, the account's own answer filled every window and the
-  // host heard it through the login, as it hears a call.
-  await until(() => noted.length >= 2);
+  // The handshake asked the account's own answer, which filled every window,
+  // and the host heard it through the login, as it hears a call.
+  await until(() => noted.length >= 1);
   expect(sdk.usageAsked).toBe(1);
-  expect(noted[1]).toMatchObject({
+  expect(noted[0]).toMatchObject({
     id: 'work',
     quotaSnapshots: {
       session: { remainingPercentage: 60, resetDate: '2026-11-04T12:00:00.000Z' },
@@ -294,13 +294,23 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     },
   });
 
-  // The next turn carries all of them.
-  session.sendMessage('two', 'and now');
+  session.sendMessage('one', 'how much is left');
   await settle();
-  sdk.push(...answered('two'));
+  // The event comes with the turn, as the CLI sends it with the first call.
+  sdk.push(
+    { type: 'rate_limit_event', rate_limit_info: { rateLimitType: 'five_hour', utilization: 0.3, resetsAt: 1_800_000_000 } },
+    ...answered('one'),
+  );
   await settle();
+
+  // The turn says the window the event named, beside the windows answered.
   expect((lastUsage(chat)._meta as Bag).quotaSnapshots).toMatchObject({
-    session: { remainingPercentage: 60, resetDate: '2026-11-04T12:00:00.000Z' },
+    session: { remainingPercentage: 70, resetDate: new Date(1_800_000_000_000).toISOString() },
     weekly: { remainingPercentage: 90, resetDate: '2026-11-10T12:00:00.000Z' },
   });
+  // The event moved the session window, so the host heard it. The minute had
+  // not passed, so the turn's end asked nothing.
+  await until(() => noted.length >= 2);
+  expect(noted[1]?.quotaSnapshots?.session?.remainingPercentage).toBe(70);
+  expect(sdk.usageAsked).toBe(1);
 });

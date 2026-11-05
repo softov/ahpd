@@ -233,7 +233,8 @@ it('puts the breakdown and the bar on a turn\'s usage, beside its cost', async (
 
   const usage = lastUsage(main);
   const meta = usage._meta as Bag;
-  expect(sdk.asked).toBe(1);
+  // Once at the handshake, for the session, and once when the turn ended.
+  expect(sdk.asked).toBe(2);
   expect(usage).toMatchObject({ inputTokens: 6, outputTokens: 167 });
   expect(meta['ahpd.cost']).toEqual({ amount: 0.5, currency: 'USD' });
   expect((meta.contextAttribution as Bag).totalTokens).toBe(50000);

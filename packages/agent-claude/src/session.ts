@@ -88,6 +88,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     running: undefined as string | undefined,
     agentId: options.resume as string | undefined,
     handshake: undefined as Bag | undefined,
+    contextFigure: undefined,
+    usageSaid: undefined as string | undefined,
     gone: undefined as string | undefined,
     customizations: [...(options.seedCustomizations ?? [])] as Bag[],
     offered: [] as { id: string; name: string }[],
@@ -178,6 +180,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * client's own - which is what lets a client that never sees the chat still
    * run the call.
    */
+  /** The backend's part of the session's `_meta`, or nothing when it has none. */
+  const meta = (): { _meta?: Bag } => {
+    const model = ctx.chosen ?? str(bag(ctx.handshake).model);
+    const said: Bag = { ...(model ? { 'ahpd.model': model } : {}), ...ctx.usageMeta() };
+    return Object.keys(said).length === 0 ? {} : { _meta: said };
+  };
+
   const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(ctx.calls.entries());
 
   const self: Session = {
@@ -244,10 +253,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * `_meta['ahpd.model']` knows it is reading an extension - where a bare
        * `model` beside `title` and `provider` reads like a declared field,
        * which is a mistake somebody has already made with this one.
+       *
+       * Beside it, what the session knows of its usage before and between
+       * turns: the last context breakdown, the plan limits and the plan its
+       * account is on, under the keys a turn's usage carries them by.
        */
-      ...(ctx.chosen ?? str(bag(ctx.handshake).model)
-        ? { _meta: { 'ahpd.model': (ctx.chosen ?? str(bag(ctx.handshake).model)) as string } }
-        : {}),
+      ...meta(),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.
       ...(needed().length > 0 ? { inputNeeded: needed() } : {}),

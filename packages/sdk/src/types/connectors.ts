@@ -266,6 +266,21 @@ export interface ConnectorHealth {
    * yet: the two are not the same answer.
    */
   quotaSnapshots?: QuotaSnapshots;
+  /**
+   * The plan a login's account is on, as it last reported it, in memory only.
+   *
+   * Only the plan type and the provider: no email, organization or other part
+   * of the account leaves the host.
+   */
+  account?: ConnectorAccount;
+}
+
+/** The plan an account is on, as its provider names it. */
+export interface ConnectorAccount {
+  /** The plan type the provider names. Absent for an account with no plan. */
+  subscriptionType?: string;
+  /** The service the account runs on, such as `firstParty` or `bedrock`. */
+  apiProvider?: string;
 }
 
 /** One window of an account's plan limits, as a client draws it. */
