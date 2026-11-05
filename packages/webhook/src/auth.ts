@@ -93,6 +93,25 @@ const standardKey = (secret: string): Buffer | undefined => {
   return key.length > 0 && key.toString('base64') === encoded ? key : undefined;
 };
 
+/**
+ * The key a message this host sends for one endpoint is signed with, as
+ * Standard Webhooks' reference library keys its producer: a `standard`
+ * endpoint's secret decoded as that scheme's key, and any other endpoint's
+ * secret as its characters, the library's `raw` format.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+export const signingKey = (endpoint: Endpoint): Buffer | undefined => (endpoint.auth === 'standard'
+  ? standardKey(endpoint.secret)
+  : Buffer.from(Uint8Array.from(endpoint.secret, (character) => character.charCodeAt(0))));
+
+/**
+ * The `webhook-signature` of one message, as the reference library's `sign`
+ * makes it: `v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<payload>`.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export const signatureOf = (key: Buffer, id: string, timestamp: number, payload: string): string =>
+  `v1,${createHmac('sha256', key).update(`${id}.${String(timestamp)}.${payload}`).digest('base64')}`;
+
 /** Whether the GitHub and Meta signature over the raw body is the one the header carries. */
 const hubSignature = (endpoint: Endpoint, call: Call): boolean => {
   const value = headerOf(call, 'x-hub-signature-256');

@@ -77,7 +77,8 @@
     "contracts": {
       "routes": ["post /plugins/webhook/:endpoint"],
       "triggerTypes": ["webhook"],
-      "adapters": ["webhook"]
+      "adapters": ["webhook"],
+      "closers": ["the callback attempts still to come"]
     },
     "optionsSchema": {
       "type": "object",

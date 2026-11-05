@@ -64,6 +64,7 @@ async function started() {
       routes: ['post /plugins/webhook/:endpoint'],
       triggerTypes: ['webhook'],
       adapters: ['webhook'],
+      closers: ['the callback attempts still to come'],
     },
     records: () => records,
     collections,
@@ -228,7 +229,8 @@ it('answers a call to a connector naming only a bot and a secret with 202', asyn
   const threads = await memoryRecords().collection('webhook-threads', { format: 'json' });
   const seams: BotSeams = {
     threads,
-    chat: async () => ({ session: 'session://motion', chat: 'chat://motion' }),
+    session: async () => 'session://motion',
+    openChat: async () => 'chat://motion',
     send: async () => undefined,
     ended: async () => ({ status: 'complete', text: 'done' }),
     forget: () => {},

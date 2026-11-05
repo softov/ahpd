@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -7,7 +8,7 @@ import { checkEndpoint } from '../src/record.js';
 import type { AddressInfo } from 'node:net';
 import type { ServerResponse } from 'node:http';
 import type { PluginPeer } from '../../sdk/src/types/plugin.js';
-import type { BotChat, BotSeams, TurnEnd } from '../src/bot.js';
+import type { BotSeams, TurnEnd } from '../src/bot.js';
 import type { Call } from '../src/call.js';
 import type { Endpoint } from '../src/record.js';
 import manifest from '../package.json' with { type: 'json' };
@@ -29,19 +30,26 @@ interface Sent { chat: string; turn: string; text: string }
  * A turn ends when the case says so with `finish`, or at once when `auto` is
  * set, with the text `echo: <what was sent>`.
  */
-async function made(options: { auto?: boolean; chats?: Record<string, BotChat>; timeout?: number; turnRefused?: string } = {}) {
+async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; turnRefused?: string } = {}) {
   const threads = await memoryRecords().collection('webhook-threads');
   const sent: Sent[] = [];
-  const posted: { url: string; body: Record<string, unknown> }[] = [];
+  const posted: { url: string; id: string; body: Record<string, unknown> }[] = [];
   const problems: string[] = [];
+  const opened: string[] = [];
   const waiting = new Map<string, (end: TurnEnd) => void>();
-  const chats = options.chats ?? { 'bot://motion': { session: 'bot-chat:/motion', chat: 'ahp-chat:/motion' } };
+  const sessions = options.sessions ?? { 'bot://motion': 'bot-chat:/motion' };
   const seams: BotSeams = {
     threads,
-    chat: async (bot) => {
+    session: async (bot) => {
       // A yield, so two first calls of one thread overlap here.
       await new Promise((r) => { setTimeout(r, 5); });
-      return chats[bot];
+      return sessions[bot];
+    },
+    // Each chat the host opened, in the order asked: `ahp-chat:/<n>`.
+    openChat: async (session) => {
+      if (options.chatRefused === true) return undefined;
+      opened.push(session);
+      return `ahp-chat:/${String(opened.length)}`;
     },
     send: async (chat, turn, text) => {
       sent.push({ chat, turn, text });
@@ -51,7 +59,7 @@ async function made(options: { auto?: boolean; chats?: Record<string, BotChat>; 
     },
     ended: (_chat, turn) => new Promise<TurnEnd>((resolve) => { waiting.set(turn, resolve); }),
     forget: (_chat, turn) => { waiting.delete(turn); },
-    post: async (url, body) => { posted.push({ url, body }); },
+    post: async (_endpoint, url, id, body) => { posted.push({ url, id, body }); },
     syncTimeoutSeconds: options.timeout ?? 60,
     problem: (line) => { problems.push(line); },
   };
@@ -61,7 +69,7 @@ async function made(options: { auto?: boolean; chats?: Record<string, BotChat>; 
     const turn = sent[n]?.turn ?? '';
     waiting.get(turn)?.({ status, text, ...(error === undefined ? {} : { error }) });
   };
-  return { target, threads, sent, posted, problems, finish, waiting };
+  return { target, threads, sent, posted, problems, finish, waiting, opened };
 }
 
 /** An endpoint as the route hands it over: checked. */
@@ -82,42 +90,53 @@ const call = (body: unknown, query = ''): Call => ({
 const settle = () => new Promise((r) => { setTimeout(r, 10); });
 
 describe('the thread map', () => {
-  it('keeps one thread record, at the chat the read of the bot answered', async () => {
-    const { target, threads, sent } = await made();
+  it('keeps one thread record, at a chat of its own opened in the session the read of the bot answered', async () => {
+    const { target, threads, sent, opened } = await made();
     const answer = await target(endpoint(), call({ thread: 'pr-12', text: 'hello' }));
     expect(answer.status).toBe(202);
-    expect(sent.map((one) => [one.chat, one.text])).toEqual([['ahp-chat:/motion', 'hello']]);
+    expect(opened).toEqual(['bot-chat:/motion']);
+    expect(sent.map((one) => [one.chat, one.text])).toEqual([['ahp-chat:/1', 'hello']]);
     const kept = await threads.list();
     expect(kept).toHaveLength(1);
-    expect(kept[0]).toMatchObject({ endpoint: 'ci', thread: 'pr-12', session: 'bot-chat:/motion', chat: 'ahp-chat:/motion' });
+    expect(kept[0]).toMatchObject({ endpoint: 'ci', thread: 'pr-12', session: 'bot-chat:/motion', chat: 'ahp-chat:/1' });
     expect(String(kept[0]?.id)).toMatch(/^t-[0-9a-f-]{36}$/);
   });
 
   it('sends a second call on the same thread in the same chat', async () => {
-    const { target, sent } = await made();
+    const { target, sent, opened } = await made();
     await target(endpoint(), call({ thread: 'pr-12', text: 'one' }));
     await target(endpoint(), call({ thread: 'pr-12', text: 'two' }));
-    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/motion', 'ahp-chat:/motion']);
+    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/1', 'ahp-chat:/1']);
+    expect(opened).toHaveLength(1);
     expect(sent[0]?.turn).not.toBe(sent[1]?.turn);
   });
 
-  it('sends another thread of the bot in the same chat', async () => {
+  it('sends another thread of the bot in a chat of its own', async () => {
     const { target, threads, sent } = await made();
     await target(endpoint(), call({ thread: 'pr-12', text: 'one' }));
     await target(endpoint(), call({ thread: 'pr-13', text: 'two' }));
-    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/motion', 'ahp-chat:/motion']);
+    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/1', 'ahp-chat:/2']);
     expect((await threads.list()).map((one) => one['thread'])).toEqual(['pr-12', 'pr-13']);
   });
 
   it('keeps a record of each thread, and one of two first calls of one thread at the same time', async () => {
-    const { target, threads, sent } = await made();
+    const { target, threads, sent, opened } = await made();
     const answers = await Promise.all([
       target(endpoint(), call({ thread: 'pr-12', text: 'one' })),
       target(endpoint(), call({ thread: 'pr-12', text: 'two' })),
     ]);
     expect(answers.map((one) => one.status)).toEqual([202, 202]);
-    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/motion', 'ahp-chat:/motion']);
+    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/1', 'ahp-chat:/1']);
+    expect(opened).toHaveLength(1);
     expect(await threads.list()).toHaveLength(1);
+  });
+
+  it('answers 409 and keeps no thread when the host opens no chat for it', async () => {
+    const { target, threads, sent } = await made({ chatRefused: true });
+    const answer = await target(endpoint(), call({ thread: 'pr-12', text: 'hello' }));
+    expect(answer.status).toBe(409);
+    expect(await threads.list()).toEqual([]);
+    expect(sent).toEqual([]);
   });
 
   it('sends the text of a JSON body as the turn, with the thread from the body', async () => {
@@ -153,7 +172,7 @@ describe('the thread map', () => {
   });
 
   it('answers 409 and keeps no thread when the read answers no chat for the bot', async () => {
-    const { target, threads, sent } = await made({ chats: {} });
+    const { target, threads, sent } = await made({ sessions: {} });
     const answer = await target(endpoint(), call({ thread: 'pr-12', text: 'hello' }));
     expect(answer.status).toBe(409);
     expect(await threads.list()).toEqual([]);
@@ -184,6 +203,7 @@ describe('the reply modes', () => {
     await settle();
     expect(posted).toEqual([{
       url: 'https://ci.example.com/hooks/pr-12',
+      id: sent[0]?.turn,
       body: { thread: 'pr-12', turn: sent[0]?.turn, status: 'complete', text: 'all green' },
     }]);
   });
@@ -256,6 +276,7 @@ describe('the reply modes', () => {
     await settle();
     expect(posted).toEqual([{
       url: 'https://ci.example.com/hooks/pr-12',
+      id: sent[0]?.turn,
       body: { thread: 'pr-12', turn: sent[0]?.turn, status: 'error', text: '', error: 'the model refused' },
     }]);
   });
@@ -410,17 +431,60 @@ describe('the callback', () => {
     return { url: `http://127.0.0.1:${port}/`, hits: () => hits, close: () => new Promise((r) => { server.close(r); }) };
   };
 
-  it('fails on a redirect, and does not follow it', async () => {
+  /** No wait between attempts, so a case runs the whole schedule at once. */
+  const quick = { wait: async () => {} };
+
+  it('counts a redirect a failure, does not follow it, and tries again on the schedule', async () => {
     const second = await serve((response) => { response.end('ok'); });
     const first = await serve((response) => { response.writeHead(307, { location: second.url }).end(); });
     try {
-      await expect(callBack(first.url, { thread: 'pr-12' })).rejects.toThrow('the callback answered');
-      expect(first.hits()).toBe(1);
+      await expect(callBack(endpoint(), first.url, 'turn-1', { thread: 'pr-12' }, { ...quick, schedule: [0, 5_000, 300_000] }))
+        .rejects.toThrow('the callback failed 3 times, the last time because it answered 307');
+      expect(first.hits()).toBe(3);
       expect(second.hits()).toBe(0);
     }
     finally {
       await first.close();
       await second.close();
     }
+  });
+
+  it('signs each attempt as Standard Webhooks has a producer sign one, with the attempt\'s own timestamp', async () => {
+    const seen: Record<string, string | undefined>[] = [];
+    const bodies: string[] = [];
+    let answers = [500, 200];
+    const fetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      seen.push({ id: headers.get('webhook-id') ?? undefined, stamp: headers.get('webhook-timestamp') ?? undefined, signature: headers.get('webhook-signature') ?? undefined });
+      bodies.push(String(init?.body));
+      const [status = 200, ...rest] = answers;
+      answers = rest;
+      return new Response(null, { status });
+    };
+    let clock = 1_700_000_000_000;
+    const key = Buffer.from('a fixed key of the endpoint');
+    const secret = `whsec_${key.toString('base64')}`;
+    await callBack(endpoint({ auth: 'standard', secret }), 'https://ci.example.com/hooks/pr-12', 'turn-1', { thread: 'pr-12' }, {
+      ...quick, fetch, now: () => { clock += 7_000; return clock; },
+    });
+    expect(seen.map((one) => one.id)).toEqual(['turn-1', 'turn-1']);
+    expect(seen.map((one) => one.stamp)).toEqual(['1700000007', '1700000014']);
+    for (const [at, one] of seen.entries()) {
+      const expected = createHmac('sha256', key).update(`turn-1.${String(one.stamp)}.${String(bodies[at])}`).digest('base64');
+      expect(one.signature).toBe(`v1,${expected}`);
+    }
+  });
+
+  it('stops at 410 Gone, and waits at least a retry-after it is given', async () => {
+    const waited: number[] = [];
+    let answers: [number, Record<string, string>][] = [[503, { 'retry-after': '120' }], [410, {}], [200, {}]];
+    const fetch = async (): Promise<Response> => {
+      const [[status, headers] = [200, {}], ...rest] = answers;
+      answers = rest;
+      return new Response(null, { status, headers });
+    };
+    await expect(callBack(endpoint(), 'https://ci.example.com/hooks/pr-12', 'turn-1', {}, { fetch, wait: async (ms) => { waited.push(ms); } }))
+      .rejects.toThrow('the callback answered 410 Gone, so it is not tried again');
+    expect(waited).toEqual([120_000]);
   });
 });

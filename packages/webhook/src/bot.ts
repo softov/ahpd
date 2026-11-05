@@ -21,35 +21,28 @@ export interface TurnEnd {
 /** How one turn ended, as the host's `turn_end` says it. */
 type Ending = Omit<TurnEnd, 'text'>;
 
-/**
- * One bot's own chat, as the seams give it.
- *
- * A read of the bot answers the session, and the session's own state names the
- * chat a turn is said in. The two are kept separate because a session can be
- * started again under the same chat: what a thread record is about is the chat,
- * and the session is how that chat was found.
- */
-export interface BotChat {
-  /** The session the bot's read answered, which a thread record keeps. */
-  session: string;
-  /** The default chat of that session: where every turn of this bot is said. */
-  chat: string;
-}
-
 /** What the bot target reads and calls, so a test gives each one. */
 export interface BotSeams {
   /** The `webhook-threads` collection. */
   threads: RecordCollection;
-  /** The bot's own chat, or nothing when the plugin is answered no chat for it. */
-  chat(bot: string): Promise<BotChat | undefined>;
+  /** The plugin's session with the bot, which a read of the bot answers, or nothing when it answers none. */
+  session(bot: string): Promise<string | undefined>;
+  /**
+   * Open a chat of its own in that session, as a client opens one with
+   * `createChat`, and answer its URI, or nothing when the host refused it.
+   */
+  openChat(session: string): Promise<string | undefined>;
   /** Send one turn in a chat, and give the host's reason when it refused the turn, or `undefined` when it took it. */
   send(chat: string, turn: string, text: string): Promise<string | undefined>;
   /** Wait for one turn to end. Asked before the turn is sent, so no end is missed. */
   ended(chat: string, turn: string): Promise<TurnEnd>;
   /** Stop the wait for one turn's end, for a turn the host refused. */
   forget(chat: string, turn: string): void;
-  /** POST a JSON body to a callback URL. */
-  post(url: string, body: Record<string, unknown>): Promise<void>;
+  /**
+   * POST a JSON body to a callback URL, signed for the endpoint under the
+   * message id `id`, and settle once it is delivered or given up.
+   */
+  post(endpoint: Endpoint, url: string, id: string, body: Record<string, unknown>): Promise<void>;
   /** How long a `sync` call waits when its endpoint names no time. */
   syncTimeoutSeconds: number;
   /** Say what went wrong, for the operator to read. */
@@ -151,23 +144,27 @@ export function turnEnds() {
 /**
  * The target of a bot endpoint.
  *
- * A call's text is a turn in the bot's own chat: one conversation between this
- * plugin and this bot, which every thread of the endpoint says its turns in.
- * The endpoint's `reply` decides what the call is answered with.
+ * A call's text is a turn in its thread's own chat: each caller thread is a
+ * conversation of its own with the bot, a chat the plugin opens in its session
+ * with the bot, as the spec gives a separate conversation its own chat with
+ * `session/chatAdded`. The endpoint's `reply` decides what the call is
+ * answered with.
  */
 export function botTarget(seams: BotSeams): Target {
   /** The last lookup of each thread, so the lookups of one thread run one after another and keep one record. */
   const queued = new Map<string, Promise<Thread | undefined>>();
 
   const lookFor = async (endpoint: Endpoint, thread: string, bot: string): Promise<Thread | undefined> => {
-    const own = await seams.chat(bot);
-    if (own === undefined) return undefined;
+    const session = await seams.session(bot);
+    if (session === undefined) return undefined;
     const kept = await findThread(seams.threads, endpoint.id, thread);
-    // The bot's chat is the one it was, so the record already says where this
-    // thread talks. A chat that moved - a session started again - is written
-    // down again, and the record keeps the id it had.
-    if (kept !== undefined && kept.session === own.session && kept.chat === own.chat) return kept;
-    const record: Thread = { id: kept?.id ?? threadId(), endpoint: endpoint.id, thread, session: own.session, chat: own.chat };
+    // The session is the one it was, so the record already says where this
+    // thread talks. A session started again is a new chat for the thread,
+    // written down under the record's own id.
+    if (kept !== undefined && kept.session === session) return kept;
+    const chat = await seams.openChat(session);
+    if (chat === undefined) return undefined;
+    const record: Thread = { id: kept?.id ?? threadId(), endpoint: endpoint.id, thread, session, chat };
     await seams.threads.put({ ...record });
     return record;
   };
@@ -225,7 +222,9 @@ export function botTarget(seams: BotSeams): Target {
       const url = callback;
       end.then(async (done) => {
         try {
-          await seams.post(url, { ...said, ...ended(done) });
+          // The turn is the event the callback is about, so its id is the
+          // message id every attempt carries.
+          await seams.post(endpoint, url, turn, { ...said, ...ended(done) });
         }
         catch (error) {
           seams.problem(`webhooks/${endpoint.id} could not call back ${url}: ${reason(error)}`);

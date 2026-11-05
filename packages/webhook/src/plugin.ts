@@ -1,12 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { reason } from '@ahpd/sdk';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { WEBHOOK_TRIGGER } from './automation.js';
+import { signatureOf, signingKey } from './auth.js';
 import { botTarget, turnEnds } from './bot.js';
 import { webhookAdapter } from './adapter.js';
 import { DEFAULT_MAX_BODY_BYTES } from './call.js';
 import { NAME, webhookRoute } from './route.js';
 import type { Bag, Plugin, PluginHost, PluginPeer, TurnEndEvent } from '@ahpd/sdk';
-import type { BotChat, BotSeams } from './bot.js';
+import type { BotSeams } from './bot.js';
 import type { Endpoint } from './record.js';
 
 /**
@@ -99,15 +101,77 @@ export function dispatcher(conn: PluginPeer, clientId: string, waitMs = ECHO_MS,
   };
 }
 
-/** POST a JSON body to a callback URL. A redirect is not followed, and fails as any answer that is not 2xx. */
-export async function callBack(url: string, body: Record<string, unknown>): Promise<void> {
-  const answered = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    redirect: 'manual',
-  });
-  if (!answered.ok) throw new Error(`the callback answered ${answered.status}`);
+/**
+ * The waits before each attempt of one callback, Standard Webhooks' example
+ * retry schedule: at once, then 5 seconds, 5 minutes, 30 minutes, 2 hours, 5
+ * hours, 10 hours, 14 hours, 20 hours and 24 hours after the attempt before.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export const RETRY_SCHEDULE_MS = [0, 5_000, 300_000, 1_800_000, 7_200_000, 18_000_000, 36_000_000, 50_400_000, 72_000_000, 86_400_000];
+
+/** How long one attempt waits for its answer: the top of the 15 to 30 seconds Standard Webhooks recommends. */
+const ATTEMPT_TIMEOUT_MS = 30_000;
+
+/** What a callback is sent with, so a test gives its own fetch and clock. */
+export interface CallBackOptions {
+  fetch?: typeof fetch;
+  /** The waits before each attempt; `RETRY_SCHEDULE_MS` otherwise. */
+  schedule?: readonly number[];
+  /** Wait `ms`, and answer once it is over or the plugin closed. */
+  wait?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * POST a JSON body to a callback URL as Standard Webhooks has a producer send
+ * a message: signed with the endpoint's key under `webhook-id`,
+ * `webhook-timestamp` and `webhook-signature`, the timestamp the attempt's
+ * own, and tried again on the retry schedule until an answer is 2xx. A
+ * redirect is not followed and counts as a failure, `410 Gone` ends the tries,
+ * and a `retry-after` an answer gives is waited at the least.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export async function callBack(endpoint: Endpoint, url: string, id: string, body: Record<string, unknown>, options: CallBackOptions = {}): Promise<void> {
+  const key = signingKey(endpoint);
+  if (key === undefined) throw new Error(`the endpoint ${endpoint.id} holds no key to sign its callback with`);
+  const payload = JSON.stringify(body);
+  const schedule = options.schedule ?? RETRY_SCHEDULE_MS;
+  const send = options.fetch ?? fetch;
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.(); }));
+  let last = '';
+  let floor = 0;
+  for (const delay of schedule) {
+    const waited = Math.max(delay, floor);
+    if (waited > 0) await wait(waited);
+    const timestamp = Math.floor(now() / 1000);
+    let answered: Response;
+    try {
+      answered = await send(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'webhook-id': id,
+          'webhook-timestamp': String(timestamp),
+          'webhook-signature': signatureOf(key, id, timestamp, payload),
+        },
+        body: payload,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+      });
+    }
+    catch (error) {
+      last = reason(error);
+      floor = 0;
+      continue;
+    }
+    if (answered.ok) return;
+    if (answered.status === 410) throw new Error('the callback answered 410 Gone, so it is not tried again');
+    last = `it answered ${String(answered.status)}`;
+    const after = Number(answered.headers.get('retry-after'));
+    floor = Number.isFinite(after) && after > 0 ? after * 1000 : 0;
+  }
+  throw new Error(`the callback failed ${String(schedule.length)} times, the last time because ${last}`);
 }
 
 /** The plugin's connection to the host, and the dispatcher over it. */
@@ -131,19 +195,26 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
   const ends = turnEnds();
   host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
+  // Each callback's wait for its next attempt, ended when the plugin closes.
+  const waits = new Map<NodeJS.Timeout, (error: Error) => void>();
+  host.registerClose(() => {
+    for (const [timer, stop] of waits) {
+      clearTimeout(timer);
+      stop(new Error('the daemon stopped before the callback was delivered'));
+    }
+    waits.clear();
+  });
   return {
     threads: host.records('webhook-threads'),
     /**
-     * The plugin's own chat with the bot, read the way a client reads one.
+     * The plugin's own session with the bot, read the way a client reads one.
      *
      * The read answers `chat` only to a reader who may chat - a holder of
      * `bot:chat`, or the bot's owner - and the session is started there if it
      * is not one this host holds, so the two grants the plugin needs are named
-     * in one problem line when the read answers the record without it. The chat
-     * a turn goes in is then the session's own default chat rather than a name
-     * of this plugin's: it is the one the session says is current.
+     * in one problem line when the read answers the record without it.
      */
-    chat: async (bot): Promise<BotChat | undefined> => {
+    session: async (bot): Promise<string | undefined> => {
       const conn = await peer();
       let said: Bag;
       try {
@@ -159,21 +230,24 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
         problem(`needs the grants bot:chat and session:create to be answered a chat by ${bot}`);
         return undefined;
       }
-      // A chat's state is read off a session the host has loaded, and a subscribe loads it.
-      let opened: { snapshot?: { state?: unknown } };
+      return session;
+    },
+    /**
+     * A chat of one caller thread's own, opened as a client opens one: a
+     * `createChat` naming a chat URI of the plugin's choosing, which the host
+     * says to the session as `session/chatAdded`.
+     */
+    openChat: async (session): Promise<string | undefined> => {
+      const conn = await peer();
+      const chat = `ahp-chat:/${randomUUID()}`;
       try {
-        opened = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: unknown } };
+        await conn.request('createChat', { channel: session, chat });
       }
       catch (error) {
-        problem(`${session} cannot be read: ${reason(error)}`);
+        problem(`could not open a chat in ${session}, which needs the grant chat:create: ${reason(error)}`);
         return undefined;
       }
-      const chat = ((opened.snapshot?.state ?? {}) as Bag)['defaultChat'];
-      if (typeof chat !== 'string' || chat === '') {
-        problem(`${session} names no chat to send a turn to`);
-        return undefined;
-      }
-      return { session, chat };
+      return chat;
     },
     send: async (chat, turn, text) => {
       const { conn, sender } = await open();
@@ -198,7 +272,13 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
       const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: unknown } };
       return { ...ending, text: textOf(opened.snapshot?.state, turn) };
     },
-    post: callBack,
+    post: (endpoint, url, id, body) => callBack(endpoint, url, id, body, {
+      wait: (ms) => new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { waits.delete(timer); resolve(); }, ms);
+        timer.unref?.();
+        waits.set(timer, reject);
+      }),
+    }),
     syncTimeoutSeconds: timeout,
     problem,
   };
