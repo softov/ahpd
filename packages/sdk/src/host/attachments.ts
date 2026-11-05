@@ -170,7 +170,7 @@ async function written(
       const contentType = typeOf(one.contentType);
       const bytes = Buffer.from(typeof one.data === 'string' ? one.data : '', 'base64');
       const path = await put(dir, labelOf(one), contentType, bytes);
-      return tagged(value, one, path, bytes.length, contentType);
+      return tagged(one, path, contentType);
     }
     if (one.type !== 'resource') return value;
     const uri = typeof one.uri === 'string' ? one.uri : '';
@@ -181,10 +181,13 @@ async function written(
     const found = await stat(path).catch(() => undefined);
     if (found !== undefined) {
       // A folder this session's own, holding a file this host wrote and a
-      // client sent back: the file is already there and only the tag is
-      // missing. Anything else is somebody's own file, and stays theirs.
-      if (!found.isFile() || !inside(dir, path)) return value;
-      return tagged(value, one, path, found.size, typeOf(one.contentType));
+      // client sent back: the file is already there, so an attachment
+      // missing the tag is given it and one carrying it is left as it is.
+      // Anything else is somebody's own file, and stays theirs.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13825-L13830
+      if (!found.isFile() || !inside(dir, path) || heldSnapshot(one)) return value;
+      const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
+      return { ...one, _meta: { ...meta, [TAG]: { isSnapshot: true, contentType: typeOf(one.contentType) } } };
     }
     // A file this host has no copy of: the client that sent it is the only
     // thing that can read it, and only where it is small enough to answer
@@ -194,7 +197,7 @@ async function written(
     const contentType = typeOf(one.contentType);
     const bytes = await fromClient(connection, uri);
     const held = await put(dir, labelOf(one), contentType, bytes);
-    return tagged(value, one, held, bytes.length, contentType);
+    return tagged(one, held, contentType);
   } catch (error) {
     told(`could not write an attachment: ${error instanceof Error ? error.message : String(error)}`);
     return value;
@@ -204,37 +207,24 @@ async function written(
 /**
  * The attachment, naming the file that holds its bytes.
  *
- * The tag is merged into whatever `_meta` the attachment already carried,
- * because the client that sent it may have put something there that this host
- * knows nothing about.
+ * It carries what VS Code's host gives the attachment it rewrites: the label,
+ * the range, the display kind, a resource's selection, and the tag, which
+ * holds the type the bytes are in. The tag is merged into whatever `_meta`
+ * the attachment already carried, because the client that sent it may have
+ * put something there that this host knows nothing about.
+ *
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13869-L13893
  */
-function tagged(
-  value: unknown,
-  one: Bag,
-  path: string,
-  size: number,
-  contentType: string,
-): unknown {
-  const uri = uriOf(path);
-  const tag = { isSnapshot: true, contentType };
+function tagged(one: Bag, path: string, contentType: string): Record<string, unknown> {
   const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
-  const held = (typeof meta[TAG] === 'object' && meta[TAG] !== null ? meta[TAG] : {}) as Bag;
-  // Already this file, already tagged: the attachment a client sent back is
-  // the one that arrived, and nothing about it moved.
-  if (one.type === 'resource' && one.uri === uri && one.contentType === contentType
-    && heldSnapshot(one) && held.contentType === contentType) {
-    return value;
-  }
   return {
     label: labelOf(one),
     ...(one.range === undefined ? {} : { range: one.range }),
     ...(one.displayKind === undefined ? {} : { displayKind: one.displayKind }),
-    ...(one.selection === undefined ? {} : { selection: one.selection }),
+    ...(one.type === 'resource' && one.selection !== undefined ? { selection: one.selection } : {}),
     type: 'resource',
-    uri,
-    sizeHint: size,
-    contentType,
-    _meta: { ...meta, [TAG]: tag },
+    uri: uriOf(path),
+    _meta: { ...meta, [TAG]: { isSnapshot: true, contentType } },
   };
 }
 

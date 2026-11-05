@@ -16,7 +16,7 @@
  * state does.
  */
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -214,14 +214,15 @@ it.skipIf(!posix)('writes an embedded image to a file the message names', async 
   // Read-only, because nobody edits what somebody pasted.
   expect(statSync(file).mode & 0o777).toBe(0o400);
 
-  const attachment = first(sent(first(said.begun)));
-  expect(attachment.type).toBe('resource');
-  expect(attachment.uri).toBe(uriOf(file));
-  expect(attachment.label).toBe('pasted.png');
-  expect(attachment.contentType).toBe('image/png');
-  expect((attachment._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
-  // The bytes are gone from the message: what travels is the path.
-  expect('data' in attachment).toBe(false);
+  // The bytes are gone from the message: what travels is the path, with the
+  // label and the tag that says what type the bytes are in, which is what
+  // VS Code's host makes of a pasted picture.
+  expect(first(sent(first(said.begun)))).toEqual({
+    type: 'resource',
+    uri: uriOf(file),
+    label: 'pasted.png',
+    _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } },
+  });
 
   // And the turn a client reads carries the same resource, which is the chip.
   const chat = await state();
@@ -314,6 +315,34 @@ it('reads a file only the client has, and leaves one this host has as it came', 
   expect((elsewhere._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
   // A file this host already holds is the user's own and is left where it is.
   expect(mine).toEqual({ type: 'resource', label: 'mine.png', uri: uriOf(here), contentType: 'image/png' });
+});
+
+it('tags a copy from the session\'s own folder where it stands, and leaves a tagged one as it came', async () => {
+  const said = saidNothing();
+  const { dir, turn, peer: p } = await serving(said);
+  // Two files this host wrote for an earlier message, which a client opened
+  // and attached again.
+  const folder = fileSessions({ dir }).attachmentsDir?.('one') as string;
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'copy.png'), PNG);
+  writeFileSync(join(folder, 'kept.png'), PNG);
+  const untagged = { type: 'resource', label: 'copy.png', uri: uriOf(join(folder, 'copy.png')), contentType: 'image/png', sizeHint: 1 };
+  const tagged = {
+    type: 'resource', label: 'kept.png', uri: uriOf(join(folder, 'kept.png')),
+    _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } },
+  };
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again', attachments: [untagged, tagged] } });
+  await until(() => said.begun.length > 0);
+
+  // Both files are here already, so nothing was asked for or written.
+  expect(p.asked).toEqual([]);
+  expect(written(dir).names.sort()).toEqual(['copy.png', 'kept.png']);
+  // The one without the tag is the attachment as sent with the tag added,
+  // and the one carrying it is the attachment as sent.
+  expect(sent(first(said.begun))).toEqual([
+    { ...untagged, _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } } },
+    tagged,
+  ]);
 });
 
 it('asks no client for a file above the size it will fetch', async () => {
