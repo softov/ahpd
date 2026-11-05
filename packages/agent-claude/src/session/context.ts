@@ -452,6 +452,4 @@ export interface Scope {
    * whole when the chat opens, so it is applied as if it had arrived then.
    */
   waiting?: (() => void)[] | undefined;
-  /** What releases `waiting` when no spawn is recorded in time. */
-  release?: ReturnType<typeof setTimeout> | undefined;
 }

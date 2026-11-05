@@ -248,6 +248,11 @@ export function createStream(ctx: SessionContext): Stream {
         if (ctx.options.plan === true && name === 'TodoWrite') return;
         scope.calling.set(key, id);
         if (scope.parts.has(id)) return;
+        // A spawning call's spawn, recorded at its block's start as VS Code's
+        // mapper records it, so its worker's chat opens on the worker's first
+        // frame with what the record holds by then.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L646-L653
+        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, {}, scope, str(turn.id));
         // Whose tool it is. The reducer refuses `chat/toolCallAuthRequired` on
         // a call with no MCP contributor, so an MCP server's is also what makes
         // a sign-in mid-call sayable at all.
@@ -564,17 +569,6 @@ export function createStream(ctx: SessionContext): Stream {
       // structured output beside its result. Before the part is looked up: a
       // create whose call never reached this stream still made a task.
       if (id !== undefined) tasks.ended(id, structured);
-      /*
-       * A worker that spoke before the call that spawned it was recorded.
-       *
-       * The call's own result is the last thing there is to wait for: its
-       * spawn was either going to be recorded by now or it never will be, and
-       * a worker whose call has ended has a chat either way. Before the part is
-       * looked up, because a call whose `tool_use` never arrived is exactly the
-       * one with a result and nothing else - and before `workerBlock` below, so
-       * a result for a call that does have a record still links what it opens.
-       */
-      if (id !== undefined) ctx.releaseHeld(id);
       const part = id ? scope.parts.get(id) : undefined;
       if (id === undefined || !part) continue;
       const call = bag(part.toolCall);

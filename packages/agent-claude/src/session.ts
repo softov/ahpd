@@ -328,12 +328,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // And the output terminals a background shell wrote into, which go with
       // the session that made them rather than being finished without it.
       ctx.closeOutputs();
-      // A worker still waiting for a spawn that will now never be recorded, and
-      // a timer that would open its chat on a session nobody is listening to.
-      for (const scope of ctx.scopes.values()) {
-        if (scope.release !== undefined) clearTimeout(scope.release);
-        scope.waiting = undefined;
-      }
+      // A worker still waiting for a spawn that will now never be recorded.
+      for (const scope of ctx.scopes.values()) scope.waiting = undefined;
       ctx.wake?.();
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);

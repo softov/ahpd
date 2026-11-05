@@ -298,12 +298,18 @@ it('records the spawn from the permission callback, which the SDK runs first', a
   expect(main.some((one) => one.action.toolCallId === call)).toBe(true);
 });
 
-it('opens a held worker on its own result when no spawn was ever recorded', async () => {
+/*
+ * A worker no spawn was recorded for is never announced, its frames held, as
+ * VS Code's host holds a subagent's signals for a chat not yet announced: its
+ * spawning call's result and a stop open nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L60-L66
+ */
+it('opens no chat for a worker no spawn was recorded for, on its result or at a stop', async () => {
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
   // The harness's `tool_use` never arrives: all there is of the spawning call
   // is a result, naming a worker that has already spoken.
-  const { main, workers, asked } = await replay('none', [
+  const { main, session, asked } = await replay('none', [
     lines[0] as Record<string, unknown>,
     lines[4] as Record<string, unknown>,
   ]);
@@ -311,46 +317,33 @@ it('opens a held worker on its own result when no spawn was ever recorded', asyn
 
   sdk.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: call, content: 'done' }] } });
   await settle();
-
-  // The fallback title, because there is nothing to name it by, and the frames
-  // it held are on it rather than nowhere.
-  expect(asked).toEqual([call]);
-  const worker = workers.get(call);
-  expect(worker?.request).toMatchObject({ title: 'Subagent' });
-  expect(worker?.request.prompt).toBeUndefined();
-  expect(drew(worker as Worker).some((one) => JSON.stringify(one).includes('directory contents'))).toBe(true);
+  expect(asked).toEqual([]);
   // Nothing on the lead either: a result with no call behind it draws no row.
   expect(main.some((one) => one.action.type === 'chat/toolCallComplete')).toBe(false);
-});
-
-it('cancels a worker that was still waiting for its spawn', async () => {
-  const lines = fixture('claude-subagent.jsonl');
-  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  // The worker spoke and the call that names it never came, so it is held.
-  const { workers, session, asked } = await replay('none', [
-    lines[0] as Record<string, unknown>,
-    lines[4] as Record<string, unknown>,
-  ]);
-  expect(asked).toEqual([]);
 
   session.abort();
   await settle();
+  expect(asked).toEqual([]);
+});
 
-  // Its chat opens as the turn is stopped rather than five seconds after it,
-  // with the fallback title it had nothing to name it by, and it ends with the
-  // turn that spawned it.
+/*
+ * A spawn recorded at its call's block start, before its input exists: a
+ * worker that speaks before the input arrives opens its chat with what the
+ * spawn holds, as VS Code's mapper records a spawn at the block's start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L646-L653
+ */
+it('opens a worker that speaks after its call\'s block start with what the spawn holds then', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { workers, asked } = await replay('none', [
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_spawn' } } },
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: call, name: 'Agent', input: {} } } },
+    lines[4] as Record<string, unknown>,
+  ]);
   expect(asked).toEqual([call]);
-  const worker = workers.get(call);
-  expect(worker?.request).toMatchObject({ title: 'Subagent' });
-  expect(drew(worker as Worker).length).toBeGreaterThan(0);
-  expect(worker?.ended).toEqual([{ state: 'cancelled' }]);
-
-  // And nothing opens afterwards: the timer went with the chat. Waited out
-  // past `SPAWN_GRACE` rather than settling, because settling is not the claim.
-  await new Promise((resolve) => { setTimeout(resolve, 5200); });
-  expect(asked).toEqual([call]);
-  expect(worker?.ended).toEqual([{ state: 'cancelled' }]);
-}, 10000);
+  expect(workers.get(call)?.request).toMatchObject({ title: 'Subagent' });
+  expect(drew(workers.get(call) as Worker).some((one) => JSON.stringify(one).includes('directory contents'))).toBe(true);
+});
 
 it('names a worker chat by its task, cut to sixty characters', () => {
   expect(titleOf('x'.repeat(80), 'Explore')).toBe(`${'x'.repeat(60)}…`);

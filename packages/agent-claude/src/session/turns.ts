@@ -537,15 +537,12 @@ export function createTurns(ctx: SessionContext): Turns {
       /*
        * And every worker and task the CLI runs, foreground or background,
        * since they go with the CLI the stop closes, as a background task ends
-       * with the reference's abort. A worker still waiting to be told what it
-       * is is opened first, with whatever the record said by now, so the loop
-       * below ends it with the rest.
+       * with the reference's abort. A worker whose chat was never announced
+       * has nothing to end, and what it held goes with the CLI.
        */
       for (const scope of [...ctx.scopes.values()]) {
-        if (scope.waiting !== undefined) ctx.releaseHeld(scope.parent);
-      }
-      for (const scope of [...ctx.scopes.values()]) {
-        if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+        if (scope.waiting !== undefined) ctx.scopes.delete(scope.parent);
+        else if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
       }
       ctx.noteLive({ tasks: [] });
       // The files the turn's edit calls began changing, as the stop leaves them.
