@@ -753,8 +753,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      *
      * The same thing `setDraft` is for a message: held here so that two people
      * looking at one elicitation see the form being filled in rather than each
-     * filling in their own. Kept on the request itself as well as emitted,
-     * because a client that arrives while the question is open reads
+     * filling in their own. Kept on the request itself, because a client that
+     * arrives while the question is open reads
      * `session.inputNeeded` and would otherwise see an empty form somebody has
      * already answered.
      *
@@ -775,12 +775,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       else delete request.answers;
       // Not `touch()`: typing is not a change to the conversation, and a
       // catalogue that reordered itself on every keystroke would be unusable.
-      ctx.emit('chat', {
-        type: 'chat/inputAnswerChanged',
-        requestId,
-        questionId,
-        ...(answer !== undefined ? { answer } : {}),
-      });
+      // Nothing is said: the host said the client's answer when it took it.
       return true;
     },
 
