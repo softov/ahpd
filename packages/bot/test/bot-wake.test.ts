@@ -266,6 +266,18 @@ it('starts a back session on the bot\'s own harness, in its folder, for the pers
   });
 });
 
+/*
+ * A back session records the main session, chat and turn it was started for,
+ * as VS Code's create_session records the session that made one:
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1920-L1927
+ */
+it('records the main turn a back session was started for, as VS Code records a session\'s creator', async () => {
+  const one = await sitting();
+  await one.wake.woken(message('t1', 'hello'), turn().handle);
+  const meta = (one.starts[0]?.config as { _meta?: Record<string, unknown> } | undefined)?._meta;
+  expect(meta?.['agentHost/createdBySession']).toEqual({ session: message('t1', 'hello').session, chat: message('t1', 'hello').chat, turnId: 't1' });
+});
+
 it('asks the host for post_message when it starts a back session', async () => {
   const one = await sitting();
 

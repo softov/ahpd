@@ -4,7 +4,7 @@ import { contextBlock, timeWithOffset } from './context.js';
 import { prepareFolder } from './folder.js';
 import { userOf } from './names.js';
 import { isFilledName, TURN_WORD } from './record.js';
-import type { Bag, Owner, RecordCollection, SessionRequest } from '@ahpd/sdk';
+import type { Bag, CreatedBy, Owner, RecordCollection, SessionRequest } from '@ahpd/sdk';
 import type { ChatMessage, TurnHandle } from './chat.js';
 import type { BackSessions } from './names.js';
 import type { BotRecord } from './record.js';
@@ -273,8 +273,18 @@ export interface Wake {
  * talk to. The bot's rules are its `AGENTS.md` in its own folder, which trust
  * still loads.
  */
-export const sessionFor = (bot: BotRecord, owner: Owner): SessionRequest => {
+export const sessionFor = (bot: BotRecord, owner: Owner, createdBy?: CreatedBy): SessionRequest => {
   const provider = bot.preset ?? bot.harness;
+  /*
+   * The main session, chat and turn a back session was started for, recorded
+   * at its start as VS Code's create_session records the session that made
+   * one, which its clients place a related session by.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1920-L1927
+   */
+  const config = {
+    ...(bot.computer === undefined ? {} : { computer: bot.computer }),
+    ...(createdBy === undefined ? {} : { _meta: { 'agentHost/createdBySession': createdBy } }),
+  };
   return {
     owner,
     ...(provider === undefined ? {} : { provider }),
@@ -282,7 +292,7 @@ export const sessionFor = (bot: BotRecord, owner: Owner): SessionRequest => {
     trusted: true,
     userSettings: false,
     ...(bot.preset !== undefined || bot.model === undefined ? {} : { model: { id: bot.model } }),
-    ...(bot.computer === undefined ? {} : { config: { computer: bot.computer } }),
+    ...(Object.keys(config).length === 0 ? {} : { config }),
     title: bot.name,
     tools: ['post_message'],
   };
@@ -449,7 +459,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * together for one name start one session, which is the same guard `chatOf` in
    * the provider keeps over the main chats.
    */
-  const sessionNamed = async (bot: BotRecord, owner: Owner, user: string, name: string): Promise<string> => {
+  const sessionNamed = async (bot: BotRecord, owner: Owner, user: string, name: string, createdBy?: CreatedBy): Promise<string> => {
     /*
      * The agent before the row: a record that now names an agent its owner may
      * not use is refused even where a session of an earlier record is still
@@ -494,7 +504,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * the tree is isolated, and a reader that learned the URI only after the
        * start answered would miss it.
        */
-      const session = await seams.sessions.start(sessionFor(bot, owner), (uri) => {
+      const session = await seams.sessions.start(sessionFor(bot, owner, createdBy), (uri) => {
         named = uri;
         started.set(uri, bot.id);
       }).catch((error: unknown) => {
@@ -677,7 +687,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         let session: string;
         let looked: Looked;
         try {
-          session = await sessionNamed(bot, owner, userOf(owner), name);
+          session = await sessionNamed(bot, owner, userOf(owner), name, { session: message.session, chat: message.chat, turnId: message.turnId });
           looked = await seams.look(session);
         }
         catch (error) {
