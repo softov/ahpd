@@ -10,11 +10,11 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Left
 
-1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `4b5e1290` or later. It wires in #212 to #237. Before the restart, run `ahpd config set httpApi true` and `ahpd config set modelApi true` with `--config-file ~/.config/ahpd/config-dev.json`: the file lost `http`, and #237 gates the model calls on `modelApi`.
-2. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
+1. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
 
 ## Done
 
+- **The daemon on main.** Softov restarted the dev daemon on `4b5e1290` with `httpApi` and `modelApi` set, on 2026-11-04, and it works.
 - **The release.** Run 41892315275 staged all 13 packages under `next`, and Softov approved them on 2026-11-04. `npm view` gives `next: 0.15.0-rc.1` and `latest: 0.14.0` for each. `@ahpd/server@next` installs in an empty folder and says `0.15.0-rc.1`.
 
 - **The bump.** #231 sets `0.15.0-rc.1` in every published package. The update test takes a pre-release version.
