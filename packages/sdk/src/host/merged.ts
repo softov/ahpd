@@ -135,9 +135,13 @@ export function createMerged(ctx: HostContext): Merged {
 
   /**
    * The pull requests of a session, asked one URL at a time: the folder's
-   * recorded pull requests and the ones the session took over.
+   * recorded pull requests and the ones the session took over, with the URLs
+   * GitHub answered nothing for: a related pull request the lookup cannot
+   * resolve makes the session not eligible, as the reference host's
+   * lifecycle reads one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L229-L241
    */
-  const byUrls = async (row: Summary, dir: string): Promise<PullRequest[] | undefined> => {
+  const byUrls = async (row: Summary, dir: string): Promise<{ found: PullRequest[]; unresolved: string[] } | undefined> => {
     const github = options.github;
     const ask = github?.byUrl;
     if (github === undefined || ask === undefined) return undefined;
@@ -153,11 +157,13 @@ export function createMerged(ctx: HostContext): Merged {
     const resource = String(github.resource.resource ?? '');
     const cwd = worktreeOf(row.resource)?.repository ?? dir;
     const found: PullRequest[] = [];
+    const unresolved: string[] = [];
     for (const url of urls) {
       const one = await ask.call(github, url, lent(resource), cwd);
       if (one !== undefined) found.push(one);
+      else unresolved.push(url);
     }
-    return found;
+    return { found, unresolved };
   };
 
   /**
@@ -169,8 +175,13 @@ export function createMerged(ctx: HostContext): Merged {
     const dir = folderOf(row);
     if (dir === undefined || options.github === undefined) return undefined;
     let found: PullRequest[] | undefined;
+    let unresolved: string[] = [];
     try {
-      if (ctx.pullRequestLookup === 'url' && options.github.byUrl !== undefined) found = await byUrls(row, dir);
+      if (ctx.pullRequestLookup === 'url' && options.github.byUrl !== undefined) {
+        const asked = await byUrls(row, dir);
+        found = asked?.found;
+        unresolved = asked?.unresolved ?? [];
+      }
       else {
         if (ctx.pullRequestLookup === 'url' && !saidNoUrl) {
           saidNoUrl = true;
@@ -187,6 +198,8 @@ export function createMerged(ctx: HostContext): Merged {
     const baseline = kept.pullRequests(idOf(row.resource));
     const taken = new Set((baseline?.associatedPullRequestUrls ?? []).map(urlKey));
     const before = new Set((baseline?.initialPullRequestUrls ?? []).map(urlKey).filter((key) => !taken.has(key)));
+    // A related pull request GitHub answered nothing for: the session is not eligible.
+    if (unresolved.some((url) => !before.has(urlKey(url)))) return undefined;
     return found.filter((one) => !before.has(urlKey(one.url)));
   };
 

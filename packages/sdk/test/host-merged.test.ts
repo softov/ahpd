@@ -543,6 +543,23 @@ describe('how the pass looks a pull request up', () => {
     expect(pulls.asked).toEqual([`url ${PR1}`, `url ${PR2}`]);
   });
 
+  /*
+   * VS Code's lifecycle reads a related pull request it cannot resolve as one
+   * that keeps the session from being archived.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L229-L241
+   */
+  it('keeps a session one of whose related pull requests GitHub answers nothing for', async () => {
+    const pulls = github();
+    const h = await hosting({ port: pulls.port });
+    const one = await h.open('unresolved');
+    h.owns(one, [PR1, PR2]);
+    pulls.states.set(PR1, 'merged');
+    h.days(8);
+    await h.push({ [ARCHIVE]: 7 });
+    await h.logged('merged sessions: looked at 1, archived 0');
+    expect(h.archived(one)).toBe(false);
+  });
+
   it('asks forBranch under branch, and archives when the related ones are merged', async () => {
     const pulls = github();
     const h = await hosting({ port: pulls.port, pullRequestLookup: 'branch', directories: onBranch('feature') });
