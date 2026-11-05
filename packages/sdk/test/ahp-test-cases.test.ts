@@ -369,6 +369,7 @@ const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatc
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
+const DRAINED = 'queueDrainContribution.ts L29 at 6b68d3fe: "Owns pending-message synchronization and decides when a queued turn can be admitted."; a client\'s reorder, L87 and L146, drains the queue of a chat that runs nothing, so its head starts as a turn';
 const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
 
 /**
@@ -380,11 +381,11 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': [{ reduced: ['activity'], because: THINKING }],
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [
-    { reduced: ['activity'], because: THINKING },
-    { reduced: ['steeringMessage'], because: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."' },
-  ],
+  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
   '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
+  '054-keeps-messages-not-in-order-at-end-in-original-order': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
+  '055-ignores-unknown-ids-in-reorder': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
+  '056-empty-reorder-preserves-all-messages-in-original-order': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
   '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
   '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activity'], because: THINKING }],
