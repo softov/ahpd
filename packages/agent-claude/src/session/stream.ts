@@ -388,8 +388,9 @@ export function createStream(ctx: SessionContext): Stream {
          * is still read; only the row a client would draw is left out.
          */
         if (ctx.options.plan === true && name === 'TodoWrite') continue;
-        const line = lineOf(name, bag(block.input));
-        ctx.pastLines.set(id, pastLineOf(name, bag(block.input)));
+        const displayName = displayNameOf(name);
+        const line = lineOf(name, bag(block.input), displayName);
+        ctx.pastLines.set(id, pastLineOf(name, bag(block.input), displayName));
         const input = toolInputOf(name, bag(block.input));
         const from = serverOf(name);
         /*
@@ -422,7 +423,6 @@ export function createStream(ctx: SessionContext): Stream {
         const meta = kindOf === undefined && Object.keys(described).length === 0 ? undefined : { ...kindOf, ...described };
         // A client's own tool by the name it announced.
         const shown = ctx.clientToolOf(name)?.name ?? name;
-        const displayName = displayNameOf(name);
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: shown,

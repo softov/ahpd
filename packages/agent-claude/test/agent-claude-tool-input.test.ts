@@ -13,11 +13,10 @@ import type { Bag, Session } from '@ahpd/sdk';
  * whose `toolInput` is its command, because a terminal row reads the command
  * there.
  *
- * The row line is never cut JSON. It is the call's `description` for Bash, Task,
- * Agent and Monitor; otherwise VS Code's line for a tool VS Code maps, as
- * markdown where VS Code sends markdown; otherwise the subject of
- * AskUserQuestion, WebSearch or an MCP tool, or the display name. The past
- * tense is the same rule, success or not.
+ * The row line is never cut JSON. It is VS Code's line for a tool VS Code
+ * maps, as markdown where VS Code sends markdown, a Task or Agent call's own
+ * description, and the call's display name for any other tool. The past tense
+ * is VS Code's past line, success or not.
  */
 
 const sdk = vi.hoisted(() => ({
@@ -112,12 +111,12 @@ const calls = [
 /** Each call's row line and past tense, as the task names them. */
 const rows: [string, unknown, unknown][] = [
   ['toolu_long', 'Update todo list', 'Update todo list'],
-  ['toolu_bash', 'List files', 'List files'],
-  ['toolu_ask', 'Which colour?', 'Which colour?'],
+  ['toolu_bash', { markdown: 'Running `ls -la`' }, { markdown: 'Ran `ls -la`' }],
+  ['toolu_ask', 'Ask user a question', 'Ask user a question'],
   ['toolu_fetch', { markdown: 'Fetching [https://example.com/page](https://example.com/page)' }, { markdown: 'Fetched [https://example.com/page](https://example.com/page)' }],
-  ['toolu_search', 'kqueue linux', 'kqueue linux'],
-  ['toolu_mcp', 'kqueue', 'kqueue'],
-  ['toolu_numbers', 'mcp__pager__page', 'mcp__pager__page'],
+  ['toolu_search', 'WebSearch', 'WebSearch'],
+  ['toolu_mcp', 'Run MCP tool docs__search', 'Run MCP tool docs__search'],
+  ['toolu_numbers', 'Run MCP tool pager__page', 'Run MCP tool pager__page'],
 ];
 
 /** The text of a line, whether it is a string or markdown. */
@@ -210,11 +209,11 @@ it('keeps Bash\'s command in toolInput, live and restored', async () => {
   const back = (await restored()).get('toolu_bash');
   for (const call of [ready.get('toolu_bash'), held.get('toolu_bash'), back]) {
     expect(call?.toolInput).toBe('ls -la');
-    expect(call?.invocationMessage).toBe('List files');
+    expect(call?.invocationMessage).toEqual({ markdown: 'Running `ls -la`' });
   }
 });
 
-it('draws each live call\'s row line as its subject or its display name', async () => {
+it('draws each live call\'s row line as VS Code\'s line or its display name', async () => {
   const { held, ready } = await live();
   for (const [id, line] of rows) {
     for (const call of [ready.get(id), held.get(id)]) {
@@ -263,7 +262,7 @@ it('gives a call confirmed while it streams its whole input', async () => {
 const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   {
     block: { type: 'tool_use', id: 'toolu_said', name: 'Bash', input: { command: 'ls -la /tmp/scratch', description: 'Check scratch directory' } },
-    line: 'Check scratch directory', past: 'Check scratch directory',
+    line: { markdown: 'Running `ls -la /tmp/scratch`' }, past: { markdown: 'Ran `ls -la /tmp/scratch`' },
   },
   {
     block: { type: 'tool_use', id: 'toolu_plain', name: 'Bash', input: { command: 'ls -la' } },
@@ -299,11 +298,11 @@ const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   },
   {
     block: { type: 'tool_use', id: 'toolu_task', name: 'Task', input: { description: 'Find the reducer', prompt: 'Look for it', subagent_type: 'Explore' } },
-    line: 'Find the reducer', past: 'Find the reducer',
+    line: 'Find the reducer', past: 'Ran subagent',
   },
   {
     block: { type: 'tool_use', id: 'toolu_monitor', name: 'Monitor', input: { description: 'Watch the build log', command: 'tail -f build.log', timeout_ms: 1000 } },
-    line: 'Watch the build log', past: 'Watch the build log',
+    line: 'Monitor', past: 'Monitor',
   },
   {
     block: { type: 'tool_use', id: 'toolu_done', name: 'TaskUpdate', input: { taskId: '3', status: 'completed', description: 'A new body for the task' } },
@@ -315,26 +314,22 @@ const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   },
   {
     block: { type: 'tool_use', id: 'toolu_topic', name: 'mcp__docs__search', input: { limit: 5, topic: 'kqueue' } },
-    line: 'kqueue', past: 'kqueue',
+    line: 'Run MCP tool docs__search', past: 'Run MCP tool docs__search',
   },
   {
     block: { type: 'tool_use', id: 'toolu_body', name: 'mcp__docs__write', input: { body: `${'z'.repeat(100)}\nsecond line` } },
-    line: `${'z'.repeat(80)}…`, past: `${'z'.repeat(80)}…`,
+    line: 'Run MCP tool docs__write', past: 'Run MCP tool docs__write',
   },
   {
     block: {
       type: 'tool_use', id: 'toolu_ask_wide', name: 'AskUserQuestion',
       input: { questions: [{ question: `${'q'.repeat(100)}\nwhy`, header: 'Why', multiSelect: false, options: [{ label: 'Red' }] }] },
     },
-    line: `${'q'.repeat(80)}…`, past: `${'q'.repeat(80)}…`,
+    line: 'Ask user a question', past: 'Ask user a question',
   },
   {
     block: { type: 'tool_use', id: 'toolu_search_wide', name: 'WebSearch', input: { query: 's'.repeat(100) } },
-    line: `${'s'.repeat(80)}…`, past: `${'s'.repeat(80)}…`,
-  },
-  {
-    block: { type: 'tool_use', id: 'toolu_body_blank', name: 'mcp__docs__write', input: { body: '\n\nfirst words\nmore' } },
-    line: 'first words', past: 'first words',
+    line: 'WebSearch', past: 'WebSearch',
   },
 ];
 
@@ -377,19 +372,6 @@ it('draws a restored call\'s row line and past tense as the live one does', asyn
   expect(back.get('toolu_said')?.success).toBe(false);
 });
 
-it('cuts a subject over 80 characters to its first line', async () => {
-  const { held, ready } = await live([
-    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: mirrored.map(({ block }) => block) } },
-  ]);
-  for (const id of ['toolu_body', 'toolu_ask_wide', 'toolu_search_wide']) {
-    for (const line of [ready.get(id)?.invocationMessage, held.get(id)?.pastTenseMessage]) {
-      const text = textOf(line);
-      expect(text, id).not.toMatch(/\n/);
-      expect(text.length, id).toBeLessThanOrEqual(81);
-    }
-  }
-});
-
 it('gives a confirmation card the row line, and the title of its tool\'s permission', async () => {
   sdk.hold = new Promise(() => {});
   const input = { command: 'rm -rf /tmp/scratch', description: 'Clear scratch directory' };
@@ -397,8 +379,8 @@ it('gives a confirmation card the row line, and the title of its tool\'s permiss
     void sdk.canUseTool?.('Bash', input, { toolUseID: 'toolu_card', title: 'Claude wants to run rm -rf /tmp/scratch' });
   });
   sdk.hold = Promise.resolve();
-  expect(held.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
-  expect(ready.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
+  expect(held.get('toolu_card')?.invocationMessage).toEqual({ markdown: 'Running `rm -rf /tmp/scratch`' });
+  expect(ready.get('toolu_card')?.invocationMessage).toEqual({ markdown: 'Running `rm -rf /tmp/scratch`' });
   expect(held.get('toolu_card')?.confirmationTitle).toBe('Run in terminal?');
   expect(held.get('toolu_card')?.toolInput).toBe('rm -rf /tmp/scratch');
 });

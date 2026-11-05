@@ -380,8 +380,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
       const shownName = ctx.clientToolOf(toolName)?.name ?? toolName;
       const displayName = ctx.displayNameOf(toolName);
-      const invocationMessage = lineOf(toolName, written);
-      ctx.pastLines.set(id, pastLineOf(toolName, written));
+      const invocationMessage = lineOf(toolName, written, displayName);
+      ctx.pastLines.set(id, pastLineOf(toolName, written, displayName));
       const confirmationTitle = getClaudeConfirmationTitle(toolName);
 
       // The call the assistant message opened, if it arrived first. Which of

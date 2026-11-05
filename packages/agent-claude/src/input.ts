@@ -12,31 +12,6 @@ import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMark
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 /**
- * What a tool call is *about*, in one line.
- *
- * The only thing separating twenty identical rows, so it is worth doing per
- * tool: `Bash` is its command, the file tools are their path, AskUserQuestion
- * its first question, WebFetch its url, WebSearch its query, and an MCP tool
- * its first string argument. Any other tool has no subject, and its row reads
- * the display name: a row reading `{"file_path":"/very/long/…","offset":0}` is
- * a row nobody reads.
- */
-export function summarize(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  if (name === 'Read' || name === 'Write' || name === 'Edit') return str(input.file_path);
-  if (name === 'Glob' || name === 'Grep') return str(input.pattern);
-  if (name === 'Task' || name === 'Agent') return str(input.description);
-  if (name === 'AskUserQuestion') {
-    const first: unknown = Array.isArray(input.questions) ? input.questions[0] : undefined;
-    return typeof first === 'object' && first !== null ? str((first as Bag).question) : undefined;
-  }
-  if (name === 'WebFetch') return str(input.url);
-  if (name === 'WebSearch') return str(input.query);
-  if (name.startsWith('mcp__')) return Object.values(input).find((value): value is string => typeof value === 'string');
-  return undefined;
-}
-
-/**
  * A call's `toolInput`: its whole input as JSON, which a client parses.
  *
  * Bash is its command, because a terminal row reads the command there. Absent
@@ -185,9 +160,6 @@ const PATHS: Readonly<Record<string, string>> = {
   Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path',
 };
 
-/** Tools whose `description` says what the call does, rather than being data it carries. */
-const DESCRIBED = new Set(['Bash', 'Task', 'Agent', 'Monitor']);
-
 /**
  * A text with one string replaced by another, or nothing when it is not there.
  *
@@ -268,14 +240,12 @@ export function writeOf(name: string, input: Bag): { path: string; apply: (curre
 /**
  * The line a call's row draws while it runs, and on its confirmation card.
  *
- * The call's `description` for a tool whose description says what the call
- * does. Otherwise VS Code's line for the tools `getClaudeInvocationMessage`
- * maps, in its English and as markdown where it sends markdown. Otherwise the
- * subject from `summarize`, cut as VS Code's lines are, or the tool's name.
+ * VS Code's line for the tools `getClaudeInvocationMessage` maps, in its
+ * English and as markdown where it sends markdown, a `Task` or `Agent` call's
+ * own description, and the call's display name for any other tool.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L346-L455
  */
-export function lineOf(name: string, input: Bag): StringOrMarkdown {
-  const said = DESCRIBED.has(name) ? filled(input.description) : undefined;
-  if (said !== undefined) return said;
+export function lineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
   const path = PATHS[name] === undefined ? undefined : filled(input[PATHS[name]]);
   switch (name) {
     case 'Bash': {
@@ -321,10 +291,9 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
       }
     case 'TaskList': return 'Read task list';
     case 'TaskGet': return 'Read task';
-    default: {
-      const subject = summarize(name, input)?.split('\n').find((line) => line.trim() !== '');
-      return subject === undefined ? name : truncate(subject, 80);
-    }
+    case 'Task':
+    case 'Agent': return filled(input.description) ?? displayName;
+    default: return displayName;
   }
 }
 
@@ -332,11 +301,11 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
  * The line a call's row draws once it has ended, whether it succeeded or not:
  * a failure is the result's `success`, not its line.
  *
- * The same rule as {@link lineOf}, with VS Code's past tense for the tools
- * `getClaudePastTenseMessage` maps and the running line for the rest.
+ * VS Code's past tense for the tools `getClaudePastTenseMessage` maps, and the
+ * running line for the rest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L536
  */
-export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
-  if (DESCRIBED.has(name) && filled(input.description) !== undefined) return lineOf(name, input);
+export function pastLineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
@@ -353,6 +322,6 @@ export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
       const skill = filled(input.skill);
       return skill !== undefined ? md(`Ran skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Ran skill';
     }
-    default: return lineOf(name, input);
+    default: return lineOf(name, input, displayName);
   }
 }

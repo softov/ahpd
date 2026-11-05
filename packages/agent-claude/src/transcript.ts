@@ -488,6 +488,9 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const given = bag(block.input);
         const input = toolInputOf(name, given);
         const meta = toolMetaOf(name);
+        // From Claude's display table, as VS Code's replay names a call.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393
+        const displayName = getClaudeToolDisplayName(name);
         startedAt.set(id, at);
         /*
          * Checked against the state it claims to be in, at the moment it is
@@ -502,9 +505,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const call: Bag = {
           toolCallId: id,
           toolName: name,
-          // From Claude's display table, as VS Code's replay names a call.
-          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393
-          displayName: getClaudeToolDisplayName(name),
+          displayName,
           // Completed as its result says, once one is read; a call no result
           // was written for is read back cancelled at the end.
           status: 'completed',
@@ -521,10 +522,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
            * question waiting on somebody. `success` and `pastTenseMessage`
            * stand until the call's result says otherwise.
            */
-          invocationMessage: lineOf(name, given),
+          invocationMessage: lineOf(name, given, displayName),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: pastLineOf(name, given),
+          pastTenseMessage: pastLineOf(name, given, displayName),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
         inputs.set(id, given);
