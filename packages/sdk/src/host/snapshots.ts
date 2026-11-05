@@ -204,6 +204,14 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const state: Bag = {
       ...talking.chat.chatState(),
       ...startedBy(session, chatUri),
+      /*
+       * The session's default chat holds the title it was given, or none,
+       * which reads as its session's: whoever titles the session, a client
+       * shows that title for the chat, as VS Code's host opens a default chat
+       * with its own title or an empty one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+       */
+      ...(owner?.defaultChat === chatUri ? { title: ctx.titleOf(session, chatUri) ?? '' } : {}),
       // The chat's own status with the read and archived bits laid over it,
       // which is what its catalogue row says too: a chat's state and its row
       // are two answers to one question.
@@ -594,6 +602,21 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
     const title = titles.get(id) ?? 'Session';
     /*
+     * The chats the store recorded for it, closed ones left out, and which of
+     * them the session would come back as. None for a session inside a
+     * machine, whose chats are the inner host's.
+     */
+    const recorded = kept.nested?.(id) !== undefined ? [] : recordedChats(id);
+    const lead = recorded.find((one) => one.default === true);
+    const leadUri = lead?.uri ?? chatUriFor(nameOf(id));
+    /*
+     * The title its default chat holds: the one it was given, or none, which
+     * reads as the session's, as the chat holds it live and as VS Code's host
+     * restores a default chat with its own title or an empty one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+     */
+    const leadTitle = ctx.titleOf(nameOf(id), leadUri) ?? '';
+    /*
      * A chat of this session, answered from its own conversation.
      *
      * A peer chat is a conversation of its own, and the record says which
@@ -622,7 +645,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         kind: 'chat',
         state: {
           resource: channel,
-          title: opened.title ?? title,
+          title: opened.uri === leadUri ? leadTitle : opened.title ?? title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           turns: ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[]),
@@ -667,7 +690,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         kind: 'chat',
         state: {
           resource: channel,
-          title,
+          title: channel === leadUri ? leadTitle : title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           ...startedBy(nameOf(id)),
@@ -680,13 +703,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     }
     // A chat that is none of the above is not one this record answers for.
     if (chat) throw new RpcError(-32001, `No chat at ${channel}`);
-    /*
-     * The chats the store recorded for it, closed ones left out, and which of
-     * them the session would come back as. None for a session inside a
-     * machine, whose chats are the inner host's.
-     */
-    const recorded = kept.nested?.(id) !== undefined ? [] : recordedChats(id);
-    const lead = recorded.find((one) => one.default === true);
     const listedAt = moves.get(nameOf(id)) ?? stamp;
     const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).seeds);
     const running = {
@@ -707,15 +723,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
          * from the backend's disk has one by construction, and a session
          * whose first chat was closed has another chat as its default.
          */
-        defaultChat: lead?.uri ?? chatUriFor(nameOf(id)),
+        defaultChat: leadUri,
         // A whole `ChatSummary`, and not a name and a URI: a client reads a
         // chat row's `status` and `modifiedAt` by name, and a live session
         // answers with both.
         chats: [
           {
-            resource: lead?.uri ?? chatUriFor(nameOf(id)),
-            title: lead?.title ?? title,
-            status: Status.Idle | kept.chatFlags(id, lead?.uri ?? chatUriFor(nameOf(id))),
+            resource: leadUri,
+            title: leadTitle,
+            status: Status.Idle | kept.chatFlags(id, leadUri),
             modifiedAt: listedAt,
             ...startedBy(nameOf(id), lead?.uri),
           },

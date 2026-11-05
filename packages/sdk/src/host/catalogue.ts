@@ -162,7 +162,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return {
       resource: uri,
       ...startedBy(session, uri),
-      title: chat.title(),
+      // The title its state opens with: a default chat's own, or none.
+      title: sessions.get(session)?.defaultChat === uri ? ctx.titleOf(session, uri) ?? '' : chat.title(),
       // What the backend is doing, with the client's own bits laid over it. A
       // chat marked read is read whatever the backend says next, and the flags
       // are this host's to remember - no backend has heard of them.

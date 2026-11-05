@@ -508,6 +508,37 @@ it('reads a finished turn back after its release as complete, as the chat held i
   expect(ended(back.snapshot.state)).toEqual(['complete']);
 });
 
+/*
+ * A session's default chat holds no title of its own until it is given one,
+ * and reads as its session's, live and read back: the backend titles the
+ * session from its first message, and the chat goes on reading as the session,
+ * as VS Code's host keeps a default chat's title empty while it inherits its
+ * session's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1733-L1738
+ */
+it('holds a default chat with no title of its own as its session\'s, live and read back after its release', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const subscribed = async (to: typeof client, channel: string): Promise<Bag> =>
+    ((await to.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  const live = { session: await subscribed(client, one.channel), chat: await subscribed(client, one.chatUri) };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = { session: await subscribed(other, one.channel), chat: await subscribed(other, one.chatUri) };
+  for (const held of [live, back]) {
+    expect(held.session.title).toBe('hello');
+    expect((held.session.chats as Bag[])[0]).toMatchObject({ resource: one.chatUri, title: '' });
+    expect(held.chat.title).toBe('');
+  }
+});
+
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L318-L338
   const knobs: Knobs = { closes: [] };
