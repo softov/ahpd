@@ -116,7 +116,7 @@ export interface Workers {
   /**
    * End a worker's turn, once, whichever signal got here first.
    */
-  endWorker: (callId: string, state: 'complete' | 'error' | 'cancelled', why?: string) => void;
+  endWorker: (callId: string, state: 'complete' | 'cancelled') => void;
   /**
    * The `subagent` content for a worker, as the spawning call's result shows it.
    */
@@ -662,7 +662,7 @@ export function createWorkers(ctx: SessionContext): Workers {
    * Anything the worker was still asking is declined rather than left on a
    * promise nothing will settle.
    */
-  const endWorker = (callId: string, state: 'complete' | 'error' | 'cancelled', why?: string): void => {
+  const endWorker = (callId: string, state: 'complete' | 'cancelled'): void => {
     if (ended.has(callId)) return;
     const scope = scopes.get(callId);
     if (scope?.chat === undefined) return;
@@ -674,7 +674,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       ctx.inputNeededRemoved(one.id);
     }
     settleOpen(scope.turn);
-    scope.chat.end(state, why);
+    scope.chat.end(state);
     scopes.delete(callId);
     ctx.rounds.delete(callId);
     background.delete(callId);

@@ -552,7 +552,7 @@ it('stops one foreground worker with its task id, and leaves the lead turn runni
   expect(workers.get(call)?.ended).toEqual([]);
   sdk.push(stoppedNotice(call, 'a39214c163af9a96a'), stoppedNotice(call, 'a39214c163af9a96a'));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
 it('stops one background worker with its task id', async () => {
@@ -565,7 +565,21 @@ it('stops one background worker with its task id', async () => {
   expect(sdk.interrupted).toBe(0);
   sdk.push(stoppedNotice(call, 'af279e8136cb23ae9'));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+});
+
+/*
+ * A worker's chat completes however its task ended, failed and stopped
+ * alike, as VS Code completes a subagent's chat on its terminal notification.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
+ */
+it('completes a worker\'s chat whose task failed', async () => {
+  const lines = fixture('claude-subagent-background.jsonl');
+  const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
+  const { workers } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  sdk.push({ type: 'system', subtype: 'task_notification', tool_use_id: call, task_id: 'af279e8136cb23ae9', status: 'failed', summary: 'it broke' });
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
 it('cancels the lead turn instead when configured to stop the session', async () => {

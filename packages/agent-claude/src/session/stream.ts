@@ -535,14 +535,17 @@ export function createStream(ctx: SessionContext): Stream {
 
   /**
    * A spawning call's result ends the worker it ran when the call did not
-   * ask for the background. A call that did gets a result saying only that
-   * the worker was launched, and its worker ends on its notification.
+   * ask for the background, its chat's turn complete however the call ended,
+   * as VS Code completes a subagent's chat. A call that did gets a result
+   * saying only that the worker was launched, and its worker ends on its
+   * notification.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1503-L1520
    */
-  const settleSpawn = (id: string, ok: boolean, text: string | undefined): void => {
+  const settleSpawn = (id: string): void => {
     const info = ctx.spawning.get(id);
     if (info === undefined) return;
     info.completed = true;
-    if (info.foreground) ctx.endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
+    if (info.foreground) ctx.endWorker(id, 'complete');
     // Ended, or never opened and not running on in the background.
     if (ctx.ended.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
   };
@@ -602,7 +605,7 @@ export function createStream(ctx: SessionContext): Stream {
       if (!list(scope.turn?.responseParts).includes(part)) {
         ctx.pastLines.delete(id);
         edited(id);
-        settleSpawn(id, ok, text);
+        settleSpawn(id);
         continue;
       }
       // A call a person declined is already `cancelled`, and it never ran, so
@@ -695,7 +698,7 @@ export function createStream(ctx: SessionContext): Stream {
         // times and the kind have to be said again here or they are gone.
         ...(call._meta === undefined ? {} : { _meta: call._meta }),
       });
-      settleSpawn(id, ok, text);
+      settleSpawn(id);
     }
   };
 

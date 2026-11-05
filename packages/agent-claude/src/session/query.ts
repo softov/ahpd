@@ -888,10 +888,10 @@ export function createQuery(ctx: SessionContext): Query {
           const status = str(message.status);
           if (status === 'completed' || status === 'failed' || status === 'stopped') {
             if (task !== undefined) ctx.dropTask(task);
-            if (id !== undefined && ctx.background.has(id)) {
-              ctx.endWorker(id, status === 'completed' ? 'complete' : status === 'stopped' ? 'cancelled' : 'error',
-                status === 'failed' ? str(message.summary) : undefined);
-            }
+            // Complete however the task ended, as VS Code completes a
+            // subagent's chat on its terminal notification.
+            // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
+            if (id !== undefined && ctx.background.has(id)) ctx.endWorker(id, 'complete');
           }
           continue;
         }
