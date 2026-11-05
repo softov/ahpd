@@ -712,12 +712,31 @@ describe('a host that keeps client plugins', () => {
     expect(await kept(client)).toEqual([]);
   });
 
-  it('refuses a template whose plugins share an id, which nothing could read', async () => {
+  it('refuses a template whose plugins share an id or name none, in VS Code\'s words', async () => {
     const { client, peer: p } = await serving();
     await write(client, naming([...ONE_PLUGIN, { id: 'p1', type: 'plugin', uri: PLUGIN, nonce: 'n2' }]));
     await settle();
-    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('an id of its own');
+    expect(refusals(p, AUTOMATIONS).at(-1)).toBe('Automation customization ids must be non-empty and unique.');
+    await write(client, naming([{ id: ' ', type: 'plugin', uri: PLUGIN, nonce: 'n1' }]));
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toBe('Automation customization ids must be non-empty and unique.');
     expect(await entries(client)).toEqual([]);
+  });
+
+  it('captures the plugins again for a patch that carries the session, and none for one naming none', async () => {
+    const { client, asked } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [copy] = await kept(client);
+    const before = asked.length;
+
+    // The session again, with no list: a template whose session names no
+    // plugin, which leaves the automation none, as VS Code's host has it.
+    await patch(client, { ...DEFINITION.session });
+    await settle();
+    expect(existsSync(copy?.path ?? '')).toBe(false);
+    expect(await kept(client)).toEqual([]);
+    expect(asked.length).toBe(before);
   });
 
   it('starts a run with the copies, as an active client of the run\'s own session', async () => {

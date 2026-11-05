@@ -668,7 +668,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * loads nothing.
        */
       const port = options.clientPlugins;
-      const named = templatePlugins(keyed(written['session'])['customizations']);
+      /*
+       * A patch that carries the template's session carries its plugins too,
+       * so a session naming none leaves the automation with none, as VS
+       * Code's host captures them again whenever an update carries a session.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L376-L378
+       */
+      const session = written['session'];
+      const named = templatePlugins(keyed(session)['customizations'])
+        ?? (type === 'automation/updateRequested' && session !== undefined ? [] : undefined);
       // A list with something in it is what cannot be honoured - an empty one
       // names no plugin, and a host that refuses it would be refusing a
       // template for saying it has none.
@@ -677,8 +685,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
       /*
-       * Nothing to copy. A patch that says nothing about plugins is a patch
-       * about something else, so the copies this automation already has stay -
+       * Nothing to copy. A patch that carries no session is a patch about
+       * something else, so the copies this automation already has stay -
        * which is the `undefined` the store reads as "leave them alone". An
        * empty list is not that: it says the template has no plugins, so the
        * copies it had go with the last one.
@@ -1009,15 +1017,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   /**
    * The client plugins a template names, in the shape the port is handed them.
    *
-   * Nothing where the template says nothing about plugins, which is not the
-   * same as an empty list: a create that mentions none has none, while a patch
-   * that mentions none is a patch about something else and leaves this
-   * automation's copies where they are.
+   * Nothing where the session says nothing about plugins, which the write
+   * reads as none for a create or a patch carrying the session, and leaves a
+   * patch about something else to keep this automation's copies where they
+   * are.
    *
    * Every entry of a list that *is* there is kept, even a malformed one, so
-   * that the check for a usable id is the port's and answers in its own words -
-   * dropping one here would be this host quietly storing a template it cannot
-   * honour.
+   * that the check for a usable id is the port's, which refuses it in VS
+   * Code's words - dropping one here would be this host quietly storing a
+   * template it cannot honour.
    */
   const templatePlugins = (value: unknown): TemplatePlugin[] | undefined => {
     if (!Array.isArray(value)) return undefined;

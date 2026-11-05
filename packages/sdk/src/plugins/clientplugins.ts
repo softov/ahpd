@@ -250,10 +250,12 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
     join(automations, createHash('sha256').update(`${uri}\n${nonce}`).digest('hex'));
 
   const capture = async (client: string, plugins: TemplatePlugin[]): Promise<HeldCopies> => {
+    // In VS Code's words for a template whose plugins it cannot tell apart.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L42-L48
     const ids = new Set<string>();
     for (const one of plugins) {
       const id = str(one.id)?.trim() ?? '';
-      if (id === '' || ids.has(id)) throw new Error('Every plugin a template names needs an id of its own');
+      if (id === '' || ids.has(id)) throw new Error('Automation customization ids must be non-empty and unique.');
       ids.add(id);
     }
     // A copy is the client's tree read over its connection, so a template with
