@@ -439,6 +439,31 @@ it('leaves a person\'s record that names a variable invalid at open, without rea
   await close();
 });
 
+it('says on the row why a connector did not open at start, and clears it once it opens', async () => {
+  const { host, users, collection, connectors, close } = await served();
+  await collection.put({
+    id: 'ci', adapter: 'webhook', owner: 'host', config: { target: 'bot://motion', secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } },
+  });
+  expect(process.env['AHPD_TEST_CONNECTOR_KEY']).toBeUndefined();
+  await connectors.openAll();
+  const ana = await as(host, users, 'ana');
+  expect((await ana.rows())['ci']).toMatchObject({
+    state: 'invalid',
+    health: { check: { result: 'failed', message: 'the environment holds no AHPD_TEST_CONNECTOR_KEY' } },
+  });
+
+  process.env['AHPD_TEST_CONNECTOR_KEY'] = 'right-token';
+  try {
+    await connectors.openAll();
+    const row = (await ana.rows())['ci'] as { state: string; health?: { check?: { result: string } } };
+    expect(row.state).toBe('ready');
+    expect(row.health?.check?.result).not.toBe('failed');
+  } finally {
+    delete process.env['AHPD_TEST_CONNECTOR_KEY'];
+  }
+  await close();
+});
+
 it('serves a connector of an adapter nobody registers as unavailable, and does not open it', async () => {
   const { host, users, collection, opened, connectors, close } = await served(false);
   await collection.put({ id: 'lost', adapter: 'webhook', owner: 'host', config: { target: 'bot://motion' } });
