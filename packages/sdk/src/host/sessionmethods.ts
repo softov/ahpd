@@ -1392,8 +1392,25 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
+      /*
+       * Its name, written before its state opens too: the request's title,
+       * trimmed, and a fork given none named after the chat it came from,
+       * "Forked: <title>" with the prefix said once, or "Forked Chat" where
+       * that chat and its session have none, as VS Code's host names one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7370
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7458-L7461
+       */
+      const forked = 'Forked: ';
+      const given = typeof params.title === 'string' ? params.title.trim() : '';
+      const from = fromChat === undefined ? '' : String(ctx.stateOf(fromChat)?.title || ctx.stateOf(uri)?.title || '');
+      const title = given !== '' ? given
+        : origin?.['kind'] !== 'fork' ? undefined
+          : from === '' ? 'Forked Chat'
+            : from.startsWith(forked) ? from : `${forked}${from}`;
+      if (title !== undefined) kept.setChatTitle(idOf(uri), chatUri, title);
       const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
       log(`opened ${chatUri} in ${uri}`);
+      if (title !== undefined) ctx.keepTitle(uri, chatUri, title);
       /*
        * The default chat takes its own title from here, before the new chat
        * is said, as the reference host's addChat snapshots it.

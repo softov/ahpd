@@ -290,6 +290,37 @@ describe('dropping the turns after one', () => {
 });
 
 describe('a chat made out of another', () => {
+  /*
+   * A chat is named by the request's title, trimmed, and a fork given none is
+   * named after the chat it came from, as VS Code's host names one; the
+   * prefix is not said twice.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7370
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7458-L7461
+   */
+  it('names a chat by the title it was asked for, and an untitled fork after its source, as VS Code\'s host', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'assistant', uuid: 'sdk-reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    wrote('sdk-1', String(sessionQueries().at(-1)?.options.cwd));
+    await client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'session/titleChanged', title: 'The plan' } } });
+    await settle();
+    const titleOf = async (chat: string): Promise<unknown> =>
+      ((await client.handle({ method: 'subscribe', params: { channel: chat } })) as { snapshot: { state: { title?: unknown } } }).snapshot.state.title;
+
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/named', title: '  Review  ' } });
+    expect(await titleOf('ahp-chat:/named')).toBe('Review');
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: chatUri, turnId: 't1' } } });
+    expect(await titleOf('ahp-chat:/forked')).toBe('Forked: The plan');
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/again', source: { kind: 'fork', chat: 'ahp-chat:/forked', turnId: 't1' } } });
+    expect(await titleOf('ahp-chat:/again')).toBe('Forked: The plan');
+  });
+
   it('forks at the turn it was told to, and brings the history through it', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({
