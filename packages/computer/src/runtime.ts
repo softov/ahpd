@@ -1716,10 +1716,10 @@ const LISTED_LABELS = [
  * The `--format` a listing asks with: the fields a machine is read from, and its
  * id, which is what a record of an adopted container names it by.
  */
-const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}}', '{{.ID}}'].join('\t');
+const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.ID}}'].join('\t');
 
 /**
- * The `--format` the labels come back by.
+ * The `--format` the labels come back by, with when the machine was made.
  *
  * `.Config.Labels` is a map rather than the listing's column, so every value
  * is quoted and escaped and nothing a value holds - a comma, a tab, a newline -
@@ -1729,11 +1729,15 @@ const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}
  * The name is asked for with it, because the answer is one line per machine and
  * a machine removed between the two calls is a line that is not there: without
  * the name beside it a line cannot be told from whose it is.
+ *
+ * `.Created` is the record's own time, in RFC 3339, the one form a machine's
+ * `created` is written in: a listing's `CreatedAt` is the client's local time
+ * with its zone by name, `+0200 CEST`, which no date parser reads.
  */
-const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}'].join('\t');
+const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}', '{{.Created}}'].join('\t');
 
 /** One machine as a listing answered it. */
-type Listed = { name: string; image: string; status: string; created: string; id: string };
+type Listed = { name: string; image: string; status: string; id: string };
 
 /** The labels one row answered, by the keys `LISTED_LABELS` holds. */
 type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
@@ -1749,12 +1753,16 @@ const listed = (said: string): Listed[] =>
     .split('\n')
     .filter((line) => line !== '')
     .map((line) => {
-      const [name, image, status, created, id] = line.split('\t');
-      return { name: name ?? '', image: image ?? '', status: status ?? '', created: created ?? '', id: id ?? '' };
+      const [name, image, status, id] = line.split('\t');
+      return { name: name ?? '', image: image ?? '', status: status ?? '', id: id ?? '' };
     });
 
+/** What `inspect` answered of one machine: its labels, and when it was made. */
+type Inspected = { labels: Record<string, unknown>; created: string };
+
 /**
- * The labels `inspect` answered, by the machine each line named.
+ * The labels `inspect` answered, and each machine's creation time, by the
+ * machine each line named.
  *
  * `inspect` prints a machine that is not there as an error and a non-zero exit,
  * with every other machine still printed, so the lines are read by name rather
@@ -1762,17 +1770,17 @@ const listed = (said: string): Listed[] =>
  * back once one of them is gone. A machine with no labels at all is not a row
  * either - `inspect` says `null` for a container that carries none.
  */
-const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
-  const byName = new Map<string, Record<string, unknown>>();
+const labelRecords = (said: string): Map<string, Inspected> => {
+  const byName = new Map<string, Inspected>();
   for (const line of said.split('\n')) {
     if (line.trim() === '') continue;
-    const [named, labels] = line.split('\t');
+    const [named, labels, created] = line.split('\t');
     if (named === undefined || labels === undefined) continue;
     let parsed: unknown;
     try { parsed = JSON.parse(labels); } catch { continue; }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
     // `inspect` names a container with a leading `/` where a listing does not.
-    byName.set(named.startsWith('/') ? named.slice(1) : named, parsed as Record<string, unknown>);
+    byName.set(named.startsWith('/') ? named.slice(1) : named, { labels: parsed as Record<string, unknown>, created: created ?? '' });
   }
   return byName;
 };
@@ -1788,14 +1796,15 @@ const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
  */
 const withLabels = (
   found: Listed[],
-  held: Map<string, Record<string, unknown>>,
-): (Listed & { labels: ListedLabels })[] =>
+  held: Map<string, Inspected>,
+): (Listed & { created: string; labels: ListedLabels })[] =>
   found.flatMap((row) => {
-    const labels = held.get(row.name);
-    if (labels === undefined) return [];
+    const record = held.get(row.name);
+    if (record === undefined) return [];
     return [{
       ...row,
-      labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(labels[key])])) as ListedLabels,
+      created: record.created,
+      labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(record.labels[key])])) as ListedLabels,
     }];
   });
 
@@ -2701,11 +2710,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
 
     /*
      * A listing is two calls: `ps` for what is there, then one `inspect` for
-     * the labels of exactly those, because a listing prints a label map as one
-     * comma-joined column and a value holding a comma cannot be told from the
-     * pair after it. One `inspect` for the whole listing rather than one per
-     * machine, so the answer is not one call per machine on a host with `max`
-     * of them.
+     * the labels and the creation time of exactly those, because a listing
+     * prints a label map as one comma-joined column and a value holding a comma
+     * cannot be told from the pair after it, and its creation time in the
+     * client's local zone. One `inspect` for the whole listing rather than one
+     * per machine, so the answer is not one call per machine on a host with
+     * `max` of them.
      *
      * The second call is not held to a zero exit. `inspect` prints the machines
      * it found and exits non-zero when one it was asked for is gone, which is
@@ -2743,7 +2753,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           .filter((row) => isAdopted(row) !== undefined && !every.some((one) => one.name === row.name));
       const found = [...every, ...rest];
       const held = found.length === 0
-        ? new Map<string, Record<string, unknown>>()
+        ? new Map<string, Inspected>()
         : labelRecords((await ran(options, [
           'inspect', '--type', 'container', '--format', LISTED_LABELS_FORMAT, ...found.map((one) => one.name),
         ])).stdout);

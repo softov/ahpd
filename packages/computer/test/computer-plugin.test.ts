@@ -12,6 +12,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins, pluginIdsOf } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { NestedHost, NestedStart, NestedStarted } from '../../sdk/src/types/computers.js';
 import type { HostOptions, HostTool, NodeChange, NodeRegistry, ToolCall } from '../../sdk/src/types/host.js';
@@ -260,6 +261,26 @@ it('answers how to reach a machine, and nothing for one that is not there', asyn
 
   // A machine that is not there is not a spawn descriptor.
   expect(await options.computers?.how('nope', { command: 'node' })).toBeUndefined();
+});
+
+/*
+ * A listed machine says when it was made in the one form a made machine does,
+ * RFC 3339, read from the machine's record: a listing's own column is the
+ * client's local time with its zone by name, which is no date a reader parses.
+ */
+it('gives a listed machine its creation time in the form a made one has, from its record', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-created-'));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: join(loose, 'docker.json') },
+    label: 'ahpd.computer=1',
+  });
+  const made = await runtime.run({ name: 'box', image: 'debian:bookworm-slim', label: 'ahpd.computer=1' });
+  const [listed] = await runtime.list();
+
+  expect(Number.isNaN(Date.parse(made.created))).toBe(false);
+  expect(listed?.created).toBe('2026-09-22T00:00:00Z');
 });
 
 /*
