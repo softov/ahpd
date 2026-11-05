@@ -1,6 +1,6 @@
 ---
 title: The proxy routes through connectors
-status: implemented
+status: done
 depends: [task-01-an-adapter-can-serve-models.md, task-02-the-host-ships-four-provider-adapters.md]
 layer: "server"
 refs:

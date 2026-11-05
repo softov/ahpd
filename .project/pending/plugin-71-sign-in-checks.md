@@ -31,7 +31,11 @@ cat ~/.config/ahpd/connectors/<id>.json
 ```
 
 5. Check that the daemon's terminal, the answers and every row show no code and no key.
-6. Call a model through the connector, as [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) step 2 does, and check that the call works.
+6. Call a model through the connector, with its name in place of `<model>`, and check that the answer has a reply:
+
+```bash
+curl -s http://127.0.0.1:37537/v1/chat/completions -H "Authorization: Bearer $(cat /home/softov/.vscode/cli/agent-host-token)" -H 'Content-Type: application/json' -d '{"model":"<model>","messages":[{"role":"user","content":"Say ok."}]}'
+```
 
 ## Reply
 
