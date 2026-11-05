@@ -465,6 +465,11 @@ describe('a chat\'s command\'s turns', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client, p } = await hostAt(k, store);
+    // Moving chats on, as a VS Code window with its move setting on turns it on.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });

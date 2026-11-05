@@ -309,6 +309,14 @@ const hostAt = async (k: Knobs, store: SessionStore) => {
   return { host, client, p };
 };
 
+/** Moving chats on, as a VS Code window with its move setting on turns it on. */
+const movesOn = async (client: Awaited<ReturnType<typeof hostAt>>['client']): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
+};
+
 /** The start the host made for one chat, the latest of them. */
 const startOf = (k: Knobs, chat: string): Start => {
   const start = k.starts.filter((one) => one.chatUri === chat).at(-1);
@@ -345,6 +353,7 @@ describe('a terminal a backend opens', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -478,6 +487,7 @@ describe('an output a backend keeps', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -507,6 +517,7 @@ describe('an output a backend keeps', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });

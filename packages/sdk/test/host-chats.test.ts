@@ -908,7 +908,10 @@ describe('more than one chat in a session', () => {
     };
   };
 
-  /** A host over one store folder, and a client whose window trusts. */
+  /**
+   * A host over one store folder, and a client whose window trusts and moves
+   * chats, as a VS Code window with its move setting on turns it on.
+   */
   const hostAt = async (dir: string, agent: Agent, over: Partial<HostOptions> = {}) => {
     const host = createHost({ path: DIR, agents: [agent], ...machine(), sessions: fileSessions({ dir }), ...over });
     const p = peer();
@@ -917,6 +920,10 @@ describe('more than one chat in a session', () => {
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     return { host, client, p };
   };
 
@@ -1325,6 +1332,41 @@ describe('more than one chat in a session', () => {
       // that is inside it.
       await expect(client.handle({ method: 'subscribe', params: { channel: PEER } }))
         .rejects.toMatchObject({ code: -32001 });
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * Moving chats is VS Code's `chatMoves.enabled`, off until a window turns it
+   * on: while it is off a chat is offered no move and a move is refused
+   * `disabled` in VS Code's words, and turning it on offers the move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L21-L27
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L62-L67
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7892-L7896
+   */
+  it('offers and makes no move while moving chats is off, as VS Code\'s host', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const host = createHost({ path: DIR, agents: [backend([])], ...machine(), sessions: fileSessions({ dir: join(root, 'sessions') }) });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
+        .rejects.toMatchObject({ code: -32602, message: 'Moving chats is not enabled.', data: { reason: 'disabled' } });
+
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
+      await settle();
+      expect((await opened(client, PEER)).state.movable).toBe(true);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1884,6 +1926,10 @@ describe('more than one chat in a session', () => {
       p.request = async () => ({ trusted: true });
       const client = host.accept(p);
       await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
       await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await client.handle({ method: 'createSession', params: { channel: OTHERS, provider: 'claude' } });
@@ -2266,13 +2312,20 @@ describe('a chat of another backend', () => {
     };
   };
 
-  /** A host serving these backends over one store, and a client whose window trusts. */
+  /**
+   * A host serving these backends over one store, and a client whose window
+   * trusts and moves chats.
+   */
   const hostAt = async (agents: Agent[], store: ReturnType<typeof memorySessions>, over: Partial<HostOptions> = {}) => {
     const host = createHost({ path: DIR, agents, ...machine(), sessions: store, ...over });
     const p = peer();
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     return { host, client, p };
   };
 

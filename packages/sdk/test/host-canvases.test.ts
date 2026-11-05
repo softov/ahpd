@@ -326,6 +326,11 @@ describe('a canvas whose chat goes', () => {
   it('stays with its chat when the chat moves, and the list is said nothing', async () => {
     const { made, calls } = withCanvases();
     const { client, seen } = await at(made, 'canvas');
+    // Moving chats on, as a VS Code window with its move setting on turns it on.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     await sessionAt(client);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'base' } });
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });

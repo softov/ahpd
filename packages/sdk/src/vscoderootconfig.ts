@@ -14,13 +14,14 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * contributes the literal it resolves to. The two keys whose default comes
  * from `src/vs/platform/chat/common/chatSettings.ts` name that file as a URL.
  *
- * This host acts on six of them, each one setting for every connection:
+ * This host acts on seven of them, each one setting for every connection:
  * `globalAutoApproveEnabled` and `eligibleForAutoApproval`,
  * `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
- * `editAutoApprovePatterns`, which a session's commands are answered by, and
+ * `editAutoApprovePatterns`, which a session's commands are answered by,
  * `canvasesEnabled`, which the
  * plugin host's `openCanvas`, `updateCanvas` and `closeCanvas` ask before they
- * reach the store. The rest are declared so that a client
+ * reach the store, and `chatMoves.enabled`, which a chat's move is offered and
+ * made by. The rest are declared so that a client
  * can draw them and so that a push of one is kept and read back rather than
  * refused; what is acted on is in `docs/sdk/AHP.md`.
  */
@@ -29,12 +30,14 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * The properties VS Code's own agent host declares for the keys it pushes.
  *
  * Keyed by the config key, so `ROOT_CONFIG_SCHEMA` spreads the whole map into
- * its own `properties`. Six keys here this host reads: `globalAutoApproveEnabled`,
+ * its own `properties`. Seven keys here this host reads: `globalAutoApproveEnabled`,
  * which `trust.ts` asks before a tool call runs; `eligibleForAutoApproval`,
  * which `host/spawn.ts` asks before it; `terminalAutoApproveEnabled`,
  * `terminalAutoApproveRules` and `editAutoApprovePatterns`, which
- * `host/spawn.ts` answers a session's commands from; and `canvasesEnabled`,
- * which `host/canvases.ts` asks before it opens, updates or closes a canvas.
+ * `host/spawn.ts` answers a session's commands from; `canvasesEnabled`,
+ * which `host/canvases.ts` asks before it opens, updates or closes a canvas;
+ * and `chatMoves.enabled`, which `host/catalogue.ts` asks before it offers a
+ * move and `host/sessionmethods.ts` before it makes one.
  *
  * `workspaceTrust` is not here: it is declared beside `defaultShell` in
  * `host/root.ts`.
@@ -425,5 +428,15 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
     title: 'Automation Run Timeout',
     description: 'Maximum duration of an automation run, in minutes.',
     default: 30,
+  },
+  /*
+   * `chatMoveRootConfigSchema`, a schema of its own, read at VS Code
+   * `6b68d3fe7dd`: a window mirrors its move setting into it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L21-L27
+   */
+  'chatMoves.enabled': {
+    type: 'boolean',
+    title: 'Move Chats',
+    default: false,
   },
 };

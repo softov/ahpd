@@ -210,8 +210,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * A chat of another backend than the session's is not movable at all: a move
    * starts it again on the destination's backend, which is a harness that has
    * never seen its transcript.
+   *
+   * And moving chats has to be on, `chatMoves.enabled` in root config, as VS
+   * Code's host offers a move only while a window has turned it on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L62-L67
    */
   const movable = (uri: string): boolean => {
+    if (ctx.rootConfig['chatMoves.enabled'] !== true) return false;
     const held = sessions.get(sessionHolding(uri) ?? '');
     const chat = held === undefined ? undefined : held.chats.get(uri);
     if (held === undefined || chat === undefined) return false;

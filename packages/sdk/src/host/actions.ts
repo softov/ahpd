@@ -422,6 +422,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * the echo.
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
+        // Moving chats turned on or off moves every chat's offer of a move.
+        if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.movableMoved(chat);
       };
       /*
        * The daemon's keys, which are not this host's to keep.

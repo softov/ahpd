@@ -466,6 +466,11 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
 
 it('reduces a chat reordered inside its session', async () => {
   const { client, peer: p, uri, opened } = await running();
+  // Moving chats on, as a VS Code window with its move setting on turns it on.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
   const other = 'ahp-chat:/other';
   await client.handle({ method: 'createChat', params: { channel: uri, chat: other } });
   await settle();

@@ -1453,6 +1453,19 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (!held)
         throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${found.uri}`);
       /*
+       * Each refusal is the reference's: InvalidParams, its words, and the
+       * `reason` from its fixed set in `data`, for a client to explain it by.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L222-L230
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
+       */
+      const refused = (reason: string, message: string): RpcError => new RpcError(INVALID_PARAMS, message, { reason });
+      /*
+       * Moving chats is `chatMoves.enabled`, off until a window turns it on,
+       * and asked first, as the reference host asks it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7892-L7896
+       */
+      if (ctx.rootConfig['chatMoves.enabled'] !== true) throw refused('disabled', 'Moving chats is not enabled.');
+      /*
        * A chat of another backend stays where it is.
        *
        * A move starts the chat again in the session it lands in, on that
@@ -1462,13 +1475,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * by `movable`, which answers the client's move control with no room for
        * a reason.
        */
-      /*
-       * Each refusal is the reference's: InvalidParams, its words, and the
-       * `reason` from its fixed set in `data`, for a client to explain it by.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L222-L230
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
-       */
-      const refused = (reason: string, message: string): RpcError => new RpcError(INVALID_PARAMS, message, { reason });
       const serving = chatAgent(held, chatUri);
       if (serving !== held.agent) {
         throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
