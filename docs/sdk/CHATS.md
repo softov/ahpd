@@ -98,7 +98,7 @@ Attachments carry which of the three they became, so a backend whose block names
 
 An agent that spawns one starts a conversation of its own, and this host serves it as a **worker chat**: `ahp-chat://subagent/<base64url(session)>/<toolCallId>`. The shape is the reference client's, which reads the authority to tell a worker from an ordinary chat.
 
-The chat is announced on the session as `session/chatAdded`, its turn is opened with the prompt the parent agent wrote, and it is `read-only` to a person: the actions it takes are an answer to what it asked and a stop. The spawning call carries the link in both directions - the chat's origin names the call, and the call's result content names the chat - so a client draws the worker under the row that started it. A nested worker's call is in the worker chat that spawned it, which is why the parent names a call rather than a chat.
+The chat is announced on the session as `session/chatAdded`, its turn is opened with the prompt the parent agent wrote, and it is `read-only` to a person: the actions it takes are an answer to what it asked, a stop, and a client's run of a tool the worker called with the confirmation of its result, each handed to the backend that runs the worker. The spawning call carries the link in both directions - the chat's origin names the call, and the call's result content names the chat - so a client draws the worker under the row that started it. A nested worker's call is in the worker chat that spawned it, which is why the parent names a call rather than a chat.
 
 ## Commands
 

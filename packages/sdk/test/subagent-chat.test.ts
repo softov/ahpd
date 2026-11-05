@@ -783,6 +783,25 @@ it('stops nothing when a stop on a running worker\'s chat names another turn, an
   await settle();
 });
 
+/*
+ * A client runs a tool a worker called, and confirms its result, on the
+ * worker's chat, as VS Code's host serves a subagent chat's calls through the
+ * runtime that owns them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1621-L1645
+ */
+it('takes a client\'s run of a worker\'s tool and its result confirmation on the worker\'s chat', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, {
+    type: 'chat/toolCallComplete', turnId: 'w', toolCallId: 'toolu_none',
+    result: { success: true, pastTenseMessage: 'Ran', content: [] },
+  });
+  await send(worker, { type: 'chat/toolCallResultConfirmed', turnId: 'w', toolCallId: 'toolu_none', approved: true });
+  expect(refusals()).toEqual([]);
+  const said = wire.filter((one) => one.method === 'action' && one.params.channel === worker)
+    .map((one) => (one.params.action as Bag).type);
+  expect(said).toEqual(['chat/toolCallComplete', 'chat/toolCallResultConfirmed']);
+});
+
 it('refuses anything else on a worker chat as read-only', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });

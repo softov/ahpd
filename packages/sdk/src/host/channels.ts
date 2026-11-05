@@ -166,8 +166,17 @@ export const chatIdFor = (session: string, chatUri: string): string | undefined 
 export const subagentChatUri = (session: string, toolCallId: string): string =>
   `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
-/** The client actions a worker's chat takes: answers to what it asked, drafts of them, and a stop. */
-export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled']);
+/**
+ * The client actions a worker's chat takes: answers to what it asked, drafts
+ * of them, a stop, and a client's run of a tool the worker called and the
+ * confirmation of its result, as VS Code's host serves a subagent chat's
+ * calls.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1621-L1645
+ */
+export const WORKER_ACTIONS = new Set([
+  'chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled',
+  'chat/toolCallComplete', 'chat/toolCallResultConfirmed',
+]);
 
 /**
  * The client actions a session another host runs takes there, through its
