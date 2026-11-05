@@ -131,13 +131,18 @@ it('puts the verbs on the changeset, idle, alongside the files', async () => {
   expect(state.operations?.[0]?.confirmation).toBeUndefined();
 });
 
-it('refuses an operation it never offered, and one aimed at the wrong kind of thing', async () => {
+/*
+ * In VS Code's code and words: an operation the changeset does not offer, one
+ * aimed at a scope it does not take, and a changeset the host does not hold.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L378-L422
+ */
+it('refuses an operation it never offered, one aimed at the wrong kind of thing, and a changeset it does not hold, in VS Code\'s words', async () => {
   const { client, changeset } = await watching(scripted().source);
   const missing = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'rebase' },
   }));
   expect(missing.code).toBe(-32602);
-  expect(missing.message).toContain('rebase');
+  expect(missing.message).toBe(`Unknown operation 'rebase' on changeset ${changeset}`);
 
   // `commit` is changeset-scoped. A client that points it at a file is asking
   // for something the advertised operation does not accept.
@@ -150,6 +155,13 @@ it('refuses an operation it never offered, and one aimed at the wrong kind of th
     },
   }));
   expect(misaimed.code).toBe(-32602);
+  expect(misaimed.message).toBe('Operation \'commit\' does not support scope \'resource\' (allowed: changeset)');
+
+  const nowhere = await refused(client.handle({
+    method: 'invokeChangesetOperation', params: { channel: 'ahp-session:/nobody/changeset/session', operationId: 'commit' },
+  }));
+  expect(nowhere.code).toBe(-32001);
+  expect(nowhere.message).toBe('Changeset not found: ahp-session:/nobody/changeset/session');
 });
 
 it('runs a write with no grant, as it runs one that writes nothing', async () => {
@@ -382,7 +394,7 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   const { source } = scripted();
   // A second between the echo's chunks, so the turn is still running through
   // every check below however busy the machine is.
-  const { host, client, peer: p, uri, chatUri, changeset } = await watching(source, 1000);
+  const { host, client, peer: p, chatUri, changeset } = await watching(source, 1000);
   await client.handle({
     method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}`, write: true },
   });
@@ -402,11 +414,11 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   const busy = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
   }));
-  // `-32004 TurnInProgress`, not `-32002 ProviderNotFound`: what the client
-  // should do is wait, and the code is the only part of a refusal it branches
-  // on.
-  expect(busy.code).toBe(-32004);
-  expect(busy.message).toContain(uri);
+  // An operation the changeset offers disabled while the turn runs, refused
+  // in VS Code's code and words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L387-L389
+  expect(busy.code).toBe(-32602);
+  expect(busy.message).toBe(`Operation 'commit' is disabled on changeset ${changeset}`);
   await host.close();
 });
 

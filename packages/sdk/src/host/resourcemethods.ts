@@ -283,12 +283,15 @@ const CONFLICT = -32011;
     /**
      * Run one of the verbs a changeset advertised.
      *
-     * Three gates, and none of them is a flag on this host: the id has to
-     * be one this changeset offers *now*, the target has to be a kind that
-     * operation accepts, and the session must not be mid-turn. The list is
-     * the access model - a client can invoke nothing that was not already
-     * put in front of it. An operation that writes is not gated on a
+     * The list is the access model - a client can invoke nothing that was
+     * not already put in front of it. Refused as VS Code's changeset
+     * operations refuse, in their order and words: a changeset this host
+     * does not hold, an operation the changeset does not offer, one it
+     * offers disabled, one asked while the session runs a turn whatever its
+     * advertised status says by then, and a target of a scope the operation
+     * does not take. An operation that writes is not gated on a
      * `resourceRequest`, because the resource half is not either.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L378-L422
      */
     invokeChangesetOperation: async (params) => {
       const channel = String(params.channel ?? '');
@@ -296,14 +299,20 @@ const CONFLICT = -32011;
       const backendChannel = ctx.relayedChannel(channel);
       if (backendChannel !== undefined) return await backendChannel.request('invokeChangesetOperation', params);
       const at = changesetAt(channel);
-      if (!at || ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `No changeset at ${channel}`);
+      if (!at || ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `Changeset not found: ${channel}`);
       const source = need(options.changes, 'invokeChangesetOperation');
       const operationId = String(params.operationId ?? '');
       const context = operationContext(at.owner, at.dir);
-      const offered = (source.operations?.(at.dir, at.owner, at.scope, context) ?? [])
-        .find((one) => one.id === operationId);
+      const offered = ctx.operationsOf(channel).find((one) => one.id === operationId);
       if (!offered)
-        throw new RpcError(INVALID_PARAMS, `No operation called ${operationId} on ${channel}`);
+        throw new RpcError(INVALID_PARAMS, `Unknown operation '${operationId}' on changeset ${channel}`);
+      if (offered.status === 'disabled')
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' is disabled on changeset ${channel}`);
+      // The agent is writing to this tree while a turn runs, and an operation
+      // that rewrote a file underneath it would race the work the changeset
+      // is about.
+      if ((statusOf(at.owner) & Status.InProgress) !== 0)
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' is disabled while a turn is active on changeset ${channel}`);
 
       const raw = params.target as Record<string, unknown> | undefined;
       const target = raw !== undefined && typeof raw === 'object'
@@ -319,15 +328,9 @@ const CONFLICT = -32011;
       // No target is the changeset itself, which is how the protocol says
       // a changeset-scoped invocation.
       const kind = target?.kind ?? 'changeset';
-      if (!offered.scopes.includes(kind))
-        throw new RpcError(INVALID_PARAMS, `${operationId} cannot be invoked on a ${kind}`);
-
-      // Refused while a turn runs: the agent is writing to this tree, and an
-      // operation that rewrote a file underneath it would race the work the
-      // changeset is about. `-32004` is the protocol's code for an operation
-      // that requires no active turn.
-      if ((statusOf(at.owner) & Status.InProgress) !== 0)
-        throw new RpcError(-32004, `${at.owner} is mid-turn`);
+      const scopes = Array.isArray(offered.scopes) ? offered.scopes as string[] : [];
+      if (!scopes.includes(kind))
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' does not support scope '${kind}' (allowed: ${scopes.join(', ')})`);
 
       /*
        * An identical invocation in flight is shared, and any other waits for
