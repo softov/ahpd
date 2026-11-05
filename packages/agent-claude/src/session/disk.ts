@@ -3,11 +3,13 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 /**
- * What a customization file is, in the protocol's words for it. An
+ * What a customization file is, in the protocol's words for it. A command is
+ * a `skill`, as VS Code's Claude scan folds one into the skills. An
  * `mcpServer` is a server a settings or `.mcp.json` file declares, and its
- * path is the file that declares it.
+ * path is the file that declares it; a `hook` is a settings file that
+ * declares hooks.
  */
-export type DiskKind = 'skill' | 'prompt' | 'agent' | 'rule' | 'mcpServer';
+export type DiskKind = 'skill' | 'agent' | 'rule' | 'hook' | 'mcpServer';
 
 /**
  * Where a customization file was read from.
@@ -187,8 +189,8 @@ function syncedIn(dir: string): DiskFile[] {
   return out;
 }
 
-/** The `*.md` files of one folder, not of its subfolders, as commands or agents. */
-function markdownIn(dir: string, kind: 'prompt' | 'agent', scope: DiskScope): DiskFile[] {
+/** The `*.md` files of one folder, not of its subfolders, as commands (skills) or agents. */
+function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope): DiskFile[] {
   const out: DiskFile[] = [];
   for (const file of namesIn(dir)) {
     if (!file.toLowerCase().endsWith('.md')) continue;
@@ -262,6 +264,64 @@ function serversIn(roots: DiskRoots): DiskFile[] {
   return out;
 }
 
+/** The lifecycle events a hook is declared for, in Claude's spelling and in Copilot's. */
+const HOOK_EVENTS = new Set([
+  'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'UserPromptTransformed', 'PreToolUse', 'PostToolUse',
+  'PreCompact', 'SubagentStart', 'SubagentStop', 'Stop', 'ErrorOccurred',
+  'sessionStart', 'sessionEnd', 'userPromptSubmitted', 'userPromptTransformed', 'preToolUse', 'postToolUse',
+  'preCompact', 'subagentStart', 'agentStop', 'subagentStop', 'errorOccurred',
+]);
+
+/**
+ * Whether a settings file declares a hook, as VS Code's parser reads one: the
+ * file does not say `disableAllHooks`, and its `hooks` block (or the file
+ * itself) names a lifecycle event with a command, an item's own or one of its
+ * nested `hooks`. A command has no `type` or the type `command`, and a command
+ * line for some platform.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L774-L957
+ */
+const declaresHooks = (object: Record<string, unknown>): boolean => {
+  if (object.disableAllHooks === true) return false;
+  const block = typeof object.hooks === 'object' && object.hooks !== null && !Array.isArray(object.hooks)
+    ? object.hooks as Record<string, unknown>
+    : object;
+  const isCommand = (raw: unknown): boolean => {
+    if (typeof raw !== 'object' || raw === null) return false;
+    const command = raw as Record<string, unknown>;
+    return (command.type === undefined || command.type === 'command')
+      && ['command', 'bash', 'powershell', 'windows', 'linux', 'osx'].some((key) => typeof command[key] === 'string' && command[key] !== '');
+  };
+  return Object.entries(block).some(([event, items]) => HOOK_EVENTS.has(event) && Array.isArray(items) && items.some((item) => {
+    const nested = typeof item === 'object' && item !== null ? (item as Record<string, unknown>).hooks : undefined;
+    return Array.isArray(nested) ? nested.some(isCommand) : isCommand(item);
+  }));
+};
+
+/**
+ * The settings files that declare hooks, as VS Code's Claude scan reads them:
+ * the working directory's `.claude/settings.json` and `settings.local.json`,
+ * then the personal `settings.json`, each file once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeHookScan.ts#L11-L71
+ */
+function hooksIn(roots: DiskRoots): DiskFile[] {
+  // The home folder's own files are the personal scope's, as its `.claude` is.
+  const own: DiskScope = projectDirOf(roots) === undefined ? 'user' : 'project';
+  const sources: [string, DiskScope][] = [
+    ...(roots.cwd === undefined ? [] : [
+      [join(roots.cwd, '.claude', 'settings.json'), own],
+      [join(roots.cwd, '.claude', 'settings.local.json'), own],
+    ] as [string, DiskScope][]),
+    [join(roots.configDir, 'settings.json'), 'user'],
+  ];
+  const out: DiskFile[] = [];
+  for (const [path, scope] of sources) {
+    if (out.some((one) => resolve(one.path) === resolve(path))) continue;
+    const object = objectIn(path);
+    if (object !== undefined && declaresHooks(object)) out.push({ kind: 'hook', name: basename(path), scope, path });
+  }
+  return out;
+}
+
 /** A memory file, `CLAUDE.md` and its siblings, which applies always. */
 const memory = (path: string, scope: DiskScope): DiskFile[] =>
   isFile(path) ? [{ kind: 'rule', name: basename(path), scope, path }] : [];
@@ -288,8 +348,8 @@ function rulesIn(dir: string, scope: DiskScope): DiskFile[] {
 }
 
 /**
- * The skill, command, agent and rule files of each scope, and the MCP servers
- * its settings declare.
+ * The skill, command, agent and rule files of each scope, its settings files
+ * that declare hooks, and the MCP servers its settings declare.
  *
  * Read from disk because the CLI reports what it loaded and never where it
  * came from. A folder that is missing or cannot be read gives nothing, and
@@ -311,8 +371,13 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
   out.push(...skillsIn(join(configDir, 'skills'), 'user'));
   if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project'));
   out.push(...syncedIn(join(configDir, 'skills', 'synced')));
+  /*
+   * A scope's commands, as skills after its skills, so a skill of one name is
+   * the one found, as VS Code's Claude scan folds them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeAgentSkillScan.ts#L58-L74
+   */
   for (const [root, scope] of [[configDir, 'user'], ...(project === undefined ? [] : [[project, 'project']])] as [string, DiskScope][]) {
-    out.push(...markdownIn(join(root, 'commands'), 'prompt', scope));
+    out.push(...markdownIn(join(root, 'commands'), 'skill', scope));
     out.push(...markdownIn(join(root, 'agents'), 'agent', scope));
   }
   out.push(...memory(join(configDir, 'CLAUDE.md'), 'user'), ...rulesIn(join(configDir, 'rules'), 'user'));
@@ -326,7 +391,7 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
       ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own)),
     );
   }
-  out.push(...serversIn(roots));
+  out.push(...hooksIn(roots), ...serversIn(roots));
   return out;
 }
 

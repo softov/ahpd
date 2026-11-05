@@ -47,7 +47,7 @@ describe('the files of each scope', () => {
     ]);
   });
 
-  it('reads the personal skills, commands, agents and rules from the config directory', () => {
+  it('reads the personal skills, commands as skills, agents and rules from the config directory', () => {
     const root = tree({
       'skills/writing/SKILL.md': named('writing'),
       'commands/review.md': '# Review\n',
@@ -57,14 +57,14 @@ describe('the files of each scope', () => {
     });
     expect(filesOf({ configDir: root })).toEqual([
       { kind: 'skill', name: 'writing', scope: 'user', path: join(root, 'skills', 'writing', 'SKILL.md') },
-      { kind: 'prompt', name: 'review', scope: 'user', path: join(root, 'commands', 'review.md') },
+      { kind: 'skill', name: 'review', scope: 'user', path: join(root, 'commands', 'review.md') },
       { kind: 'agent', name: 'scout', scope: 'user', path: join(root, 'agents', 'scout.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'user', path: join(root, 'CLAUDE.md') },
       { kind: 'rule', name: 'style.md', scope: 'user', path: join(root, 'rules', 'style.md') },
     ]);
   });
 
-  it('reads the project files from the working directory and its .claude', () => {
+  it('reads the project files from the working directory and its .claude, a command as a skill', () => {
     const root = tree({
       'work/.claude/skills/build/SKILL.md': named('build'),
       'work/.claude/commands/ship.md': '# Ship\n',
@@ -77,7 +77,7 @@ describe('the files of each scope', () => {
     const work = join(root, 'work');
     expect(filesOf({ configDir: join(root, 'config'), cwd: work })).toEqual([
       { kind: 'skill', name: 'build', scope: 'project', path: join(work, '.claude', 'skills', 'build', 'SKILL.md') },
-      { kind: 'prompt', name: 'ship', scope: 'project', path: join(work, '.claude', 'commands', 'ship.md') },
+      { kind: 'skill', name: 'ship', scope: 'project', path: join(work, '.claude', 'commands', 'ship.md') },
       { kind: 'agent', name: 'tester', scope: 'project', path: join(work, '.claude', 'agents', 'tester.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'project', path: join(work, 'CLAUDE.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'project', path: join(work, '.claude', 'CLAUDE.md') },

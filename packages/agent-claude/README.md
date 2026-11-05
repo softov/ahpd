@@ -195,27 +195,29 @@ A session the host resumes picks up the conversation the CLI wrote under that id
 
 ## Where a customization comes from
 
-The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri.
+The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri, in the tree VS Code's Claude discovery lays out. A command is a skill: its file in `commands` is listed among the skills of its scope.
 
-| Scope | Folder | A person writes there |
+| Scope | Directories | A person writes there |
 | --- | --- | --- |
-| project | `<cwd>/.claude/agents`, `skills`, `commands` and `rules` | yes |
-| user | `CLAUDE_CONFIG_DIR`, or `~/.claude`, with the same four folders | yes |
-| managed | `.claude/skills` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode` | no |
+| project | `<cwd>/.claude/agents`, `skills`, `rules` and `hooks` | yes |
+| user | `CLAUDE_CONFIG_DIR`, or `~/.claude`, with the same four | yes |
+| managed | `.claude/skills` and `.claude/agents` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode` | no |
 | synced | `<config dir>/skills/synced/<id>/<name>/SKILL.md`, listed by each `manifest.json` | no |
-| builtin | `claude-internal:/skills`, `/commands` and `/agents` | no |
+| builtin | `agent-builtin:/skills` | no |
 
-A name found in more than one scope takes the managed file first, then the personal one, then the project one. A synced skill is matched by `anthropic-skills:<name>` and by its bare name. A skill, command or agent with no file is one the CLI ships, and goes in a `builtin` directory with a `claude-internal:` uri. A plugin's entries stay under the plugin.
+A skill found in more than one scope takes the managed file first, then the personal one, then the project one; an agent takes the managed file, then the project one, then the personal one. A synced skill is matched by `anthropic-skills:<name>` and by its bare name. A skill or command with no file is one the CLI ships, and goes in the `builtin` skills directory with the uri `agent-builtin:/skill/<name>`; an agent with no file is the CLI's own, and is listed among the personal agents with the uri `claude-internal:/agent/<name>`. A plugin's entries stay under the plugin.
+
+A scope's `hooks` directory lists each of its settings files that declares a hook: the working directory's `.claude/settings.json` and `settings.local.json` for the project, the personal `settings.json` for the user. A file declares one when it names a command for a lifecycle event and does not say `disableAllHooks`.
 
 An MCP server the CLI reports is listed at the top level, named by the file that declares it, as VS Code's Claude names one: the working directory's `.claude/settings.json`, then its `.mcp.json`, then the personal `settings.json`, the first file to declare a name taking it. The server's uri is that file, and its id the file's uri with `#mcp=<name>`. A server no file there declares has the uri `claude-internal:/mcp/<name>` and the id `claude-internal:/mcp/<name>#mcp=<name>`.
 
 A session started in the home folder has no project scope, because its `.claude` is the personal folder; the home folder's `CLAUDE.md` is then a personal rule.
 
-The project and user directories are sent with nothing in them too, so a client can offer to write the first one there. The read-only directories are sent only with something in them.
+The project and user directories of agents, skills and rules are sent with nothing in them too, so a client can offer to write the first one there. A `hooks` directory and the read-only directories are sent only with something in them.
 
 The rules are the `CLAUDE.md` files and every `*.md` under a `rules` folder: `<config dir>/CLAUDE.md`, and `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the working directory. A rule whose frontmatter has `paths` carries them as `globs`; any other rule is `alwaysApply`.
 
-A session in a machine has its CLI read the machine's own config, and not this host's folders. Its entries are listed with no file, all in the `builtin` directories, and no writable directory is sent.
+A session in a machine has its CLI read the machine's own config volume. Its entries are listed with no file: its skills and commands in the `builtin` skills directory, its agents in a read-only `builtin` agents directory, `claude-internal:/agents`. No writable directory is sent.
 
 A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders and asks the CLI for its lists again, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
 

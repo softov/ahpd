@@ -44,12 +44,13 @@ describe('what the harness offers', () => {
     const leaves = state.customizations
       .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
     const kinds = leaves.map((c) => c.type);
-    expect(kinds).toContain('prompt');
+    expect(kinds).toContain('skill');
     expect(kinds).toContain('agent');
     expect(state.customizations.map((c) => c.type)).toContain('mcpServer');
 
-    const command = leaves.find((c) => c.id === 'command:advisor');
-    expect(command).toMatchObject({ name: 'advisor', description: 'Read support tickets', enabled: true });
+    // A command is a skill, as VS Code's Claude discovery lists one.
+    const command = leaves.find((c) => c.id === 'skill:advisor');
+    expect(command).toMatchObject({ type: 'skill', name: 'advisor', description: 'Read support tickets', enabled: true });
   });
 
   it('advertises the models on the root channel, keyed by `value`', async () => {
@@ -250,7 +251,7 @@ describe('what the harness offers', () => {
     // The personal folders are there to write in, empty or not, and a skill
     // no folder has is the CLI's own.
     expect(offered.map((one) => one.id).sort()).toEqual([
-      serverId('gmail'), 'directory:builtin:skills', 'directory:user:agents', 'directory:user:commands',
+      serverId('gmail'), 'directory:builtin:skills', 'directory:user:agents',
       'directory:user:rules', 'directory:user:skills',
     ]);
     expect(offered.find((one) => one.id === serverId('gmail'))?.type).toBe('mcpServer');
@@ -326,7 +327,7 @@ describe('what the harness offers', () => {
       params: { channel: chatUri, kind: 'userMessage', text: '/', offset: 1 },
     }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
     /*
-     * A prompt and a skill are `children` of a directory, never top-level.
+     * A skill is a `child` of a directory, never top-level.
      *
      * A filter that looked only at the top level found nothing every time and
      * fell back to the backend-wide list - which answered correctly and by
@@ -335,12 +336,11 @@ describe('what the harness offers', () => {
      */
     expect(found.items.map((one) => one.insertText).sort()).toEqual(['/compact', '/writing']);
     expect(found.items.map((one) => one.insertText)).not.toContain('/internal');
-    // And said to be a skill, where it is one. The reference client keeps a
-    // runtime skill in an automation's text only when the flag is there,
-    // and drops it otherwise as a command it cannot find a file for. `true`
-    // or absent, which is how it is read.
+    // And said to be a skill, a command the CLI ships among them, as VS Code's
+    // Claude lists one. The reference client keeps a runtime skill in an
+    // automation's text only when the flag is there.
     const meta = Object.fromEntries(found.items.map((one) => [one.insertText, (one.attachment._meta as Record<string, unknown>).isSkill]));
-    expect(meta).toEqual({ '/compact': undefined, '/writing': true });
+    expect(meta).toEqual({ '/compact': true, '/writing': true });
   });
 
   it('gives a live session\'s skill its argument hint as ghost text', async () => {
@@ -1107,11 +1107,11 @@ describe('turning a customization on and off', () => {
   });
 });
 
-describe('a skill is not a prompt', () => {
+describe('a command is a skill', () => {
   const offering = async () => {
     // The CLI hands out two lists that overlap. `review` is in both, `deploy`
-    // is a built-in prompt, and `keybindings-help` is a skill the CLI does
-    // not put behind a slash.
+    // is a command the CLI ships, and `keybindings-help` is a skill the CLI
+    // does not put behind a slash.
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }, { name: 'deploy' }] };
     sdk.skills = [{ name: 'review' }, { name: 'keybindings-help', description: 'Internal' }];
     const started = await running();
@@ -1156,9 +1156,9 @@ describe('a skill is not a prompt', () => {
     expect(items.filter((entry) => entry.name === 'review')).toHaveLength(1);
   });
 
-  it('leaves a command that is not a skill a prompt', async () => {
+  it('lists a command the skills do not as a built-in skill', async () => {
     const { items } = await offering();
-    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'prompt' });
+    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'skill', id: 'skill:deploy', uri: 'agent-builtin:/skill/deploy' });
   });
 
   it('marks a skill the CLI will not put behind a slash as the agent\'s', async () => {
@@ -1168,7 +1168,7 @@ describe('a skill is not a prompt', () => {
       .toMatchObject({ type: 'skill', disableUserInvocation: true });
   });
 
-  it('completes a slash into skills as well as prompts, and not the agent\'s', async () => {
+  it('completes a slash into the skills, the commands among them, and not the agent\'s', async () => {
     const { client, chatUri } = await offering();
     const found = await client.handle({
       method: 'completions',

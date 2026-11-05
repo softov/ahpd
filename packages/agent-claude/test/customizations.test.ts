@@ -83,14 +83,19 @@ describe('where a customization came from', () => {
     expect(out.map((one) => one.uri)).toEqual(['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', '/plugins/acme']);
   });
 
-  it('answers the three builtin containers when there is no disk and the SDK reported no plugins', () => {
+  it('answers the builtin skills and agents directories when there is no disk and the SDK reported no plugins', () => {
     const out = customizationsOf({
       commands: [{ name: 'review', description: 'Review the diff' }],
       agents: [{ name: 'helper', description: 'Helps' }],
     }, [], [{ name: 'writing', description: 'How to write' }]);
-    expect(out.map((one) => one.id)).toEqual(['directory:builtin:skills', 'directory:builtin:commands', 'directory:builtin:agents']);
-    expect(out.map((one) => one.contents)).toEqual(['skill', 'prompt', 'agent']);
+    expect(out.map((one) => one.id)).toEqual(['directory:builtin:skills', 'directory:builtin:agents']);
+    expect(out.map((one) => [one.contents, one.uri])).toEqual([['skill', 'agent-builtin:/skills'], ['agent', 'claude-internal:/agents']]);
     expect(out.every((one) => one.name === 'builtin' && one.writable === false)).toBe(true);
+    // The command is a skill, beside the skill the CLI loaded.
+    expect(children(out[0]).map((one) => [one.type, one.name, one.uri])).toEqual([
+      ['skill', 'writing', 'agent-builtin:/skill/writing'],
+      ['skill', 'review', 'agent-builtin:/skill/review'],
+    ]);
     expect(byType(out, 'plugin')).toBeUndefined();
   });
 
@@ -108,14 +113,14 @@ describe('where a customization came from', () => {
     expect(children(directory).map((one) => one.name)).not.toContain('acme-skill');
   });
 
-  it('moves an attributed agent and prompt under its plugin, and keeps the directories empty', () => {
+  it('moves an attributed agent and command under its plugin, the command as a skill, and keeps the directories empty', () => {
     const out = customizationsOf({
       commands: [{ name: 'acme:acme-command', description: '(acme) A plugin command' }],
       agents: [{ name: 'acme:acme-agent', description: 'A plugin agent' }],
     }, [], [], undefined, [PLUGIN]);
     const plugin = byType(out, 'plugin');
     expect(children(plugin)).toEqual([
-      { type: 'prompt', id: 'command:acme:acme-command', name: 'acme-command', uri: '/plugins/acme/commands/acme-command.md', enabled: true, description: '(acme) A plugin command' },
+      { type: 'skill', id: 'skill:acme:acme-command', name: 'acme-command', uri: '/plugins/acme/commands/acme-command.md', enabled: true, description: '(acme) A plugin command' },
       // No file under the plugin this names, so it is the CLI's own agent and
       // carries the internal uri rather than a path to nothing.
       { type: 'agent', id: 'agent:acme:acme-agent', name: 'acme-agent', uri: 'claude-internal:/agent/acme-agent', enabled: true, description: 'A plugin agent' },
@@ -308,14 +313,21 @@ describe('where each entry\'s file is', () => {
     ]);
   });
 
-  it('puts a skill, a command and an agent with no file in the builtin directories', () => {
+  /*
+   * As VS Code's Claude discovery lists what the CLI ships: one read-only
+   * built-in skills directory, a command among its skills, and an agent among
+   * the personal agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L98-L176
+   */
+  it('puts a skill and a command with no file in the one builtin skills directory, and an agent with none among the personal agents', () => {
     const { config } = roots({});
     const out = customizationsOf({ commands: [{ name: 'code-review' }, { name: 'compact' }], agents: [{ name: 'Explore' }] }, [],
       [{ name: 'code-review' }], undefined, [], undefined, [], diskOf({ configDir: config }));
-    expect(dir(out, 'directory:builtin:skills')).toMatchObject({ uri: 'claude-internal:/skills', name: 'builtin', writable: false, contents: 'skill' });
-    expect(leaf(out, 'directory:builtin:skills', 'code-review')).toMatchObject({ uri: 'claude-internal:/skill/code-review' });
-    expect(leaf(out, 'directory:builtin:commands', 'compact')).toMatchObject({ uri: 'claude-internal:/command/compact' });
-    expect(leaf(out, 'directory:builtin:agents', 'Explore')).toMatchObject({ uri: 'claude-internal:/agent/Explore' });
+    expect(dir(out, 'directory:builtin:skills')).toMatchObject({ uri: 'agent-builtin:/skills', name: 'builtin', writable: false, contents: 'skill' });
+    expect(leaf(out, 'directory:builtin:skills', 'code-review')).toMatchObject({ type: 'skill', uri: 'agent-builtin:/skill/code-review' });
+    expect(leaf(out, 'directory:builtin:skills', 'compact')).toMatchObject({ type: 'skill', id: 'skill:compact', uri: 'agent-builtin:/skill/compact' });
+    expect(leaf(out, 'directory:user:agents', 'Explore')).toMatchObject({ uri: 'claude-internal:/agent/Explore' });
+    expect(out.filter((one) => one.type === 'directory' && one.name === 'builtin').map((one) => one.id)).toEqual(['directory:builtin:skills']);
   });
 
   it('gives a plugin skill its SKILL.md when the plugin has it', () => {
@@ -328,17 +340,26 @@ describe('where each entry\'s file is', () => {
     ]);
   });
 
-  it('gives a command its file, and leaves out a command a skill has the name of', () => {
+  it('lists a command as a skill of its scope with its file, and a command a skill has the name of once', () => {
     const { config } = roots({
       'config/commands/review.md': '# Review\n',
+      'config/commands/writing.md': '# Writing\n',
       'config/skills/writing/SKILL.md': skill('writing'),
     });
     const out = customizationsOf({ commands: [{ name: 'review' }, { name: 'writing' }] }, [], [{ name: 'writing' }],
       undefined, [], undefined, [], diskOf({ configDir: config }));
-    expect(children(dir(out, 'directory:user:commands'))).toEqual([
-      { type: 'prompt', id: 'command:review', name: 'review', uri: uriOf(join(config, 'commands', 'review.md')), enabled: true },
+    expect(children(dir(out, 'directory:user:skills')).map((one) => [one.type, one.id, one.uri])).toEqual([
+      ['skill', 'skill:writing', uriOf(join(config, 'skills', 'writing', 'SKILL.md'))],
+      ['skill', 'skill:review', uriOf(join(config, 'commands', 'review.md'))],
     ]);
-    expect(leaf(out, 'directory:user:skills', 'writing')).toBeDefined();
+    expect(dir(out, 'directory:user:commands')).toBeUndefined();
+  });
+
+  it('names a skill the CLI loaded from a command file by that file', () => {
+    const { config, work } = roots({ 'work/.claude/commands/deploy.md': '# Deploy\n' });
+    const out = customizationsOf({ commands: [{ name: 'deploy' }] }, [], [{ name: 'deploy' }],
+      undefined, [], undefined, [], diskOf({ configDir: config, cwd: work }));
+    expect(leaf(out, 'directory:project:skills', 'deploy')).toMatchObject({ type: 'skill', uri: uriOf(join(work, '.claude', 'commands', 'deploy.md')) });
   });
 
   it('leaves out a file the CLI did not report', () => {
@@ -353,11 +374,9 @@ describe('where each entry\'s file is', () => {
     expect(out.map((one) => [one.id, one.uri, one.name, one.writable])).toEqual([
       ['directory:project:agents', uriOf(join(work, '.claude', 'agents')), 'agents', true],
       ['directory:project:skills', uriOf(join(work, '.claude', 'skills')), 'skills', true],
-      ['directory:project:commands', uriOf(join(work, '.claude', 'commands')), 'commands', true],
       ['directory:project:rules', uriOf(join(work, '.claude', 'rules')), 'rules', true],
       ['directory:user:agents', uriOf(join(config, 'agents')), 'agents', true],
       ['directory:user:skills', uriOf(join(config, 'skills')), 'skills', true],
-      ['directory:user:commands', uriOf(join(config, 'commands')), 'commands', true],
       ['directory:user:rules', uriOf(join(config, 'rules')), 'rules', true],
     ]);
     // The read-only ones are sent only with something in them.
@@ -368,14 +387,14 @@ describe('where each entry\'s file is', () => {
   it('sends no project directories for a session with no working directory', () => {
     const { config } = roots({});
     const out = customizationsOf({}, [], [], undefined, [], undefined, [], diskOf({ configDir: config }));
-    expect(out.map((one) => one.id)).toEqual(['directory:user:agents', 'directory:user:skills', 'directory:user:commands', 'directory:user:rules']);
+    expect(out.map((one) => one.id)).toEqual(['directory:user:agents', 'directory:user:skills', 'directory:user:rules']);
   });
 
   it('sends the personal directories once for a session in the home folder', () => {
     const { work } = roots({ 'work/CLAUDE.md': '# Home\n' });
     // The home folder's `.claude` is the personal folder.
     const out = customizationsOf({}, [], [], undefined, [], undefined, [], diskOf({ configDir: join(work, '.claude'), cwd: work }));
-    expect(out.map((one) => one.id)).toEqual(['directory:user:agents', 'directory:user:skills', 'directory:user:commands', 'directory:user:rules']);
+    expect(out.map((one) => one.id)).toEqual(['directory:user:agents', 'directory:user:skills', 'directory:user:rules']);
     expect(children(dir(out, 'directory:user:rules')).map((one) => one.uri)).toEqual([uriOf(join(work, 'CLAUDE.md'))]);
   });
 
@@ -403,6 +422,44 @@ describe('where each entry\'s file is', () => {
       ['gmail', 'claude-internal:/mcp/gmail', 'claude-internal:/mcp/gmail#mcp=gmail'],
       ['desk two', 'claude-internal:/mcp/desk%20two', 'claude-internal:/mcp/desk%20two#mcp=desk%20two'],
     ]);
+  });
+
+  /*
+   * As VS Code's Claude discovery lists hooks: each settings file that
+   * declares a command for a lifecycle event, in a hooks directory of its
+   * scope, and none for a scope whose files declare none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeHookScan.ts#L11-L71
+   */
+  it('lists each settings file that declares hooks in a hooks directory of its scope', () => {
+    const { config, work } = roots({
+      'work/.claude/settings.json': JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo checked' }] }] } }),
+      'work/.claude/settings.local.json': JSON.stringify({ disableAllHooks: true, hooks: { Stop: [{ hooks: [{ command: 'echo done' }] }] } }),
+      'config/settings.json': JSON.stringify({ hooks: { preToolUse: [{ bash: 'echo checked' }], Unheard: [{ command: 'echo' }] } }),
+    });
+    const out = customizationsOf({}, [], [], undefined, [], undefined, [], diskOf({ configDir: config, cwd: work }));
+    const project = join(work, '.claude', 'settings.json');
+    const personal = join(config, 'settings.json');
+    expect(dir(out, 'directory:project:hooks')).toMatchObject({ uri: uriOf(join(work, '.claude', 'hooks')), name: 'hooks', contents: 'hook', writable: true });
+    expect(children(dir(out, 'directory:project:hooks'))).toEqual([
+      { type: 'hook', id: `hook:project:${project}`, uri: uriOf(project), name: 'settings.json', enabled: true },
+    ]);
+    expect(children(dir(out, 'directory:user:hooks'))).toEqual([
+      { type: 'hook', id: `hook:user:${personal}`, uri: uriOf(personal), name: 'settings.json', enabled: true },
+    ]);
+    // Each scope's hooks after its rules.
+    expect(out.map((one) => one.id).filter((id) => typeof id === 'string' && id.startsWith('directory:project:'))).toEqual([
+      'directory:project:agents', 'directory:project:skills', 'directory:project:rules', 'directory:project:hooks',
+    ]);
+  });
+
+  it('sends a hooks directory for a scope whose settings name a command, and none for one whose settings name no command for a lifecycle event', () => {
+    const { config, work } = roots({
+      'work/.claude/settings.local.json': JSON.stringify({ hooks: { Stop: [{ type: 'command', command: 'echo done' }] } }),
+      'config/settings.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'prompt', prompt: 'Is it done?' }] }], Unheard: [{ command: 'echo' }] } }),
+    });
+    const out = customizationsOf({}, [], [], undefined, [], undefined, [], diskOf({ configDir: config, cwd: work }));
+    expect(children(dir(out, 'directory:project:hooks')).map((one) => one.name)).toEqual(['settings.local.json']);
+    expect(dir(out, 'directory:user:hooks')).toBeUndefined();
   });
 
   it('lists the memory files and the rules of each scope', () => {
