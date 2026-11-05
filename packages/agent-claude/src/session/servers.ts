@@ -48,7 +48,9 @@ export function createServers(ctx: SessionContext): Servers {
   const onServer = new Map<string, { server: string; turnId: string; blocked: boolean }>();
 
   /**
-   * The MCP servers this session declared, by name, as it declared them.
+   * The MCP servers the session starts with, by name, as it declares them:
+   * what `ctx.mcpServers` holds until the client tools' declarations replace
+   * it with the set the CLI has.
    *
    * Kept because re-declaring one means sending the whole set back: the SDK
    * replaces its dynamic servers with what it is given, so a set rebuilt from
@@ -140,7 +142,7 @@ export function createServers(ctx: SessionContext): Servers {
       const server = bag(raw);
       const name = str(server.name);
       if (name === undefined || str(server.status) !== 'needs-auth' || wanted.has(name)) return;
-      const url = urlOf(mcpServers[name] ?? server.config);
+      const url = urlOf(ctx.mcpServers[name] ?? server.config);
       if (url === undefined) return;
       wanted.set(name, await protectedResource(url, name).catch(() => ({ resource: url, resource_name: name })) as Published);
     }));
@@ -537,14 +539,16 @@ export function createServers(ctx: SessionContext): Servers {
         ? [...wanted.entries()].find(([, published]) => published.resource === resource)?.[0]
         : serverNamed(server);
       if (named === undefined || wanted.get(named)?.resource !== resource) return false;
-      const config = mcpServers[named];
+      // The set the session holds now, its in-process servers among it: the
+      // client tools' declarations replace the set the session started with.
+      const config = ctx.mcpServers[named];
       if (config === undefined) return false;
       const headers = typeof config.headers === 'object' && config.headers !== null
         ? config.headers as Record<string, string>
         : {};
-      mcpServers[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
+      ctx.mcpServers[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
       try {
-        await ctx.query.setMcpServers(mcpServers as never);
+        await ctx.query.setMcpServers(ctx.mcpServers as never);
         // Discovered again next time: a server that connects is no longer one
         // anybody needs to sign into.
         wanted.delete(named);

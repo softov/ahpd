@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
-import { claude, createHost, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
 
 /*
@@ -60,7 +60,8 @@ const opened = async (client: Client, uri: string): Promise<Fake> => {
 /** Two clients on one host, each watching a session of its own whose server waits for a sign-in. */
 const twoClients = async () => {
   sdk.mcp = [{ name: 'desk', status: 'needs-auth' }];
-  const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine() });
+  // The host's own tools too, which ride the session's in-process host server.
+  const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine(), tools: hostTools() });
   const ana = await introduced(host, 'ana');
   const bea = await introduced(host, 'bea');
   const one = await opened(ana.client, ONE);
@@ -84,6 +85,9 @@ it('spends a token only on the sessions its connection watches', async () => {
   await settle(8);
 
   expect(header(one)).toBe('Bearer desk-ana');
+  // The whole set the session holds goes back with the token, its in-process
+  // host server among it.
+  expect(Object.keys(one.options.mcpServers as Record<string, unknown>)).toContain('host');
   // Bea's session waits for the same resource, and Ana's token is not hers.
   expect(header(two)).toBeUndefined();
 });
