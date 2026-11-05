@@ -453,20 +453,19 @@ export const MANIFEST_SCHEMA = (
         title: 'Profile',
         description: 'What this machine is made from, and what it is given.',
         enum: names,
-        // What each one is, so a picker can say more than its key.
-        'x-choices': names.map((name) => ({
-          value: name,
-          title: (options.profiles ?? {})[name]?.title ?? name,
-          description: (options.profiles ?? {})[name]?.description,
-        })),
+        // What each one is, so a picker can say more than its key: the spec's
+        // parallel `enumLabels` and `enumDescriptions`.
+        enumLabels: names.map((name) => (options.profiles ?? {})[name]?.title ?? name),
+        enumDescriptions: names.map((name) => (options.profiles ?? {})[name]?.description ?? ''),
       },
     }),
+    // Shown and not changeable, which the spec says with `readOnly`.
     runtime: {
       type: 'string',
       title: 'Runtime',
       description: 'What makes the machine. This host runs one.',
-      enum: [options.runtime],
       default: options.runtime,
+      readOnly: true,
     },
     /*
      * The two recipes, as a choice and the two fields beside it, both always
@@ -478,10 +477,8 @@ export const MANIFEST_SCHEMA = (
         title: 'Source',
         description: 'What the machine is made from.',
         enum: ['image', 'devcontainer'],
-        'x-choices': [
-          { value: 'image', title: 'Image', description: 'What to make it from.' },
-          { value: 'devcontainer', title: 'Dev container', description: "A folder's own devcontainer.json makes it." },
-        ],
+        enumLabels: ['Image', 'Dev container'],
+        enumDescriptions: ['What to make it from.', "A folder's own devcontainer.json makes it."],
         default: 'image',
       },
     }),

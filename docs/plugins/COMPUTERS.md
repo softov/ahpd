@@ -577,7 +577,7 @@ Two agents that ask for the same thing at one target get it once: an environment
 
 A mount whose host path is not there is refused at create, naming the mount and whether it came from the plugin options, a profile or a body - not mounted as an empty directory for the session to find out about later. A relative source is refused the same way, because Docker reads `cache:/cache` as a named volume rather than as a path on this host. The check is at create and not at load, so a folder made after the daemon started is still accepted, and the same is true of a need's own value.
 
-The names are published in the create schema as an `enum` with titles and descriptions in `x-choices`, so a client can draw a picker. No profiles means no such property.
+The names are published in the create schema as an `enum` with each profile's title and description in the spec's parallel `enumLabels` and `enumDescriptions`, so a client can draw a picker. No profiles means no such property. The runtime is published with its one value as the default and `readOnly`, a field shown and not changeable.
 
 `server` names the entry of `ssh.machines` that a profile's machines are made on, and that box's `server` leaf says what it can run. A profile whose `server` is not an entry there is left out, with a line in the log:
 

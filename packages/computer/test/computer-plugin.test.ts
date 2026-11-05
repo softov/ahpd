@@ -547,13 +547,16 @@ it('makes a machine from a named profile, and refuses one it does not define', a
 
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
-    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[]; enumLabels?: string[]; enumDescriptions?: string[] }> } };
   };
 
   // Published in the schema, so a client draws the picker with no new
-  // protocol and no code of its own.
+  // protocol and no code of its own: each profile's title and description in
+  // the spec's parallel `enumLabels` and `enumDescriptions`.
   const picker = provider.describe().manifest?.properties?.profile;
   expect(picker?.enum).toEqual(['claude', 'plain']);
+  expect(picker?.enumLabels).toEqual(['Claude', 'plain']);
+  expect(picker?.enumDescriptions).toEqual(['The CLI and this host configuration.', '']);
 
   await provider.write('computer://box', {
     data: JSON.stringify({ profile: 'claude', workdir: '/mine' }),
@@ -590,12 +593,13 @@ it('refuses a body naming a runtime this host does not serve, and names the ones
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
     list(uri: string): Promise<{ name: string }[]>;
-    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[]; default?: unknown; readOnly?: boolean }> } };
   };
 
-  // The picker still offers only what this host makes machines on, which is the
-  // one runtime it was configured with.
-  expect(provider.describe().manifest?.properties?.runtime?.enum).toEqual(['docker']);
+  // The form shows the one runtime this host makes machines on, and a client
+  // cannot change it: the spec's `readOnly`.
+  expect(provider.describe().manifest?.properties?.runtime).toMatchObject({ default: 'docker', readOnly: true });
+  expect(provider.describe().manifest?.properties?.runtime?.enum).toBeUndefined();
   /*
    * Naming one of the others is refused for what it is rather than for not
    * existing, because `ssh` is a runtime this project has and this host does
