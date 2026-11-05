@@ -1137,7 +1137,7 @@ Ask whether a remote person can reach the URL you give. A URL on `localhost` rea
 
 The three calls are refused with `Canvases are disabled.` until a window turns `canvasesEnabled` on, and it is off by default. Turning it off leaves open canvases open and refuses the three calls after it. An unload still closes the canvases a plugin had open. That is the host taking back what the plugin drew, rather than the plugin asking.
 
-A canvas lives as long as its chat. A chat that closes, is removed or moves to another session takes its canvases with it. A subscription to one answers `-32008` "Canvas is no longer available", and nothing survives a restart.
+A canvas lives as long as its chat. A chat that closes, is removed or moves to another session takes its canvases with it. A subscription to one answers `-32008` "Canvas is no longer available: <canvas uri>", and nothing survives a restart.
 
 [examples/canvas](../../examples/canvas) is a whole plugin that does this: a route serves its page, and a tool opens it on the chat that calls it.
 

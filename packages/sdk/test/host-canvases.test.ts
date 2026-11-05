@@ -86,7 +86,7 @@ const withCanvases = (over: Parameters<typeof host>[0] = {}) => {
 /** A subscribe to a canvas, which a gone one refuses. */
 const refusedCanvas = (client: Client, resource: string) =>
   expect(client.handle({ method: 'subscribe', params: { channel: resource } }))
-    .rejects.toMatchObject({ code: -32008, message: 'Canvas is no longer available' });
+    .rejects.toMatchObject({ code: -32008, message: `Canvas is no longer available: ${resource}` });
 
 describe('the store', () => {
   it('answers a canvas before the chat that lists it, and lists the whole of them', () => {

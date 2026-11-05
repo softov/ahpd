@@ -159,13 +159,17 @@ describe('vscode/stopBackgroundWork', () => {
     expect(stops()).toBe(0);
   });
 
-  it('refuses an empty id, or something that is not a chat', async () => {
+  it('refuses an empty id, or something that is not a chat, in VS Code\'s words', async () => {
     const { client, chat } = await opened();
 
-    expect(await call(client, 'vscode/stopBackgroundWork', { chat, id: '' })).toMatchObject({ code: -32602 });
-    expect(await call(client, 'vscode/stopBackgroundWork', { chat, id: '  ' })).toMatchObject({ code: -32602 });
+    expect(await call(client, 'vscode/stopBackgroundWork', { chat, id: '' }))
+      .toMatchObject({ code: -32602, message: 'id must be a non-empty string' });
+    expect(await call(client, 'vscode/stopBackgroundWork', { chat, id: '  ' }))
+      .toMatchObject({ code: -32602, message: 'id must be a non-empty string' });
+    expect(await call(client, 'vscode/stopBackgroundWork', { chat: 'not a uri', id: 'shell:1' }))
+      .toMatchObject({ code: -32602, message: 'chat must be a valid URI string' });
     expect(await call(client, 'vscode/stopBackgroundWork', { chat: 'ahp-session:/live', id: 'shell:1' }))
-      .toMatchObject({ code: -32602 });
+      .toMatchObject({ code: -32602, message: 'chat must be an Agent Host chat URI' });
     // Absent is refused as well, and not read as an empty string.
     expect(await call(client, 'vscode/stopBackgroundWork', { chat })).toMatchObject({ code: -32602 });
   });

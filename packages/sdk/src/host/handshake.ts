@@ -1,4 +1,4 @@
-import { compareProtocolVersions, negotiateProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import { compareProtocolVersions, negotiateProtocolVersion, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
@@ -294,10 +294,14 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (!agreed) {
         // `supportedVersions`, which is the name the protocol gives this
         // field and the only reason the error is recoverable: it is what a
-        // client reads to pick a version to retry with. Under any other
-        // spelling, the one way out of a version mismatch reads
-        // `undefined`.
-        throw new RpcError(-32005, 'No protocol version in common', { supportedVersions: [...SPOKEN_VERSIONS] });
+        // client reads to pick a version to retry with. The words are the
+        // reference host's for the same refusal.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1033-L1051
+        throw new RpcError(
+          -32005,
+          `Client offered protocol versions [${offered.join(', ')}], none of which are compatible with this server's version ${PROTOCOL_VERSION} (server accepts ${SPOKEN_VERSIONS.join(', ')}).`,
+          { supportedVersions: [...SPOKEN_VERSIONS] },
+        );
       }
       /*
        * Whether a container can be made here, asked before the answer

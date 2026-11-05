@@ -6,6 +6,7 @@ import { INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, numberParam
 import { idOf } from '../sessions/catalog.js';
 import { hostLogPath } from '../sessions/debuglogs.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
+import { spaceOf } from './channels.js';
 import { need, reason } from './common.js';
 import { symlinkFolders } from './lifecycle.js';
 import type { LogFile } from '../sessions/debuglogs.js';
@@ -396,8 +397,11 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/stopBackgroundWork': async (params) => {
       const chat = stringParam(params, 'chat', 'an AHP chat URI');
       const id = stringParam(params, 'id', 'a task id');
-      if (id.trim() === '') throw new RpcError(INVALID_PARAMS, 'id must be a non-empty task id');
-      if (!chat.startsWith('ahp-chat:')) throw new RpcError(INVALID_PARAMS, `chat must be an AHP chat URI, and ${chat} is not one`);
+      // Each refusal in the reference host's words, in its order.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3432-L3444
+      if (id.trim() === '') throw new RpcError(INVALID_PARAMS, 'id must be a non-empty string');
+      if (!URL.canParse(chat)) throw new RpcError(INVALID_PARAMS, 'chat must be a valid URI string');
+      if (spaceOf(chat) !== 'chat') throw new RpcError(INVALID_PARAMS, 'chat must be an Agent Host chat URI');
       return { stopped: await ctx.background.stop(chat, id) };
     },
     /**

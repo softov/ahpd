@@ -306,12 +306,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      *
      * A channel this host does not hold is refused here rather than read for a
      * session: the canvas is gone, and a client that subscribed to one the
-     * chat no longer lists is told so rather than handed an empty state.
-     * https://github.com/microsoft/vscode/blob/e646868227c/src/vs/platform/agentHost/node/agentService.ts#L9191-L9206
+     * chat no longer lists is told so, in the reference host's words, rather
+     * than handed an empty state.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11502-L11509
      */
     if (schemeOf(channel) === 'ahp-canvas') {
       const state = ctx.canvases.snapshot(channel);
-      if (state === undefined) throw new RpcError(-32008, 'Canvas is no longer available');
+      if (state === undefined) throw new RpcError(-32008, `Canvas is no longer available: ${channel}`);
       return value({ resource: channel, state, fromSeq: ctx.serverSeq });
     }
     const terminal = terminals.get(channel);

@@ -70,7 +70,7 @@ A draft is a `Message` rather than a string, and the session holds it rather tha
 
 A chat lists what a plugin draws on it in `ChatState.canvases`: one entry per canvas, in the order they were opened. There is no key at all when the chat holds none, because absence is what none means. Each canvas is a channel of its own, `ahp-canvas:/<base64url(chat)>/<uuid>`, holding one `CanvasState` - a title, a status and a live `url`.
 
-A canvas goes with its chat. Closing the chat, removing it or moving it to another session takes its canvases with it, and a subscription to one afterwards answers `-32008`, "Canvas is no longer available". A plugin opens, draws and closes canvases, and no client action does - [PLUGINS.md](../plugins/PLUGINS.md#showing-a-canvas-on-a-chat). Only a connection at `0.10.0` or later is sent a canvas action - [AHP.md](AHP.md#canvas--1-of-1).
+A canvas goes with its chat. Closing the chat, removing it or moving it to another session takes its canvases with it, and a subscription to one afterwards answers `-32008`, "Canvas is no longer available: <canvas uri>". A plugin opens, draws and closes canvases, and no client action does - [PLUGINS.md](../plugins/PLUGINS.md#showing-a-canvas-on-a-chat). Only a connection at `0.10.0` or later is sent a canvas action - [AHP.md](AHP.md#canvas--1-of-1).
 
 ## Compacted context, and a rewind
 

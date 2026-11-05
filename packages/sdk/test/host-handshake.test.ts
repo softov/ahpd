@@ -132,10 +132,11 @@ describe('the handshake', () => {
     expect(result.actions.map((held) => held.action.type)).not.toContain('chat/canvasesChanged');
   });
 
-  it('refuses with the versions it can speak, so the client can say why', async () => {
+  it('refuses with the versions it can speak, so the client can say why, in VS Code\'s words', async () => {
     for (const offered of [['0.8.0'], ['99.0.0']]) {
       await expect(open().handle(hello(offered))).rejects.toMatchObject({
         code: -32005,
+        message: `Client offered protocol versions [${offered.join(', ')}], none of which are compatible with this server's version 1.0.0 (server accepts 1.0.0, 0.10.0, 0.9.0).`,
         // `supportedVersions`, which is the name the protocol gives it. Under
         // any other one the client has read `undefined` and has no version to
         // retry with, which is the whole point of the field.
