@@ -584,8 +584,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      */
     const chat = spaceOf(channel) === 'chat';
     const asked = chat ? sessionFor(channel) : channel;
-    // Never a session's id read out of a file, a terminal, a watch or a chat.
-    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
+    /*
+     * Never a session's id read out of a file, a terminal, a watch or a chat.
+     * A chat no session holds is a resource not found, in the reference host's
+     * words for a chat it finds no owner for.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2188-L2199
+     */
+    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) {
+      throw new RpcError(AhpErrorCodes.SessionNotFound, chat ? `Resource not found: ${channel}` : `No agent for session: ${asked}`);
+    }
     const id = idOf(asked);
     /*
      * A session whose agent this host is not serving, one not running and not

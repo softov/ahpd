@@ -1725,6 +1725,21 @@ describe('what a backend offers, asked again', () => {
   });
 });
 
+describe('a chat no session holds', () => {
+  /*
+   * Refused in VS Code's words: its subscribe finds no owner for the chat,
+   * restores nothing, and answers what it could not subscribe to as a resource
+   * not found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11638-L11640
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2188-L2199
+   */
+  it('refuses a subscribe -32001, the chat named as a resource not found, as VS Code\'s host', async () => {
+    const { client } = await running();
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/nobody' } }))
+      .rejects.toMatchObject({ code: -32001, message: 'Resource not found: ahp-chat:/nobody' });
+  });
+});
+
 describe('a subscribe another overtook', () => {
   /*
    * One subscription of a channel per connection, as VS Code's host keeps one
