@@ -33,8 +33,9 @@ export interface Spawning {
   /** Whether the call's own result has been emitted. */
   completed?: boolean;
   /**
-   * Whether the call did not ask for the background: its input said
-   * `run_in_background: false` or said nothing. Its result ends the worker.
+   * Whether the worker runs in the foreground, the spawning call blocking on
+   * it: the SDK's own report of its task, `task_started`'s `is_backgrounded`
+   * and `task_updated`'s patch, until which it is. Its result ends the worker.
    */
   foreground: boolean;
 }
@@ -310,7 +311,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       ...(about !== undefined ? { description: about } : {}),
       ...(prompt !== undefined ? { prompt } : {}),
       parent: was?.parent ?? scope.parent,
-      foreground: given.run_in_background === true ? false : (was?.foreground ?? true),
+      foreground: was?.foreground ?? true,
       ...(made !== undefined ? { turn: made } : {}),
     });
     // A worker that spoke before its spawn was recorded: its chat opens now,

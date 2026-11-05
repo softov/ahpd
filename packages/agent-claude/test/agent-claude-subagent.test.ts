@@ -517,6 +517,24 @@ it('ends a foreground worker on its result when no notification came', async () 
   expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
+/*
+ * Whether a worker runs in the background is the SDK's own report of its
+ * task, `task_started`'s `is_backgrounded` and a later `task_updated` patch,
+ * as VS Code marks a spawn from `task_started`: a worker moved there is not
+ * ended by its call's result, and ends on its notification.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L103-L111
+ */
+it('keeps a worker the SDK moved to the background running past its call\'s result', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const moved = { type: 'system', subtype: 'task_updated', task_id: 'a39214c163af9a96a', patch: { is_backgrounded: true } };
+  const { workers } = await replay('claude-subagent.jsonl', [...lines.slice(0, 3), moved, ...lines.slice(3, 11), lines[12] as Record<string, unknown>]);
+  expect(workers.get(call)?.ended).toEqual([]);
+  sdk.push(lines[11] as Record<string, unknown>);
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+});
+
 it('describes the spawning call in its _meta, on its start and its ready action', async () => {
   const { main } = await replay('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';

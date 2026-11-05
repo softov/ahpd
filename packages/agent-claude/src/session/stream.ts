@@ -539,11 +539,11 @@ export function createStream(ctx: SessionContext): Stream {
   };
 
   /**
-   * A spawning call's result ends the worker it ran when the call did not
-   * ask for the background, its chat's turn complete however the call ended,
-   * as VS Code completes a subagent's chat. A call that did gets a result
-   * saying only that the worker was launched, and its worker ends on its
-   * notification.
+   * A spawning call's result ends the worker it ran when the worker runs in
+   * the foreground, its chat's turn complete however the call ended, as VS
+   * Code completes a subagent's chat. A background worker's call gets a
+   * result saying only that the worker was launched, and its worker ends on
+   * its notification.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1503-L1520
    */
   const settleSpawn = (id: string): void => {
@@ -631,9 +631,9 @@ export function createStream(ctx: SessionContext): Stream {
        * call to point back. The completion action replaces the call's whole
        * content, so the block the host put there when the chat opened has to
        * be carried into the completion or the link is gone the moment the
-       * worker finishes. A call that asked for the background completes before
-       * its worker says anything, with a result that only says it was
-       * launched, so its worker is opened here and the completion names it.
+       * worker finishes. A background worker's call completes before its
+       * worker says anything, with a result that only says it was launched,
+       * so its worker is opened here and the completion names it.
        */
       if (ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
       const workerContent = ctx.workerBlock(id);

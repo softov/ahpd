@@ -868,8 +868,23 @@ export function createQuery(ctx: SessionContext): Query {
           const task = str(message.task_id);
           if (id !== undefined) ctx.background.add(id);
           if (id !== undefined && task !== undefined && !ctx.ended.has(id)) ctx.tasks.set(id, task);
+          /*
+           * Whether the worker runs in the background is the SDK's own report
+           * of its task, as VS Code marks a spawn from `task_started`; a later
+           * move there is `task_updated`'s patch below.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L103-L111
+           */
+          const spawn = id === undefined ? undefined : ctx.spawning.get(id);
+          if (spawn !== undefined && typeof message.is_backgrounded === 'boolean') spawn.foreground = !message.is_backgrounded;
           ctx.noteTask(message);
           continue;
+        }
+        if (type === 'system' && str(message.subtype) === 'task_updated' && bag(message.patch).is_backgrounded === true) {
+          const task = str(message.task_id);
+          for (const [call, held] of ctx.tasks) {
+            const spawn = held === task ? ctx.spawning.get(call) : undefined;
+            if (spawn !== undefined) spawn.foreground = false;
+          }
         }
         /*
          * Every task the harness is running, after a change to that set.
