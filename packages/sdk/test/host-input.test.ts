@@ -75,9 +75,10 @@ describe('driving a turn', () => {
         return action.type === 'chat/toolCallReady' && action.toolCallId === 'c9';
       });
       const needed = frames.find((n) => (n.params as { action: Record<string, unknown> }).action.type === 'session/inputNeededSet');
+      // The confirmation as VS Code's client sends it, naming the turn the call is in.
       const answer = (action: Record<string, unknown>) => client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'c9', ...action } },
+        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c9', ...action } },
       });
       return { p, chatUri, decision, ready, needed, answer };
     };
