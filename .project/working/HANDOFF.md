@@ -87,7 +87,7 @@ Current progress and pending items only, as of 2026-11-04.
 - proxy/05: its checks passed on 2026-11-04.
 - proxy/06: [pending/proxy-06-endpoint-checks.md](../pending/proxy-06-endpoint-checks.md).
 - plugin/63: [pending/plugin-63-model-list-checks.md](../pending/plugin-63-model-list-checks.md).
-- proxy/04: icon curation, and [pending/proxy-04-move-config-dev.md](../pending/proxy-04-move-config-dev.md).
+- proxy/04: built on 2026-11-04.
 - plugin/58: task 05 waits for [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md).
 - plugin/50: [pending/plugin-50-first-pieces.md](../pending/plugin-50-first-pieces.md).
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.

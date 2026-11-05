@@ -12,7 +12,6 @@ Checked against main at 16bf971c on 2026-11-04. Wrong steps were fixed in fb040e
 
 Restart the daemon on main first. Do them from the top down.
 
-- [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) - 5 min, two curls on your daemon with `config-dev.json`. It passed on a test daemon.
 - [install-path-checks.md](install-path-checks.md) - 20 min, sudo and a test user. Claude cannot add a system user here.
 - [plugin-69-mark-checks.md](plugin-69-mark-checks.md) - 10 min, ahpw in light and dark.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.

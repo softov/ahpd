@@ -20,7 +20,7 @@ On a test daemon at 8b5423b2, on 2026-11-04, with `openrouter`, `openai` and `an
 
 ## Set up
 
-Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* restarts the daemon with `httpApi` on. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
+The daemon needs `modelApi` on, as your `config-dev.json` has since 2026-11-04. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
 
 ```bash
 export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token) B=http://127.0.0.1:37537
