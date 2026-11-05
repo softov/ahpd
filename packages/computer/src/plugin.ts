@@ -14,7 +14,7 @@ import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
 import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, roomFor, sessionOf, stateVolumeOf, within } from './runtime.js';
+import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
 import { routed, parseMachineId, spellMachineId } from './router.js';
 import type { Routed } from './router.js';
@@ -2031,17 +2031,10 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(asked.team === undefined ? {} : { team: asked.team }),
           ...(asked.project === undefined ? {} : { project: asked.project }),
         });
-        // Counted before it is made, and with the same count a write to
-        // `computer://<name>` passes: a machine made for a session is a machine
-        // this host holds.
-        // The count and the create are one queued operation, so a second
-        // session starting while this one is making its machine counts the
-        // machine being made.
+        // One create at a time per runtime, as VS Code queues a source's dev
+        // container operations; a session's machine is made as a client's is,
+        // with `max` capping the agent's tool alone.
         return queue(made, async () => {
-          const full = roomFor(await made.list(), max);
-          if (full !== undefined) {
-            throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
-          }
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
@@ -2140,19 +2133,12 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(git.repository === undefined ? {} : { repository: git.repository }),
         ...(git.sessionTree === undefined ? {} : { sessionTree: git.sessionTree }),
       });
-      // Counted before it is made, and with the same count a write to
-      // `computer://<name>` passes: a machine made for a session is a machine
-      // this host holds.
-      // The count and the create are one queued operation, so a second
-      // session starting while this one is making its machine counts the
-      // machine being made.
+      // One create at a time per runtime, as VS Code queues a source's dev
+      // container operations; a session's machine is made as a client's is,
+      // with `max` capping the agent's tool alone.
       // The id the router spells, which names the runtime a machine made on a
       // box's Docker is on: the name alone would be this host's Docker's.
       const machine = await queue(made, async () => {
-        const full = roomFor(await made.list(), max);
-        if (full !== undefined) {
-          throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
-        }
         // The runtime's own sentence is kept: it is the only thing that says
         // what Docker refused, and the session reads it as its creation error.
         return making(async () => made.run({

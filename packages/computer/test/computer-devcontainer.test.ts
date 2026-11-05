@@ -706,7 +706,7 @@ it('makes it at session start, with the harness needs in the override config', a
   await answered(dockerState, 2);
 });
 
-it('counts a machine made for a session against max, as one made from the form is', async () => {
+it('makes a session\'s dev container past the tool\'s maximum, as one made from the form is', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -719,10 +719,9 @@ it('counts a machine made for a session against max, as one made from the form i
 
   const { options: loaded } = await load(optionsOf(devState, dockerState, { max: 1 }), [agentWith()], join(dir, 'config'));
   const { open } = await room(loaded);
-  await expect(open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder))
-    .rejects.toThrow(/This host holds 1 computers already/);
-  // Nothing was asked of the CLI, which is what the count is for.
-  expect(devHeld(devState).calls).toEqual([]);
+  await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder);
+  // `max` caps the agent's tool, so the CLI was asked to make it.
+  expect(devHeld(devState).calls.map((one) => one[0])).toContain('up');
 });
 
 it('binds one entry where a copy-in is the same bind as a need', async () => {

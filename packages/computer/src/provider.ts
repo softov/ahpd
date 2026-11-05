@@ -8,7 +8,7 @@ import type { FolderAnswer, Profile } from './manifest.js';
 import { revealed, vaultNamed, withDefaults } from './secrets.js';
 import type { Revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
-import { queue, roomFor } from './runtime.js';
+import { queue } from './runtime.js';
 
 /**
  * The `computer:` scheme.
@@ -330,14 +330,13 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     if (await runtime.inspect(name) !== undefined) {
       throw new RpcError(-32010, `${name} is already a computer; destroy it or choose another name`);
     }
-    // The count and the create are one queued operation, so a second write
-    // arriving while this one is making its machine counts the machine being
-    // made.
+    /*
+     * One create at a time per runtime, as VS Code queues a source's dev
+     * container operations. A client's write makes every machine it asks for,
+     * as VS Code's host makes every container a client asks for: `max` caps
+     * what the agent's tool makes.
+     */
     await queue(runtime, async () => {
-      const full = roomFor(await runtime.list(), options.max);
-      if (full !== undefined) {
-        throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${name} would be one more`);
-      }
       try {
         await runtime.run({ ...spec, label: options.label });
       }

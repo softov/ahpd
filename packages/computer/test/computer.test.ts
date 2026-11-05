@@ -462,14 +462,17 @@ it('takes the OCI runtime from the profile alone', async () => {
   expect(specs).toHaveLength(2);
 });
 
-it('refuses a create onto a name already taken, and past the maximum', async () => {
+it('refuses a create onto a name already taken, and makes one past the tool\'s maximum', async () => {
   const { runtime, held } = fake();
   const provider = computerProvider(runtime, { ...options, max: 1 });
   await provider.write('computer://box', made({}));
 
   await expect(provider.write('computer://box', made({}, { createOnly: true }))).rejects.toMatchObject({ code: -32010 });
   await expect(provider.write('computer://box', made({}))).rejects.toMatchObject({ code: -32010 });
-  await expect(provider.write('computer://other', made({}))).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('holds 1 computers') });
+  // A client's write makes every machine it asks for, as VS Code's host makes
+  // every container a client asks for: `max` caps the agent's tool.
+  await provider.write('computer://other', made({}));
+  expect(held.has('other')).toBe(true);
 
   // A write to a leaf or to the root is not a create at all.
   await expect(provider.write('computer://box/status', made({}))).rejects.toMatchObject({ code: -32602 });

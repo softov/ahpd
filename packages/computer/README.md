@@ -64,7 +64,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `image` | `debian:bookworm-slim` | The image a machine is made from when a call names none |
 | `cpus` | none | A CPU limit for every machine this host makes |
 | `memory` | none | A memory limit for every machine this host makes |
-| `max` | `3` | How many machines may exist at once |
+| `max` | `3` | How many machines may exist at once when the agent's tool asks for one more |
 | `label` | `ahpd.computer=1` | The label every machine carries, and the one every read checks |
 | `prefix` | `ahpd-computer` | What the name of every machine this host makes starts with |
 | `sessionSetting` | `true` | Whether the plugin adds a `computer` session setting that names the machine a session runs in |

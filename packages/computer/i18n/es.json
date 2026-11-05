@@ -32,7 +32,7 @@
       "description": "Un límite de memoria para cada máquina que crea este host."
     },
     "max": {
-      "description": "Cuántas pueden existir a la vez."
+      "description": "Cuántas máquinas pueden existir a la vez cuando la herramienta del agente pide una más."
     },
     "label": {
       "description": "La etiqueta que lleva cada máquina."

@@ -159,7 +159,7 @@
         "image": { "type": "string", "description": "The image a machine is made from when a call names none." },
         "cpus": { "type": "string", "description": "A CPU limit for every machine this host makes." },
         "memory": { "type": "string", "description": "A memory limit for every machine this host makes." },
-        "max": { "type": "integer", "minimum": 1, "description": "How many may exist at once." },
+        "max": { "type": "integer", "minimum": 1, "description": "How many machines may exist at once when the agent's tool asks for one more." },
         "label": { "type": "string", "description": "The label every machine carries." },
         "prefix": { "type": "string", "description": "What the name of every machine this host makes starts with." },
         "sessionSetting": { "type": "boolean", "description": "Whether a session setting names the machine a session runs in." },

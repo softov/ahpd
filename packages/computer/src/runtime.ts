@@ -720,16 +720,13 @@ export interface ComputerRuntime {
 /**
  * The machines already here when one more would pass `max`, or nothing.
  *
- * Every road that makes a machine asks this: a write to `computer://<name>`,
- * the tool that asks for one in words, and a session that names a source it is
- * started in. One count rather than three, because a limit one road checks and
- * another does not is no limit at all.
- *
- * The machines come back with it, because each road says so in its own words:
- * the ones already here to a tool that has to name them, and the one that
- * would not fit to a request that names what was refused. They are the caller's
- * own listing rather than a listing of their own, so a road that counts them
- * against something else - a name that is taken - lists them once.
+ * The tool an agent asks for a machine with asks this, as VS Code caps what an
+ * agent's tools create (sessionServerTools.ts L38-L41 at 6b68d3fe); a client's
+ * write and a session's source are made as VS Code's host makes every
+ * container a client asks for. The machines come back with it, because the
+ * tool names the ones already here. They are the caller's own listing, so a
+ * caller that counts them against something else - a name that is taken -
+ * lists them once.
  */
 export const roomFor = (held: Machine[], max: number): Machine[] | undefined =>
   held.length >= max ? held : undefined;
@@ -743,14 +740,14 @@ const operations = new WeakMap<ComputerRuntime, Promise<unknown>>();
  * L224 and L246, and its `queue` in src/vs/base/common/async.ts L338-L363, at
  * 6b68d3fe), keyed by the runtime.
  *
- * `max` is a count, and a count read and then acted on is read too early: two
- * calls at once both read the same listing, both find room, and one more machine
- * exists than the limit says. So the count and the create it allows are one
- * operation, and a caller that arrives second counts the first create as one of
- * the machines.
+ * The tool's `max` is a count, and a count read and then acted on is read too
+ * early: two calls at once both read the same listing, both find room, and one
+ * more machine exists than the limit says. So the count and the create it
+ * allows are one operation, and a caller that arrives second counts the first
+ * create as one of the machines.
  *
- * Keyed by runtime: two runtimes are two sets of machines, each with its own
- * limit. An operation that fails settles like any other, and the next one runs.
+ * Keyed by runtime: two runtimes are two sets of machines. An operation that
+ * fails settles like any other, and the next one runs.
  */
 export const queue = <T>(runtime: ComputerRuntime, task: () => Promise<T>): Promise<T> => {
   const next: Promise<T> = (operations.get(runtime) ?? Promise.resolve())
