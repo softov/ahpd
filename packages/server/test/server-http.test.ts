@@ -518,6 +518,33 @@ describe('the handlers, called with a Request', () => {
     expect((await handler(request('/api/user/list'))).status).toBe(401);
   });
 
+  it('sends the API\'s 401 a bearer challenge: the realm alone with no token, invalid_token with one', async () => {
+    writeFileSync(usersFile, JSON.stringify({ roles: {}, users: [] }));
+    const users = fileUsers({ path: usersFile });
+    const facts: ServedFacts = {
+      options: { users: usersFile } as Options,
+      configFile: config,
+      users,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      users,
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+    const none = await handler(request('/api/user/list'));
+    expect(none.status).toBe(401);
+    expect(none.headers.get('www-authenticate')).toBe('Bearer realm="ahpd"');
+    const unknown = await handler(request('/api/user/list', 'not-a-token'));
+    expect(unknown.status).toBe(401);
+    expect(unknown.headers.get('www-authenticate')).toBe('Bearer realm="ahpd", error="invalid_token"');
+    expect((await handler(request('/api/user/list', 'root-secret'))).headers.get('www-authenticate')).toBeNull();
+  });
+
   it('answers 404 under /api and 426 elsewhere with no API', async () => {
     const handler = withoutApi(doorOf({}));
     const missing = await handler(request('/api/x'));

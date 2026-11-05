@@ -192,6 +192,19 @@ describe('a caller is a person, root or a session, and may call', () => {
     expect(fake.received).toEqual([]);
   });
 
+  it('sends each 401 a bearer challenge: the realm alone with no credential, invalid_token with one', async () => {
+    const fake = await okProvider();
+    const served = await proxy({ ...table(fake.endpoint) });
+    for (const path of [CHAT, MESSAGES]) {
+      const none = await send(served.port, path, { body: CALL });
+      expect(none.headers['www-authenticate']).toBe('Bearer realm="ahpd"');
+      const unknown = await send(served.port, path, { headers: { 'x-api-key': 'not-a-token' }, body: CALL });
+      expect(unknown.headers['www-authenticate']).toBe('Bearer realm="ahpd", error="invalid_token"');
+      const removed = await send(served.port, path, { headers: { authorization: `Bearer ${who.rex}` }, body: CALL });
+      expect(removed.headers['www-authenticate']).toBe('Bearer realm="ahpd", error="invalid_token"');
+    }
+  });
+
   it('takes the credential as Bearer or as x-api-key, and refuses two that differ', async () => {
     const fake = await okProvider();
     const served = await proxy({ ...table(fake.endpoint) });

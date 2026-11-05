@@ -261,6 +261,8 @@ export interface Refusal {
   message: string;
   /** OpenAI's machine-readable `code`, such as `model_not_found`. */
   code?: string;
+  /** The `WWW-Authenticate` challenge a 401 carries (RFC 9110 section 11.6.1). */
+  challenge?: string;
 }
 
 /**
@@ -268,7 +270,8 @@ export interface Refusal {
  *
  * `openai`: `{ error: { message, type, param: null, code } }`.
  * `anthropic`: `{ type: 'error', error: { type, message } }`.
- * `headers` adds to the answer, such as `Allow` on a 405.
+ * `headers` adds to the answer, such as `Allow` on a 405; a refusal's
+ * challenge goes out as its `WWW-Authenticate`.
  */
 export const refusalBody = (dialect: Dialect, refusal: Refusal, headers: Record<string, string> = {}): Response => {
   const type = errorType(refusal.status);
@@ -277,7 +280,11 @@ export const refusalBody = (dialect: Dialect, refusal: Refusal, headers: Record<
     : { error: { message: refusal.message, type, param: null, code: refusal.code ?? null } };
   return new Response(`${JSON.stringify(body)}\n`, {
     status: refusal.status,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: {
+      'content-type': 'application/json',
+      ...(refusal.challenge === undefined ? {} : { 'www-authenticate': refusal.challenge }),
+      ...headers,
+    },
   });
 };
 

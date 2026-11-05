@@ -18,7 +18,7 @@
 import { serve, toNodeListener, type RequestHandler } from '@cofold/remote';
 import type { Runner } from '@cofold/commands';
 import { plainAnswer, routeOf, ROUTE_ROOT, serveRequests, type Door, type NodeRequestListener, type Route, type Users } from '@ahpd/sdk';
-import { authorizeOverHttp } from './commands/authorize.js';
+import { authorizeOverHttp, challengeOf } from './commands/authorize.js';
 import { MCP_PREFIX } from './mcp.js';
 import { isRootPath } from './proxy/dialects.js';
 
@@ -106,7 +106,8 @@ export function originRefusal(request: Request, origins: readonly string[], subj
  * The prefix is what every route and the manifest hang off. `authorize` answers
  * who the caller is and hands that on to the command; the registry's own
  * `authorize` hook is what holds them to the command's scopes. A request from
- * another site is refused here, before either.
+ * another site is refused here, before either. A 401 goes out with its bearer
+ * challenge, as HTTP has every 401 carry one (RFC 9110 section 11.6.1).
  */
 export function apiHandler(options: ApiOptions): RequestHandler {
   const api = serve(options.registry, options.program, {
@@ -116,12 +117,14 @@ export function apiHandler(options: ApiOptions): RequestHandler {
       ...(options.users === undefined ? {} : { users: options.users }),
     }),
   });
-  return guarded((request, path) => {
+  return guarded(async (request, path) => {
     if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) {
       const refusal = foreign(request, options.origins());
-      if (refusal !== undefined) return Promise.resolve(json(403, { message: refusal }));
+      if (refusal !== undefined) return json(403, { message: refusal });
     }
-    return api(request);
+    const answer = await api(request);
+    if (answer.status === 401) answer.headers.set('www-authenticate', challengeOf(request.headers));
+    return answer;
   });
 }
 

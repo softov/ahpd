@@ -187,7 +187,7 @@ Every refusal is the dialect's own error body, so the tool shows the message. On
 | Status | Type | When |
 | --- | --- | --- |
 | 400 | `invalid_request_error` | The body is not JSON or has no `model`; two different credentials |
-| 401 | `authentication_error` | No credential, or one this host does not know |
+| 401 | `authentication_error` | No credential, or one this host does not know; its `WWW-Authenticate` is `Bearer realm="ahpd"`, with `error="invalid_token"` beside it when a credential came |
 | 403 | `permission_error` | No `proxy:call`; a scope you are not in; a policy refuses every entry; a policy limit or the key's own limit has no room; a foreign `Host` or `Origin` |
 | 404 | `not_found_error` | `model <name> is not served here`, or it is served only in the other dialect, and the message names the path to call |
 | 405 | `invalid_request_error` | A method other than `POST` (or `GET` on `/v1/models`) |

@@ -181,6 +181,21 @@ it('answers a plain request 401 when the handshake would refuse its token, and 4
   }
 });
 
+it('sends a refused plain request a bearer challenge: the realm alone with no token, invalid_token with one', async () => {
+  running = await listen({ port: 0, token: ROOT, identify: doorOnly }, watching);
+  expect((await ask()).headers.get('www-authenticate')).toBe('Bearer realm="ahpd"');
+  for (const refused of [await ask('nope'), await ask(undefined, { authorization: 'Bearer nope' })]) {
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get('www-authenticate')).toBe('Bearer realm="ahpd", error="invalid_token"');
+  }
+  // The same challenge from the answer the daemon's own HTTP surface mounts.
+  const door = doorOf({ token: ROOT });
+  expect((await plainAnswer(door, new Request('http://127.0.0.1/'))).headers.get('www-authenticate')).toBe('Bearer realm="ahpd"');
+  expect((await plainAnswer(door, new Request('http://127.0.0.1/?tkn=nope'))).headers.get('www-authenticate'))
+    .toBe('Bearer realm="ahpd", error="invalid_token"');
+  expect((await ask(ROOT)).headers.get('www-authenticate')).toBeNull();
+});
+
 it('answers every plain request 426 when no connection token is required', async () => {
   running = await listen({ port: 0 }, watching);
   for (const admitted of [await ask(), await ask('nope')]) {

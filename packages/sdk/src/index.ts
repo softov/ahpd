@@ -36,7 +36,7 @@ export type { Catalog, Catalogs } from './i18n.js';
 export { formIn } from './host/formlocale.js';
 export { installLine, knownAgents } from './machines/agents.js';
 export type { AgentVariable, KnownAgent } from './machines/agents.js';
-export { doorOf, listen, overStdio, plainAnswer, runtime, serveRequests } from './listen.js';
+export { bearerChallenge, doorOf, listen, overStdio, plainAnswer, runtime, serveRequests } from './listen.js';
 export {
   createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
