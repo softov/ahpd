@@ -8,7 +8,7 @@ import { partsOf, rulesOf } from '../plugins/pluginparts.js';
 import { bodyText } from '../resources/records.js';
 import { BINDINGS_KEY } from '../connectors/bindings.js';
 import { actionTools } from '../connectors/actions.js';
-import { SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
+import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
@@ -1819,9 +1819,14 @@ export function createTooling(ctx: HostContext): Tooling {
       await settle(made, asked.workingDirectory, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
-      // it ends up running in.
-      openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
-        forWhom(kept.owner(idOf(uri))));
+      // it ends up running in. And the session, chat and turn it was made
+      // from, which `openSession` writes down beside the record so the summary
+      // carries them from its announcement, as the reference host's create
+      // carries its creation reference.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
+      const madeFrom = { session: uri, chat: chatUri, ...(turn === undefined ? {} : { turnId: turn }) };
+      openSession(made, provider, { ...config, _meta: { [CREATED_BY_META]: madeFrom } }, where, undefined, undefined, undefined,
+        asked.title, forWhom(kept.owner(idOf(uri))));
       /*
        * The session this one was made inside, kept with its record.
        *

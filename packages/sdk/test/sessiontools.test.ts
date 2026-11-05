@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
@@ -608,6 +609,30 @@ describe("VS Code's limits on spawning and messaging", () => {
   /** One session's tools send a message to another, which is where a send goes. */
   const telling = (at: number, to: string, message: string): Promise<Answer> =>
     call('send_message', { session: to, message }, at);
+
+  /*
+   * The reference host's create carries the session, chat and turn it was
+   * made from on the new session's summary, under `agentHost/createdBySession`,
+   * before the session is announced.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
+   */
+  it('announces a session it made with the session and chat it was made from on its summary', async () => {
+    const host = createHost({
+      path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
+      sleepAfterMinutes: 0,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await hello(client);
+    const first = await started(client, 'first');
+    expect(said(await spawn(first.at, 'made'))).toMatch(/^New session created \(/);
+
+    const added = p.notes
+      .filter((note) => note.method === 'root/sessionAdded')
+      .map((note) => (note.params as { summary: { resource: string; _meta?: Record<string, unknown> } }).summary)
+      .find((summary) => summary.resource !== first.held);
+    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: chatUriFor(first.held) });
+  });
 
   it("stops a chain of sessions at spawn depth 3, in the reference host's words", async () => {
     const client = await top();
