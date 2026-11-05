@@ -408,7 +408,18 @@ it('moves the changeset when a client writes a file through the host', async () 
   await waitFor(() => channelActions(p, CHANGESET).some((one) => JSON.stringify(one.files ?? '').includes('fresh.txt')));
 });
 
-it('moves the changeset when a tool call completes mid-turn', async () => {
+/**
+ * A tool call's result naming the file it wrote, in the protocol's file edit
+ * content: what the reference recomputes a session's changesets on mid-turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1118-L1124
+ */
+const editing = (path: string): Record<string, unknown> => ({
+  success: true,
+  pastTenseMessage: 'Wrote it',
+  content: [{ type: 'fileEdit', after: { uri: uriOf(path), content: { uri: uriOf(path) } } }],
+});
+
+it('moves the changeset when a tool call that edited a file completes mid-turn', async () => {
   const dir = repository();
   const held: { emit?: Start['emit'] } = {};
   const base = echo({ path: dir });
@@ -424,10 +435,25 @@ it('moves the changeset when a tool call completes mid-turn', async () => {
   await settle(8);
 
   writeFileSync(join(dir, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'from-tool.txt')) });
   await waitFor(() => channelActions(p, CHANGESET).some((one) => JSON.stringify(one.files ?? '').includes('from-tool.txt')));
   // And nothing has ended the turn, which is what used to be the only trigger.
   expect(channelActions(p, URI).some((one) => one.type === 'chat/turnComplete')).toBe(false);
+});
+
+it('reads nothing again for a tool call whose result names no file edit', async () => {
+  const dir = repository();
+  const { held, agent } = endable(dir);
+  const { calls, source } = counting();
+  const { client } = await open(dir, source, agent);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = calls.refresh;
+
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: { success: true, pastTenseMessage: 'Read it' } });
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  expect(calls.refresh).toBe(before);
 });
 
 /** An echo backend whose emitter the test holds, so it can end a turn itself. */
@@ -463,11 +489,10 @@ it('pushes the files of a watched changeset when a turn ends', async () => {
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
   await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
 
-  // A tool call that wrote nothing: its own mid-turn re-read finds the same
-  // files, so the turn's end is the only thing left that can push these.
-  const before = calls.refresh;
+  // A tool call that names no file edit reads nothing again, so the turn's end
+  // is the only thing left that can push these.
   held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
-  await waitFor(() => calls.finished >= before + 1);
+  await settle(8);
 
   writeFileSync(join(dir, 'from-turn.txt'), 'made\n');
   held.emit?.('chat', { type: 'chat/turnComplete', turnId: 't1', duration: 1 });
@@ -530,7 +555,7 @@ it('runs no git for tool calls or writes when no client watches the directory', 
   // Ten tool calls that each wrote a file, with nobody subscribed.
   for (let i = 0; i < 10; i++) {
     writeFileSync(join(dir, `t${String(i)}.txt`), 'x\n');
-    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: {} });
+    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: editing(join(dir, `t${String(i)}.txt`)) });
   }
   await settle(10);
   expect(calls.refresh).toBe(0);
@@ -1125,7 +1150,7 @@ it('moves a session row at a tool call, from its baseline, before the turn ends'
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(dir, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'from-tool.txt')) });
 
   await waitFor(() => countsMoved(p, from)?.files === 1);
   expect(countsMoved(p, from)).toEqual({ files: 1, additions: 1, deletions: 0 });
@@ -1141,7 +1166,7 @@ it('moves a worktree row at a tool call, from its branch, before the turn ends',
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(where, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(where, 'from-tool.txt')) });
 
   await waitFor(() => countsMoved(p, from)?.files === 1);
   expect(countsMoved(p, from)).toEqual({ files: 1, additions: 1, deletions: 0 });
@@ -1172,7 +1197,7 @@ it('runs at most two summary reads for a burst of ten tool calls', async () => {
 
   for (let i = 0; i < 10; i++) {
     writeFileSync(join(dir, `t${String(i)}.txt`), 'x\n');
-    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: {} });
+    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: editing(join(dir, `t${String(i)}.txt`)) });
   }
   await waitFor(() => reads.finished >= 2 && reads.finished === reads.started);
   // One read running and one waiting behind it, as `refreshWatched` does.
@@ -1180,7 +1205,7 @@ it('runs at most two summary reads for a burst of ten tool calls', async () => {
   expect(reads.started).toBeLessThanOrEqual(2);
 });
 
-it('sends no row for a tool call that changes nothing', async () => {
+it('sends no row for a tool call whose edit changes nothing', async () => {
   const dir = repository();
   const { held, agent } = endable(dir);
   const base = gitChanges();
@@ -1202,7 +1227,7 @@ it('sends no row for a tool call that changes nothing', async () => {
   const before = rowsMoved(p, SESSION).length;
   const finishedBefore = reads.finished;
 
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'unchanged.txt')) });
   // The read still runs; it is what it finds that says nothing new.
   await waitFor(() => reads.finished > finishedBefore);
   await settle(10);

@@ -1232,11 +1232,15 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         dispatch(where, asSent(action), answering);
         if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
-        // A tool call that finished may have written to this session's tree, so
-        // the changeset is re-read then rather than waiting for the turn's end.
+        // A tool call whose result names file edits wrote to this session's
+        // tree, so the changeset is re-read then rather than waiting for the
+        // turn's end, as the reference recomputes on a completed call's edits.
         // The row's counts move with it: the turn has no checkpoint yet, so
         // the session kind is counted from its baseline to the working tree.
-        if (action.type === 'chat/toolCallComplete') {
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1118-L1124
+        const result = action.result as Bag | undefined;
+        if (action.type === 'chat/toolCallComplete' && Array.isArray(result?.content)
+          && (result.content as Bag[]).some((one) => one?.type === 'fileEdit')) {
           const dir = dirOf(uri);
           if (dir !== undefined) {
             void refreshWatched(dir);
