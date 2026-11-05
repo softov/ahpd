@@ -124,6 +124,51 @@ describe('canvasesEnabled', () => {
   });
 });
 
+describe('a client that agreed 0.9.0', () => {
+  /*
+   * A canvas's actions are 0.10.0's, so they are held back from it - and from
+   * it again once it comes back, as VS Code's host keeps the version a client
+   * agreed for the connection it reconnects on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1351-L1362
+   */
+  it('is sent no canvas action after it comes back, as before it went, as VS Code\'s host', async () => {
+    const plugins = [pluginHost('board', context())];
+    const { options } = foldHostOptions({
+      path: DIR,
+      agents: [echo({ path: DIR, pace: 0 })],
+      resources: fileResources(),
+    }, plugins.map((one) => one.contribution));
+    const host = createHost(options);
+    const notes: { method: string; params: { action?: { type?: string } } }[] = [];
+    const listening = (): Peer => ({
+      send: () => {}, notify: (method, params) => { notes.push({ method, params: params as { action?: { type?: string } } }); },
+      request: async () => ({}), answered: () => {}, close: () => {},
+    });
+    const first = host.accept(listening());
+    await first.handle({ method: 'initialize', params: { clientId: 'older', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+    await canvases(first, true);
+    await first.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    const opened = await first.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    const chat = opened.snapshot.state.defaultChat;
+    await first.handle({ method: 'subscribe', params: { channel: chat } });
+    const plugin = plugins[0]?.host as PluginHost;
+    const shown = (): unknown[] => notes.filter((one) => one.method === 'action' && one.params.action?.type === 'chat/canvasesChanged');
+    await plugin.openCanvas(chat, STATE);
+    expect(shown()).toEqual([]);
+
+    first.close();
+    const back = host.accept(listening());
+    const replayed = await back.handle({
+      method: 'reconnect', params: { channel: ROOT, clientId: 'older', lastSeenServerSeq: 0, subscriptions: [ROOT, chat] },
+    }) as { type: string; actions?: { action: { type: string } }[] };
+    expect((replayed.actions ?? []).filter((one) => one.action.type === 'chat/canvasesChanged')).toEqual([]);
+    await plugin.openCanvas(chat, { ...STATE, instanceId: 'board-2' });
+    expect(shown()).toEqual([]);
+  });
+});
+
 describe('a state a plugin gives', () => {
   it('is replaced whole, and a state without a url is sent without one', async () => {
     const { hosts, client, chat } = await made({ on: true });

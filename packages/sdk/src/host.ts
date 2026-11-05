@@ -433,6 +433,8 @@ export function createHost(options: HostOptions): Host {
   const locales = new Map<string, string>();
   /** The name each client gave in `clientInfo` at `initialize`, by client id. */
   const clientNames = new Map<string, string>();
+  /** The protocol version each client agreed at `initialize`, by client id. */
+  const clientVersions = new Map<string, string>();
   const learned = new Map<string, Learned>();
   const about = (provider: string): Learned => {
     const held = learned.get(provider);
@@ -1412,7 +1414,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, lastSeen, waitsOver, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, lastSeen, waitsOver, locales, clientNames, clientVersions, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]

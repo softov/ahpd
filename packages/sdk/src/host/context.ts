@@ -124,6 +124,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
    */
   clientNames: Map<string, string>;
+  /**
+   * The protocol version each client agreed at `initialize`, by client id.
+   *
+   * Kept beside `known` and for the same span, because a `reconnect` offers
+   * no versions and a connection it resumes is held to the one agreed, as the
+   * reference host takes it from the client's record.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1351-L1362
+   */
+  clientVersions: Map<string, string>;
   /** The last locale a client sent, or `undefined` when it sent none. */
   localeOf: (clientId: string) => string | undefined;
   /**

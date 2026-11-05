@@ -94,7 +94,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, clientsChanged, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
+    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
@@ -137,6 +137,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       ctx.lastSeen.delete(id);
       known.delete(id);
       clientNames.delete(id);
+      clientVersions.delete(id);
       locales.delete(id);
     }
   };
@@ -354,6 +355,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * replay. Read before the snapshots below, which are answered whole.
        */
       connection.protocolVersion = agreed;
+      clientVersions.set(connection.clientId, agreed);
       // Met, so a later `reconnect` under this id is answerable.
       known.add(connection.clientId);
       attached(connection.clientId);
@@ -604,6 +606,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       }
       connection.clientId = clientId;
       attached(clientId);
+      // Held to the version this client agreed at `initialize`, which a
+      // `reconnect` offers none of, live and in its replay.
+      const agreed = clientVersions.get(clientId);
+      if (agreed === undefined) delete connection.protocolVersion;
+      else connection.protocolVersion = agreed;
       // An older VS Code window, by the name it gave at `initialize` and what
       // this `reconnect` declares, as the reference host reads it.
       // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
