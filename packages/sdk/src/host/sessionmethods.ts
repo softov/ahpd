@@ -202,7 +202,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       sessions.set(into, made);
       ctx.births.set(into, made.createdAt);
       ctx.names.set(idOf(into), into);
-      ctx.asleep.delete(into);
       ctx.touch(into);
     }
     const there = sessions.get(into) as Held;
@@ -1502,6 +1501,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
       // Last, and once: the row's chat list just moved.
       summaryMoved(found.uri);
+      // A chat closed while its turn ran leaves the root's count of sessions
+      // running a turn, as VS Code's host drops it there.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1881-L1887
+      activeSessionsMoved();
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.
       movableMoved(chatUri);

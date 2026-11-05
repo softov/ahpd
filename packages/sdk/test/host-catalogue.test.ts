@@ -87,37 +87,38 @@ describe('the catalogue', () => {
   });
 
   /*
-   * The protocol's count: "Number of active (non-disposed) sessions on the
-   * server", the sessions a client's list holds from `root/sessionAdded` to
-   * `root/sessionRemoved`. A transcript the catalogue lists counts, and so does
-   * a session whatever its turn is doing, until it is disposed.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/commands.ts#L20-L33
+   * The sessions running a turn, as VS Code's host counts its active sessions:
+   * a session counts while one of its chats has an active turn. A transcript
+   * the catalogue lists, and a session at rest, count nothing. VS Code's
+   * Sessions window reads the number as a host's running sessions, and starts
+   * a new session on the host with the fewest.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3263
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L252
    */
-  it('counts every session it lists, the transcripts beside it included, until one is disposed', async () => {
+  it('counts the sessions running a turn, as VS Code\'s host, the transcripts it lists and a session at rest counting none', async () => {
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
     sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
     const { client, peer: p, uri, chatUri } = await running();
     const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { activeSessions: number } };
     }).snapshot.state.activeSessions;
+    // The two transcripts; the session is listed from its first message.
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: unknown[] };
     await settle();
-    expect(listed.items).toHaveLength(3);
-    expect(await count()).toBe(3);
+    expect(listed.items).toHaveLength(2);
+    expect(await count()).toBe(0);
 
-    // A turn moves nothing.
     client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } } });
     await settle();
-    expect(await count()).toBe(3);
+    expect(await count()).toBe(1);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
-    expect(await count()).toBe(3);
+    expect(await count()).toBe(0);
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
-    expect(await count()).toBe(2);
-    // Said as it moved, and never while the number stood still.
-    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions).at(-1))
-      .toBe(2);
+    expect(await count()).toBe(0);
+    // Said as it moved, once each way, and never while the number stood still.
+    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions))
+      .toEqual([1, 0]);
   });
 
   it('refuses a session channel it has no agent for', async () => {

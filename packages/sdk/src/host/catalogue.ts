@@ -86,7 +86,7 @@ export interface Catalogue {
    */
   summaryKept(uri: string, running?: boolean): Promise<void>;
   forgetSent(uri: string): void;
-  /** How many sessions this host has and has not disposed: every row of its catalogue. */
+  /** How many sessions are running a turn in any of their chats. */
   activeCount(): number;
   activeSessionsMoved(): void;
   learnModels(uri: string): void;
@@ -501,24 +501,25 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
 
   /**
-   * How many sessions this host has: the protocol's "Number of active
-   * (non-disposed) sessions on the server", the sessions a client's list
-   * holds from their `root/sessionAdded` to their `root/sessionRemoved`. Every
-   * row of the catalogue, by id: a session running, one asleep and a row a
-   * listing found alike. A session still being made is not one yet.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/root-channel.md#L29
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/commands.ts#L20-L33
+   * How many sessions are running a turn, as VS Code's host counts its active
+   * sessions: a session counts while any of its chats, a worker's included,
+   * has an active turn in the state the chat's reducer made. A session asleep,
+   * at rest or listed from a transcript counts nothing. VS Code's Sessions
+   * window reads the number as a host's running sessions, and starts a new
+   * session on the host with the fewest.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3263
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L128
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L252
    */
-  const activeCount = (): number => new Set([
-    ...[...sessions].filter(([uri, held]) => leadOf(held) !== undefined && !coming.has(uri)).map(([uri]) => idFor(uri)),
-    ...[...ctx.asleep].map((uri) => idFor(uri)),
-    ...ctx.listed().map((row) => idFor(row.resource)),
-  ]).size;
+  const activeCount = (): number => [...sessions.values()].filter((held) => [
+    ...held.chats.keys(),
+    ...[...subagents].filter(([, one]) => sessions.get(one.session) === held).map(([one]) => one),
+  ].some((chat) => typeof ctx.stateOf(chat)?.activeTurn === 'object' && ctx.stateOf(chat)?.activeTurn !== null)).length;
   /**
-   * Say how many sessions there are, when the root's clients hold another
-   * number: the one the root's state holds, or the last said while no client
-   * has the root's state.
+   * Say how many sessions are running a turn, when the root's clients hold
+   * another number: the one the root's state holds, or the last said while no
+   * client has the root's state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
    */
   let announced = -1;
   const activeSessionsMoved = (): void => {
@@ -651,7 +652,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (!coming.has(uri) || !sessions.has(uri)) return;
     sessionAdded(uri);
     ctx.dispatch(uri, { type: 'session/ready' });
-    activeSessionsMoved();
   };
   /**
    * What each session's row said last, as its mutable fields.
@@ -1517,7 +1517,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * that now decides it, in place, as the reference host folds its chats into
    * the session's state with no action of its own. And the catalogue row
    * moves with both. Each is done only when the session's state is held: a
-   * session nothing holds opens with what its chats say then.
+   * session nothing holds opens with what its chats say then. The root's count
+   * of sessions running a turn is read again too, since a turn's start and end
+   * are chat actions.
    *
    * A row's `activity` the chat cleared stays as it was: the action merges what
    * it carries, and the protocol's summary has no value that clears it. The
@@ -1568,6 +1570,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       }
     }
     summaryMoved(session);
+    activeSessionsMoved();
   };
 
   /**

@@ -1661,7 +1661,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
-    ctx.asleep.delete(uri);
     /*
      * Started, or brought back, which is recent in the residency; one more
      * resident may put another past the limit, which is read once the start is

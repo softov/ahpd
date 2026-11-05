@@ -727,7 +727,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const [channel, open] of ctx.heldStates) {
       if (channel === uri || (open.kind === 'chat' && ctx.sessionFor(channel) === uri)) ctx.closeState(channel);
     }
-    ctx.asleep.delete(uri);
     activeSessionsMoved();
     if (announced) broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);

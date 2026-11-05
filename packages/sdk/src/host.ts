@@ -1449,7 +1449,6 @@ export function createHost(options: HostOptions): Host {
     heldStates: states as ReadonlyMap<string, HeldState>,
     asks,
     letStateGo,
-    asleep: new Set<string>(),
   } as HostContext;
   // Before any area is built, because everything a person or a backend does
   // goes out through `emit`, which folds into this stream on the way.

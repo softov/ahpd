@@ -27,8 +27,6 @@ export interface History {
   refresh(): Promise<Summary[]>;
   /** The rows as last listed: held when there are any, and the first listing when there are not. */
   held(): Promise<Summary[]>;
-  /** The rows as last listed, and none before the first listing lands. */
-  listed(): Summary[];
   past(id: string): Promise<Bag[] | undefined>;
   /** A session deleted here, out of the rows this host is holding, by id. */
   drop(resource: string): void;
@@ -206,8 +204,6 @@ export function createHistory(ctx: HostContext): History {
       const found = listed.filter((row) => !goneWhileOut(row));
       ctx.rowsMoved(before.filter((row) => !goneWhileOut(row)), found);
       rows = found;
-      // The rows a client's list holds moved, and the root's count is theirs.
-      ctx.activeSessionsMoved();
       // A pass that started after a delete read the store knowing about it, so
       // a delete older than this pass has nothing left to hold back.
       for (const [id, dropped] of droppedIn) if (dropped < startedAt) droppedIn.delete(id);
@@ -244,7 +240,6 @@ export function createHistory(ctx: HostContext): History {
    * what that one left behind.
    */
   const held = (): Promise<Summary[]> => (rows.length === 0 ? refresh() : Promise.resolve(rows));
-  const listed = (): Summary[] => rows;
   /**
    * A listing of its own, for an id the held rows do not have.
    *
@@ -420,7 +415,7 @@ export function createHistory(ctx: HostContext): History {
   };
 
   return {
-    history, subHistory, titles, restoredSubagents, sessionAt, restoredParentChat, linkedTurns, refresh, held, listed, past,
+    history, subHistory, titles, restoredSubagents, sessionAt, restoredParentChat, linkedTurns, refresh, held, past,
     drop, keepRow,
   };
 }

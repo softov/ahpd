@@ -232,9 +232,6 @@ export function createSleep(ctx: HostContext): Sleep {
     // A wake starts the backend on the config the session holds, which is all
     // a relaunch it owed would have taken.
     ctx.relaunches.delete(uri);
-    // Asleep and still open: counted as one this host holds, and resident
-    // with the state it holds until the residency lets it go.
-    ctx.asleep.add(uri);
     if (row !== undefined) {
       wheres.set(uri, row.workingDirectories);
       moves.set(uri, row.modifiedAt);
@@ -498,7 +495,6 @@ export function createSleep(ctx: HostContext): Sleep {
     log(`resumed ${named}`);
     dispatch(named, { type: 'session/ready' });
     summaryMoved(named);
-    activeSessionsMoved();
     return { uri: named, chat: picked(named, chat) ?? session };
   };
 

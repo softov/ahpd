@@ -664,7 +664,7 @@ export function createRoot(ctx: HostContext): Root {
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(daemon)]) daemonSeen.add(key);
     return {
       agents: descriptors(),
-      // Every session this host has and has not disposed, as its catalogue lists them.
+      // The sessions running a turn, as VS Code's host counts them.
       activeSessions: ctx.activeCount(),
       ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
       /*

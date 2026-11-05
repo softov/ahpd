@@ -445,11 +445,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   letStateGo: (session: string) => void;
   /**
-   * The sessions this host put to sleep and has not disposed, by their own
-   * URI: open sessions with no agent running, counted with the running ones.
-   */
-  asleep: Set<string>;
-  /**
    * Answer one client's dispatch with the reason it was not applied, at the
    * next `serverSeq`.
    *

@@ -22,7 +22,7 @@ Terms, one line each:
 | Field | What it says |
 | --- | --- |
 | `agents` | Every backend, as `providers` - see below |
-| `activeSessions` | A number: how many sessions the catalogue lists, not a list |
+| `activeSessions` | A number: how many sessions are running a turn, not a list |
 | `terminals` | Every open terminal's `TerminalInfo`, absent when none is open |
 | `config` | The schema and the values of root config - see [Root config](#root-config) |
 
