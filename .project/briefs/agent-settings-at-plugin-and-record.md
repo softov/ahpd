@@ -47,7 +47,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 | `modelSources` |  |  |  | ✓ |  |  |  |  |
 | `keepCliModels` |  |  |  | ✓ |  |  |  |  |
 | `baseUrl` |  |  |  |  | ✓ | ✓ | 🔵 | 🔵 |
-| `apiKey` |  |  |  |  | ✓ | ✓ |  |  |
+| `apiKey` |  |  |  |  | ✓ | ✓ | 🔵 | 🔵 |
 | `resource` |  |  |  |  | ✓ | ✓ |  |  |
 | **Prompt and output** | | | | | | | | |
 | `instructions` |  |  | 🔵 | 🔵 | ✓ | ✓ | 🔵 | 🔵 |
@@ -92,7 +92,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 ## Why each blue circle
 
 - **claude `model`.** Every record has a top-level `model`, and acp, cofold and pi start a session on it. Claude's engine does not read it, so a Claude agent starts on the CLI's default. See [`code://packages/agent-claude/src/plugin.ts#L125-L135`](../../packages/agent-claude/src/plugin.ts#L125-L135). A plugin-wide default is missing too.
-- **pi record `models`, pi `baseUrl`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344).
+- **pi record `models`, pi `baseUrl` and `apiKey`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344). A record's `env` holds keys for pi's built-in providers only, by their own variables, so a provider at another URL has no key. See [`code://packages/agent-pi/src/machine.ts#L25`](../../packages/agent-pi/src/machine.ts#L25).
 - **claude and pi `instructions`.** Claude's SDK takes a prompt to append, and ahpd already sends the host's instructions through it. See [`code://packages/agent-claude/src/session/query.ts#L451`](../../packages/agent-claude/src/session/query.ts#L451). pi's SDK replaces or appends to its system prompt. cofold has `instructions` at both levels.
 - **pi record `thinking`.** pi's `createAgentSession` takes a `thinkingLevel`, and claude has `thinking` on the record.
 - **cofold record `thinking`.** cofold reads an effort level per session, from the session's `effortLevel` setting. See [`code://packages/agent-cofold/src/agent.ts#L424-L431`](../../packages/agent-cofold/src/agent.ts#L424-L431). A record cannot set a default.
@@ -111,7 +111,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - **Project trust.** acp has `honoursTrust` on the record, and pi has `projectTrust` at both levels. Claude and cofold have none.
 - **Computers.** Claude has four plugin options, the `computer` ones. cofold has `computerConfigDir` at both levels. acp has `machine` on the record. pi has none.
 - **Environment.** acp, claude and pi take `env` on the record. cofold takes `baseUrl`, `apiKey` and `resource` instead.
-- **pi's provider.** pi takes credentials, and ahpd uses that: a pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`. A base URL and a model list come only from pi's own `models.json`, outside ahpd.
+- **pi's provider.** A pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`, for pi's built-in providers only. A provider at another URL, with its key and its models, comes only from pi's own `models.json`, outside ahpd.
 
 ## Settings that one agent has
 
