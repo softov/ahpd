@@ -490,23 +490,25 @@ const SYNCED = 'anthropic-skills:';
 export const INTERNAL_AGENT = 'claude-internal:/agent/';
 
 /**
- * The name the SDK's `agent` option wants, out of a customization's uri.
+ * The name the SDK's `agent` option wants, out of a customization's uri: VS
+ * Code's Claude's `resolveClaudeAgentName`.
  *
  * A `file:` uri names the file a person wrote, and the name the CLI knows the
  * agent by is the one in that file's frontmatter - `reviewer.md` may well say
- * `name: reviewer`, and the file's own name is not what the CLI will take. A
- * file that has been deleted since the listing was made, or one whose
- * frontmatter names nothing, leaves the file's own name without its extension,
- * which is the last thing the CLI can be asked by.
+ * `name: reviewer`, and the CLI takes that name. A file that has been deleted
+ * since the listing was made, or one whose frontmatter names nothing, leaves
+ * the file's own name without its extension, which is the last thing the CLI
+ * can be asked by.
  *
- * An internal uri carries no file at all: the agent is the CLI's own and the
- * last segment of the uri is its name, put there by the same function that
- * built the uri.
+ * An internal uri carries no file: the agent is the CLI's own and the last
+ * segment of the uri is its name, put there by the same function that built
+ * the uri.
  *
- * Nothing rather than a wrong name, for a uri that is neither: handing the CLI
- * an agent it does not have would fail the turn over a picker.
+ * Nothing for a uri that is neither, so the turn runs on the default agent:
+ * handing the CLI an agent it does not have would fail the turn over a picker.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L206-L247
  */
-export function agentNameOf(uri: string): string | undefined {
+export function resolveClaudeAgentName(uri: string): string | undefined {
   if (uri.startsWith(INTERNAL_AGENT)) {
     const last = uri.slice(INTERNAL_AGENT.length).split('/').filter((one) => one !== '').pop();
     if (last === undefined) return undefined;

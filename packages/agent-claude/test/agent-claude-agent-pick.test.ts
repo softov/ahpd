@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
-import { agentNameOf } from '../src/session.js';
+import { resolveClaudeAgentName } from '../src/session.js';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -192,29 +192,29 @@ describe('the name behind a uri', () => {
   it('is the file\'s frontmatter name, not its own', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-name-'));
     writeFileSync(join(dir, 'reviewer.md'), '---\nname: reviewer\ndescription: Reviews\n---\n\nThe prompt.\n');
-    expect(agentNameOf(uriOf(join(dir, 'reviewer.md')))).toBe('reviewer');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'reviewer.md')))).toBe('reviewer');
   });
 
   it('is the file\'s own name when its frontmatter names nothing', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-name-'));
     writeFileSync(join(dir, 'plain.md'), 'No frontmatter at all.\n');
     writeFileSync(join(dir, 'empty.md'), '---\ndescription: No name here\n---\n');
-    expect(agentNameOf(uriOf(join(dir, 'plain.md')))).toBe('plain');
-    expect(agentNameOf(uriOf(join(dir, 'empty.md')))).toBe('empty');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'plain.md')))).toBe('plain');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'empty.md')))).toBe('empty');
   });
 
   it('is the file\'s own name when the file has gone since the listing was made', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-name-'));
-    expect(agentNameOf(uriOf(join(dir, 'deleted.md')))).toBe('deleted');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'deleted.md')))).toBe('deleted');
   });
 
   it('reads a file in a folder with a space, however its uri is spelt', () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'ahpd-name-')), 'my agents');
     mkdirSync(dir);
     writeFileSync(join(dir, 'review.MD'), '---\nname: reviewer\n---\n');
-    expect(agentNameOf(pathToFileURL(join(dir, 'review.MD')).href)).toBe('reviewer');
-    expect(agentNameOf(uriOf(join(dir, 'review.MD')))).toBe('reviewer');
-    expect(agentNameOf(pathToFileURL(join(dir, 'gone.MD')).href)).toBe('gone');
+    expect(resolveClaudeAgentName(pathToFileURL(join(dir, 'review.MD')).href)).toBe('reviewer');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'review.MD')))).toBe('reviewer');
+    expect(resolveClaudeAgentName(pathToFileURL(join(dir, 'gone.MD')).href)).toBe('gone');
   });
 
   it('reads no folder, and only the head of a huge file', () => {
@@ -222,24 +222,24 @@ describe('the name behind a uri', () => {
     // spell a device the same way.
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-name-'));
     mkdirSync(join(dir, 'zero'));
-    expect(agentNameOf(uriOf(join(dir, 'zero')))).toBe('zero');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'zero')))).toBe('zero');
     // The frontmatter is at the top, so the first 64 KB are enough for it.
     writeFileSync(join(dir, 'huge.md'), `---\nname: inside\n---\n${'x'.repeat(70 * 1024)}`);
-    expect(agentNameOf(uriOf(join(dir, 'huge.md')))).toBe('inside');
+    expect(resolveClaudeAgentName(uriOf(join(dir, 'huge.md')))).toBe('inside');
   });
 
   it('is nothing for an internal uri whose escape is broken', () => {
-    expect(agentNameOf('claude-internal:/agent/%E0%A4%A')).toBeUndefined();
+    expect(resolveClaudeAgentName('claude-internal:/agent/%E0%A4%A')).toBeUndefined();
   });
 
   it('is the last segment of an internal uri', () => {
-    expect(agentNameOf('claude-internal:/agent/Explore')).toBe('Explore');
+    expect(resolveClaudeAgentName('claude-internal:/agent/Explore')).toBe('Explore');
   });
 
   it('is nothing for a uri that names neither a file nor an internal agent', () => {
     // Handing the CLI an agent it does not have would fail the turn over a
     // picker, which is the one thing a pick must never do.
-    expect(agentNameOf('https://example.test/agents/Plan')).toBeUndefined();
-    expect(agentNameOf('claude-internal:/agent/')).toBeUndefined();
+    expect(resolveClaudeAgentName('https://example.test/agents/Plan')).toBeUndefined();
+    expect(resolveClaudeAgentName('claude-internal:/agent/')).toBeUndefined();
   });
 });

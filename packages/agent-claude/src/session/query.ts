@@ -7,7 +7,7 @@ import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { hostHoldsTasks, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
-import { agentNameOf } from './customizations.js';
+import { resolveClaudeAgentName } from './customizations.js';
 
 /**
  * The settings files one session loads, from the two answers it was started
@@ -727,7 +727,7 @@ export function createQuery(ctx: SessionContext): Query {
    * built without one runs on.
    */
   const rebindForRestart = (uri: string | undefined): string | undefined => {
-    const name = uri === undefined ? undefined : agentNameOf(uri);
+    const name = uri === undefined ? undefined : resolveClaudeAgentName(uri);
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
     try { was.close(); }
