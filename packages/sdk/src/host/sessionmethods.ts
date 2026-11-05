@@ -545,20 +545,18 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * `turnsLoaded` is, to everyone watching *that* name. Never a session's
        * id read out of a file, a terminal or a watch, which is the guard
        * `snapshotOf` makes and this is the same one. A chat no session holds
-       * or records is no chat here.
+       * or records is no chat here, and neither is a session whose agent this
+       * host is not serving. Each is refused as the reference host refuses a
+       * channel it holds no chat state for, in its words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2455-L2459
        */
-      if (!sessionChannel(channel))
-        throw new RpcError(INVALID_PARAMS, `${channel} is not a session or a chat`);
+      const notFound = (): RpcError => new RpcError(AhpErrorCodes.SessionNotFound, `Session not found: ${channel}`);
+      if (!sessionChannel(channel)) throw notFound();
       const live = byChat.get(channel);
       const owning = live?.uri ?? sessionFor(channel);
-      if (spaceOf(owning) === 'chat') throw new RpcError(-32001, `No chat at ${channel}`);
-      // A session whose agent this host is not serving, or that no agent here
-      // can read, is refused as the reference host's restore refuses one.
-      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
-      if (waitingFor(idOf(owning)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
+      if (spaceOf(owning) === 'chat' || waitingFor(idOf(owning)) !== undefined) throw notFound();
       const all = live ? live.chat.allTurns() : await past(idOf(owning));
-      if (!all)
-        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
+      if (!all) throw notFound();
       const asked = typeof params.cursor === 'string' ? params.cursor : undefined;
       /*
        * No cursor asks for whatever is next, and the host keeps no record of

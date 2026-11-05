@@ -157,8 +157,10 @@ it('refuses turns for a name that is nobody\'s session or chat', async () => {
    */
   await call(admin.client, 'fetchTurns', { channel: terminal, cursor: '1' });
   expect(admin.seen.seen.filter((said) => said.method === 'action' && said.params.channel === terminal)).toEqual([]);
-  // And the session's own chat still pages.
-  await call(admin.client, 'fetchTurns', { channel: 'ahp-session:/one', cursor: '1' });
+  // And the session's own chat still pages, to a client watching it, on its
+  // chat's channel.
+  expect(await call(admin.client, 'subscribe', { channel: chatUriFor('ahp-session:/one') })).toHaveProperty('result');
+  await call(admin.client, 'fetchTurns', { channel: chatUriFor('ahp-session:/one'), cursor: '1' });
   expect(admin.seen.seen.filter((said) => said.method === 'action'
     && said.params.action?.type === 'chat/turnsLoaded')).not.toEqual([]);
 });

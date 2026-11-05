@@ -562,8 +562,10 @@ describe('a row two harnesses both list', () => {
     // The older turns, the session's config and a draft: three roads that all
     // end at a transcript this host cannot read, each refused as the restore
     // they need is.
+    // A page is refused as VS Code's host refuses a channel it holds no chat
+    // state for, in its words.
     await expect(client.handle({ method: 'fetchTurns', params: { channel: chatUriFor('two:/shared') } }))
-      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
+      .rejects.toMatchObject({ code: -32001, message: `Session not found: ${chatUriFor('two:/shared')}` });
 
     for (const [channel, action] of [
       ['two:/shared', { type: 'session/configChanged', config: { voice: 'shouty' } }],

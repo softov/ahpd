@@ -502,6 +502,19 @@ describe('paging a long history', () => {
     expect(pages()).toHaveLength(0);
   });
 
+  /*
+   * A channel with no chat behind it is refused as VS Code's host refuses one
+   * it holds no chat state for, in its words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2455-L2459
+   */
+  it('refuses a page of a channel that is no chat, as VS Code\'s host', async () => {
+    const { client } = await opened();
+    for (const channel of ['ahp-terminal:/t', 'ahp-chat:/nowhere']) {
+      await expect(client.handle({ method: 'fetchTurns', params: { channel } }))
+        .rejects.toMatchObject({ code: -32001, message: `Session not found: ${channel}` });
+    }
+  });
+
   it('refuses a cursor it did not issue', async () => {
     const { client } = await opened();
     // Guessing would answer a question about old turns with new ones, and the
