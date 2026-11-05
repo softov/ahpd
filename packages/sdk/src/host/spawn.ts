@@ -58,6 +58,8 @@ export interface Spawn {
   titleOf(uri: string, chatUri: string): string | undefined;
   /** Store a chat's title under its name. */
   keepTitle(uri: string, chatUri: string, title: string): void;
+  /** Store the title a session was given, beside its chats' own. */
+  keepSessionTitle(uri: string, title: string): void;
   /** Write down which harness a session runs on, under every id it answers to. */
   keepProvider(uri: string, agent: Agent, session: Session): void;
   /**
@@ -392,6 +394,12 @@ export function createSpawn(ctx: HostContext): Spawn {
         interactivity: 'read-only',
         turns: [],
       });
+      /*
+       * The default chat takes its own title from here, before the worker is
+       * said, as the reference host adds a spawned chat to its session.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15539-L15548
+       */
+      ctx.snapshotDefaultChatTitle(session);
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
       // The session's row is where a client listing sessions reads its chats,
       // so a chat that has just appeared is said there too.
@@ -496,12 +504,21 @@ export function createSpawn(ctx: HostContext): Spawn {
   /** Store a chat's title under its URI, and clear one kept under `formerChatUri`. */
   const keepTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
-    if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
     const former = formerChatUri(uri, chatUri);
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
     // And on the session's own list of chats, so a session served read-only
     // after a restart lists this one under the name it was given.
     ctx.keepChat(uri, chatUri, undefined, false);
+  };
+  /**
+   * Store the title a session was given, beside its chats' own: the name its
+   * backend is handed as its default chat starts, and the title a nested
+   * session's record lists it by. An empty one is kept as the session having
+   * none, and its backend's own title stands.
+   */
+  const keepSessionTitle = (uri: string, title: string): void => {
+    kept.setCustomTitle?.(idOf(uri), title);
+    moveNested(idOf(uri), { title });
   };
 
   /**
@@ -1691,9 +1708,13 @@ export function createSpawn(ctx: HostContext): Spawn {
      * A chat's title is its own and the catalogue's is derived, so the store
      * is what remembers it across a restart. Applied here, before the chat is
      * announced or handed to a backend, so a client never sees the derived
-     * name first and then a correction.
+     * name first and then a correction. The default chat's backend holds the
+     * session's title, so it is handed the one the session was given, an
+     * empty one being none; a record that keeps no title of the session's
+     * kept the session's name as its default chat's, and that is handed.
      */
-    const named_ = titleOf(uri, chatUri);
+    const given = held.defaultChat === chatUri ? kept.customTitle?.(idOf(uri)) : undefined;
+    const named_ = given === undefined ? titleOf(uri, chatUri) : given === '' ? undefined : given;
     if (named_ !== undefined) session.setTitle?.(named_);
     // The name it is held under, which is the session's own and not its
     // provider's. Recorded so every other answer about it uses that same string.
@@ -1819,7 +1840,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   return {
     unstamped, withWorkerUri, stampedCalls, asSentChat,
     sendSubagent, endedWorkers,
-    openSubagent, formerChatUri, titleOf, keepTitle, keepProvider,
+    openSubagent, formerChatUri, titleOf, keepTitle, keepSessionTitle, keepProvider,
     spawn, wirePlan,
   };
 }

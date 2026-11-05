@@ -342,6 +342,8 @@ export function createChangesets(ctx: HostContext): Changesets {
         held.workingDirectory, undefined, held.additional,
       );
       ctx.log(`opened ${chatUri} in ${uri} to write the words`);
+      // The default chat takes its own title from here, before the side chat is said.
+      ctx.snapshotDefaultChatTitle(uri);
       ctx.dispatch(uri, { type: 'session/chatAdded', summary: ctx.chatSummary(uri, chatUri, chat) });
       watching = watchTurn(chat, uri, turnId);
       const refused = ctx.beginOrRun(chat, held.agent.provider, turnId, prompt, undefined, { origin: { kind: 'systemNotification' } });

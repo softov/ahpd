@@ -539,6 +539,46 @@ it('holds a default chat with no title of its own as its session\'s, live and re
   }
 });
 
+/*
+ * A default chat takes its session's title as its own once the session has
+ * another chat, and keeps it through a rename of the session, live and read
+ * back after its release: the store keeps it beside the session's own, as VS
+ * Code's host snapshots a default chat's title when a chat is added and
+ * restores it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1855-L1862
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+ */
+it('keeps a default chat\'s own title from when its session gained a chat, through a rename, live and read back', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const subscribed = async (to: typeof client, channel: string): Promise<Bag> =>
+    ((await to.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  const peerChat = 'ahp-chat:/peer';
+  await client.handle({ method: 'createChat', params: { channel: one.channel, chat: peerChat } });
+  // Something said in it, so the session sleeps with both chats.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: peerChat, action: { type: 'chat/turnStarted', turnId: 'peer-0', startedAt: new Date().toISOString(), message: { text: 'second', origin: { kind: 'user' } } } },
+  });
+  for (let i = 0; i < 200 && ((await subscribed(client, peerChat)).turns as Bag[]).length === 0; i++) await settle(1);
+  await client.handle({ method: 'dispatchAction', params: { channel: one.channel, action: { type: 'session/titleChanged', title: 'Renamed' } } });
+  await settle(4);
+  const live = { session: await subscribed(client, one.channel), chat: await subscribed(client, one.chatUri) };
+  await open('two');
+  client.close();
+  await until(() => knobs.closed?.includes('one') === true);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = { session: await subscribed(other, one.channel), chat: await subscribed(other, one.chatUri) };
+  expect(live.session.title).toBe('Renamed');
+  for (const held of [live, back]) {
+    expect((held.session.chats as Bag[]).find((row) => row.resource === one.chatUri)).toMatchObject({ title: 'hello' });
+    expect(held.chat.title).toBe('hello');
+  }
+});
+
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L318-L338
   const knobs: Knobs = { closes: [] };

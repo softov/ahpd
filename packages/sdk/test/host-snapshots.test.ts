@@ -311,12 +311,15 @@ describe('what it says it is doing', () => {
     });
     await settle();
     const id = 'titled';
-    expect(store.chatTitlesOf(id)).toEqual({ [peerChat]: 'Tests' });
+    // Beside the default chat's, which took the session's title as its own
+    // once the session had another chat.
+    const lead = { [chatUriFor(uri)]: 'New session' };
+    expect(store.chatTitlesOf(id)).toEqual({ ...lead, [peerChat]: 'Tests' });
 
     await client.handle({ method: 'disposeChat', params: { channel: peerChat } });
     await settle();
     // The session is still here; the chat and the name that was its own are not.
-    expect(store.chatTitlesOf(id)).toBeUndefined();
+    expect(store.chatTitlesOf(id)).toEqual(lead);
   });
 
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {

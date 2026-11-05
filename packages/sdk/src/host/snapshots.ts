@@ -610,12 +610,18 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const lead = recorded.find((one) => one.default === true);
     const leadUri = lead?.uri ?? chatUriFor(nameOf(id));
     /*
-     * The title its default chat holds: the one it was given, or none, which
-     * reads as the session's, as the chat holds it live and as VS Code's host
-     * restores a default chat with its own title or an empty one.
+     * The title its default chat holds, as it holds it live: the one it was
+     * given; with another chat beside it, the session's, which a default chat
+     * takes as its own once its session has one; and otherwise none, which
+     * reads as the session's. VS Code's host restores a default chat with its
+     * own title or an empty one, and gives it the session's as it registers
+     * the session's other chats.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1816
      */
-    const leadTitle = ctx.titleOf(nameOf(id), leadUri) ?? '';
+    const leadOwn = ctx.titleOf(nameOf(id), leadUri);
+    const besides = recorded.some((one) => one.uri !== leadUri);
+    const leadTitle = (others: boolean): string => leadOwn ?? (others ? title : '');
     /*
      * A chat of this session, answered from its own conversation.
      *
@@ -645,7 +651,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         kind: 'chat',
         state: {
           resource: channel,
-          title: opened.uri === leadUri ? leadTitle : opened.title ?? title,
+          title: opened.uri === leadUri ? leadTitle(besides) : opened.title ?? title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           turns: ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[]),
@@ -690,7 +696,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         kind: 'chat',
         state: {
           resource: channel,
-          title: channel === leadUri ? leadTitle : title,
+          title: channel === leadUri ? leadTitle(besides || workers.length > 0) : title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           ...startedBy(nameOf(id)),
@@ -730,7 +736,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         chats: [
           {
             resource: leadUri,
-            title: leadTitle,
+            title: leadTitle(besides || workers.length > 0),
             status: Status.Idle | kept.chatFlags(id, leadUri),
             modifiedAt: listedAt,
             ...startedBy(nameOf(id), lead?.uri),

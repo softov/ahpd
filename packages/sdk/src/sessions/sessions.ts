@@ -154,6 +154,8 @@ export function memorySessions(): SessionStore & Held {
     pullRequests: (id) => rows.get(id)?.pullRequests,
     // An all-empty pair is still a baseline, so it is kept rather than dropped.
     setPullRequests: (id, value) => { patch(id, { pullRequests: value }); },
+    customTitle: (id) => rows.get(id)?.customTitle,
+    setCustomTitle: (id, value) => { patch(id, { customTitle: value }); },
     chatTitle: (id, chatUri) => rows.get(id)?.chatTitles?.get(chatUri),
     setChatTitle: (id, chatUri, title) => {
       const held = new Map(rows.get(id)?.chatTitles);
@@ -249,6 +251,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
         ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
         ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+        ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
         ...(held.chatDrafts === undefined ? {} : { chatDrafts: held.chatDrafts }),
@@ -438,6 +441,7 @@ interface Row {
   userSettings?: boolean | undefined;
   artifacts?: Record<string, unknown>[] | undefined;
   pullRequests?: PullRequestBaseline | undefined;
+  customTitle?: string | undefined;
   chatTitles?: Map<string, string> | undefined;
   chatFlags?: Map<string, number> | undefined;
   chatDrafts?: Map<string, Record<string, unknown>> | undefined;
@@ -468,7 +472,7 @@ const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
   && row.owner === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
-  && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
+  && row.artifacts === undefined && row.pullRequests === undefined && row.customTitle === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined && row.chatDrafts === undefined && row.annotations === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
   && row.remoteOrigin === undefined && row.createdBy === undefined && row.multiRoot === undefined && row.worktree === undefined
@@ -500,6 +504,8 @@ interface Saved {
   userSettings?: boolean;
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
+  /** The title the session was given, beside each chat's own. */
+  customTitle?: string;
   chatTitles?: Record<string, string>;
   /** The read and archived bits of each chat, by the chat's URI. */
   chatFlags?: Record<string, number>;
@@ -658,6 +664,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
       ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
       ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+      ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
       ...(held.chatDrafts === undefined ? {} : { chatDrafts: Object.fromEntries(held.chatDrafts) }),
@@ -795,6 +802,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           associatedPullRequestUrls: strings(baseline.associatedPullRequestUrls),
         });
       }
+      // The session's own title, where it is a string.
+      if (typeof row.customTitle === 'string') inner.setCustomTitle?.(row.id, row.customTitle);
       // A record of string titles, one per chat, and anything else is ignored
       // rather than guessed at.
       if (typeof row.chatTitles === 'object' && row.chatTitles !== null && !Array.isArray(row.chatTitles)) {
@@ -911,6 +920,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setArtifacts: (id, values) => { touched(id, () => { inner.setArtifacts(id, values); }); },
     pullRequests: (id) => inner.pullRequests(id),
     setPullRequests: (id, value) => { touched(id, () => { inner.setPullRequests(id, value); }); },
+    customTitle: (id) => inner.customTitle?.(id),
+    setCustomTitle: (id, value) => { touched(id, () => { inner.setCustomTitle?.(id, value); }); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
     chatFlags: (id, chatUri) => inner.chatFlags(id, chatUri),

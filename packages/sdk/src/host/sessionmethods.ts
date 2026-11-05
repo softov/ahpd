@@ -280,8 +280,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * Published in the order the protocol gives: the chat leaves the source,
      * arrives at the destination, the destination's list is said whole, and
      * both rows are re-read. Removal first, because a client that hears the
-     * chat arrive before it hears it leave is a client holding it twice.
+     * chat arrive before it hears it leave is a client holding it twice. A
+     * destination that was there before has its default chat take its own
+     * title first, as the reference host's move does.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1921
      */
+    if (to !== undefined) ctx.snapshotDefaultChatTitle(into);
     dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
     for (const one of carried) dispatch(found.uri, { type: 'session/chatRemoved', chat: one });
     dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, found.chat) });
@@ -1278,6 +1282,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       startsRead(ctx, uri, chatUri);
       const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
       log(`opened ${chatUri} in ${uri}`);
+      /*
+       * The default chat takes its own title from here, before the new chat
+       * is said, as the reference host's addChat snapshots it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1733-L1738
+       */
+      ctx.snapshotDefaultChatTitle(uri);
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
       // and a chat named any other way arrives as a TypeError inside it.
       dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(uri, chatUri, chat) });

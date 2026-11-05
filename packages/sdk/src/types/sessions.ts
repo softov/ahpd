@@ -505,6 +505,17 @@ export interface SessionStore {
    */
   setPullRequests(id: string, value: PullRequestBaseline): void;
   /**
+   * The title the session was given, or nothing where it was never named.
+   *
+   * Kept beside its default chat's own, as VS Code's host keeps a session's
+   * custom title beside each chat's: a session renamed while it has other
+   * chats takes the title, and its default chat keeps the one it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L78
+   */
+  customTitle?(id: string): string | undefined;
+  /** Set it. An empty string is the session having none of its own. */
+  setCustomTitle?(id: string, value: string): void;
+  /**
    * The title a chat was given, or nothing where it was never named.
    *
    * The catalogue's title is derived and the reference host keeps a chat's

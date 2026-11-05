@@ -224,7 +224,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     isolating, charged, senders, sentBy, forgetSender, forgetSendersIn, forgetKeys, keepKeys,
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
-    spawn, keepTitle, keepProvider, forgetChats,
+    spawn, keepProvider, forgetChats,
     sessionComing, provisional, forgetSent, activeSessionsMoved,
   } = ctx;
 
@@ -2143,8 +2143,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // Named before it is announced, when the maker had a name for it: a row
     // that appears as "New session" and is renamed a moment later is two rows
     // to a client that lists once. `spawn` hands the backend the name it finds
-    // here, before the chat's state opens.
-    if (title !== undefined) kept.setChatTitle(idOf(uri), chatUriFor(uri), title);
+    // here, before the chat's state opens. The name is the session's, and its
+    // default chat holds none of its own, as VS Code's host makes a session's
+    // default chat inherit its title.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+    if (title !== undefined) kept.setCustomTitle?.(idOf(uri), title);
     // Its row goes out whole once it is added, and moves from then on.
     sessionComing(uri);
     try {
@@ -2161,7 +2164,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const lead = spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
-      if (title !== undefined) keepTitle(uri, chatUriFor(uri), title);
+      if (title !== undefined) ctx.keepSessionTitle(uri, title);
       // What it was made with, so a resume after a restart starts from the
       // same place rather than from the defaults.
       if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });

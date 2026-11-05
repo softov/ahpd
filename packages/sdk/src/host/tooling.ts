@@ -300,6 +300,11 @@ export interface Tooling {
    * say so, unless a client's rename on that channel was `said` already.
    */
   renameSession(uri: string, title: string, said?: boolean): void;
+  /**
+   * Keep the session's title as its default chat's own where the chat holds
+   * none, as the session gains another chat.
+   */
+  snapshotDefaultChatTitle(uri: string): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
   /**
@@ -1401,7 +1406,10 @@ export function createTooling(ctx: HostContext): Tooling {
     // `session/titleChanged` and the `rename_chat` tool both come through.
     keepTitle(uri, chatUri, title);
     updateChatTitle(uri, chatUri, title);
-    if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
+    if (chatUri === held.defaultChat) {
+      ctx.keepSessionTitle(uri, title);
+      dispatch(uri, { type: 'session/titleChanged', title });
+    }
     summaryMoved(uri);
     // The session's title is the subject a commit would use, so the question
     // the changeset's commit asks names a different line now.
@@ -1410,14 +1418,14 @@ export function createTooling(ctx: HostContext): Tooling {
   /**
    * Give a session a title from its own channel, and say so.
    *
-   * The session's title is its default chat's: the chat's backend is handed
-   * it and the store keeps it under that chat, and it goes out as
-   * `session/titleChanged` on the session. A session that counts one chat or
-   * none in its `readAggregate` has its default chat's held state and row
-   * take the title after, as the reference host carries a session's rename
-   * down onto a sole default chat; with peer chats, the default chat's held
-   * state and row keep the title they have.
-   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+   * The session's backend is handed it through the default chat, the store
+   * keeps it as the session's, and it goes out as `session/titleChanged` on
+   * the session. A session that counts one chat or none in its
+   * `readAggregate` has its default chat take it as its own after, in its
+   * held state, its row and its record, as the reference host carries a
+   * session's rename down onto a sole default chat; with peer chats, the
+   * default chat keeps the title it has.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
    *
    * `said` when a client's rename on the session's channel was said there
    * already, as its own action.
@@ -1427,11 +1435,36 @@ export function createTooling(ctx: HostContext): Tooling {
     const found = held?.chats.get(held.defaultChat);
     if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
     found.setTitle?.(title);
-    keepTitle(uri, held.defaultChat, title);
+    ctx.keepSessionTitle(uri, title);
     if (!said) dispatch(uri, { type: 'session/titleChanged', title });
-    if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
+    if (readAggregate(ctx, uri).length <= 1) {
+      keepTitle(uri, held.defaultChat, title);
+      updateChatTitle(uri, held.defaultChat, title);
+    }
     summaryMoved(uri);
     operationsMoved(uri);
+  };
+  /**
+   * The session's title kept as its default chat's own, where the chat holds
+   * none, as the session gains another chat: from then on the two are
+   * independent, and a rename of the session with peer chats leaves the chat
+   * as it is. The reference host snapshots a default chat's title whenever a
+   * chat is added to its session, and keeps the snapshot.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1855-L1862
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2161-L2171
+   */
+  const snapshotDefaultChatTitle = (uri: string): void => {
+    const held = sessions.get(uri);
+    const lead = held === undefined ? undefined : leadOf(held);
+    if (held === undefined || lead === undefined || ctx.titleOf(uri, held.defaultChat) !== undefined) return;
+    const title = String(ctx.stateOf(uri)?.title ?? lead.title());
+    if (title === '') return;
+    keepTitle(uri, held.defaultChat, title);
+    // The session's own title kept beside it, an empty one where it has none:
+    // a record holding one hands its backend that, and the chat's stays the
+    // chat's.
+    if (kept.customTitle?.(idOf(uri)) === undefined) kept.setCustomTitle?.(idOf(uri), '');
+    if (ctx.stateOf(held.defaultChat)?.title !== title) updateChatTitle(uri, held.defaultChat, title);
   };
 
   /**
@@ -1714,6 +1747,8 @@ export function createTooling(ctx: HostContext): Tooling {
     const chat = spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
     if (asked.title !== undefined) keepTitle(at, chatUri, asked.title);
+    // The default chat takes its own title from here, before the new chat is said.
+    snapshotDefaultChatTitle(at);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
     // And the row: a client listing sessions reads a session's chats there.
     summaryMoved(at);
@@ -2445,7 +2480,7 @@ export function createTooling(ctx: HostContext): Tooling {
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
     clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision, publishSessionCustomizations,
-    retool, pluginsSettled, chatMeant, renameChat, renameSession, toolContext, sessionlessContext,
+    retool, pluginsSettled, chatMeant, renameChat, renameSession, snapshotDefaultChatTitle, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,
     moving, served,

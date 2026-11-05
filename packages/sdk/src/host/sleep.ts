@@ -488,6 +488,13 @@ export function createSleep(ctx: HostContext): Sleep {
         sender,
       );
     }
+    /*
+     * A session that comes back with another chat, a peer or a worker its
+     * record names, has its default chat take its own title, as the reference
+     * host's restore registers a session's other chats.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1816
+     */
+    if ((sessions.get(named)?.chats.size ?? 0) > 1 || (ctx.subHistory.get(id)?.length ?? 0) > 0) ctx.snapshotDefaultChatTitle(named);
     log(`resumed ${named}`);
     dispatch(named, { type: 'session/ready' });
     summaryMoved(named);

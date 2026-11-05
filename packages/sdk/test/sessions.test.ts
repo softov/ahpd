@@ -1110,6 +1110,24 @@ it('keeps the titles chats were given, and forgets them with the session', async
   expect(fileSessions({ dir }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
 });
 
+it('keeps the title a session was given beside its chats\' own, an empty one included, and forgets it with the session', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setCustomTitle?.('a', 'Renamed');
+  store.setChatTitle('a', 'ahp-chat:/one', 'hello');
+  store.setCustomTitle?.('b', '');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', customTitle: 'Renamed', chatTitles: { 'ahp-chat:/one': 'hello' } });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
+  expect(second.customTitle?.('a')).toBe('Renamed');
+  expect(second.chatTitle('a', 'ahp-chat:/one')).toBe('hello');
+  expect(second.customTitle?.('b')).toBe('');
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ dir }).customTitle?.('a')).toBeUndefined();
+});
+
 it("keeps the flags a chat was given, and forgets them with the session", async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });

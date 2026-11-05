@@ -1201,8 +1201,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * A row for a session listed from the turns this host keeps for it.
    *
-   * Its title is its default chat's own where somebody named it, and else its
-   * first turn's, as a backend titles a session after its first prompt. Its
+   * Its title is the one the session was given, kept as its default chat's in
+   * a record that keeps none of the session's, and else its first turn's, as
+   * a backend titles a session after its first prompt. Its
    * dates are its first turn's start and its last turn's end, which is where
    * the protocol's reducer moves a chat when a turn completes. A turn that
    * names no start adds nothing to them, and a row with no start at all dates
@@ -1214,7 +1215,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const first = dated[0];
     const last = dated.at(-1);
     const name = kept.uri?.(id);
-    const named = name === undefined ? undefined : kept.chatTitle(id, chatUriFor(name));
+    const given = kept.customTitle?.(id);
+    const named = given !== undefined
+      ? given === '' ? undefined : given
+      : name === undefined ? undefined : kept.chatTitle(id, chatUriFor(name));
     const message = (first ?? turns[0])?.message;
     const said = typeof message === 'object' && message !== null ? (message as { text?: unknown }).text : undefined;
     const epoch = new Date(0).toISOString();
