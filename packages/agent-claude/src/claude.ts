@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
-import type { Asked, Spawned } from './spawn.js';
+import type { Asked, SpawnedProcess } from './spawn.js';
 import type { Agent, Bag, Listed, MachineNeed, Session, Start } from '@ahpd/sdk';
 
 /**
@@ -379,7 +379,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * cannot reach it, and running on the host would be the silent failure the
    * gate exists to stop.
    */
-  const insideOf = (start: Start): ((asked: Asked) => Spawned) | undefined => {
+  const insideOf = (start: Start): ((asked: Asked) => SpawnedProcess) | undefined => {
     const said = machineAsked(start);
     if (said === undefined) return undefined;
     const named = /^computer:\/\/([^/\s]+)$/.exec(said);

@@ -5,7 +5,7 @@ import { bag } from '@ahpd/sdk';
 import { expect, it } from 'vitest';
 import { spawnInside } from '../src/spawn.js';
 import { createSession } from '../src/session.js';
-import type { Asked, Spawned } from '../src/spawn.js';
+import type { Asked, SpawnedProcess } from '../src/spawn.js';
 
 /*
  * A CLI that never started fails its turn in the SDK's own words, as VS Code's
@@ -41,7 +41,7 @@ const until = async (check: () => boolean, times = 4000): Promise<void> => {
  * a person reaches by watching a session open and then typing: a turn started
  * beside a live-looking CLI would take the other road to the same message.
  */
-const failureUnder = async (spawn: (asked: Asked) => Spawned): Promise<string> => {
+const failureUnder = async (spawn: (asked: Asked) => SpawnedProcess): Promise<string> => {
   const said: string[] = [];
   const session = createSession({
     uri: 'ahp-session:/spawn',

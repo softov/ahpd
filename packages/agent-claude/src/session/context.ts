@@ -1,7 +1,7 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
 import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
-import type { Asked, Spawned } from '../spawn.js';
+import type { Asked, SpawnedProcess } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
 import type { Config } from './config.js';
@@ -78,7 +78,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   handshakeTimeoutMs?: number;
   /** Start the CLI somewhere other than this host. */
-  spawn?: (asked: Asked) => Spawned;
+  spawn?: (asked: Asked) => SpawnedProcess;
   /** Where the CLI is wherever `spawn` starts it. */
   spawnExecutable?: string;
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
