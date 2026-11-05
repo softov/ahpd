@@ -26,9 +26,9 @@ export function createTelemetry(ctx: HostContext): Telemetry {
    * than a new source of them.
    *
    * Stateless and ephemeral, as the protocol says: nothing is replayed on
-   * reconnect, and a subscriber gets only what was emitted after it arrived.
-   * There is no state to snapshot either, which is why `subscribe` answers an
-   * empty one rather than refusing.
+   * reconnect, a subscriber gets only what was emitted after it arrived, and
+   * `subscribe` answers an empty result with no snapshot.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L43
    */
   const LOGS = 'ahp-otlp://logs';
   /**

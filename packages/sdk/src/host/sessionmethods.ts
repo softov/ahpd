@@ -422,6 +422,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const asked = params.view;
       const view = typeof asked === 'object' && asked !== null ? asked as SubscribeView : undefined;
       const snapshot = await snapshotOf(meantBy(channel), connection, view);
+      // A stateless channel is watched from here on and answered with no
+      // snapshot, and nothing of it is held to replay.
+      if (snapshot === undefined) {
+        connection.watching.add(channel);
+        return {};
+      }
       // Answered to this connection after the snapshot is taken: the root's
       // other spelling recorded, a session's chats the ones it may see.
       const meant = answeredAs(connection, channel, snapshot);

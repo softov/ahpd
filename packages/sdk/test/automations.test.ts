@@ -152,6 +152,18 @@ it('answers the trigger list on the root channel, and refuses another', async ()
   })).resolves.toBeTruthy();
 });
 
+/*
+ * A host with no store refuses the catalogue -32001 in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1294
+ */
+it('refuses the catalogue on a host with no store, in VS Code\'s words', async () => {
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'a', protocolVersions: ['0.9.0'] } });
+  await expect(client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } }))
+    .rejects.toMatchObject({ code: -32001, message: `Automation catalogue is unavailable: ${AUTOMATIONS}` });
+});
+
 it('answers a run on the automations channel, which is the one it declares', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);

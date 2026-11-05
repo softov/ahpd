@@ -50,12 +50,11 @@ it('sends nothing to a client that has not subscribed', async () => {
 
 it('subscribes without a snapshot, because the channel is a stream', async () => {
   const { client } = await connected();
-  const opened = await client.handle({
-    method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' },
-  }) as { snapshot: { state: Record<string, unknown> } };
-  // Refusing would tell a client the channel does not exist; an empty state
-  // tells it there is nothing yet, which is what is true.
-  expect(opened.snapshot.state).toEqual({});
+  // The spec's empty SubscribeResult, the snapshot left out for a stateless
+  // channel, as VS Code answers it.
+  for (const channel of ['ahp-otlp://logs/info', 'ahp-otlp://traces', 'ahp-otlp://metrics']) {
+    expect(await client.handle({ method: 'subscribe', params: { channel } })).toEqual({});
+  }
 });
 
 it('carries what the host logs as an OTLP request the client can parse', async () => {

@@ -205,8 +205,7 @@ it('answers a subscribe to the chat the call links', async () => {
 
   /*
    * The chat is a session's own, not a worker of the main one, so it is served
-   * like any other chat: its state, from the session that holds it. A link to
-   * a worker chat the host derived would answer `No worker chat at ...` here.
+   * like any other chat: its state, from the session that holds it.
    */
   const opened = await ask('subscribe', { channel: backChat }) as { snapshot: { resource: string; state: Bag } };
   expect(opened.snapshot.resource).toBe(backChat);

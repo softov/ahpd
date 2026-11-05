@@ -2,11 +2,9 @@ import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
-import { uriOf } from '../resources/fileuri.js';
 import { runState } from './automations.js';
 import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, MARKS, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
-import { need } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { WireTurn } from '../types/wire.js';
@@ -17,7 +15,8 @@ import type { SubscribeView, Turn } from '@microsoft/agent-host-protocol';
 /** What a subscribe is answered with, and the state a session or chat channel opens with. */
 export interface Snapshots {
   value(snapshot: Record<string, unknown>): Record<string, unknown>;
-  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
+  /** A channel's snapshot, or nothing for a stateless channel, whose subscribe answers none. */
+  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown> | undefined>;
   /**
    * The state a running session's channel opens with: what its default chat's
    * backend says, with what this host keeps beside it. Read once, when the
@@ -259,7 +258,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return ctx.openState(uri, 'session', sessionSeed(uri));
   };
 
-  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown> | undefined> => {
     if (isRootChannel(channel)) {
       /*
        * The root's held state, as this connection may read it.
@@ -336,12 +335,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
+    /*
+     * A telemetry channel, which is stateless: a subscriber receives only what
+     * is emitted after it arrived, and its subscribe answers with no snapshot,
+     * as the spec says and the reference host answers it.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L43
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2143-L2150
+     */
     if (channel === LOGS || channel.startsWith(`${LOGS}/`) || channel === TRACES || channel === METRICS) {
-      // Nothing to snapshot: the channel is a stream, and the protocol says a
-      // subscriber receives only what was emitted after it arrived. Answering
-      // with an empty state is how a client is told it is subscribed rather
-      // than refused.
-      return value({ resource: channel, state: {}, fromSeq: ctx.serverSeq });
+      return undefined;
     }
     if (isAutomations(channel)) {
       /*
@@ -354,7 +356,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * and is answered exactly as before.
        */
       const owner = ownerFilter(queryOf(channel), connection?.principal);
-      const entries = need(options.automations, 'the automations channel').list();
+      // A host with no store refuses the catalogue in the reference host's words.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1294
+      if (options.automations === undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `Automation catalogue is unavailable: ${channel}`);
+      const entries = options.automations.list();
       return value({
         resource: channel,
         state: { entries: owner === undefined ? entries : entries.filter((entry) => automationOwner(entry) === owner) },
@@ -629,15 +634,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     }
     const workers = await restoredSubagents(id, owner, turns as unknown as WireTurn<Turn>[]);
     /*
-     * A worker chat read back out of the backend's own record.
-     *
-     * Its call id is in the URI, which is how a subscribe to a worker's
-     * channel finds the conversation it names rather than the session's.
+     * A worker chat read back out of the backend's own record: the worker
+     * the record holds under this channel's name, and the call that spawned
+     * it as the record says, as the reference host reads a spawned chat's
+     * call from its recorded origin.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
      */
-    const wanted = toolCallOfSubagentChat(channel);
-    if (wanted !== undefined) {
-      const one = workers.find((held) => String(held.toolCallId ?? '') === wanted);
-      if (one === undefined) throw new RpcError(-32001, `No worker chat at ${channel}`);
+    const one = chat ? workers.find((held) => subagentChatUri(nameOf(id), String(held.toolCallId ?? '')) === channel) : undefined;
+    if (one !== undefined) {
+      const wanted = String(one.toolCallId ?? '');
       const parentChat = restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one);
       return {
         kind: 'chat',
@@ -658,7 +663,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         },
       };
     }
-    if (sessionOfChat(channel) !== undefined) {
+    // The session's own chat; a worker's name the record does not hold is no
+    // chat here.
+    if (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined) {
       return {
         kind: 'chat',
         state: {
@@ -746,7 +753,11 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             listedAt,
           )),
         ],
-        workingDirectories: wheres.get(nameOf(id)) ?? [uriOf(options.path)],
+        // The folders its record holds, and none where it recorded none, as
+        // the reference host restores a session with the folders its
+        // metadata recorded.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14736
+        ...(wheres.get(nameOf(id)) === undefined ? {} : { workingDirectories: wheres.get(nameOf(id)) }),
         activeClients: activeClientsOf(nameOf(id)),
         ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(nameOf(id)) } : {}),
         ...describes(nameOf(id)),

@@ -1430,7 +1430,7 @@ export function createHost(options: HostOptions): Host {
     channel: string,
     connection?: Connection,
     view?: SubscribeView,
-  ): Promise<Record<string, unknown>> => {
+  ): Promise<Record<string, unknown> | undefined> => {
     if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
     return backendSnapshot(channel, connection, view);
   };

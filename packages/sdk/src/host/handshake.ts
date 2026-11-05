@@ -367,6 +367,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           if (held !== undefined) await held;
           if (!visible(connection, meantBy(channel))) continue;
           const snapshot = await snapshotOf(meantBy(channel), connection);
+          // A stateless channel is watched, with no snapshot in the answer.
+          if (snapshot === undefined) {
+            connection.watching.add(channel);
+            continue;
+          }
           const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
           connection.watching.add(channel);
@@ -677,6 +682,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       const snapshots = [];
       for (const channel of resumed.values()) {
         const snapshot = await snapshotOf(meantBy(channel), connection);
+        if (snapshot === undefined) continue;
         answeredAs(connection, channel, snapshot);
         snapshots.push(snapshot);
       }

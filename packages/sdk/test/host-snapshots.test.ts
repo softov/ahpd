@@ -999,6 +999,33 @@ describe('the fields a client reads by name', () => {
     expect(call).not.toHaveProperty('content');
   });
 
+  /*
+   * A worker's call read from the record that holds the worker, as VS Code
+   * reads a spawned chat's call from its recorded origin: a name the record
+   * holds no worker under is no chat here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
+   */
+  it('answers a worker chat of a session nothing runs from its record, and refuses a name the record holds none under', async () => {
+    sdk.sessions.push({ sessionId: 'kept', summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov', [], {
+      agents: [{
+        ...claude({ paths: ['/home/softov'] }),
+        subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
+      }],
+    } as never);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const session = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/kept' } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    const worker = session.snapshot.state.chats.map((one) => one.resource).find((one) => one.includes('toolu_task')) as string;
+    const opened = await client.handle({ method: 'subscribe', params: { channel: worker } }) as { snapshot: { state: Record<string, unknown> } };
+    expect(opened.snapshot.state.origin).toEqual({ kind: 'tool', chat: chatUriFor('ahp-session:/kept'), toolCallId: 'toolu_task' });
+    const none = worker.replace('toolu_task', 'toolu_none');
+    await expect(client.handle({ method: 'subscribe', params: { channel: none } }))
+      .rejects.toMatchObject({ code: -32001, message: `No chat at ${none}` });
+  });
+
   it('archives one chat, and restores it, without archiving the session', async () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';
