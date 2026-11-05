@@ -1052,7 +1052,10 @@ export function botChatAgent(
         append(dir, id, { id: held.id, steering: true, message, _meta: mark });
         handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text });
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
-        touch();
+        // The modified time stays, as the protocol's reducer moves it only at
+        // a turn's end and its start.
+        // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L227-L232
+        // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L369-L373
         return true;
       },
 

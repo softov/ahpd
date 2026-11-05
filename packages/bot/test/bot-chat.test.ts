@@ -20,6 +20,7 @@ import { botStore } from '../src/store.js';
 import type { ChatMessage } from '../src/chat.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
+import type { Session } from '../../sdk/src/types/session.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -525,6 +526,32 @@ it('steers a message into the open turn, which goes on', async () => {
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
   expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+});
+
+// The protocol's reducer moves a chat's modifiedAt at a turn's start and end only.
+it('leaves the chat\'s modified time where a steer finds it', async () => {
+  const { host, configDir, records } = made();
+  const client = await anyone(host);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
+  });
+  const agent = await backend(configDir, records, () => {});
+  // The session a later subscriber is seeded from, read directly.
+  const session = agent.create({
+    uri: 'bot-chat:/steered',
+    chatUri: 'ahp-chat:/steered',
+    settings: { bot: 'backer' },
+    schema: () => ({}),
+    emit: () => {},
+    clientToolTimeoutMs: 0,
+  } as Start) as Session;
+  session.sendMessage('t1', 'hello');
+  const before = session.modifiedAt();
+  // Long enough that a moved time would read as another one.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'stop that', from: { origin: { kind: 'user' } } })).toBe(true);
+  expect(session.modifiedAt()).toBe(before);
 });
 
 it('answers a steer to the client that sent it', async () => {
