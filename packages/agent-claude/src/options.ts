@@ -31,8 +31,8 @@ export interface Declaration {
   toQuery?: (value: unknown) => Bag;
   /** The flag settings a value becomes; absent when the query takes it instead. */
   toFlags?: (value: unknown) => Bag;
-  /** What this option is when nothing named one. */
-  fallback?: unknown;
+  /** What this option is when nothing named one: the spec's `default` of a config property. */
+  default?: unknown;
 }
 
 /**
@@ -72,9 +72,8 @@ export const storedSandbox = (settings: Record<string, unknown> | undefined): Ba
 /**
  * Extended thinking, which the query is built with.
  *
- * What every session ran on before a record could say otherwise, which is why
- * it is the one option with a fallback: an install whose record names nothing
- * is the empty record, and it has to answer as it answered before.
+ * Adaptive by default: an install whose record names nothing is the empty
+ * record, and it answers with thinking the agent decides on.
  */
 export const thinking: Declaration = {
   schema: {
@@ -82,7 +81,7 @@ export const thinking: Declaration = {
     enum: ['adaptive', 'disabled'],
     description: 'Extended thinking. The agent decides when to think, or there is none.',
   },
-  fallback: 'adaptive',
+  default: 'adaptive',
   toQuery: (value) => value === 'adaptive' ? { thinking: { type: 'adaptive' } }
     : value === 'disabled' ? { thinking: { type: 'disabled' } }
     : {},
@@ -109,7 +108,7 @@ export const hostTasks: Declaration = {
     type: 'boolean',
     description: "Leave Claude's own task tools to the host's, when the host offers task_add. On by default.",
   },
-  fallback: true,
+  default: true,
 };
 
 /**
@@ -136,7 +135,7 @@ export const enableTasks: Declaration = {
     type: 'boolean',
     description: "Turn Claude's own task tools on when Claude keeps them. On by default.",
   },
-  fallback: true,
+  default: true,
 };
 
 /**
@@ -335,7 +334,7 @@ const through = (values: Bag, member: 'toQuery' | 'toFlags'): Bag => {
  * somebody chose.
  */
 export const optionDefaults = (): Bag => Object.fromEntries(
-  Object.entries(DECLARED).filter(([, one]) => one.fallback !== undefined).map(([name, one]) => [name, one.fallback]),
+  Object.entries(DECLARED).filter(([, one]) => one.default !== undefined).map(([name, one]) => [name, one.default]),
 );
 
 /** The `query()` options a set of declared values produces. */
