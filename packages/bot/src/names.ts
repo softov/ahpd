@@ -121,8 +121,8 @@ export type Named =
  * are what know which names there are, and a read of one nobody has is a read
  * of something absent.
  */
-export const named = (leaf: string): Named | undefined => {
-  const parts = leaf.split('/');
+export const named = (path: string): Named | undefined => {
+  const parts = path.split('/');
   const user = parts[0] ?? '';
   if (user === '') return undefined;
   if (parts.length === 1) return { at: 'chat', user };

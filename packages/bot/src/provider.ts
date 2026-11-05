@@ -192,8 +192,8 @@ export interface BotProvider extends ResourceProvider {
 interface At {
   /** The slug, empty at the root. */
   slug: string;
-  /** Whatever came after a further slash: the chat, or the chat's own name. */
-  leaf: string;
+  /** The path under the bot, after a further slash: the chat, or the chat's own name. */
+  path: string;
   /** The text after `?`, which only the root listing reads. */
   query: string;
 }
@@ -216,8 +216,8 @@ const split = (uri: string): At | undefined => {
   const query = mark === -1 ? '' : rest.slice(mark + 1);
   const slash = path.indexOf('/');
   return slash === -1
-    ? { slug: path, leaf: '', query }
-    : { slug: path.slice(0, slash), leaf: path.slice(slash + 1), query };
+    ? { slug: path, path: '', query }
+    : { slug: path.slice(0, slash), path: path.slice(slash + 1), query };
 };
 
 const absent = (uri: string): RpcError => new RpcError(-32008, `No bot at ${uri}`);
@@ -601,7 +601,7 @@ export function botProvider(options: BotOptions): BotProvider {
       if (held === undefined) return false;
       // The root is the listing, which the provider answers for whoever asks
       // and narrows to what each reader may see.
-      if (held.slug === '') return held.leaf === '';
+      if (held.slug === '') return held.path === '';
       const bot = store.get(held.slug);
       return bot !== undefined && mayRead(bot, reader);
     },
@@ -624,7 +624,7 @@ export function botProvider(options: BotOptions): BotProvider {
       await store.ready();
       const held = at(uri);
       if (held.slug === '') {
-        if (held.leaf !== '') throw absent(uri);
+        if (held.path !== '') throw absent(uri);
         const every = store.all();
         const shown = reader === undefined || reader.can('bot:list')
           ? every
@@ -637,7 +637,7 @@ export function botProvider(options: BotOptions): BotProvider {
       }
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
-      const where = named(held.leaf);
+      const where = named(held.path);
       if (where === undefined || where.at !== 'sessions') throw absent(uri);
       if (!mayLook(bot, where.user, reader)) throw notTheirs(bot, where.user);
       const names = await options.backSessions.list(bot.id, where.user);
@@ -665,13 +665,13 @@ export function botProvider(options: BotOptions): BotProvider {
       await store.ready();
       const held = at(uri);
       if (held.slug === '') {
-        if (held.leaf !== '') throw absent(uri);
+        if (held.path !== '') throw absent(uri);
         const now = new Date().toISOString();
         return { uri, type: 'directory', mtime: now, ctime: now };
       }
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
-      if (held.leaf === '') {
+      if (held.path === '') {
         const body = JSON.stringify(bot, null, 2);
         const mtime = moment(bot.updatedAt);
         const ctime = moment(bot.createdAt);
@@ -687,7 +687,7 @@ export function botProvider(options: BotOptions): BotProvider {
           etag: bot.updatedAt,
         };
       }
-      const where = named(held.leaf);
+      const where = named(held.path);
       if (where === undefined) throw absent(uri);
       const now = new Date().toISOString();
       if (where.at === 'sessions') return { uri, type: 'directory', mtime: now, ctime: now };
@@ -725,7 +725,7 @@ export function botProvider(options: BotOptions): BotProvider {
       // the bot made to its own file shows on the next read, without anything
       // having to notice the write.
       const bot = fromAgents(options.yaml, known);
-      if (held.leaf === '') {
+      if (held.path === '') {
         /*
          * The agent it names is the bot's session's, and one this host does not
          * serve is said so here: a bot whose agent went is one that wakes
@@ -741,7 +741,7 @@ export function botProvider(options: BotOptions): BotProvider {
           : { ...bot, ...state };
         return json(answered);
       }
-      const where = named(held.leaf);
+      const where = named(held.path);
       // A directory is not a read: what is under a person's chat is the names,
       // and a listing is what answers them.
       if (where === undefined || where.at === 'sessions') throw absent(uri);
@@ -775,7 +775,7 @@ export function botProvider(options: BotOptions): BotProvider {
     write: async (uri, content, owner, _client, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '') {
+      if (held.path !== '') {
         throw new RpcError(-32602, `${uri} is not a bot; write to bot://<slug>`);
       }
       if (held.slug === '') throw new RpcError(-32602, `${uri} is not a name for a bot; write to bot://<slug>`);
@@ -895,7 +895,7 @@ export function botProvider(options: BotOptions): BotProvider {
     remove: async (uri, _recursive, owner, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '' || held.slug === '') {
+      if (held.path !== '' || held.slug === '') {
         throw new RpcError(-32602, `${uri} is not a bot to delete; delete bot://<slug>`);
       }
       const bot = store.get(held.slug);
@@ -926,7 +926,7 @@ export function botProvider(options: BotOptions): BotProvider {
     watch: async (uri, _options, onChange, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '') throw absent(uri);
+      if (held.path !== '') throw absent(uri);
       if (held.slug !== '' && store.get(held.slug) === undefined) throw absent(uri);
       const one: Watching = { slug: held.slug, reader, onChange };
       watching.add(one);
