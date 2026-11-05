@@ -60,11 +60,12 @@ import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
 import type { Claimed, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
-import { GREETINGS, UNGATED, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
+import { GREETINGS, UNGATED, seesAccount, seesConfig, DECLARED, ownIn } from './host/gate.js';
 import type { Home } from './host/gate.js';
 import { createChatRecord } from './host/chatrecord.js';
 import { createRouting } from './host/routing.js';
 import { createRelay } from './host/relay.js';
+import { AGENT_CLIENT_SCHEME } from './host/clienturi.js';
 import { createChangesets } from './host/changesets.js';
 import { createFacts } from './host/facts.js';
 import { createOwners } from './host/owners.js';
@@ -188,9 +189,9 @@ export function createHost(options: HostOptions): Host {
    *
    * A session under its held name and every name a client created it under,
    * its chats, including the ones a client named, its worker chats,
-   * terminals, this host's resource watches and the ones a client relays.
-   * One name is one thing: a new session, chat, terminal or relayed watch is
-   * refused a name already here (`claimable`), and the users gate reads a
+   * terminals and resource watches. One name is one thing: a new session,
+   * chat or terminal is refused a name already here (`claimable`), and the
+   * users gate reads a
    * channel's kind from here (`channelKind`). Written by the maps that hold
    * each kind, which are `Claiming`, and by `createSession` for the name a
    * client asked for.
@@ -1229,7 +1230,8 @@ export function createHost(options: HostOptions): Host {
     const descriptor = parseResourceWatchChannelUri(channel);
     if (descriptor === undefined) return undefined;
     const scheme = schemeOf(descriptor.root);
-    const store = scheme === '' || scheme === 'file' ? options.resources : options.resourceProviders?.[scheme];
+    const store = scheme === '' || scheme === 'file' ? options.resources
+      : scheme === AGENT_CLIENT_SCHEME ? ctx.clientResources : options.resourceProviders?.[scheme];
     const start = store?.watch;
     if (store === undefined || start === undefined) return undefined;
     const watcher = await start.call(store, descriptor.root, {
@@ -1540,7 +1542,7 @@ export function createHost(options: HostOptions): Host {
   const {
     spaceHere, nameOf, sessionOfChat, sessionFor, meantBy,
     sessionHolding, channelKind, sessionChannel, homeOf,
-    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, ownerOf, elsewhere, relayed, clients,
+    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, clients, clientResources, heard, clientGone,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
     changesetsOf, operationContext, opKey, inFlight, lastError, shown,
     describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
@@ -2211,6 +2213,14 @@ export function createHost(options: HostOptions): Host {
           }
           if (later !== undefined) behind(params, origin, () => later);
         },
+        /**
+         * A batch a client reports on a watch this host keeps on it: the
+         * receiver's `resourceWatch/changed`, sent back over the action
+         * envelope as the protocol carries a watch's changes to its caller.
+         * Heard only on a channel this host subscribed to on this connection.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/resource-watch-channel.md#L83
+         */
+        action: (params) => { heard(connection, params); },
       };
       return {
         /*
@@ -2260,12 +2270,9 @@ export function createHost(options: HostOptions): Host {
           /*
            * The one gate.
            *
-           * Every command passes here, so a handler added later is refused
-           * rather than served by omission - which is the property `needsWrite`
-           * did not have when five handlers each remembered to call it. It sits
-           * before the client relay below on purpose: a URI another client owns
-           * is that client's to answer, and this host's roles do not reach into
-           * it.
+           * Every command passes here, so a handler added later is gated as
+           * every other one is. A client's resource, under the client scheme,
+           * is gated by that scheme as any other scheme is.
            *
            * A host with no user directory has no principal and refuses nothing,
            * which is what keeps every install that never configured one exactly
@@ -2280,14 +2287,6 @@ export function createHost(options: HostOptions): Host {
           if (conn.handshook && request.method === 'initialize') {
             throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
           }
-          /*
-           * A URI another client published is that client's to answer.
-           *
-           * Before the handler, because the handler is this host's
-           * filesystem and the resource is not on it. What goes back is
-           * whatever the owning client said, verbatim - including its
-           * refusal, which is the owner's to make.
-           */
           /*
            * A channel the protocol fixes, named as something else.
            *
@@ -2311,10 +2310,6 @@ export function createHost(options: HostOptions): Host {
             && !(fixed === AUTOMATIONS && isAutomations(named))
             && !(fixed === ROOT && isRootChannel(named))) {
             throw new RpcError(INVALID_PARAMS, `${request.method} is answered on ${fixed}, not on ${named}`);
-          }
-          if (REVERSE.has(request.method)) {
-            const away = await elsewhere(request.method, request.params ?? {});
-            if (away !== undefined) return away.result;
           }
           return handler(request.params);
         },
@@ -2353,11 +2348,9 @@ export function createHost(options: HostOptions): Host {
           }
           // The tokens went with the connection; so do their clocks.
           for (const key of [...conn.expiring.keys()]) conn.forgetExpiry(key);
-          // And the watches it was keeping for other clients: the channel was
-          // its to report on, and with it gone nothing ever will again.
-          for (const [channel, away] of [...relayed]) {
-            if (away.owner === connection) relayed.delete(channel);
-          }
+          // What it reported on the watches this host keeps on it stops, and a
+          // request for its resources waits out the grace for it to come back.
+          clientGone(connection);
           // Each resource watch it subscribed to is released as its
           // unsubscribe releases one, as the reference host releases a gone
           // client's subscriptions.

@@ -203,7 +203,7 @@ to every backend that can take tools, and replaced whole with `host.setTools()`
 `set_workspace`), with its names, input schemas and answers, so a skill written
 against VS Code's host calls them here unchanged; and two of this host's own,
 `ahp_resource` and `ahp_terminals`, both read-only, answering what an agent
-inside one session cannot see for itself - a client's published resource and
+inside one session cannot see for itself - a client's resource and
 the terminals a person is watching; and the reference host's three artifact
 tools (`add_artifact_or_reference`, `remove_artifact_or_reference`,
 `list_artifacts_and_references`), which write the session's

@@ -105,7 +105,7 @@ is: the root and the automations catalogue are this host's own channels.
 | `resourceMkdir` | 🧩 | `mkdir -p` semantics, as the protocol declares. |
 | `resourceMove` | 🧩 | Both ends checked. Refused `-32602` across two different clients, because neither peer could carry that out. |
 | `resourceCopy` | 🧩 | The same. |
-| `resourceRequest` | ✅ | Answered yes for any `file:` URI, as the reference host answers it, and logged. It withholds nothing, because the write half is served without it; a URI this host does not mediate is refused `-32009`. |
+| `resourceRequest` | ✅ | Answered yes for any `file:` URI, as the reference host answers it, and logged. It withholds nothing, because the write half is served without it. One under the client scheme is asked of the client it names, as VS Code's client filesystem asks a client for access; any other URI this host does not mediate is refused `-32009`. |
 | `listAutomationTriggerDefinitions` | 🧩 | *Event* triggers only. A schedule is protocol-defined and never listed; manual is not a trigger at all, and an empty trigger list on a definition is what manual-only means. Answered on `ahp-root://`, which is what it declares. |
 | `runAutomation` | 🧩 | The session is created here rather than in the store, because only this file knows what a session is - the store is handed a function and gets a URI back. `enabled` and a disable condition do not gate a press: the protocol has them govern the runs an automation schedules for itself, so a switched-off automation still runs by hand, and `-32001` here means there is no automation at that resource and nothing else. |
 | `fetchAutomationRuns` | 🧩 | Answers `{}` and nothing else, which is what the protocol declares for it: the page is not the result. Asking grows the automation's entry by one page of runs, newest first, and every subscriber of `ahp-automations://` reads the longer `runs` and the next `runsNextCursor` off the `automation/set` that follows, so the client that asked and the clients that did not are told the same thing. The cursor is the entry's own `runsNextCursor`, and one this host did not issue is refused `-32602`; one count per automation, so every client sees the same page. |
@@ -117,24 +117,35 @@ entries `CommandMap` does, with the same params and the same results: the
 family is symmetrical, and the receiver decides whether to allow an operation
 whichever peer asked for it. What it is *for* is a resource this host cannot
 reach - a plugin's virtual files, an editor's unsaved buffers, a filesystem
-provider - published by a client and addressed as `<scheme>://<clientId>/…`.
+provider - served by a client and addressed as [VS Code's host addresses
+one](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentClientUri.ts#L8-L23),
+`vscode-agent-client://<clientId>/<scheme>/<authority>/<path>`, an empty
+authority written `-`: `file:///work/a.ts` on client `editor` is
+`vscode-agent-client://editor/file/-/work/a.ts`.
 
-Routing is the authority part of the URI: a `resource*` request naming a
-connected client's id is forwarded to that client and its answer comes back
-verbatim, refusals included. `file:` is never a client's, and neither is any
-`ahp-` scheme, whose authority is part of a channel name. `resourceMove` and
-`resourceCopy` are refused `-32602` across two different clients, because
-neither peer could carry that out. `createResourceWatch` is forwarded and the
-channel the owner mints is relayed: that client - and only that client - may
-dispatch `resourceWatch/changed` onto it, and this host passes it to whoever
-subscribed.
+A `resource*` request under the client scheme goes to the client its authority
+names, about the URI as that client knows it, and its answer comes back as the
+client gave it; every other scheme is this host's own stores' and providers'.
+`resourceMove` and `resourceCopy` go to the source's client with both URIs as
+it knows them, as VS Code's client filesystem sends a rename. A client whose
+connection has just closed is waited for through [VS Code's 5 s
+grace](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L205-L216),
+and one gone longer, or never here, is refused `-32603` `No connection for
+authority: <clientId>`. `resourceRequest` under the client scheme asks the
+client. `createResourceWatch` under it answers this host's own channel, as for
+any root; at the channel's first subscribe this host asks the client for a
+watch, subscribes to the channel it answers on the client's connection, and
+takes each batch the client sends back over the `action` envelope, as the
+protocol carries a watch's changes [from receiver to
+caller](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/resource-watch-channel.md#L32-L54),
+saying it on its own channel with the URIs under the client scheme. A client
+that drops and comes back is asked for the watch again.
 
-A refusal comes back to the asking client exactly as the owner sent it - this
-host has no standing to soften somebody else's `-32009` - and is written to the
-log with the method, the URI, the client that refused and the code, because
-that is the only place all four are visible at once. A client on the other end
-of a `-32009` cannot tell "published read-only" from "not yet sure who is
-asking".
+A refusal comes back to the asking client as the client sent it, and is
+written to the log with the method, the URI, the client that refused and the
+code, because that is the only place all four are visible at once. A client
+on the other end of a `-32009` cannot tell "published read-only" from "not yet
+sure who is asking".
 
 `host.clients` is the same ten as named methods, so an embedder can read a
 client directly, and `ahp_resource` (see [state actions](#state-actions),
@@ -362,7 +373,7 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `resourceWatch/changed` | host | ✅ | In coalesced batches, with globs for `includes` and `excludes`. On a watch over a *client's* resources it is that client that dispatches this, and this host relays it - see [server-to-client commands](#server-to-client-commands). |
+| `resourceWatch/changed` | host | ✅ | In coalesced batches, with globs for `includes` and `excludes`. A client's dispatch of it is refused `Server-only action: resourceWatch/changed`, as VS Code's host refuses one. On a watch over a *client's* resources this host says the batches that client sends back over the `action` envelope on the watch channel this host subscribed to - see [server-to-client commands](#server-to-client-commands). |
 
 ### `automation/*` — 4 of 4 🧩
 

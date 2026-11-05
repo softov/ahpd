@@ -313,15 +313,14 @@ export function createRouting(ctx: HostContext): Routing {
   };
 
   /**
-   * Refuse a name for a new session, chat, terminal or relayed watch that
-   * `claims` already holds, as it is or as the session channel it hangs off
-   * (`baseOf`), that is a session running or listed here, or that falls in a
-   * space (`spaceOf`) this host keeps for another kind. A relayed watch may be
-   * named in `ahp-resource-watch:`, as this host's own are.
+   * Refuse a name for a new session, chat or terminal that `claims` already
+   * holds, as it is or as the session channel it hangs off (`baseOf`), that is
+   * a session running or listed here, or that falls in a space (`spaceOf`)
+   * this host keeps for another kind.
    */
   const claimable = (name: string, kind: NameKind): void => {
     const space = spaceHere(name);
-    const fits = space === undefined || space === kind || (kind === 'watch' && schemeOf(name) === 'ahp-resource-watch');
+    const fits = space === undefined || space === kind;
     if (!fits)
       throw new RpcError(-32003, `${name} is a name this host keeps for ${space === 'own' ? 'its own channels' : space === 'plugin' ? 'plugin channels' : `${space}s`}`);
     for (const one of new Set([name, baseOf(name)])) {

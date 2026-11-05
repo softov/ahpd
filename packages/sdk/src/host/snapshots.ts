@@ -43,7 +43,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     about, leadOf,
     LOGS, TRACES, METRICS,
     nameOf, sessionOfChat, sessionChannel, sessionFor,
-    relayed,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
@@ -402,15 +401,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         || ((await past(id)) !== undefined && nameOf(id) === owning))
         return value({ resource: channel, state: marksOf(id), fromSeq: ctx.serverSeq });
     }
-    /*
-     * A watch another client is keeping, which this host only relays.
-     *
-     * Its state is the params it was made with, the same as one of this
-     * host's own - and a snapshot has to be served here or the client that
-     * asked for the watch cannot subscribe to what it was given.
-     */
-    const away = relayed.get(channel);
-    if (away) return value({ resource: channel, state: away.state, fromSeq: ctx.serverSeq });
     /*
      * A watch, attached at its channel's first subscribe. The state is what
      * the watch *is*: its root, `recursive` and globs. The protocol's reducer

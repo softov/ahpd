@@ -4,15 +4,17 @@ import { notServed } from '../resources/resources.js';
 import { Status } from '../sessions/catalog.js';
 import { need } from './common.js';
 import { buildResourceWatchChannelUri, schemeOf } from './channels.js';
+import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import type { WriteMode } from '../types/resources.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
 /**
  * Which store serves a URI, and the methods a client calls to reach one.
  *
- * `file:` is the store the host was given and anything else is a scheme a
- * plugin registered, so every `resource*` method asks `storeFor` first and a
- * scheme nobody serves is refused rather than read.
+ * `file:` is the store the host was given, the client scheme the connected
+ * clients' resources, and anything else a scheme a plugin registered, so every
+ * `resource*` method asks `storeFor` first and a scheme nobody serves is
+ * refused.
  */
 export interface ResourceMethods {
   /** Which store serves a URI, read by the gate and by every method here. */
@@ -24,8 +26,8 @@ export interface ResourceMethods {
 export function createResourceMethods(ctx: HostContext, conn: ConnectionContext): ResourceMethods {
   const { connection } = conn;
   const {
-    bringBackOf, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext, opKey,
-    options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
+    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext,
+    opKey, options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
   } = ctx;
 
 /**
@@ -50,19 +52,16 @@ const CONFLICT = -32011;
   /**
    * Which store serves a URI.
    *
-   * `file:` is the store the host was given, and anything else is a scheme
-   * a plugin registered under `resourceProviders`. A scheme nobody serves
-   * falls through to that same store, which is where the sentence about a
-   * foreign scheme is written - so an unserved URI reads as somebody
-   * else's rather than as a host that forgot it.
-   *
-   * A URI a connected client published never reaches here: the relay in
-   * `handle` answers it before any handler, which is the order that keeps
-   * a plugin from shadowing a client's own resources.
+   * `file:` is the store the host was given, the client scheme is the
+   * connected clients' resources, as VS Code's host serves that scheme with a
+   * filesystem that asks the client, and anything else is a scheme a plugin
+   * registered under `resourceProviders`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostServerMain.ts#L330
    */
   const storeFor = (uri: string) => {
     const scheme = schemeOf(uri);
     if (scheme === '' || scheme === 'file') return options.resources;
+    if (scheme === AGENT_CLIENT_SCHEME) return clientResources;
     const provider = options.resourceProviders?.[scheme];
     // A scheme nobody serves is not the file store's to read, and it is
     // not a permission answer either: the host has nothing for it, which
@@ -265,6 +264,15 @@ const CONFLICT = -32011;
      */
     resourceRequest: async (params) => {
       const uri = String(params.uri ?? '');
+      // A client's resource is that client's to grant, as VS Code's client
+      // filesystem asks the client for access to one.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L571-L590
+      if (schemeOf(uri) === AGENT_CLIENT_SCHEME) {
+        return await clientResources.request(uri, {
+          ...(params.read !== undefined ? { read: params.read === true } : {}),
+          ...(params.write !== undefined ? { write: params.write === true } : {}),
+        });
+      }
       if (!uri.startsWith('file://')) throw new RpcError(-32009, `This host does not mediate ${uri}`);
       // Neither flag is a read, which is what the protocol tells receivers
       // to make of a request that sets nothing.

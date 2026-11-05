@@ -14,7 +14,8 @@ import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
-import { ROOT, chatIdFor, chatUriFor } from './channels.js';
+import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
+import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import { need, noProvider } from './common.js';
 import { asksForTool } from './spawn.js';
 import { preambleOf } from './preamble.js';
@@ -398,7 +399,7 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, ownerOf, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
     isolated, settle, openSession, backendsOwn, removeSession, spawn,
@@ -1996,12 +1997,13 @@ export function createTooling(ctx: HostContext): Tooling {
       running: held.exitCode() === undefined,
     })),
     read: async (asked) => {
-      // The client that published it, if one did - that is the only thing
-      // that can read it - and this host's own store otherwise.
-      const owner = ownerOf(asked);
-      const answer = owner === undefined
-        ? await need(options.resources, 'resourceRead').read(asked)
-        : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
+      // A client's resource from the client the client scheme names, about
+      // the URI as it knows it, as VS Code's host reads one through its client
+      // filesystem, and this host's own store otherwise.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13851-L13867
+      const answer = schemeOf(asked) === AGENT_CLIENT_SCHEME
+        ? await clientResources.read(asked)
+        : await need(options.resources, 'resourceRead').read(asked);
       const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
         data?: unknown; encoding?: unknown;
       };

@@ -246,7 +246,14 @@ interface Answered {
   error?: { code: number; message: string };
 }
 
-/** A stdio daemon over a users file in `home`, sent `frames`, closed once `waiting` are answered. */
+/**
+ * A stdio daemon over a users file in `home`, sent `frames` one at a time,
+ * closed once `waiting` are answered.
+ *
+ * Each frame goes once the one before it is answered, as a client that reads
+ * what it wrote waits for the write's answer: the daemon handles the requests
+ * it is sent side by side, as JSON-RPC lets it.
+ */
 const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
   mkdirSync(join(home, 'ahpd'), { recursive: true });
   const config = join(home, 'config.json');
@@ -257,6 +264,14 @@ const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const frames_: Answered[] = [];
+  const ids = frames.map((one) => (JSON.parse(one) as { id: number }).id);
+  let sent = 0;
+  const send = (): void => {
+    const one = frames[sent];
+    if (one === undefined) return;
+    sent += 1;
+    child.stdin.write(`${one}\n`);
+  };
   let held = '';
   const close = (): void => { child.stdin.end(); };
   child.stdout.on('data', (chunk: Buffer) => {
@@ -265,12 +280,16 @@ const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
     while (at !== -1) {
       const line = held.slice(0, at).trim();
       held = held.slice(at + 1);
-      if (line.startsWith('{')) frames_.push(JSON.parse(line) as Answered);
+      if (line.startsWith('{')) {
+        const answered = JSON.parse(line) as Answered;
+        frames_.push(answered);
+        if (answered.method === undefined && answered.id === ids[sent - 1]) send();
+      }
       at = held.indexOf('\n');
     }
     if (waiting.every((one) => frames_.some((frame) => frame.id === one))) setTimeout(close, 200);
   });
-  for (const frame of frames) child.stdin.write(`${frame}\n`);
+  send();
   return new Promise((done) => {
     const give = setTimeout(close, 15000);
     child.on('exit', () => { clearTimeout(give); done(frames_); });

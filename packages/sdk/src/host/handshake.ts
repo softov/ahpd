@@ -117,17 +117,20 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
 
   /**
    * A client arrived: its record is active again, every wait its closed
-   * connections began is over, and the records of clients gone longer than
-   * the retention are forgotten, as the reference host disposes a returning
-   * client's disconnect timeouts and prunes its client records whenever a
-   * client attaches. A reconnect naming one is then refused, and its client
-   * starts again with `initialize`.
+   * connections began is over, a request or a watch waiting on its resources
+   * goes on, and the records of clients gone longer than the retention are
+   * forgotten, as the reference host disposes a returning client's disconnect
+   * timeouts, registers its filesystem again and prunes its client records
+   * whenever a client attaches. A reconnect naming one is then refused, and
+   * its client starts again with `initialize`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1412-L1414
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1459-L1478
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2064-L2076
    */
   const attached = (clientId: string): void => {
     ctx.lastSeen.delete(clientId);
     ctx.waitsOver(clientId);
+    ctx.clientBack(clientId);
     const cutoff = Date.now() - CLIENT_RECORD_RETENTION;
     for (const [id, at] of [...ctx.lastSeen]) {
       if (at >= cutoff) continue;
@@ -865,6 +868,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         connection.principal = held;
         principals.set(`user:${held.id}`, held);
         if (ownId(connection.clientId)) holders.set(connection.clientId, held.id);
+        // Its resources answer from here, so whatever waited on them goes on.
+        ctx.clientBack(connection.clientId);
         /*
          * When the sign-in ends, which is the earlier of two clocks.
          *

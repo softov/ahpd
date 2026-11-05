@@ -49,7 +49,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const {
     agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, past, permitted, presence, relayed, restart, retool,
+    ownerFor, owners, past, permitted, presence, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, summaryMoved, terminals, toolDefinitions,
     value, waitingFor,
   } = ctx;
@@ -104,10 +104,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * every other refused action gets, which is the only "no" this
      * direction has.
      *
-     * First in the function, before the relayed watch below and before
-     * anything is read or written, because every branch under here drives
-     * something: `terminal/input` runs a command, `chat/turnStarted` runs a
-     * model, `root/configChanged` changes a setting for everybody.
+     * First in the function, before anything is read or written, because
+     * every branch under here drives something: `terminal/input` runs a
+     * command, `chat/turnStarted` runs a model, `root/configChanged` changes
+     * a setting for everybody.
      *
      * A host with no user directory refuses nothing, exactly as at the
      * other boundary.
@@ -173,21 +173,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(`${who.id} may not ${needed} here`);
         return;
       }
-    }
-    /*
-     * A watch this client itself keeps, whose reports this host relays.
-     *
-     * `resourceWatch/changed` is a host's to say - except on a watch over
-     * a client's own resources, where that client is the only thing that
-     * can see the files move: it was asked for the watch through
-     * `createResourceWatch` and answered with the channel. Passed
-     * straight through to whoever subscribed, and refused from anybody
-     * else by the check below - a change to somebody else's files is not
-     * a thing a third client may claim happened.
-     */
-    if (relayed.get(channel)?.owner === connection && type === 'resourceWatch/changed') {
-      dispatch(channel, action, origin);
-      return;
     }
     /*
      * A type the protocol does not let a client send, a type it does not know

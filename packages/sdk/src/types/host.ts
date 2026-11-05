@@ -1561,23 +1561,21 @@ export interface Connection {
  * calls on a host are the ten a host may call on a client, with the same
  * params and the same results, and the receiver decides whether to allow the
  * operation whichever way round it went. What that is *for* is a client that
- * publishes something the host has no way to reach - a plugin's virtual
- * files, an editor's unsaved buffers, a filesystem provider - and addresses
- * it as `<scheme>://<clientId>/…`.
+ * serves something the host has no way to reach - a plugin's virtual files,
+ * an editor's unsaved buffers, a filesystem provider - which the host
+ * addresses as `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>`,
+ * as the reference host does.
  *
  * So this is not a port handed in: it is built out of the connections a host
- * already has, and a URI naming one of them is answered by that client rather
- * than by the host's own filesystem.
+ * already has. Each method names the client it asks, and the URI is the one
+ * that client knows.
  */
 export interface Clients {
   /** Every client currently connected, by the id it gave at `initialize`. */
   ids(): string[];
   /**
-   * The client a URI belongs to, if a connected one publishes it.
-   *
-   * `<scheme>://<clientId>/…`, which is how the reference host addresses one.
-   * `file:` is never a client's, and neither is any `ahp-` channel scheme -
-   * those are this protocol's own and their authority is not a client id.
+   * The connected client a URI under the client scheme names, or nothing for
+   * any other URI.
    */
   owner(uri: string): string | undefined;
 

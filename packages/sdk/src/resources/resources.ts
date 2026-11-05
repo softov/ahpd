@@ -62,12 +62,9 @@ export { uriOf };
 /**
  * Why this store cannot answer for a URI, in the terms of what it is.
  *
- * This one serves a filesystem, so anything that is not a `file:` URI is not
- * a path it got wrong - it is a URI somebody else was meant to answer. A
- * client publishes its own under `<scheme>://<clientId>/`, and a request for
- * one whose client has hung up arrives here having been routed nowhere. Told
- * as what it is, because `virtual://ahpc-6ec6cf49/hello.txt is not an
- * absolute path` sends whoever reads it looking at their path.
+ * This one serves a filesystem, so a URI of any other scheme is told as one
+ * another store was meant to answer, which is what it is, and a `file:` URI
+ * it cannot read as a path is told as that.
  */
 const why = (uri: string): string => notServedWords(uri) ?? `${uri} is not an absolute path`;
 
@@ -81,13 +78,12 @@ const why = (uri: string): string => notServedWords(uri) ?? `${uri} is not an ab
 export const notServedWords = (uri: string): string | undefined => {
   const scheme = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];
   return scheme !== undefined && scheme !== 'file'
-    ? `${uri} is not this host's to read: nothing here serves ${scheme}:,`
-      + ' and no connected client publishes it'
+    ? `${uri} is not this host's to read: nothing here serves ${scheme}:`
     : undefined;
 };
 
 /**
- * The refusal for a URI no provider and no connected client serves.
+ * The refusal for a URI no store serves.
  *
  * `-32601` rather than a permission code, because the host having nothing that
  * serves a scheme is not a client being refused - the same answer a provider

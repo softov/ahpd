@@ -14,20 +14,21 @@ import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
 
-/** A peer that answers a relayed `createResourceWatch` with the channel it is given. */
+/** A client that serves a directory and answers a watch on it with the channel it is given. */
 const publishing = (channel: string): Peer & { seen: { method: string; params: Bag }[] } => {
   const seen: { method: string; params: Bag }[] = [];
   return {
     seen,
     send: () => {}, answered: () => {}, close: () => {},
-    request: async () => ({ channel }),
+    request: async (method: string, params: unknown) => (method === 'resourceResolve' ? { uri: (params as Bag).uri, type: 'directory' }
+      : method === 'subscribe' ? { snapshot: { resource: channel, state: {}, fromSeq: 0 } } : { channel }),
     notify: (method: string, params: unknown) => { seen.push({ method, params: params as Bag }); },
   };
 };
 
-it('reads a session spelt as a file or as a watch as what it is spelt as', async () => {
+it('reads a session spelt as a file as what it is spelt as', async () => {
   const made = host({
-    users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write'], g: ['file:read', 'virtual:read'] }),
+    users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write'], g: ['file:read'] }),
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
@@ -43,10 +44,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   await guest.send('file:///one', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run this' } });
   await guest.send('file:///one/annotations', { type: 'annotations/set', annotations: [] });
 
-  // Nor by a relayed watch named after the session: the name is the session's.
-  const owner = made.accept(publishing('x:/one'));
-  await hello(owner, 'plugin'); await signIn(owner, 'g');
-  expect(await call(guest.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://plugin/src' })).toMatchObject({ code: -32003 });
+  // Nor under the name the session is held by.
   expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
@@ -67,15 +65,10 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     'x:/one: g may not session:rename here',
   ]);
 
-  // The session and a watch under a name of its own both still work: the one
-  // refusal the admin holds is the guest's.
+  // The session still works: the one refusal the admin holds is the guest's.
   await admin.send('x:/one', { type: 'session/titleChanged', title: 'Mine' });
   expect(admin.refused()).toEqual(['x:/one: g may not session:rename here']);
   expect(admin.seen.seen.some((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')).toBe(true);
-  const own = made.accept(publishing('x:/w'));
-  await hello(own, 'second'); await signIn(own, 'g');
-  expect(await call(guest.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://second/src' })).toMatchObject({ result: { channel: 'x:/w' } });
-  expect(await call(guest.client, 'subscribe', { channel: 'x:/w' })).toMatchObject({ result: { snapshot: { resource: 'x:/w' } } });
 });
 
 it('keeps a session a backend keeps on disk out of reach of its spelling as a file', async () => {
@@ -223,24 +216,14 @@ it('resumes a client id for a person signed in only when it is theirs, and only 
 
 it('keeps every name to one kind of thing', async () => {
   const made = host({
-    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'virtual:read'] }),
+    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }),
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
     terminals: shellTerminals(),
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  const relay = async (clientId: string, channel: string) => {
-    const owner = made.accept(publishing(channel));
-    await hello(owner, clientId); await signIn(owner, 'a');
-    return await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: `virtual://${clientId}/src` });
-  };
-  // A relayed watch named after a session, and a session named after a relayed watch.
-  expect(await relay('first', 'claude:/one')).toMatchObject({ code: -32003 });
-  expect(await relay('second', 'claude:/later')).toMatchObject({ code: -32003 });
-  expect(await relay('third', 'x:/later')).toMatchObject({ result: { channel: 'x:/later' } });
-  expect(await call(admin.client, 'createSession', { channel: 'x:/later', provider: 'claude' })).toMatchObject({ code: -32003 });
   // A chat named in a space this host keeps for something else.
-  for (const chat of ['file:///c', 'ahp-root://c', 'ahp-session:/c', 'ahp-terminal:/c', 'claude:/c', 'x:/later']) {
+  for (const chat of ['file:///c', 'ahp-root://c', 'ahp-session:/c', 'ahp-terminal:/c', 'claude:/c']) {
     expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat })).toMatchObject({ code: -32003 });
   }
   expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/two' })).toHaveProperty('result');
@@ -254,21 +237,21 @@ it('keeps every name to one kind of thing', async () => {
   expect(await call(admin.client, 'createSession', { channel: 'file:///four', provider: 'claude' })).toMatchObject({ code: -32003 });
 });
 
-it('relays only a change of files from the client that keeps a watch', async () => {
-  const made = host({ users: directory({ a: ['file:read', 'session:read', 'session:write', 'virtual:read'] }) });
+it('hears a change of files only from the client a watch was asked of, on the channel it answered', async () => {
+  const made = host({ users: directory({ a: ['file:read', 'session:read', 'session:write', 'vscode-agent-client:read'] }) });
   const admin = await withRole(made, 'a');
   const seen = publishing('x:/w');
   const owner = made.accept(seen);
   await hello(owner, 'plugin'); await signIn(owner, 'a');
-  expect(await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://plugin/src' })).toMatchObject({ result: { channel: 'x:/w' } });
-  await call(admin.client, 'subscribe', { channel: 'x:/w' });
-  owner.handle({ method: 'dispatchAction', params: { channel: 'x:/w', action: { type: 'resourceWatch/changed', changes: { items: [] } } } });
-  owner.handle({ method: 'dispatchAction', params: { channel: 'x:/w', action: { type: 'session/titleChanged', title: 'Injected' } } });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const relayed = admin.seen.seen.filter((one) => one.method === 'action' && one.params.channel === 'x:/w' && one.params.rejectionReason === undefined);
-  expect(relayed.map((one) => one.params.action.type)).toEqual(['resourceWatch/changed']);
+  const { result } = await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'vscode-agent-client://plugin/file/-/src' }) as { result: { channel: string } };
+  expect(await call(admin.client, 'subscribe', { channel: result.channel })).toHaveProperty('result');
+  await owner.handle({ method: 'action', params: { channel: 'x:/w', serverSeq: 1, action: { type: 'resourceWatch/changed', changes: { items: [{ uri: 'file:///src/a', type: 'added' }] } } } });
+  await owner.handle({ method: 'action', params: { channel: 'x:/w', serverSeq: 2, action: { type: 'session/titleChanged', title: 'Injected' } } });
+  await owner.handle({ method: 'dispatchAction', params: { channel: result.channel, clientSeq: 1, action: { type: 'resourceWatch/changed', changes: { items: [] } } } });
+  const told = admin.seen.seen.filter((one) => one.method === 'action' && one.params.channel === result.channel && one.params.rejectionReason === undefined);
+  expect(told.map((one) => one.params.action.changes.items)).toEqual([[{ uri: 'vscode-agent-client://plugin/file/-/src/a', type: 'added' }]]);
   expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
-    .map((one) => one.params.rejectionReason)).toEqual(['x:/w is not a session here']);
+    .map((one) => one.params.rejectionReason)).toEqual(['Server-only action: resourceWatch/changed']);
 });
 
 it('keeps a session\'s marks out of a file named after it', async () => {
@@ -299,7 +282,7 @@ const answering = (name: string): Peer & { asked: string[]; seen: { method: stri
 
 it('resumes another person\'s client id with nothing it may not read, and no claim on it until they sign in', async () => {
   const made = host({
-    users: directory({ a: ['file:read', 'session:read', 'session:write', 'virtual:read'], g: ['file:read'] }),
+    users: directory({ a: ['file:read', 'session:read', 'session:write', 'vscode-agent-client:read'], g: ['file:read'] }),
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
@@ -315,19 +298,20 @@ it('resumes another person\'s client id with nothing it may not read, and no cla
   const resumed = await call(back, 'reconnect', { clientId: 'pub', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: 0 }) as { result: { type: string; missing: string[]; actions: Bag[] } };
   expect(resumed.result).toMatchObject({ type: 'replay', missing: ['ahp-session:/one'] });
   expect(resumed.result.actions.filter((one) => one.channel !== ROOT)).toEqual([]);
-  // Nothing published under the id reaches it, and nobody else may sign in on it.
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).not.toMatchObject({ result: { data: 'stranger' } });
-  expect(stranger.asked).toEqual([]);
+  // A read of what it serves waits for somebody who holds the id, and nobody else may sign in on it.
+  const read = call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/x' });
   expect(await call(back, 'authenticate', { channel: ROOT, resource: RECORD.resource, token: 'g' })).toMatchObject({ code: -32003 });
+  expect(stranger.asked).toEqual([]);
 
-  // The person who holds it signs in, and it is theirs again.
+  // The person who holds it signs in, and it is theirs again: the read goes to it.
   await signIn(back, 'a');
+  expect(await read).toMatchObject({ result: { data: 'stranger' } });
   expect(await call(back, 'subscribe', { channel: 'ahp-session:/one' })).toHaveProperty('result');
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).toMatchObject({ result: { data: 'stranger' } });
+  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/x' })).toMatchObject({ result: { data: 'stranger' } });
 });
 
 it('gives a connection no claim on a client id another person holds', async () => {
-  const made = host({ users: directory({ a: ['file:read', 'virtual:read'], g: ['file:read'] }) });
+  const made = host({ users: directory({ a: ['file:read', 'vscode-agent-client:read'], g: ['file:read'] }) });
   const admin = await withRole(made, 'a');
   const first = made.accept(answering('first'));
   await hello(first, 'pub'); await signIn(first, 'a');
@@ -336,14 +320,16 @@ it('gives a connection no claim on a client id another person holds', async () =
   const other = answering('other');
   const again = made.accept(other);
   await hello(again, 'pub');
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).not.toMatchObject({ result: { data: 'other' } });
-  expect(other.asked).toEqual([]);
+  const read = call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/x' });
   expect(await call(again, 'authenticate', { channel: ROOT, resource: RECORD.resource, token: 'g' })).toMatchObject({ code: -32003, message: expect.stringContaining('pub') });
+  expect(other.asked).toEqual([]);
 
   const theirs = answering('theirs');
   const own = made.accept(theirs);
   await hello(own, 'pub'); await signIn(own, 'a');
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/x' })).toMatchObject({ result: { data: 'theirs' } });
+  expect(await read).toMatchObject({ result: { data: 'theirs' } });
+  expect(other.asked).toEqual([]);
+  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/x' })).toMatchObject({ result: { data: 'theirs' } });
 });
 
 it('keeps every family of action to its own kind of channel', async () => {
@@ -405,15 +391,12 @@ it('keeps every family of action to its own kind of channel', async () => {
 it('keeps a name in a provider\'s scheme for a session, before anything has listed it', async () => {
   const { agent } = listingOne();
   const made = host({
-    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'virtual:read'] }),
+    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }),
     agents: [agent],
     terminals: shellTerminals(),
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createTerminal', { channel: 'claude:/disk', cwd: root })).toMatchObject({ code: -32003 });
-  const owner = made.accept(publishing('claude:/disk'));
-  await hello(owner, 'evil');
-  expect(await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://evil/src' })).toMatchObject({ code: -32003 });
   // The session is reachable once it is listed, under the name it is listed by.
   await call(admin.client, 'listSessions', { channel: ROOT });
   expect(await call(admin.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
@@ -425,20 +408,15 @@ it('keeps a name in a provider\'s scheme for a session, before anything has list
   expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/side' })).toHaveProperty('result');
 });
 
-it('keeps a watch or a terminal named like a session\'s marks what it is once the session is listed', async () => {
+it('keeps a terminal named like a session\'s marks what it is once the session is listed', async () => {
   const { agent } = listingOne();
   const made = host({
-    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'virtual:read'] }),
+    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }),
     agents: [agent],
     terminals: shellTerminals(),
   });
   const admin = await withRole(made, 'a');
-  const watch = 'x:/disk/annotations';
   const terminal = 'y:/disk/annotations';
-  const seen = publishing(watch);
-  const owner = made.accept(seen);
-  await hello(owner, 'plugin'); await signIn(owner, 'a');
-  expect(await call(admin.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://plugin/src' })).toMatchObject({ result: { channel: watch } });
   expect(await call(admin.client, 'createTerminal', { channel: terminal, cwd: root })).toHaveProperty('result');
   await admin.send('ahp-session:/disk/annotations', {
     type: 'annotations/set',
@@ -446,16 +424,7 @@ it('keeps a watch or a terminal named like a session\'s marks what it is once th
   });
   await call(admin.client, 'listSessions', { channel: ROOT });
 
-  // The watch is still the watch: its snapshot, and its owner's change reaches its subscriber.
-  const opened = await call(admin.client, 'subscribe', { channel: watch });
-  expect(opened).toMatchObject({ result: { snapshot: { resource: watch } } });
-  expect(JSON.stringify(opened)).not.toContain('private');
-  owner.handle({ method: 'dispatchAction', params: { channel: watch, action: { type: 'resourceWatch/changed', changes: { items: [] } } } });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
-  expect(admin.seen.seen.some((one) => one.method === 'action' && one.params.channel === watch && one.params.action?.type === 'resourceWatch/changed')).toBe(true);
-
-  // And the terminal is still the terminal.
+  // The terminal is still the terminal.
   const shell = await call(admin.client, 'subscribe', { channel: terminal });
   expect(shell).toMatchObject({ result: { snapshot: { resource: terminal } } });
   expect(JSON.stringify(shell)).not.toContain('private');
@@ -465,7 +434,7 @@ it('keeps a watch or a terminal named like a session\'s marks what it is once th
 });
 
 it('binds a client id to the person who reconnects under it first', async () => {
-  const made = host({ users: directory({ g: ['file:read'], h: ['file:read', 'virtual:read'] }) });
+  const made = host({ users: directory({ g: ['file:read'], h: ['file:read', 'vscode-agent-client:read'] }) });
   const x = made.accept(answering('x-unsigned'));
   await hello(x, 'x');
   x.close();
@@ -476,12 +445,12 @@ it('binds a client id to the person who reconnects under it first', async () => 
   await hello(h, 'x');
   expect(await call(h, 'authenticate', { channel: ROOT, resource: RECORD.resource, token: 'h' })).toMatchObject({ code: -32003 });
   const reader = await withRole(made, 'h');
-  expect(await call(reader.client, 'resourceRead', { channel: ROOT, uri: 'virtual://x/f' })).toMatchObject({ result: { data: 'g-conn' } });
+  expect(await call(reader.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://x/file/-/f' })).toMatchObject({ result: { data: 'g-conn' } });
 });
 
 it('routes nothing to a person removed while connected, and binds no id to a connection without one', async () => {
   let standing = true;
-  const users = directory({ a: ['file:read', 'virtual:read'], p: ['file:read'], q: ['file:read'] });
+  const users = directory({ a: ['file:read', 'vscode-agent-client:read'], p: ['file:read'], q: ['file:read'] });
   const verify = users.verify;
   users.verify = async (token) => {
     const held = await verify(token);
@@ -491,9 +460,9 @@ it('routes nothing to a person removed while connected, and binds no id to a con
   const admin = await withRole(made, 'a');
   const publisher = made.accept(answering('p-conn'));
   await hello(publisher, 'pub'); await signIn(publisher, 'p');
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/f' })).toMatchObject({ result: { data: 'p-conn' } });
+  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/f' })).toMatchObject({ result: { data: 'p-conn' } });
   standing = false;
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://pub/f' })).not.toMatchObject({ result: { data: 'p-conn' } });
+  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://pub/file/-/f' })).not.toMatchObject({ result: { data: 'p-conn' } });
 
   // Two people who name no client id are not one id, and neither is routed to.
   const one = made.accept(answering('one'));
@@ -502,5 +471,5 @@ it('routes nothing to a person removed while connected, and binds no id to a con
   const two = made.accept(answering('two'));
   await two.handle({ method: 'initialize', params: { protocolVersions: ['0.9.0'] } });
   expect(await call(two, 'authenticate', { channel: ROOT, resource: RECORD.resource, token: 'q' })).toHaveProperty('result');
-  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://anonymous/f' })).not.toMatchObject({ result: { data: expect.anything() } });
+  expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'vscode-agent-client://anonymous/file/-/f' })).not.toMatchObject({ result: { data: expect.anything() } });
 });

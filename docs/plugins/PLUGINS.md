@@ -2446,14 +2446,13 @@ no bytes serves nothing.
 | `watch(uri, options, onChange)` | Optional. `createResourceWatch` answers `-32601` without it |
 | `write`, `remove`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to |
 
-The order of authority for a URI is: a URI a connected client published is
-relayed to that client first, then a registered scheme goes to its provider,
-then `file:` goes to the daemon's store. A scheme nobody serves is explained as
-somebody else's - `nothing here serves notes:` - rather than read as a path.
+A URI goes by its scheme: `file:` to the daemon's store, the client scheme
+`vscode-agent-client:` to the connected client it names, and a registered
+scheme to its provider. A scheme nobody serves is told as one nothing here
+serves - `nothing here serves notes:`.
 
 A `move` or a `copy` whose two ends are different schemes is refused `-32602`:
-neither provider could carry out the other's half, which is the same answer two
-different clients get for a cross-client move.
+neither provider could carry out the other's half.
 
 `packages/server/test/fixtures/plugin-uri-resources` is a read-only `computer:` serving
 `computer://local/status` and `computer://local/capabilities`, and is what the

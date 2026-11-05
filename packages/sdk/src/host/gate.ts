@@ -255,8 +255,8 @@ export const UNGATED = new Set([
  * A plugin channel needs the grant its plugin registered, `served`, which the
  * caller reads off `HostOptions.channels`.
  *
- * What is left - a `file:` URI, a resource watch, one another client relays,
- * an `x-` scheme no plugin serves - is `file:watch`, the operation
+ * What is left - a `file:` URI, a resource watch, an `x-` scheme no plugin
+ * serves - is `file:watch`, the operation
  * `createResourceWatch` requires to hand a watch over.
  */
 export const channelRead = (channel: string, kind: ChannelKind, served?: Grant): Grant => {
@@ -286,11 +286,9 @@ export const channelRead = (channel: string, kind: ChannelKind, served?: Grant):
  * no key changes nothing, and needs a sign-in and no grant (`undefined`).
  *
  * The other is `file:watch` for a channel that is neither a session's nor a
- * terminal's - a `file:` URI, a resource watch, one another client relays. An
- * action on one of those is a client reporting a change to something it is
- * watching, which is the grant the watch itself was handed under. The
- * automations are the one `other` that has actions of its own, and those are
- * `ACTION_NEEDS`' to say.
+ * terminal's - a `file:` URI, a resource watch - the grant a watch is handed
+ * under. The automations are the one `other` that has actions of its own, and
+ * those are `ACTION_NEEDS`' to say.
  *
  * A dispatch is a notification, so what it gets on refusal is `rejectionReason`
  * on the channel rather than an error code.
@@ -446,8 +444,3 @@ export const DECLARED: Record<string, string | undefined> = {
   runAutomation: AUTOMATIONS,
   fetchAutomationRuns: AUTOMATIONS,
 };
-
-export const REVERSE = new Set([
-  'resourceRead', 'resourceWrite', 'resourceList', 'resourceCopy', 'resourceDelete',
-  'resourceMove', 'resourceResolve', 'resourceMkdir', 'resourceRequest', 'createResourceWatch',
-]);

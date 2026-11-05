@@ -12,12 +12,12 @@ import type { Peer } from '../src/types/rpc.js';
  * A host-owned URI scheme, beside files.
  *
  * A resource command is routed by the scheme in the URI: `file:` to the store
- * the host was given, a registered scheme to its provider, and a URI a client
- * published to that client before any of this is consulted.
+ * the host was given, the client scheme to the client it names, and a
+ * registered scheme to its provider.
  *
  * What a provider leaves out is `-32601`, the same answer a read-only store's
- * missing write half gets, and a scheme nobody serves is explained as somebody
- * else's rather than read as a path.
+ * missing write half gets, and a scheme nobody serves is told as one nothing
+ * here serves.
  */
 
 let root: string;
@@ -102,21 +102,26 @@ it('refuses a move whose two ends are different schemes', async () => {
   })).rejects.toMatchObject({ code: -32602 });
 });
 
-it('relays a URI a client published before a provider of the same scheme', async () => {
+it('reads a provider\'s scheme from the provider, and a client\'s resource from the client under the client scheme', async () => {
   const answer = { data: 'from the client', encoding: 'utf-8' };
+  const asked: string[] = [];
   const publisher: Peer = {
     send: () => {}, notify: () => {}, answered: () => {}, close: () => {},
-    request: async () => answer,
+    request: async (_method, params) => { asked.push(String((params as { uri?: unknown }).uri)); return answer; },
   };
   const served = host({ virtual: computer() });
   const publishing = served.accept(publisher);
   await publishing.handle({ method: 'initialize', params: { clientId: 'editor', protocolVersions: ['0.9.0'] } });
   const client = await open(served);
 
-  // The provider would have answered `status of virtual://editor/notes.md`.
-  // The client that published the URI answered instead, because the relay runs
-  // before any handler - which is what stops a plugin shadowing a client.
+  // The provider's scheme is the provider's, whatever client its authority names.
   expect(await client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'virtual://editor/notes.md' },
+  })).toEqual({ data: 'status of virtual://editor/notes.md', encoding: 'utf-8' });
+  expect(asked).toEqual([]);
+  // And the client's own, under the client scheme.
+  expect(await client.handle({
+    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'vscode-agent-client://editor/virtual/editor/notes.md' },
   })).toEqual(answer);
+  expect(asked).toEqual(['virtual://editor/notes.md']);
 });

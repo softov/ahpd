@@ -466,20 +466,24 @@ describe('tools the host contributes', () => {
     expect(said[0]?.action?.tools).toEqual([]);
   });
 
-  it('reads what a client published, which is the only thing that can', async () => {
+  it('reads a client\'s resource from that client, about the URI as it knows it', async () => {
     const served = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
     });
     /*
-     * A second client, publishing something this machine has no copy of.
+     * A second client, serving something this machine has no copy of.
      *
-     * `<scheme>://<clientId>/…` is how a client-served resource is addressed,
+     * `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>` is how a
+     * client's resource is addressed here, as VS Code's host addresses one,
      * and answering one is what the reverse `resource*` direction exists for:
      * a plugin's virtual files, an editor's unsaved buffers. The agent inside
-     * a session cannot open any of it, so the host's own tool asks the client.
+     * a session cannot open any of it, so the host's own tool asks the client
+     * about the URI as it knows it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentClientUri.ts#L8-L23
      */
     const publisher = peer();
-    publisher.request = async () => ({ data: 'ZG9uZQ==', encoding: 'base64' });
+    const asked: unknown[] = [];
+    publisher.request = async (_method, params) => { asked.push((params as { uri?: unknown }).uri); return { data: 'ZG9uZQ==', encoding: 'base64' }; };
     const other = served.accept(publisher);
     await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.9.0'] } });
 
@@ -490,9 +494,10 @@ describe('tools the host contributes', () => {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
     const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_resource')
-      ?.handler({ uri: 'virtual://plugin/notes.md' });
+      ?.handler({ uri: 'vscode-agent-client://plugin/virtual/plugin/notes.md' });
     // Decoded, because a tool result is text and the model reads it.
     expect(said?.content[0]?.text).toBe('done');
+    expect(asked).toEqual(['virtual://plugin/notes.md']);
   });
 
   it('lists the terminals this host has open', async () => {
