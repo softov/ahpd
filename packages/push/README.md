@@ -105,13 +105,19 @@ Three more things keep a device from being woken twice:
 - A turn that was stopped sends nothing, and neither does a turn of a worker's chat. A worker finishes its own turns inside one of the session's.
 - Nothing is sent for a request that is not a person being asked. `toolClientExecution` is a client running a call that already cleared its gate, so it is not one.
 
+## How a notification is sent
+
+A phone's notification goes to Expo's push service, a hundred messages to a request. A request that fails on the network, or that Expo answers with a 429 or a 5xx, is sent again after one second and then after two more, as Expo asks a sender to back off; one still failing then is a line in the daemon's log. Expo answers a ticket for each message, and the plugin reads the tickets' receipts fifteen minutes after the send, as Expo recommends. A ticket with no receipt by then is a line in the log too. A daemon that stops within those fifteen minutes reads none of that send's receipts.
+
+A browser's notification is one request to its push service, which keeps the message for four weeks while the browser is not connected, the web-push library's default.
+
 ## Where devices are kept
 
 One file, `push-devices.json`, under the daemon's configuration directory, written whole and read when the daemon starts. It is written `0600`, because a push token or a subscription is a credential to that device's notifications.
 
 The VAPID pair is in `push-vapid.json`, beside it, and written the same way. A host that loses that file makes a new pair, and every subscription made with the old key fails until each browser subscribes again.
 
-A device Expo answers `DeviceNotRegistered` for is removed: the token has been retired, and a message sent there is wasted from then on. The receipts are read at the next send rather than on a timer, so a daemon nobody is waiting on reads nothing.
+A device Expo answers `DeviceNotRegistered` for, in a ticket or a receipt, is removed: the token has been retired, and a message sent there is wasted from then on.
 
 A browser's push service answers 404 or 410 for an endpoint it no longer knows. That device is removed too: the subscription is gone, and the browser has to subscribe again.
 

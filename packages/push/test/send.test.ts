@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { apply } from '../src/plugin.js';
-import { ENDPOINT, RECEIPTS } from '../src/send.js';
+import { ENDPOINT, RECEIPTS, createSender } from '../src/send.js';
 import type { EventHandler, EventName, HostEventOf } from '../../sdk/src/types/events.js';
 import type { PluginHost } from '../../sdk/src/types/plugin.js';
 
@@ -30,9 +30,13 @@ interface Sent {
 /** What a service answers: a status and a body, or a network that is gone. */
 type Answer = (url: string, body: unknown) => { status?: number; body?: unknown } | 'throw';
 
+/** Fifteen minutes, which Expo says to wait before reading a send's receipts. */
+const QUARTER_HOUR = 15 * 60 * 1000;
+
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
@@ -65,6 +69,8 @@ interface Node {
   problems: string[];
   /** What `host.secret` answers, by name; a name that is not here throws. */
   vault: Map<string, string>;
+  /** Every function the plugin registered for the host's close. */
+  closers: (() => void | Promise<void>)[];
   /** Fire one event at every handler the plugin registered for it. */
   fire<K extends EventName>(event: HostEventOf<K>): Promise<void>;
 }
@@ -74,6 +80,7 @@ const node = (configDir: string, hostName: string): Node => {
   const logged: string[] = [];
   const problems: string[] = [];
   const vault = new Map<string, string>();
+  const closers: (() => void | Promise<void>)[] = [];
   const host = {
     path: configDir,
     paths: [configDir],
@@ -94,6 +101,7 @@ const node = (configDir: string, hostName: string): Node => {
       else held.push(handler);
     },
     registerResourceProvider: () => {},
+    registerClose: (close: () => void | Promise<void>) => { closers.push(close); },
     sessionOwner: async () => undefined,
   } as unknown as PluginHost;
   return {
@@ -101,6 +109,7 @@ const node = (configDir: string, hostName: string): Node => {
     logged,
     problems,
     vault,
+    closers,
     fire: async (event) => {
       for (const handler of handlers.get(event.type) ?? []) await handler(event, host);
     },
@@ -111,10 +120,10 @@ const node = (configDir: string, hostName: string): Node => {
 const devices = (said: Record<string, { client: string; token: string }>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(said).map(([id, one]) => [id, { token: one.token, platform: 'ios', client: one.client }]));
 
-/** A service that takes every message, answering a ticket for each. */
-const accepted: Answer = (_url, body) => ({
-  body: { data: (body as { to: string }[]).map((_one, index) => ({ status: 'ok', id: `ticket-${index}` })) },
-});
+/** A service that takes every message, answering a ticket for each and an ok receipt for each ticket asked about. */
+const accepted: Answer = (url, body) => (url === RECEIPTS
+  ? { body: { data: Object.fromEntries((body as { ids: string[] }).ids.map((id) => [id, { status: 'ok' }])) } }
+  : { body: { data: (body as { to: string }[]).map((_one, index) => ({ status: 'ok', id: `ticket-${index}` })) } });
 
 /** The plugin, up over a stubbed service and a devices file of this test's own. */
 const up = (answer: Answer, said: Record<string, unknown>, options: Record<string, unknown> = {}, hostName = 'Echo') => {
@@ -221,33 +230,61 @@ it('sends nothing when a wait is over, and forgets the pair so the next one is n
   expect(world.sends()).toHaveLength(2);
 });
 
-it('reads the receipts of the previous send, and none before the first', async () => {
+it('reads a send\'s receipts fifteen minutes after it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const world = up(accepted, devices({ 'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' } }));
   await openedBy(world, 'echo:/one', 'phone');
   await waiting(world, 'echo:/one', 'q1');
-  expect(world.receipts()).toEqual([]);
 
-  await waiting(world, 'echo:/one', 'q2');
-  expect(world.receipts()).toHaveLength(1);
-  expect(world.receipts()[0]?.body).toEqual({ ids: ['ticket-0'] });
-  // Read before this send's POST, which is what makes it the previous one's.
-  expect(world.calls.map((one) => one.url)).toEqual([ENDPOINT, RECEIPTS, ENDPOINT]);
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR - 1);
+  expect(world.receipts()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(world.receipts().map((one) => one.body)).toEqual([{ ids: ['ticket-0'] }]);
 });
 
-it('forgets a device Expo no longer knows', async () => {
+it('forgets a device its receipt says Expo no longer knows, with no send after it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const world = up((url) => (url === ENDPOINT
-    ? { body: { data: [{ status: 'ok', id: 'ticket-0' }] } }
-    : { body: { data: { 'ticket-0': { status: 'error', details: { error: 'DeviceNotRegistered' } } } } }),
+    ? { body: { data: [{ status: 'ok', id: 'ticket-0' }, { status: 'ok', id: 'ticket-1' }] } }
+    : { body: { data: { 'ticket-0': { status: 'error', details: { error: 'DeviceNotRegistered' } }, 'ticket-1': { status: 'ok' } } } }),
   devices({
     'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' },
     'phone-2': { client: 'tablet', token: 'ExponentPushToken[tablet]' },
   }));
   await openedBy(world, 'echo:/one', 'phone', 'tablet');
   await waiting(world, 'echo:/one', 'q1');
-  await waiting(world, 'echo:/one', 'q2');
+  expect(Object.keys(world.kept())).toEqual(['phone-1', 'phone-2']);
 
-  expect(Object.keys(world.kept())).toEqual(['phone-2']);
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  await vi.waitFor(() => { expect(Object.keys(world.kept())).toEqual(['phone-2']); });
   expect(world.logged.some((line) => line.includes('no longer registered with Expo'))).toBe(true);
+});
+
+it('says a ticket Expo has no receipt for fifteen minutes on', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const world = up((url) => (url === ENDPOINT ? accepted(url, [{ to: 'x' }]) : { body: { data: {} } }), devices({
+    'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' },
+  }));
+  await openedBy(world, 'echo:/one', 'phone');
+  await waiting(world, 'echo:/one', 'q1');
+
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  await vi.waitFor(() => {
+    expect(world.logged).toEqual(['push: Expo has no receipt for the notification to ExponentPushToken[phone] fifteen minutes on']);
+  });
+  expect(Object.keys(world.kept())).toEqual(['phone-1']);
+});
+
+it('drops the receipt reads still to come when the host closes', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const world = up(accepted, devices({ 'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' } }));
+  expect(world.closers).toHaveLength(1);
+  await openedBy(world, 'echo:/one', 'phone');
+  await waiting(world, 'echo:/one', 'q1');
+
+  for (const close of world.closers) await close();
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  expect(world.receipts()).toEqual([]);
 });
 
 it('reads a token the vault holds, and sends nothing when it holds none', async () => {
@@ -270,32 +307,45 @@ it('reads a token the vault holds, and sends nothing when it holds none', async 
   expect(world.sends()[0]?.authorization).toBe('Bearer ExpoToken abc');
 });
 
-it('a service that answers an error is logged, and the next wait still sends', async () => {
+it('sends again after one second and then two while Expo answers a 5xx, logs a send still refused, and the next wait still sends', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   let broken = true;
-  const world = up((url) => (broken && url === ENDPOINT ? { status: 500 } : accepted(url, [])), devices({
+  const world = up((url, body) => (broken && url === ENDPOINT ? { status: 503 } : accepted(url, body)), devices({
     'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' },
   }));
   await openedBy(world, 'echo:/one', 'phone');
-  await waiting(world, 'echo:/one', 'q1');
-  expect(world.logged.some((line) => line.includes('500'))).toBe(true);
+  const first = waiting(world, 'echo:/one', 'q1');
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(world.sends()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(999);
+  expect(world.sends()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(world.sends()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(1999);
+  expect(world.sends()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(1);
+  await first;
+  expect(world.sends()).toHaveLength(3);
+  expect(world.logged).toEqual(['push: the push service answered 503']);
 
   broken = false;
   await waiting(world, 'echo:/one', 'q2');
-  expect(world.sends()).toHaveLength(2);
+  expect(world.sends()).toHaveLength(4);
 });
 
-it('a receipt read that fails is logged, and its own send still goes out', async () => {
-  let broken = false;
-  const world = up((url) => (broken && url === RECEIPTS ? 'throw' : accepted(url, [{ to: 'x' }])), devices({
+it('reads receipts once: a read the network fails is logged and not made again', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const world = up((url, body) => (url === RECEIPTS ? 'throw' : accepted(url, body)), devices({
     'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' },
   }));
   await openedBy(world, 'echo:/one', 'phone');
   await waiting(world, 'echo:/one', 'q1');
 
-  broken = true;
-  await waiting(world, 'echo:/one', 'q2');
-  expect(world.logged.some((line) => line.includes('could not be reached'))).toBe(true);
-  expect(world.sends()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  await vi.waitFor(() => { expect(world.logged).toEqual(['push: the push service could not be reached: the network is gone']); });
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  expect(world.receipts()).toHaveLength(1);
 });
 
 it('carries a hundred messages to a request, and the rest in another', async () => {
@@ -332,4 +382,39 @@ it('sends nothing for a stopped turn or a worker chat', async () => {
   await ended(world, 'echo:/one', 'cancelled');
   await ended(world, 'echo:/one', 'complete', 'ahp-chat://subagent/ZWNobzovb25l/call-1');
   expect(world.sends()).toEqual([]);
+});
+
+/** One message to the phone a token names. */
+const toPhone = (token: string) => ({ to: token, title: 'Echo', body: 'A session finished', data: {} });
+
+it('sends again after one second and then two when the network or a 429 failed the send', async () => {
+  const answers: ReturnType<Answer>[] = ['throw', { status: 429 }];
+  const { calls, request } = service((url, body) => answers.shift() ?? accepted(url, body));
+  const waits: number[] = [];
+  const logged: string[] = [];
+  const sender = createSender({ log: (line) => { logged.push(line); }, gone: () => {}, request, wait: async (ms) => { waits.push(ms); } });
+  await sender.send([toPhone('ExponentPushToken[phone]')]);
+
+  expect(calls.map((one) => one.url)).toEqual([ENDPOINT, ENDPOINT, ENDPOINT]);
+  expect(waits).toEqual([1000, 2000]);
+  expect(logged).toEqual([]);
+  sender.close();
+});
+
+it('asks Expo for a send\'s receipts three hundred to a request', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const { calls, request } = service((url, body) => (url === ENDPOINT
+    ? { body: { data: (body as { to: string }[]).map((one) => ({ status: 'ok', id: `ticket-${one.to}` })) } }
+    : accepted(url, body)));
+  const logged: string[] = [];
+  const sender = createSender({ log: (line) => { logged.push(line); }, gone: () => {}, request });
+  const messages = Array.from({ length: 301 }, (_one, at) => toPhone(`ExponentPushToken[${String(at)}]`));
+  await sender.send(messages);
+  expect(calls.filter((one) => one.url === ENDPOINT).map((one) => (one.body as unknown[]).length)).toEqual([100, 100, 100, 1]);
+
+  await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
+  const asked = (): string[][] => calls.filter((one) => one.url === RECEIPTS).map((one) => (one.body as { ids: string[] }).ids);
+  await vi.waitFor(() => { expect(asked().map((ids) => ids.length)).toEqual([300, 1]); });
+  expect(asked().flat()).toEqual(messages.map((one) => `ticket-${one.to}`));
+  expect(logged).toEqual([]);
 });

@@ -128,6 +128,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       }
     },
   });
+  host.registerClose(() => { sender.close(); });
 
   const contact = str(options['contact']);
   const webSender = vapid === undefined ? undefined : createWebSender({

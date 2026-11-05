@@ -25,8 +25,12 @@ import type { Vapid } from './vapid.js';
 /** The record size of the content coding, which RFC 8291 section 4 fixes. */
 const RECORD_SIZE = 4096;
 
-/** How long a push service keeps a message for a browser that is not connected. */
-export const TTL = 86_400;
+/**
+ * How long a push service keeps a message for a browser that is not connected,
+ * in seconds: four weeks, the web-push library's default.
+ * https://github.com/web-push-libs/web-push/blob/master/src/web-push-lib.js
+ */
+export const TTL = 2_419_200;
 
 /** The delimiter that says a record is the last of a message. */
 const LAST_RECORD = 0x02;

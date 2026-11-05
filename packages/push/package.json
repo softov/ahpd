@@ -75,7 +75,8 @@
       { "src": "./icon-dark.svg", "theme": "dark" }
     ],
     "contracts": {
-      "resourceProviders": ["push"]
+      "resourceProviders": ["push"],
+      "closers": ["the receipt reads still to come"]
     },
     "optionsSchema": {
       "type": "object",
