@@ -605,16 +605,18 @@ export function createSpawn(ctx: HostContext): Spawn {
   const approver = new CommandAutoApprover(splitForRules);
 
   /*
-   * The Plan call the host draws, one per turn.
+   * The task list call the host draws, one per turn.
    *
    * A plugin registers the lines and the host draws them: a call is opened in
    * every turn open when the plugin says the lines moved, rewritten on each
-   * later change, and completed as the turn ends - which is the shape the ACP
-   * bridge draws from its own entries, so a client that knows one knows the
-   * other. The line is kept from the change it was drawn for, because the
-   * completion carries what the call last showed, and a turn that ended while
-   * a read was running draws nothing at all: the turn's end is said as its
-   * backend says it, as the reference host says an agent's end of a turn.
+   * later change, and completed as the turn ends. It is named as VS Code
+   * shows an agent's task list, its todo call `TodoWrite`, "Update todo list".
+   * The line is kept from the change it was drawn for, because the completion
+   * carries what the call last showed, and a turn that ended while a read was
+   * running draws nothing at all: the turn's end is said as its backend says
+   * it, as the reference host says an agent's end of a turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L160
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
    */
   const planCallId = (turn: string): string => `${turn}:plan`;
@@ -635,7 +637,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       toolCallId: planCallId(turn),
       result: {
         success: true,
-        pastTenseMessage: 'Plan',
+        pastTenseMessage: 'Update todo list',
         ...(held.content.length === 0 ? {} : { content: held.content }),
       },
     });
@@ -673,8 +675,8 @@ export function createSpawn(ctx: HostContext): Spawn {
       const previous = drawnPlans.get(chat);
       if (previous === undefined || previous.turn !== turn) {
         drawnPlans.set(chat, { turn, content });
-        dispatch(chat, { type: 'chat/toolCallStart', turnId: turn, toolCallId: planCallId(turn), toolName: 'plan', displayName: 'Plan' });
-        dispatch(chat, { type: 'chat/toolCallReady', turnId: turn, toolCallId: planCallId(turn), invocationMessage: 'Plan', confirmed: 'not-needed' });
+        dispatch(chat, { type: 'chat/toolCallStart', turnId: turn, toolCallId: planCallId(turn), toolName: 'TodoWrite', displayName: 'Update todo list' });
+        dispatch(chat, { type: 'chat/toolCallReady', turnId: turn, toolCallId: planCallId(turn), invocationMessage: 'Update todo list', confirmed: 'not-needed' });
       }
       else {
         previous.content = content;

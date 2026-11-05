@@ -17,7 +17,7 @@ import type { ClientCalls } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool, ToolCall } from '../src/types/host.js';
-import type { LoaderContext } from '../src/types/plugin.js';
+import type { LoaderContext, ServedPlan } from '../src/types/plugin.js';
 import type { PlanUpdate, Session } from '../src/types/session.js';
 import type { SessionAction, SessionInputRequest, SessionState } from '@microsoft/agent-host-protocol';
 import type { Grant, Principal, Users } from '../src/types/users.js';
@@ -3102,6 +3102,40 @@ describe('a customization switched for one session', () => {
  * the event is the seam: a plugin hears the list once, with the session it
  * belongs to, without either side learning the other's format.
  */
+/*
+ * The task list a plugin serves is drawn in each open turn as VS Code shows an
+ * agent's task list: its todo call, `TodoWrite`, "Update todo list".
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L160
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
+ */
+describe('a task list a plugin serves', () => {
+  it('is drawn in an open turn as VS Code\'s todo call, and completed with the turn', async () => {
+    const plan: ServedPlan = { by: 'tasks', read: async () => ['one', 'two'] };
+    const host = createHost({ path: tmpdir(), agents: [echo({ path: tmpdir(), pace: 40 })], plan });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/todo';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    const chat = chatUriFor(uri);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } } },
+    });
+    await settle();
+    await plan.changed?.(uri);
+    const said = (): Record<string, unknown>[] => actions(p, chat).map((e) => e.action);
+    const ofCall = (type: string) => said().find((one) => one.type === type && one.toolCallId === 't1:plan');
+    expect(ofCall('chat/toolCallStart')).toMatchObject({ toolName: 'TodoWrite', displayName: 'Update todo list' });
+    expect(ofCall('chat/toolCallReady')).toMatchObject({ invocationMessage: 'Update todo list' });
+    for (let tries = 0; tries < 200 && !said().some((one) => one.type === 'chat/turnComplete'); tries += 1) {
+      await new Promise((r) => { setTimeout(r, 10); });
+    }
+    expect(ofCall('chat/toolCallComplete')?.result).toMatchObject({ success: true, pastTenseMessage: 'Update todo list' });
+  });
+});
+
 describe('a harness list handed to the host', () => {
   const ana: Principal = { id: 'ana', roles: [], can: () => true };
 
