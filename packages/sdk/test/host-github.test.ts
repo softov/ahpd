@@ -286,7 +286,7 @@ describe('what a session recorded', () => {
   };
   const add = (index: number, label: string, link: string) => toolsOf(index)['add_artifact_or_reference']?.handler({ items: [{ type: 'website', label, isArtifact: false, link }] });
   const toolsOf = (index: number) => Object.fromEntries(
-    ((sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).ahp?.tools ?? [])
+    ((sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 
@@ -486,7 +486,7 @@ describe('the pull request a create-pr recorded', () => {
   }
 
   const toolsOf = () => Object.fromEntries(
-    ((sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).ahp?.tools ?? [])
+    ((sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 

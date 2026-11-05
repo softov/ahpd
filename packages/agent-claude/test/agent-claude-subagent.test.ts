@@ -442,7 +442,7 @@ it('asks a client to run a worker\'s call on the worker\'s chat', async () => {
     message: {
       id: 'msg-worker-open',
       role: 'assistant',
-      content: [{ type: 'tool_use', id: 'toolu_open', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      content: [{ type: 'tool_use', id: 'toolu_open', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
     },
   });
   await settle();

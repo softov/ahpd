@@ -1316,7 +1316,7 @@ describe('a chat another backend serves', () => {
     await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
     await settle(8);
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.ahp?.tools.find((one) => one.name === 'make_chat');
+    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat');
     if (tool === undefined) throw new Error('no make_chat');
     const made = await tool.handler({ provider: 'other', prompt: 'say hi' });
     if (made.isError === true) throw new Error(made.content[0]?.text ?? 'make_chat failed');

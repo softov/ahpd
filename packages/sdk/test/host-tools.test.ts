@@ -115,9 +115,9 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    // Under a name of this host's, beside whatever the settings files declared.
-    expect(Object.keys(servers)).toContain('ahp');
-    const listing = servers.ahp?.tools.find((one) => one.name === 'list_sessions');
+    // On the host's in-process server, beside whatever the settings files declared.
+    expect(Object.keys(servers)).toContain('host');
+    const listing = servers.host?.tools.find((one) => one.name === 'list_sessions');
     expect(listing?.description).toContain('List sessions');
 
     // And calling one answers about this host, which is the whole reason a
@@ -142,7 +142,7 @@ describe('tools the host contributes', () => {
     type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
     const toolsOf = (index = -1): Record<string, Tool> => {
       const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-      return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+      return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
     };
     // A refusal is a tool result too: the backend hands the model the message
     // as text, marked as an error, which is how a model learns what it got wrong.
@@ -314,7 +314,7 @@ describe('tools the host contributes', () => {
       // the hint that says so is the host's own: the backend turns it into the
       // eager flag a harness reads, and the published definition never carries it.
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
-      expect(servers.ahp?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
+      expect(servers.host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
       // Every other tool is offered, the artifact one included: the strategy
       // shapes rename_chat alone.
       expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
@@ -489,7 +489,7 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_resource')
+    const said = await servers.host?.tools.find((one) => one.name === 'ahp_resource')
       ?.handler({ uri: 'virtual://plugin/notes.md' });
     // Decoded, because a tool result is text and the model reads it.
     expect(said?.content[0]?.text).toBe('done');
@@ -507,7 +507,7 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    const said = await servers.host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
     expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
   });
 
@@ -536,7 +536,7 @@ describe('tools the host contributes', () => {
         const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
         }> | undefined;
-        const tool = servers?.ahp?.tools.find((one) => one.name === 'who');
+        const tool = servers?.host?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
       return { client, person };
@@ -1238,13 +1238,13 @@ describe('tools a client contributes', () => {
     return held;
   }
 
-  /** The tools the session is offering the model right now. */
+  /** The clients' tools the session is offering the model right now. */
   const offered = () => (sessionQueries().at(-1)?.options.mcpServers as Record<string, {
     tools: {
       name: string; description: string;
       handler: (input: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
     }[];
-  }> | undefined)?.ahp?.tools ?? [];
+  }> | undefined)?.client?.tools ?? [];
 
   it('offers what a client announced to the model, under a name of its own', async () => {
     const { client, chatUri } = await providing();
@@ -1278,17 +1278,17 @@ describe('tools a client contributes', () => {
         id: 'm1',
         content: [{
           type: 'tool_use', id: 'call-1',
-          name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' },
+          name: 'mcp__client__probe__openFile', input: { path: '/a.txt' },
         }],
       },
     });
 
     /*
-     * A client contributor, not this host's MCP server.
+     * A client contributor, not an MCP server's.
      *
-     * The tools a client provides ride this host's own in-process server, so
-     * by name they all look like `mcp__ahp__*` - and reporting one as this
-     * host's contribution would tell every client that the call is nobody's
+     * The tools a client provides ride this host's in-process `client` server,
+     * so by name they look like an MCP server's - and reporting one as a
+     * server's contribution would tell every client that the call is nobody's
      * to answer, including the one whose call it is.
      */
     const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
@@ -1338,7 +1338,7 @@ describe('tools a client contributes', () => {
         event: {
           type: 'content_block_start',
           index: 0,
-          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: {} },
+          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: {} },
         },
       },
     );
@@ -1358,7 +1358,7 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/gone' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/gone' } }],
       },
     });
     sdk.toolUseIds.push('call-1');
@@ -1401,7 +1401,7 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
     sdk.toolUseIds.push('call-1');
@@ -1453,7 +1453,7 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
     sdk.toolUseIds.push('call-1');
@@ -1499,7 +1499,7 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
     sdk.toolUseIds.push('call-1');
@@ -1555,7 +1555,7 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
     sdk.toolUseIds.push('call-1');
@@ -1579,7 +1579,7 @@ describe('tools a client contributes', () => {
 
   /** The model making a call of a client's tool, by the id the CLI knows it by. */
   const used = (id: string, input: Bag = { path: '/a.txt' }) => ({
-    type: 'tool_use', id, name: 'mcp__ahp__probe__openFile', input,
+    type: 'tool_use', id, name: 'mcp__client__probe__openFile', input,
   });
 
   it('raises the call on the session, and takes the entry down with the answer', async () => {
@@ -1876,7 +1876,7 @@ describe('tools a client contributes', () => {
      * assistant frame is read. Nothing has reported the call, so the approval
      * is the only thing that can raise the entry.
      */
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     expect(await askedToRun(client, uri)).toEqual([]);
     // The question opens the call, and its start names the client that runs it.
@@ -1915,7 +1915,7 @@ describe('tools a client contributes', () => {
     const { client, peer: p, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
     let decided: unknown;
-    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
+    void sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
       ?.then((one) => { decided = one; });
     await settle();
     /*
@@ -1953,7 +1953,7 @@ describe('tools a client contributes', () => {
     sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     // The question takes it back: while a person decides, no client is being
     // asked to run the tool.
@@ -1977,7 +1977,7 @@ describe('tools a client contributes', () => {
     sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    void sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
     decided(client, chatUri, false);
@@ -2004,7 +2004,7 @@ describe('tools a client contributes', () => {
     await settle();
     // A call a person is being asked about, and never answered: the turn is
     // stopped while both waits stand.
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
     client.handle({

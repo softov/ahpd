@@ -497,14 +497,15 @@ A client announces what it can run on `SessionActiveClient.tools`, and the
 protocol makes that client responsible for executing the call and dispatching
 its result. Three things about serving that are not obvious from the types.
 
-**They ride this host's own MCP server.** The harness reaches a contributed
-tool through `createSdkMcpServer`, so a client's tools and this host's arrive at
-the model in one in-process server named `ahp`. By name they are all
-`mcp__ahp__*`, which means the server they came through cannot say whose they
-are - so the call's `contributor` is a `ToolCallClientContributor` looked up
-from the announcement rather than the `ToolCallMcpContributor` the name implies.
-A client's own beats the server it is offered through, or every client would be
-told the call is nobody's to answer, including the one whose call it is.
+**They ride an in-process MCP server.** The harness reaches a contributed tool
+through `createSdkMcpServer`: a client's tools on the in-process server named
+`client` and this host's on the one named `host`, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L11-L21)
+names its two. By name a client's tool is `mcp__client__*`, which reads like an
+MCP server's - so the call's `contributor` is a `ToolCallClientContributor`
+looked up from the announcement rather than the `ToolCallMcpContributor` the
+name implies. A client's own beats the server it is offered through, or every
+client would be told the call is nobody's to answer, including the one whose
+call it is.
 
 **A client's are named `<clientId>__<name>`.** Two clients in one session may
 both provide `openFile` and the model is offered one list. The call a client

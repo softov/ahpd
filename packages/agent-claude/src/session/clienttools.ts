@@ -46,7 +46,23 @@ const namedBy = (extra: unknown): string | undefined => {
 };
 
 /**
- * The host's tools, as an in-process MCP server the CLI can call.
+ * The in-process server a client's tools ride, by VS Code's Claude's name for
+ * it: the CLI calls one of them `mcp__client__<name>`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L80-L85
+ */
+export const CLAUDE_CLIENT_MCP_SERVER_NAME = 'client';
+
+/**
+ * The in-process server the host's own tools ride, by VS Code's Claude's name
+ * for it: the CLI calls one of them `mcp__host__<name>`. Apart from the
+ * clients' server because the two run apart, a client's tool round-tripped to
+ * the client and the host's run here.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L11-L21
+ */
+export const CLAUDE_SERVER_TOOL_MCP_SERVER_NAME = 'host';
+
+/**
+ * One in-process MCP server the CLI can call, carrying `tools`.
  *
  * In-process: `createSdkMcpServer` registers the handlers here rather than
  * spawning anything, so a host tool is a function call. The result is handed
@@ -54,11 +70,12 @@ const namedBy = (extra: unknown): string | undefined => {
  * image and its file as well as its words.
  */
 export const contributed = (
+  name: string,
   tools: BoundTool[],
   /** Hand the call the CLI named to the client that provides it, and wait for what it says. */
   byClient: (tool: BoundTool, toolUseId: string) => Promise<ClientCallAnswer>,
 ): unknown => createSdkMcpServer({
-  name: 'ahp',
+  name,
   version: '1.0.0',
   tools: tools.map((one) => {
     const schema = one.definition.inputSchema;
@@ -200,15 +217,15 @@ export interface ClientTools {
    * The tools handed since the CLI was last given a set, given to the running
    * CLI before a turn's prompt; a refusal rejects, the set kept for the next.
    *
-   * `ahp` goes out in two declarations, because the SDK connects only a server
-   * name it has not registered yet and `ahp` was registered when the session
-   * started: the first call leaves it out, which is what makes the SDK
-   * disconnect it, and the second carries the new one, which is what makes the
-   * SDK connect that. A list with nothing in it is the first call alone, there
-   * being no server to add back, and a session with no `ahp` yet is the second
-   * alone. Each declaration is kept only once the SDK has taken it, so a
-   * removal that took and an add that did not leaves the session holding the
-   * set without `ahp`.
+   * The two in-process servers go out in two declarations, because the SDK
+   * connects only a server name it has not registered yet and they were
+   * registered when the session started: the first call leaves them out, which
+   * is what makes the SDK disconnect them, and the second carries the new ones,
+   * which is what makes the SDK connect those. A list with nothing in it is the
+   * first call alone, there being no server to add back, and a session with
+   * neither server yet is the second alone. Each declaration is kept only once
+   * the SDK has taken it, so a removal that took and an add that did not
+   * leaves the session holding the set without them.
    */
   rebindForClientTools: () => Promise<void>;
   /** The one place this chat's client calls are held, for the snapshot and above. */
@@ -222,11 +239,12 @@ export interface ClientTools {
 }
 
 export function createClientTools(ctx: SessionContext): ClientTools {
-  /** The full name the CLI calls a contributed tool by. */
-  const called = (name: string): string => `mcp__ahp__${name}`;
-  /** The tool of a client's this session has on offer, as it is offered. */
+  /** The full name the CLI calls a contributed tool by, on the server it rides. */
+  const called = (tool: BoundTool): string =>
+    `mcp__${tool.owner === undefined ? CLAUDE_SERVER_TOOL_MCP_SERVER_NAME : CLAUDE_CLIENT_MCP_SERVER_NAME}__${tool.definition.name}`;
+  /** The tool this session has on offer, as it is offered. */
   const offered = (toolName: string): BoundTool | undefined =>
-    ctx.offering.find((one) => called(one.definition.name) === toolName);
+    ctx.offering.find((one) => called(one) === toolName);
 
   /**
    * The tools the session's clients provide now: the set the host handed last,
@@ -422,7 +440,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   const ranByClient = async (tool: BoundTool, toolUseId: string): Promise<ClientCallAnswer> => {
     // The call this handler is for, by the CLI's own name for it, so it waits
     // for that call to be opened and never for somebody else's.
-    const joined = await untilOpen(toolUseId, called(tool.definition.name));
+    const joined = await untilOpen(toolUseId, called(tool));
     /*
      * Nothing to wait on: the call was refused, or the turn it was in stopped.
      * An answer rather than a throw, because a handler that rejects is a
@@ -437,11 +455,19 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     a.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n')
     === b.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
 
-  /** The declared servers with `ahp` carrying `tools`, or without it for none. */
+  /**
+   * The declared servers with the two in-process ones carrying `tools`: a
+   * client's on the clients' server, the host's own on the host's, and either
+   * left out when it carries none.
+   */
   const declaring = (tools: BoundTool[]): Record<string, Bag> => {
     const declared: Record<string, Bag> = { ...ctx.declared };
-    delete declared.ahp;
-    if (tools.length > 0) declared.ahp = contributed(tools, ranByClient) as Bag;
+    delete declared[CLAUDE_CLIENT_MCP_SERVER_NAME];
+    delete declared[CLAUDE_SERVER_TOOL_MCP_SERVER_NAME];
+    const clients = tools.filter((one) => one.owner !== undefined);
+    const hosts = tools.filter((one) => one.owner === undefined);
+    if (clients.length > 0) declared[CLAUDE_CLIENT_MCP_SERVER_NAME] = contributed(CLAUDE_CLIENT_MCP_SERVER_NAME, clients, ranByClient) as Bag;
+    if (hosts.length > 0) declared[CLAUDE_SERVER_TOOL_MCP_SERVER_NAME] = contributed(CLAUDE_SERVER_TOOL_MCP_SERVER_NAME, hosts, ranByClient) as Bag;
     return declared;
   };
 
@@ -459,14 +485,14 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     ctx.toolDiff = undefined;
     const next = takes(handed);
     if (same(ctx.offering, next)) return;
-    // Without `ahp`: the declaration the SDK disconnects the old one on.
+    // Without the in-process servers: the declaration the SDK disconnects the old ones on.
     const removed = declaring([]);
     const declared = declaring(next);
     try {
-      if (ctx.declared.ahp !== undefined) {
+      if (ctx.offering.length > 0) {
         await ctx.handle.setMcpServers(removed as never);
         // Gone from the CLI now, so what this session holds is the set
-        // without it, whatever the second declaration answers.
+        // without them, whatever the second declaration answers.
         ctx.offering = [];
         ctx.declared = removed;
       }
@@ -537,7 +563,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     clientGone: (clientId) => {
       const why = `The client ${clientId} that was running the tool is no longer here`;
       for (const [id, waiting] of asked) {
-        const here = waiting.filter((one) => one.tool.startsWith(called(`${clientId}__`)));
+        const here = waiting.filter((one) => one.tool.startsWith(`mcp__${CLAUDE_CLIENT_MCP_SERVER_NAME}__${clientId}__`));
         if (here.length === 0) continue;
         for (const one of here) one.go({ refused: why });
         const rest = waiting.filter((one) => !here.includes(one));

@@ -23,7 +23,7 @@ const sdk = vi.hoisted(() => ({
   landed: {} as Record<string, { tools?: unknown[] }>,
   /** Calls the CLI has not answered yet, oldest first. */
   unanswered: [] as (() => void)[],
-  /** Each prompt the CLI read, with how many tools of the `ahp` server it had then. */
+  /** Each prompt the CLI read, with how many tools of the `client` server it had then. */
   read: [] as { text: string; tools: number }[],
   feed: { held: [] as Record<string, unknown>[], wake: undefined as (() => void) | undefined },
   reset() {
@@ -53,7 +53,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       : (content as { text?: string }[]).map((block) => block.text ?? '').join('');
     void (async () => {
       for await (const message of given.prompt) {
-        sdk.read.push({ text: textOf(message.message.content), tools: sdk.landed.ahp?.tools?.length ?? 0 });
+        sdk.read.push({ text: textOf(message.message.content), tools: sdk.landed.client?.tools?.length ?? 0 });
       }
     })();
     const wake = async (): Promise<void> => {

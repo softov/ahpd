@@ -150,7 +150,7 @@ async function world(over: Partial<HostOptions> = {}, contribution?: Contributio
 /** The tools the last started session was handed, by name. */
 const toolsOf = (): Record<string, Tool> => {
   const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-  return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+  return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
 };
 
 /** Call one tool the way the model does, and answer what it said. */

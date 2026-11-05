@@ -70,8 +70,8 @@ export function createStream(ctx: SessionContext): Stream {
    * A call of a server the session lists no customization for names none.
    *
    * A client's own beats the server it is offered through: the tools a client
-   * provides reach the model on this host's in-process server, so by name they
-   * all look like `mcp__ahp__*`. And it is said at the start, because the start
+   * provides reach the model on this host's in-process `client` server, so by
+   * name they look like `mcp__client__*`. And it is said at the start, because the start
    * is where the protocol establishes who runs a call; a later contributor may
    * refine an MCP server's but never make a call a client's.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318

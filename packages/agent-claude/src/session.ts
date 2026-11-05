@@ -5,7 +5,7 @@ import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
-import { contributed, createClientTools, takes } from './session/clienttools.js';
+import { createClientTools } from './session/clienttools.js';
 import { createConfig, listsOf } from './session/config.js';
 import type { ClaudeSessionOptions, Owed, SessionContext } from './session/context.js';
 import { createLogins } from './session/logins.js';
@@ -67,7 +67,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
     turnEffort: undefined as string | undefined,
-    offering: takes((options.tools ?? []) as BoundTool[]),
+    offering: [] as BoundTool[],
     handle: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
@@ -108,7 +108,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     startedWith: '',
     draft: undefined as Bag | undefined,
     beginning: undefined as string | undefined,
-    toolDiff: undefined as BoundTool[] | undefined,
+    // The tools the session was built with, which the first CLI is given.
+    toolDiff: (options.tools ?? []) as BoundTool[] | undefined,
     turns: [...(options.seed ?? [])] as Bag[],
     self: undefined as unknown as Session,
   } as SessionContext;
@@ -150,15 +151,15 @@ export function createSession(options: ClaudeSessionOptions): Session {
   if (ctx.settings.shellInitScripts !== undefined) ctx.setShellInit(ctx.settings.shellInitScripts);
 
   /*
-   * The host's own tools, as an MCP server the CLI does not have to find.
+   * The host's own tools and the clients', as the two in-process MCP servers
+   * the CLI does not have to find.
    *
    * `createSdkMcpServer` runs in this process rather than spawning anything,
-   * so a host tool is a function call and not a subprocess. Named `ahp`
-   * because that is what a client sees the tools attributed to. Declared once
-   * at construction so `setMcpServers` keeps it: that call replaces the whole
-   * set, and a set rebuilt without this would take the host's tools away.
+   * so a host tool is a function call and not a subprocess. Declared at
+   * construction so `setMcpServers` keeps them: that call replaces the whole
+   * set, and a set rebuilt without them would take the tools away.
    */
-  if (ctx.offering.length > 0) ctx.declared.ahp = contributed(ctx.offering, ctx.ranByClient) as Bag;
+  ctx.buildClientMcpServers();
 
   // ------------------------------------------------------------------ the run
   // The login the first CLI signs in with, which the query's environment reads.

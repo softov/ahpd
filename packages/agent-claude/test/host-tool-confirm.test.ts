@@ -55,7 +55,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 /** The name the CLI calls a contributed tool by. */
-const CALLED = 'mcp__ahp__post_message';
+const CALLED = 'mcp__host__post_message';
 
 /** A host tool as the bind hands it to a backend. */
 const offered = (over: Partial<BoundTool> = {}): BoundTool => ({

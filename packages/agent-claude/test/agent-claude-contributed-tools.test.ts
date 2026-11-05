@@ -35,21 +35,22 @@ const offeredTool = (name: string, owner = 'probe'): BoundTool => ({
  * none.
  *
  * Only the fields `setTools` reads are here. `declared` starts as a session's
- * does: the host's own server, and no `ahp` - `session.ts` declares that one
- * from `ctx.offering`, so a session built with nothing contributed has none.
- * A case that wants an `ahp` to move declares one with a first change, which
- * is one declaration; every change after that is two.
+ * does: a server the host was given by a person, and neither in-process
+ * server - `session.ts` declares those from the tools the session was built
+ * with, so a session built with none has neither. A case that wants one to
+ * move declares it with a first change, which is one declaration; every
+ * change after that is two.
  */
 const session = () => {
   /** Which of the declarations refuse: all of them, the `n`th, or none. */
   let refuse: 'all' | number | undefined;
   let made = 0;
   const sent: Record<string, Bag>[] = [];
-  const hostServer = { type: 'sdk', name: 'host' } as Bag;
+  const filesServer = { type: 'sdk', name: 'files' } as Bag;
   const ctx = {
     options: { chatUri: 'ahp-chat:/contributed' },
     emit: () => {},
-    declared: { host: hostServer } as Record<string, Bag>,
+    declared: { files: filesServer } as Record<string, Bag>,
     offering: [] as BoundTool[],
     toolDiff: undefined as BoundTool[] | undefined,
     handle: {
@@ -81,12 +82,12 @@ it('sends a list the SDK refused again when the same list comes back', async () 
   held.refusing(true);
   const list = [offeredTool('openFile')];
   expect(await held.setTools(list)).toBe(false);
-  // No `ahp` yet, so the one declaration is the one that adds it, and it
-  // refused: nothing went out, and what is held is what it was, the host's
-  // own server still beside it.
+  // No in-process server yet, so the one declaration is the one that adds it,
+  // and it refused: nothing went out, and what is held is what it was, the
+  // person's server still beside it.
   expect(held.sent).toEqual([]);
   expect(held.state().offering).toEqual([]);
-  expect(Object.keys(held.state().declared)).toEqual(['host']);
+  expect(Object.keys(held.state().declared)).toEqual(['files']);
 
   held.refusing(false);
   expect(await held.setTools(list)).toBe(true);
@@ -106,44 +107,45 @@ it('does not send a list the SDK took when it comes again', async () => {
 
 /*
  * The order is the whole of it: the SDK connects only a name it has not
- * registered, and `ahp` is registered from the session's start. A declaration
- * that carries it is taken for the server already there, so only the one that
- * leaves it out makes the SDK let it go.
+ * registered, and the in-process servers are registered from the session's
+ * start. A declaration that carries one is taken for the server already
+ * there, so only the one that leaves it out makes the SDK let it go.
  */
-it('removes the ahp server first, then declares it again with the new tools', async () => {
+it('removes the in-process servers first, then declares them again with the new tools', async () => {
   const held = session();
-  // A session with no `ahp` yet has nothing to remove: one declaration.
+  // A session with no in-process server yet has nothing to remove: one declaration.
   expect(await held.setTools([offeredTool('openFile')])).toBe(true);
   expect(held.sent).toHaveLength(1);
   expect(await held.setTools([offeredTool('openFile'), offeredTool('closeFile')])).toBe(true);
   expect(held.sent).toHaveLength(3);
-  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['host']);
-  expect(Object.keys(held.sent[2] as Record<string, Bag>).sort()).toEqual(['ahp', 'host']);
+  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['files']);
+  expect(Object.keys(held.sent[2] as Record<string, Bag>).sort()).toEqual(['client', 'files']);
 });
 
-it('declares one set, with no ahp in it, when the list is emptied', async () => {
+it('declares one set, with neither in-process server in it, when the list is emptied', async () => {
   const held = session();
   expect(await held.setTools([offeredTool('openFile')])).toBe(true);
   expect(await held.setTools([])).toBe(true);
   // Two declarations in all: the add of the first change, then the removal
   // alone - an empty list has no server to add back.
   expect(held.sent).toHaveLength(2);
-  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['host']);
+  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['files']);
   expect(held.state().offering).toEqual([]);
 });
 
-it('holds the set without ahp when the declaration that adds it back is refused', async () => {
+it('holds the set without the in-process servers when the declaration that adds them back is refused', async () => {
   const held = session();
   const first = [offeredTool('openFile')];
   expect(await held.setTools(first)).toBe(true);
   held.refusingAt(2);
   expect(await held.setTools([offeredTool('closeFile')])).toBe(false);
-  // The removal went through and the re-add did not, so the CLI has no `ahp`,
-  // and the session holds just that rather than the list it no longer offers.
+  // The removal went through and the re-add did not, so the CLI has neither
+  // server, and the session holds just that rather than the list it no longer
+  // offers.
   expect(held.sent).toHaveLength(2);
-  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['host']);
+  expect(Object.keys(held.sent[1] as Record<string, Bag>)).toEqual(['files']);
   expect(held.state().offering).toEqual([]);
-  expect(Object.keys(held.state().declared)).toEqual(['host']);
+  expect(Object.keys(held.state().declared)).toEqual(['files']);
   // So the first list coming back is a change to send, and not one taken.
   held.refusing(false);
   expect(await held.setTools(first)).toBe(true);
@@ -157,27 +159,47 @@ it('holds the set without ahp when the declaration that adds it back is refused'
  * Claude has its own question tool, and the plan
  * `host/20261103-1620-an-agent-asks-the-person` leaves it on that for now. The
  * host's `ask_user` is therefore never declared, so the model is never offered
- * `mcp__ahp__ask_user` beside the question tool it already has.
+ * `mcp__host__ask_user` beside the question tool it already has.
  */
 it('does not take the host\'s ask_user, because it asks with its own tool', async () => {
   const held = session();
-  expect(await held.setTools([offeredTool('ask_user'), offeredTool('openFile')])).toBe(true);
-  // The server the CLI was given, which is what it registers as `mcp__ahp__*`.
+  const askUser = { definition: { name: 'ask_user', description: 'ask_user', inputSchema: { type: 'object', properties: {} } } } as unknown as BoundTool;
+  expect(await held.setTools([askUser, offeredTool('openFile')])).toBe(true);
+  // The server the CLI was given, which is what it registers as `mcp__client__*`.
   const tools = seen.given?.tools as { name: string }[];
   expect(tools.map((one) => one.name)).toEqual(['openFile']);
   expect(held.state().offering.map((one) => one.definition.name)).toEqual(['openFile']);
 
-  // A list of nothing but ask_user leaves the session with no `ahp` at all.
-  expect(await held.setTools([offeredTool('ask_user')])).toBe(true);
+  // A list of nothing but ask_user leaves the session with neither in-process server.
+  expect(await held.setTools([askUser])).toBe(true);
   expect(held.state().offering).toEqual([]);
-  expect(Object.keys(held.state().declared)).toEqual(['host']);
+  expect(Object.keys(held.state().declared)).toEqual(['files']);
 });
 
-it('declares the set whole, so a re-declare cannot take the host server away', async () => {
+it('declares the set whole, so a re-declare cannot take a person\'s server away', async () => {
   const held = session();
   await held.setTools([offeredTool('openFile')]);
   const set = held.sent.at(-1) as Record<string, Bag>;
-  expect(Object.keys(set).sort()).toEqual(['ahp', 'host']);
-  expect((set.ahp as { name: string }).name).toBe('ahp');
-  expect(seen.given?.name).toBe('ahp');
+  expect(Object.keys(set).sort()).toEqual(['client', 'files']);
+  expect((set.client as { name: string }).name).toBe('client');
+  expect(seen.given?.name).toBe('client');
+});
+
+/*
+ * Two in-process servers, by VS Code's Claude's names: a client's tools on
+ * `client`, round-tripped to the client, and the host's own on `host`, run
+ * here, so the model calls them `mcp__client__<name>` and `mcp__host__<name>`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L80-L85
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L11-L21
+ */
+it('offers a client\'s tools on the client server and the host\'s own on the host server', async () => {
+  const held = session();
+  const hostTool = { definition: { name: 'list_sessions', description: 'List', inputSchema: { type: 'object', properties: {} } }, run: () => '' } as unknown as BoundTool;
+  expect(await held.setTools([offeredTool('openFile'), hostTool])).toBe(true);
+  const set = held.sent.at(-1) as Record<string, { name: string; tools: { name: string }[] }>;
+  expect(Object.keys(set).sort()).toEqual(['client', 'files', 'host']);
+  expect(set.client?.name).toBe('client');
+  expect(set.client?.tools.map((one) => one.name)).toEqual(['openFile']);
+  expect(set.host?.name).toBe('host');
+  expect(set.host?.tools.map((one) => one.name)).toEqual(['list_sessions']);
 });

@@ -43,7 +43,7 @@ const handlerFor = (name: string): ((input: Bag, extra: unknown) => Promise<unkn
 
 /** A session with one client's tool offered, and the client-tools area over it. */
 const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
-  const declared: Record<string, Bag> = { host: { type: 'sdk', name: 'host' } };
+  const declared: Record<string, Bag> = { files: { type: 'sdk', name: 'files' } };
   const ctx = {
     options: { chatUri: 'ahp-chat:/probe' },
     emit: () => {},
@@ -105,7 +105,7 @@ it('refuses a handler whose tool is no longer on offer when the frame arrives', 
   // The tool is taken away - its client left - without `clientGone` being told,
   // and then the frame for the call is reported for a tool nothing offers.
   ctx.offering = [];
-  tools.openCall('mcp__ahp__probe__openFile', 't1', 'call-1', 'Open it', '{"path":"/a.txt"}');
+  tools.openCall('mcp__client__probe__openFile', 't1', 'call-1', 'Open it', '{"path":"/a.txt"}');
   const answer = await answering as { content: { text: string }[]; isError?: boolean };
   expect(answer.isError).toBe(true);
   expect(answer.content[0]?.text).toContain('Nothing here offers');
@@ -125,7 +125,7 @@ it('leaves another client\'s waits alone when this one leaves', async () => {
 
   // And it ends the way it should: the frame opens the call, and the holder's
   // own `clientGone` never touched it.
-  tools.openCall('mcp__ahp__other__openFile', 't1', 'call-2', 'Open it', '{"path":"/a.txt"}');
+  tools.openCall('mcp__client__other__openFile', 't1', 'call-2', 'Open it', '{"path":"/a.txt"}');
   tools.calls.complete('call-2', 'other', { ok: true, text: 'opened', content: [{ type: 'text', text: 'opened' }] });
   const answer = await answering as { content: { text: string }[] };
   expect(answer.content[0]?.text).toBe('opened');
