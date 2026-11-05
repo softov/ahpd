@@ -2499,7 +2499,7 @@ resource write can carry neither an image nor a limit:
 | --- | --- |
 | `request_disposable_computer` | Start one. `image`, `cpus`, `memory` and `name` override what the host was configured with |
 | `release_computer` | Stop it and remove it. Nothing on it survives |
-| `computer_exec` | Run a command line inside it through `sh -lc` |
+| `run_in_computer` | Run a command line inside it through `sh -lc` |
 
 Each declares its `effects`, so a backend with a policy has something to ask a
 person on. Docker is the runtime that ships, chosen by `runtime`; the command,

@@ -101,7 +101,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
           ...(cpus === undefined ? {} : { cpus }),
           ...(memory === undefined ? {} : { memory }),
         });
-        return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with computer_exec.`;
+        return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with run_in_computer.`;
       }),
     },
     {
@@ -137,7 +137,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     },
     {
       definition: {
-        name: 'computer_exec',
+        name: 'run_in_computer',
         description: 'Run a shell command inside a disposable computer and answer what it printed and what it exited with.',
         inputSchema: {
           type: 'object',

@@ -1822,7 +1822,7 @@ export const isRunning = (machine: Machine): boolean =>
  * `a-dev-container-is-reached-by-docker-exec`.
  *
  * Kept under the machine id every road uses rather than under whichever id the
- * road happens to hold, so the three ways in - a create, `computer_exec` and the
+ * road happens to hold, so the three ways in - a create, `run_in_computer` and the
  * relay - read and write one entry for one computer. A probe that answered
  * nothing is not kept, so a container whose shell was not in place yet is
  * asked again rather than reached without an environment for the rest of its

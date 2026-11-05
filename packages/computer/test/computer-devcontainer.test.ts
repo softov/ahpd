@@ -442,12 +442,12 @@ it('keeps the working directory a caller asks for, mapped through the mounts', a
 /*
  * The tool a backend runs a command with, on the same road.
  *
- * `how` describes a spawn for a backend to make itself; `computer_exec` is the
+ * `how` describes a spawn for a backend to make itself; `run_in_computer` is the
  * daemon making it. Both go through the runtime, so both derive the same user
  * and the same environment - a machine reachable by one and not the other
  * would be a machine whose login shell depends on who asked.
  */
-it('runs `computer_exec` on it with the same flags a backend is reached with', async () => {
+it('runs `run_in_computer` on it with the same flags a backend is reached with', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -460,7 +460,7 @@ it('runs `computer_exec` on it with the same flags a backend is reached with', a
     encoding: 'utf-8',
   });
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   const ran = String(await tool.run({ id: 'box', command: 'node --version' }, {} as ToolCall));
   expect(ran).toContain('v22.14.0');
   expect(ran).toContain('exit 0');
@@ -1156,7 +1156,7 @@ it('gives a command run after the create a need\'s variable, as the container\'s
   // The variable is the container's own environment, which every `docker exec`
   // inherits: it is on the machine Docker holds, and on no command's flags.
   const id = String(opened.snapshot.state.config?.values?.computer ?? '').slice('computer://'.length);
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id, command: 'true' }, {} as ToolCall);
   const held = dockerHeld(dockerState) as DockerHeld & { machines: { env?: Record<string, string> }[] };
   expect(held.machines[0]?.env).toMatchObject({ ANTHROPIC_API_KEY: 'from-the-agent' });
@@ -1248,7 +1248,7 @@ it('keeps a vault-named need out of the override and every argv, and gives it on
   expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
 
   // A tool's command too.
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id, command: 'true' }, {} as ToolCall);
   expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
 
@@ -1298,7 +1298,7 @@ it('passes a remoteEnv value by name to every command, and keeps it out of the s
   spawnSync(how?.command as string, how?.args as string[], { encoding: 'utf8', env: { ...outer, ...how?.env } });
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
@@ -1535,7 +1535,7 @@ it('refuses a command in a container that is not running, with the daemon\'s sen
     calls: [],
   }));
   const { options: loaded } = await load(optionsOf(devState, dockerState));
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   const ran = String(await tool.run({ id: 'stopped', command: 'true' }, {} as ToolCall));
   expect(ran).toContain('container stopped is not running');
   expect(ran).toContain('exit 1');
@@ -1772,7 +1772,7 @@ it('reads the kept probe back after a restart, and runs no probe for it', async 
   expect(probes(dockerState)).toBe(1);
 
   const { options: later } = await load(options, [], configDir);
-  const tool = (later.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (later.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   expect(String(await tool.run({ id: 'box', command: 'true' }, {} as ToolCall))).toContain('exit 0');
   expect(probes(dockerState)).toBe(1);
   // And the command ran with what was kept.
@@ -1799,7 +1799,7 @@ it('keeps no probe that answered nothing, and probes again on the next command',
     : {};
   expect(kept.box?.probe).toBeUndefined();
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
   expect(probes(dockerState)).toBe(2);
   await answered(dockerState, 9);

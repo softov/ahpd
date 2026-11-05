@@ -204,7 +204,7 @@ it('makes a machine with the configured limits, uses it and releases it', async 
   expect(String(await by(tools, 'request_disposable_computer').run({ name: 'other', cpus: '4' }, at))).toContain('computer://other');
   expect(calls[1]).toBe('run other debian:bookworm-slim 4 2g ahpd.computer=1');
 
-  const ran = String(await by(tools, 'computer_exec').run({ id: 'box', command: 'echo hi' }, at));
+  const ran = String(await by(tools, 'run_in_computer').run({ id: 'box', command: 'echo hi' }, at));
   expect(ran).toContain('hello');
   expect(ran).toContain('exit 0');
   expect(calls).toContain('exec box sh -lc echo hi');
@@ -225,10 +225,10 @@ it('refuses past the maximum, a name already taken, and a machine it does not ha
   expect(String(await by(tools, 'request_disposable_computer').run({ name: 'two' }, at)))
     .toContain('most this host will have');
   expect(String(await by(tools, 'release_computer').run({ id: 'nope' }, at))).toContain('no computer called nope');
-  expect(String(await by(tools, 'computer_exec').run({ id: 'nope', command: 'true' }, at))).toContain('no computer called nope');
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'nope', command: 'true' }, at))).toContain('no computer called nope');
   // A call with nothing named is a sentence, not a throw: the model reads it.
   expect(String(await by(tools, 'release_computer').run({}, at))).toContain('Which computer?');
-  expect(String(await by(tools, 'computer_exec').run({ id: 'one' }, at))).toContain('What command?');
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'one' }, at))).toContain('What command?');
 });
 
 it('declares what each tool does, so a policy has something to ask on', () => {
@@ -236,7 +236,7 @@ it('declares what each tool does, so a policy has something to ask on', () => {
   const tools = computerTools(runtime, { ...options, label: 'l', prefix: 'p' });
   expect(by(tools, 'request_disposable_computer').effects).toEqual({ writes: true, network: true });
   expect(by(tools, 'release_computer').effects).toEqual({ destructive: true });
-  expect(by(tools, 'computer_exec').effects).toEqual({ writes: true, network: true, destructive: true });
+  expect(by(tools, 'run_in_computer').effects).toEqual({ writes: true, network: true, destructive: true });
 });
 
 /** A create body, as a client sends one. */

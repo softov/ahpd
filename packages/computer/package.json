@@ -88,7 +88,7 @@
         "x-ahpd/computers/restart",
         "x-ahpd/computers/remove"
       ],
-      "tools": ["request_disposable_computer", "release_computer", "computer_exec"],
+      "tools": ["request_disposable_computer", "release_computer", "run_in_computer"],
       "sessionConfigs": ["computer"],
       "ports": ["computers", "containers"],
       "closers": ["the up time of every running machine"]

@@ -1442,7 +1442,7 @@ it('gives a worktree session a git directory of its own, and runs the machine as
   // Every command into it, by a backend and by the tool, as the same user.
   const how = await loaded.computers?.how(box.name, { command: 'true' });
   expect(flagValue(how?.args ?? [], '--user')).toBe(ME);
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec');
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer');
   await tool?.run({ id: box.name, command: 'true' }, {} as never);
   expect((held(state) as Held & { commands?: { user?: string }[] }).commands?.at(-1)?.user).toBe(ME);
 

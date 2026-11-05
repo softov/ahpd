@@ -97,7 +97,7 @@ The map is read at each session's start rather than once when the host was built
 
 Off by default. Turned on with `advancedTools` in the configuration, `--advanced-tools` on the command line, or a root config push, which takes hold while the daemon runs./HOST.md).
 
-The three that declare it are the computer's: `request_disposable_computer`, which makes a machine, `release_computer`, which destroys one, and `computer_exec`, which runs a command inside one. `ahpd plugin list` is unaffected either way: it says what would load, which is a different question from what a session is offered.
+The three that declare it are the computer's: `request_disposable_computer`, which makes a machine, `release_computer`, which destroys one, and `run_in_computer`, which runs a command inside one. `ahpd plugin list` is unaffected either way: it says what would load, which is a different question from what a session is offered.
 
 `effects` is a different claim and is not a permission. `reads`, `writes`, `network` and `destructive` say what running the tool does, and a backend's policy reads them to decide what to ask a person about. The computer's three declare both: `effects` for the policy, `advancedPermission` for whether the host offers them at all.
 

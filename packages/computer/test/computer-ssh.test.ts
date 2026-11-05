@@ -806,7 +806,7 @@ it('refuses a command in the box when a value there is the vault own, and writes
 
   // The one check both roads go through: a command a tool runs, and the
   // descriptor a terminal or a backend spawning into the machine is given.
-  const tool = (options.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await expect(tool.run({ id: 'ssh.dev02', command: 'env' }, { provider: 'vaulted' } as never))
     .rejects.toThrow(new RegExp(`ssh.dev02 is off this host, and ${BOX_TOKEN} comes from the vault`));
   await expect(options.computers?.how('ssh.dev02', { command: 'env', provider: 'vaulted' }))

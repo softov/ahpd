@@ -92,7 +92,7 @@ it('serves computer: through the host and offers the three tools', async () => {
   expect(Object.keys(options.resourceProviders ?? {})).toEqual(['computer']);
   const tools = options.tools ?? [];
   expect(tools.map((one) => one.definition.name)).toEqual([
-    'request_disposable_computer', 'release_computer', 'computer_exec',
+    'request_disposable_computer', 'release_computer', 'run_in_computer',
   ]);
 
   // A machine is made by the tool, which is the only thing that makes one.

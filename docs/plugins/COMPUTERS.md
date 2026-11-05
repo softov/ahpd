@@ -309,7 +309,7 @@ pi's agent directory on this host is `PI_CODING_AGENT_DIR` when the daemon has i
 
 pi declares only the variables its provider list names. A variable that pi's own `models.json` names for a provider of its own is not declared, and a profile has no need to fill for it, so such a provider does not sign in inside a machine.
 
-**A key reaches only its own agent.** A value the vault fills for a need goes to the commands of the agent whose need declared it, and to no other agent on the machine: in a machine for pi and a Claude OpenRouter variant, pi's nested host gets `pi.ANTHROPIC_API_KEY`, and the variant's CLI does not. `computer_exec` gives a command the keys of the agent whose session called it, and only a command no agent runs, such as one through a dev container's relay, gets every agent's.
+**A key reaches only its own agent.** A value the vault fills for a need goes to the commands of the agent whose need declared it, and to no other agent on the machine: in a machine for pi and a Claude OpenRouter variant, pi's nested host gets `pi.ANTHROPIC_API_KEY`, and the variant's CLI does not. `run_in_computer` gives a command the keys of the agent whose session called it, and only a command no agent runs, such as one through a dev container's relay, gets every agent's.
 
 ### ACP agents in a machine
 
@@ -1001,7 +1001,7 @@ It needs the resolver because it runs the plugin's own source. Each line is the 
 
 ## The three tools
 
-`request_disposable_computer`, `release_computer` and `computer_exec` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
+`request_disposable_computer`, `release_computer` and `run_in_computer` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
 
 They are off until the daemon enables advanced tools:
 

@@ -1059,7 +1059,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
        * runs the user's login shell and its answer is kept beside the daemon's
        * configuration: the container this connect is about, not the command, and
        * under the machine id rather than the container id so the create and
-       * `computer_exec` read the same entry. A container the CLI made again is
+       * `run_in_computer` read the same entry. A container the CLI made again is
        * probed again, because the shell that answered last time is not the one
        * in there now - decision `a-dev-container-is-reached-by-docker-exec`.
        */
