@@ -80,13 +80,15 @@ A caller that wants only its own sessions sends `_meta: {'ahpd.owner': 'me'}`. T
 
 A session's config is the backend's schema, plus what this host answers, plus what a plugin contributed. The values are read back on the session, so a client draws its controls from the session and not from its own memory of what it sent.
 
+The properties come in the order VS Code's agent host composes them, which is the order a client draws them in: a computer plugin's `computer` and `isolation` first, then the backend's keys and the other plugins', then the rest of the table below in its order. A running session reports the same order.
+
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
 | `isolation` | `folder` or `worktree` | `folder` | Whether the agent works in the folder itself or in a worktree of its own. Offered only when the directory is a git repository |
 | `branch` | one of the repository's branches | the most recently committed one | The base a worktree starts from. A picker while the worktree is being made, a value you cannot open otherwise: a folder session works on the branch already checked out |
+| `worktreeBranchPrefix` | a string | empty | Prepended to the branch the worktree creates |
 | `worktreeIncludeFiles` | a list of patterns, in `.gitignore` syntax | none | Git-ignored files to copy into a worktree, such as `.env`. A comma-separated string is read as the list it spells |
 | `worktreeSymlinkFolders` | the same | none | Git-ignored folders to link into a worktree, such as `node_modules` |
-| `worktreeBranchPrefix` | a string | empty | Prepended to the branch the worktree creates |
 | `worktreeCreateNewBranch` | `true` or `false` | `true` | Make a branch for the worktree, or check out the chosen one as it is |
 | `worktreeBranchTrack` | `true` or `false` | `false` | Whether the branch it creates tracks the upstream of the one it started from |
 | `scope` | one of the person's memberships | their primary | Which team and project the session charges its work to. Offered only when there is a person to ask |

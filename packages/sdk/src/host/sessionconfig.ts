@@ -63,9 +63,9 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
         // being asked.
         isolation: 'folder',
         ...(base !== undefined ? { branch: base } : {}),
+        worktreeBranchPrefix: '',
         worktreeIncludeFiles: [],
         worktreeSymlinkFolders: [],
-        worktreeBranchPrefix: '',
         worktreeCreateNewBranch: 'true',
         worktreeBranchTrack: 'false',
       },
@@ -116,6 +116,23 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             },
           } : {}),
           /*
+           * A preference a client seeds rather than a person picks.
+           *
+           * `readOnly` in the reference too: it carries somebody's
+           * `git.branchPrefix`, which the client already holds, rather than a
+           * question to put in front of them. Declared so the value rides in
+           * the config bag at all; a key a host does not advertise is one a
+           * client has no reason to send.
+           */
+          worktreeBranchPrefix: {
+            type: 'string',
+            title: 'Branch prefix',
+            description: 'Prepended to the branch created for the worktree.',
+            default: '',
+            readOnly: true,
+            sessionMutable: false,
+          },
+          /*
            * The files a checkout does not carry, and the session needs.
            *
            * Load-bearing rather than a refinement: a worktree has what git
@@ -147,8 +164,8 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
            * with the checkout's; a link is one directory the agent can build
            * against immediately. What it costs is that a write into it is a
            * write into the checkout too, which is why only git-ignored folders
-           * are eligible - and why the control is `readOnly`, like the three
-           * below it: it carries a preference the client already holds rather
+           * are eligible, and why the control is `readOnly`, as the branch
+           * prefix is: it carries a preference the client already holds rather
            * than a question to put in front of somebody.
            *
            * Two passes rather than one, as the reference runs two: a folder
@@ -164,22 +181,10 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * Three a client seeds rather than a person picks.
-           *
-           * `readOnly` in the reference too: they carry a preference the
-           * client already holds - somebody's `git.branchPrefix`, and how they
-           * want a branch made - rather than a question to put in front of
-           * them. Declared so the value rides in the config bag at all; a key
-           * a host does not advertise is one a client has no reason to send.
+           * Two more a client seeds rather than a person picks: how somebody
+           * wants a branch made, which the client already holds. `readOnly`
+           * and declared for the reason the branch prefix is.
            */
-          worktreeBranchPrefix: {
-            type: 'string',
-            title: 'Branch prefix',
-            description: 'Prepended to the branch created for the worktree.',
-            default: '',
-            readOnly: true,
-            sessionMutable: false,
-          },
           worktreeCreateNewBranch: {
             type: 'string',
             title: 'Create a branch',
@@ -206,23 +211,27 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
-   * A form's properties, in the order a person fills them in.
-   *
-   * `computer` comes first: it is the machine the session runs on, and every
-   * other answer is about a session on it. This host's own keys come next, in
-   * the order `hosts` gives them, and everything else keeps the order it
-   * arrived in - another plugin's keys, then the backend's own.
+   * A config schema's properties, in the order the reference host composes
+   * them: the isolation key first, then the agent's own and every plugin's in
+   * the order they arrived, then this host's other keys (the branch, its
+   * prefix, the files and folders a worktree takes) in the order `hosts`
+   * gives them, which is the order `isolating` declares them in. `computer`
+   * leads with the isolation key: it is the machine the session runs on, and
+   * every other answer is about a session on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11018-L11034
    *
    * `hosts` is the caller's because only it knows which keys this host
    * declared: the isolation keys come from the worktree port and are absent on
    * a host without one.
    */
   const formOrdered = (properties: Bag, hosts: string[]): Bag => {
-    const head = [...new Set(['computer', ...hosts])].filter((key) => Object.hasOwn(properties, key));
-    const moved = new Set(head);
+    const head = ['computer', 'isolation'].filter((key) => Object.hasOwn(properties, key));
+    const tail = hosts.filter((key) => !head.includes(key) && Object.hasOwn(properties, key));
+    const placed = new Set([...head, ...tail]);
     return Object.fromEntries([
       ...head.map((key) => [key, properties[key]] as const),
-      ...Object.entries(properties).filter(([key]) => !moved.has(key)),
+      ...Object.entries(properties).filter(([key]) => !placed.has(key)),
+      ...tail.map((key) => [key, properties[key]] as const),
     ]);
   };
 

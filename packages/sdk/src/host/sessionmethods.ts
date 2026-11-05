@@ -1606,10 +1606,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ? mine.schema.properties
         : {}) as Bag, 'session', locale, hostCatalogs);
       /*
-       * In the order the form reads: the computer, then this host's own keys,
-       * then whatever else the backend and another plugin offered. Only the
-       * order changes; what wins a shared name is still the host's value, and
-       * then the scoped one.
+       * In the order the reference host composes the schema: the computer and
+       * isolation, then whatever the backend and another plugin offered, then
+       * this host's other keys. What wins a shared name is the host's value,
+       * and then the scoped one.
        */
       const properties = formOrdered(
         { ...contributed, ...hostProperties, ...formIn(scoped.properties, 'session', locale, hostCatalogs) },
