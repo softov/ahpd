@@ -97,6 +97,12 @@
             "pattern": "^@activepieces/piece-[a-z0-9][a-z0-9-]*(?:@[^@\\s]+)?$"
           },
           "description": "The package of each Activepieces piece this plugin offers, such as @activepieces/piece-resend. A version may follow the name, as in @activepieces/piece-postgres@0.5.1; the newest version is installed when none is written."
+        },
+        "sandboxPropagatedEnvVars": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "The variables of the daemon's environment the engine is given, by name, as Activepieces' AP_SANDBOX_PROPAGATED_ENV_VARS. None by default."
         }
       },
       "required": ["pieces"]

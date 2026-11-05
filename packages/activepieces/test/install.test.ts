@@ -11,7 +11,7 @@ import type { Adapter, Alert, InstallAnswer, PluginHost } from '@ahpd/sdk';
  *
  * A name in the options may carry a version. A piece the plugin does not
  * depend on is installed into the plugin's own `installed/` folder before the
- * child is asked what the pieces are, and the child imports it by its package
+ * engine is asked what the pieces are, and the engine imports it by its package
  * name from there. npm is a fake here, so no test reaches the registry: it
  * writes the package a real npm would leave, and answers as the case says.
  *
@@ -20,7 +20,7 @@ import type { Adapter, Alert, InstallAnswer, PluginHost } from '@ahpd/sdk';
  * with the same `ref` would replace it.
  */
 
-/** The fixture piece the plugin already has, as the child imports it: by its URL. */
+/** The fixture piece the plugin already has, as the engine imports it: by its URL. */
 const PRESENT = pathToFileURL(fileURLToPath(new URL('./fixtures/piece-run.mjs', import.meta.url))).href;
 
 /** A package that is nowhere: not a dependency, and not installed until a test installs it. */
@@ -34,7 +34,7 @@ interface Manifest {
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'ahpd-activepieces-install-')); });
 
-/** The child of every plugin a case started, stopped after the case. */
+/** The engine of every plugin a case started, stopped after the case. */
 let started: Kept[] = [];
 afterEach(async () => {
   for (const one of started) {
@@ -129,7 +129,7 @@ describe('a piece that is not there', () => {
       },
     });
 
-    // The version is npm's; the child was asked for the package alone, and
+    // The version is npm's; the engine was asked for the package alone, and
     // found it in `installed/`.
     expect(kept.installs).toEqual([`${MISSING}@0.5.1`]);
     expect(kept.alerts).toEqual([{

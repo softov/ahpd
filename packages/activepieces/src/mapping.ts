@@ -9,9 +9,9 @@ import type { ActionDescription, AuthDescription, PieceDescription, PropDescript
  * auth is the connector's schema, so a connector of the adapter is one account:
  * each secret field is `secret`, and the host keeps its value in the vault.
  *
- * The mapping reads only the description the child sent, so it holds no piece
+ * The mapping reads only the description the engine sent, so it holds no piece
  * and no function of one. What a piece does with its auth and its input is the
- * child's to do when a call arrives.
+ * engine's to do when a call arrives.
  */
 
 /** What every adapter of this plugin is called before the piece's name. */
@@ -54,7 +54,7 @@ export function entryOf(auth: AuthDescription | AuthDescription[] | undefined): 
  *
  * A `MARKDOWN` prop is text a builder UI shows, so it is not in the input. A
  * `FILE` prop is a string: an `https:` URL, a `data:` URI, or the name of a
- * session attachment, which the child turns into the file a piece reads.
+ * session attachment, which the engine turns into the file a piece reads.
  *
  * An `ARRAY` prop that names the props of one item is an array of objects,
  * those fields on each; one that names none is an array of strings, which is
@@ -100,7 +100,7 @@ export function propOf(prop: PropDescription): Record<string, unknown> | undefin
       if (prop.options !== undefined) schema['enum'] = prop.options;
       break;
     case 'DROPDOWN':
-      // A dropdown's options are a call the child cannot make while it describes.
+      // A dropdown's options are a call the engine cannot make while it describes.
       schema['type'] = 'string';
       schema['description'] = described ? `${prop.description ?? ''} Give the id.` : 'Give the id.';
       break;
@@ -187,7 +187,7 @@ export function authOf(auth: AuthDescription, connector: Connector): Record<stri
   return { type: 'CUSTOM_AUTH', props };
 }
 
-/** One call of an action, as the plugin's child runs it. */
+/** One call of an action, as the plugin's engine runs it. */
 export interface RunCallArgs {
   /** The connector the call is for, which is also its store's key. */
   connector: string;
@@ -201,7 +201,7 @@ export interface RunCallArgs {
   files?: string;
 }
 
-/** The one who runs a call, which the plugin answers with its child. */
+/** The one who runs a call, which the plugin answers with its engine. */
 export type RunCall = (call: RunCallArgs) => Promise<unknown>;
 
 /** What one piece becomes: its adapter, and one line for each part left out. */

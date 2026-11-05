@@ -6,7 +6,7 @@ import type { Adapter, PluginHost } from '@ahpd/sdk';
  * The pieces the package ships, loaded by their packages.
  *
  * The plugin names a piece by its package, so this is the whole path a daemon
- * takes: `apply` forks the child, the child requires each package, and each
+ * takes: `apply` forks the engine, the engine requires each package, and each
  * piece becomes an adapter. The counts are the piece's own: every action it
  * declares is offered, and an action that takes a file takes a string.
  */

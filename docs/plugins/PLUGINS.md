@@ -689,7 +689,7 @@ host.registerAdapter({
 
 `openrouter` is the one the host ships with a `signIn`. A person signs in on OpenRouter's page, pastes the code, and the host exchanges it for the key. Both URLs are OpenRouter's public ones, so a connector's `endpoint` moves neither the sign-in nor the exchange.
 
-The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece its `pieces` option names, and runs the actions of each in a child process - [activepieces.md](activepieces.md).
+The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece its `pieces` option names, and runs the actions of each in its engine, the process Activepieces runs piece code in - [activepieces.md](activepieces.md).
 
 The schema can change between versions, and nothing migrates a stored
 connector: one whose config no longer fits shows as `invalid`, and one whose

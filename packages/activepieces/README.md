@@ -10,7 +10,7 @@ Activepieces pieces as connectors for the [`@ahpd/server`](https://www.npmjs.com
 
 A connector of a piece is one account: a Resend connector is one Resend key, and two Slack connectors are two Slack workspaces. The host keeps each key in the vault, because every secret field says `secret`.
 
-The pieces run in a child process, with no Activepieces server and no Docker. A piece bundles an HTTP client that turns off TLS checks for the process it runs in. The daemon starts one child for the pieces and pins that setting there.
+The pieces run in the engine, the process Activepieces runs piece code in, with no Activepieces server and no Docker. A piece bundles an HTTP client that turns off TLS checks for the process it runs in. The daemon starts one engine for the pieces and pins that setting there.
 
 Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/activepieces`](https://github.com/softov/ahpd/tree/main/packages/activepieces).
 
@@ -36,6 +36,7 @@ In the configuration file, with three of the pieces named:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `pieces` | - | The package of each piece the daemon offers, such as `@activepieces/piece-resend`. A version may follow the name, as in `@activepieces/piece-postgres@0.5.1`. Required, and at least one |
+| `sandboxPropagatedEnvVars` | none | The variables of the daemon's environment the engine is given, by name, as Activepieces' `AP_SANDBOX_PROPAGATED_ENV_VARS`. A proxy or a certificate file a piece needs is listed here |
 
 An adapter is named `ap-` and the piece's own name: `ap-resend`, `ap-telegram-bot` and `ap-slack`. The plugin declares the contract `ap-*`, so a client sees every adapter it loads.
 
@@ -77,11 +78,12 @@ Sent as the params of `x-ahpd/connectors/put`, that connector writes the key to 
 
 ## What a piece runs
 
-- An action runs in the child process with the connector's auth and the call's input.
+- An action runs in the engine with the connector's auth and the call's input, as Activepieces runs a single action outside a flow: its step is `step_1`, and `run.canPause` is false, so a waitpoint is refused in the engine's words. An action the piece lacks is refused as the engine refuses it, `Action not found for piece <package>@<version>`.
   The result comes back as the tool's answer, and a thrown error comes back as its message only.
-- A call that takes longer than 60 seconds fails, and the child stays up for the next one.
-  A child that exits starts again on the next call.
-- An action may keep a value in `store`, and the child keeps it in memory for that connector alone until it exits.
+- A call may run for 600 seconds, Activepieces' single action run timeout. One that runs longer fails, saying the action may have partially completed and is not to be run again blindly, and the engine stays up for the next one.
+  An engine that exits starts again on the next call, five times, as VS Code restarts its agent host. After that, every call is refused: `The engine process stopped after 5 restarts.`
+- The engine's environment is Activepieces' sandbox's: a home in the system's temporary folder, and the variables `sandboxPropagatedEnvVars` names. Nothing else of the daemon's environment reaches a piece.
+- An action may keep a value in `store`, and the engine keeps it in memory for that connector alone until it exits.
 - `files`, `connections` and `server` are not offered.
   An action that needs a required file is left out, and the plugin reports it once.
 - Triggers, OAuth2 and file props wait for a later plan.

@@ -2,10 +2,12 @@
  * A piece whose actions a call makes.
  *
  * Each action reads a different part of the context, so a case can tell what
- * the child built: `echo` reads `auth` and `propsValue`, `remember` and `recall`
- * read the connector's `store`, `env` reads the child's environment, `read`
- * reads the file a `FILE` prop was turned into, `write` writes into the call's
- * folder, `fail` throws, and `slow` answers after the timeout a call gives up at.
+ * the engine built: `echo` reads `auth` and `propsValue`, `remember` and
+ * `recall` read the connector's `store`, `env` reads the engine's environment,
+ * `read` reads the file a `FILE` prop was turned into, `write` writes into the
+ * call's folder, `context` answers the run and the step, `pause` and `wait` ask
+ * for a waitpoint, `fail` throws, `crash` ends the engine, and `slow` answers
+ * after the timeout a call gives up at.
  */
 export const runnable = {
   displayName: 'Runnable',
@@ -71,9 +73,30 @@ export const runnable = {
     env: {
       name: 'env',
       displayName: 'Env',
-      description: 'Answers the daemon token the child can read, if any.',
+      description: 'Answers the daemon token the engine can read, if any, and its home and path.',
       props: {},
-      run: async () => ({ token: process.env.AHPD_TOKEN ?? null }),
+      run: async () => ({ token: process.env.AHPD_TOKEN ?? null, home: process.env.HOME ?? null, path: process.env.PATH ?? null }),
+    },
+    context: {
+      name: 'context',
+      displayName: 'Context',
+      description: 'Answers what the run and the step are.',
+      props: {},
+      run: async (context) => ({ canPause: context.run.canPause, step: context.step.name, agent: 'agent' in context }),
+    },
+    pause: {
+      name: 'pause',
+      displayName: 'Pause',
+      description: 'Asks for a waitpoint.',
+      props: {},
+      run: async (context) => await context.run.createWaitpoint({ type: 'WEBHOOK' }),
+    },
+    wait: {
+      name: 'wait',
+      displayName: 'Wait',
+      description: 'Waits on a waitpoint.',
+      props: {},
+      run: async (context) => { context.run.waitForWaitpoint('waitpoint-1'); return {}; },
     },
     fail: {
       name: 'fail',
@@ -81,6 +104,13 @@ export const runnable = {
       description: 'Throws an error.',
       props: {},
       run: async () => { throw new Error('the action failed'); },
+    },
+    crash: {
+      name: 'crash',
+      displayName: 'Crash',
+      description: 'Ends the process it runs in.',
+      props: {},
+      run: async () => { process.exit(3); },
     },
     slow: {
       name: 'slow',

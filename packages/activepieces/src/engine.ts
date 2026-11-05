@@ -1,21 +1,24 @@
+import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { basename, extname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fileOf } from './files.ts';
 import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store } from './wire.js';
 
 /**
- * The child process that loads Activepieces pieces.
+ * The engine: the process that loads Activepieces pieces and runs their
+ * actions, as Activepieces' own engine does.
  *
  * A piece bundles its own HTTP client, and that client turns off TLS checks for
  * the whole process on every request. The daemon cannot have that, so a piece
  * runs here instead: a process of its own, with `process.env` pinned against a
  * write or a delete of `NODE_TLS_REJECT_UNAUTHORIZED`.
  *
- * The parent asks what the pieces it named are, and for one action of one of
- * them. Nothing here is exported: this file is an entry, run by `fork`, and it
- * exits when the channel to its parent closes.
+ * The plugin asks what the pieces it named are, and for one action of one of
+ * them, which runs as Activepieces runs a single action outside a flow. Nothing
+ * here is exported: this file is an entry, run by `fork`, and it exits when the
+ * channel to the plugin closes.
  */
 
 /** The key a piece turns the certificate check off with, which this process pins. */
@@ -152,13 +155,54 @@ const pieceOf = (module: Record<string, unknown>): Record<string, unknown> => {
   return found;
 };
 
+/** One piece that loaded, and the version of the package it came from, when its manifest says one. */
+interface Loaded {
+  piece: Record<string, unknown>;
+  version?: string;
+}
+
 /** The pieces that loaded so far, by the specifier they were asked for by. */
-const loaded = new Map<string, Record<string, unknown>>();
+const loaded = new Map<string, Loaded>();
 
 /** The file one package resolves to inside `installed/`, if it is there. */
 const fromInstalled = (spec: string, installed: string): string | undefined => {
   try {
     return createRequire(join(installed, 'package.json')).resolve(spec);
+  }
+  catch {
+    return undefined;
+  }
+};
+
+/**
+ * The version the package of one imported file says, read from the first
+ * `package.json` above it that names the package.
+ */
+const versionAbove = (spec: string, file: string): string | undefined => {
+  for (let folder = dirname(file); dirname(folder) !== folder; folder = dirname(folder)) {
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(readFileSync(join(folder, 'package.json'), 'utf8'));
+    }
+    catch {
+      continue;
+    }
+    if (isRecord(manifest) && manifest['name'] === spec) return typeof manifest['version'] === 'string' ? manifest['version'] : undefined;
+  }
+  return undefined;
+};
+
+/** One module, and the file it was imported from. */
+interface Imported {
+  module: Record<string, unknown>;
+  file: string | undefined;
+}
+
+/** The file Node imports a specifier from, or nothing for one it cannot resolve. */
+const resolvedFile = (spec: string): string | undefined => {
+  try {
+    const url = import.meta.resolve(spec);
+    return url.startsWith('file:') ? fileURLToPath(url) : undefined;
   }
   catch {
     return undefined;
@@ -175,35 +219,36 @@ const fromInstalled = (spec: string, installed: string): string | undefined => {
  * resolves to. A name that neither holds is the first failure, because that is
  * the line that says what the plugin's own resolution did.
  */
-const imported = async (spec: string, installed: string | undefined, first: boolean): Promise<Record<string, unknown>> => {
+const imported = async (spec: string, installed: string | undefined, first: boolean): Promise<Imported> => {
   if (first && installed !== undefined) {
     const at = fromInstalled(spec, installed);
-    if (at !== undefined) return await import(pathToFileURL(at).href) as Record<string, unknown>;
+    if (at !== undefined) return { module: await import(pathToFileURL(at).href) as Record<string, unknown>, file: at };
   }
   try {
-    return await import(spec) as Record<string, unknown>;
+    return { module: await import(spec) as Record<string, unknown>, file: resolvedFile(spec) };
   }
   catch (error) {
     if (installed === undefined) throw error;
     const at = fromInstalled(spec, installed);
     if (at === undefined) throw error;
-    return await import(pathToFileURL(at).href) as Record<string, unknown>;
+    return { module: await import(pathToFileURL(at).href) as Record<string, unknown>, file: at };
   }
 };
 
 /** The piece one specifier names, loaded once and kept for the next call. */
-const loadedPiece = async (spec: string, installed: string | undefined, first = false): Promise<Record<string, unknown>> => {
+const loadedPiece = async (spec: string, installed: string | undefined, first = false): Promise<Loaded> => {
   const held = loaded.get(spec);
   if (held !== undefined) return held;
-  const module = await imported(spec, installed, first);
-  const piece = pieceOf(module);
+  const { module, file } = await imported(spec, installed, first);
+  const version = file === undefined ? undefined : versionAbove(spec, file);
+  const piece: Loaded = { piece: pieceOf(module), ...(version === undefined ? {} : { version }) };
   loaded.set(spec, piece);
   return piece;
 };
 
 /** Load one piece, once, and describe it. */
 const describePiece = async (spec: string, installed: string | undefined, first: boolean): Promise<PieceDescription> => {
-  const piece = await loadedPiece(spec, installed, first);
+  const { piece } = await loadedPiece(spec, installed, first);
   const one: PieceDescription = {
     package: spec,
     displayName: typeof piece['displayName'] === 'string' ? piece['displayName'] : spec,
@@ -356,18 +401,37 @@ const withFiles = async (action: Record<string, unknown>, request: RunRequest): 
 };
 
 /**
- * The context one action runs with, built from the request alone.
+ * The step an action run is, which Activepieces names `step_1`.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/api/src/app/mcp/tools/flow-run-utils.ts
+ */
+const ACTION_RUN_STEP_NAME = 'step_1';
+
+/**
+ * What an action run refuses a waitpoint with: it cannot pause, because no flow
+ * is there to resume.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/handler/piece-executor.ts#L340-L344
+ */
+const cannotSuspend = (): never => {
+  throw new Error('This action pauses the run (waitpoint) and can only run inside a flow, not as a action run.');
+};
+
+/**
+ * The context one action runs with, built from the request alone, as the
+ * engine builds an action run's.
  *
  * A piece reads `auth` and `propsValue`, and may keep a value in `store`. The
- * rest is a stub: the plugin runs one action, not a flow, so a piece that
- * reaches for a connection or the server is told that it is not here. `files`
- * writes into the call's folder, and a call with no folder refuses it.
+ * run cannot pause, so `canPause` is false and a waitpoint is refused; the
+ * step is `step_1`. The rest is a stub: the plugin runs one action, not a flow,
+ * so a piece that reaches for a connection or the server is told that it is
+ * not here. `files` writes into the call's folder, and a call with no folder
+ * refuses it.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/handler/piece-executor.ts#L91-L141
  */
 const contextOf = (request: RunRequest, input: Record<string, unknown>): Record<string, unknown> => ({
   auth: request.auth,
   propsValue: input,
   store: storeOf(request.connector),
-  step: { name: request.action },
+  step: { name: ACTION_RUN_STEP_NAME },
   project: { id: request.connector, externalId: async () => request.connector },
   executionType: 'BEGIN',
   flows: {
@@ -376,30 +440,34 @@ const contextOf = (request: RunRequest, input: Record<string, unknown>): Record<
   },
   tags: { add: async () => undefined },
   output: { update: async () => undefined },
-  agent: { tools: async () => notOffered('agent tools') },
   run: {
     id: `run-${request.id}`,
+    canPause: false,
     stop: () => undefined,
     respond: () => undefined,
-    createWaitpoint: async () => notOffered('waitpoints'),
-    waitForWaitpoint: () => notOffered('waitpoints'),
+    createWaitpoint: async () => cannotSuspend(),
+    waitForWaitpoint: () => cannotSuspend(),
   },
   files: request.files === undefined ? refused('files') : filesIn(request.files),
   connections: refused('connections'),
   server: refused('server'),
 });
 
-/** One action of a piece by name, or an error that names it. */
-const actionOf = (piece: Record<string, unknown>, name: string): Record<string, unknown> => {
-  const actions = piece['_actions'];
-  if (isRecord(actions) && isRecord(actions[name])) return actions[name] as Record<string, unknown>;
-  throw new Error(`the piece has no action ${name}`);
+/**
+ * One action of a piece by name, or the engine's refusal of an action its
+ * piece lacks, naming the piece and the version that loaded.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/helper/piece-loader.ts
+ */
+const actionOf = (held: Loaded, request: RunRequest): Record<string, unknown> => {
+  const actions = held.piece['_actions'];
+  if (isRecord(actions) && isRecord(actions[request.action])) return actions[request.action] as Record<string, unknown>;
+  throw new Error(`Action not found for piece ${request.piece}${held.version === undefined ? '' : `@${held.version}`}`);
 };
 
 /** Answer a `run`: the action's result, or the message of what it threw. */
 const answerRun = async (request: RunRequest): Promise<Answer> => {
   const piece = await loadedPiece(request.piece, request.installed, request.installedFirst === true);
-  const action = actionOf(piece, request.action);
+  const action = actionOf(piece, request);
   const perform = action['run'];
   if (typeof perform !== 'function') throw new Error(`the action ${request.action} cannot run`);
   const input = await withFiles(action, request);
@@ -423,7 +491,7 @@ process.on('message', (message: Request) => {
 
 /*
  * The daemon exits, or stops the plugin, and the channel closes. A piece has
- * nothing to settle after that, and a child that stayed would outlive the
+ * nothing to settle after that, and an engine that stayed would outlive the
  * daemon that started it.
  */
 process.on('disconnect', () => { process.exit(0); });

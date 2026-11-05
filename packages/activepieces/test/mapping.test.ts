@@ -7,7 +7,7 @@ import type { ActionDescription, AuthDescription, PieceDescription, PropDescript
 /*
  * What a piece becomes in the daemon.
  *
- * The mapping reads the description the child sends and nothing else, so a
+ * The mapping reads the description the engine sends and nothing else, so a
  * case builds one by hand: the auth the piece takes, and the props of its
  * actions. No piece is loaded here, and no function survives into an adapter.
  */

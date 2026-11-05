@@ -9,30 +9,32 @@ import type { Adapter, Connector, PluginHost } from '@ahpd/sdk';
 /*
  * One action, run through the adapter the plugin registered.
  *
- * `apply` forks the real child, so a case talks to a real piece in a real
+ * `apply` forks the real engine, so a case talks to a real piece in a real
  * process. The host is a stub: it keeps what the plugin registers, and the
- * close it registers is how a case stops the child.
+ * close it registers is how a case stops the engine.
  */
 
-/** The fixture piece, as the child imports it: by its URL. */
+/** The fixture piece, as the engine imports it: by its URL. */
 const PIECE = pathToFileURL(fileURLToPath(new URL('./fixtures/piece-run.mjs', import.meta.url))).href;
 
 /** What one host kept, for the cases of one plugin. */
 interface Kept {
   adapters: Map<string, Adapter>;
   problems: string[];
+  logged: string[];
   closes: (() => void | Promise<void>)[];
 }
 
-/** Start the plugin on the fixture piece, and answer what its host kept. */
-async function start(): Promise<Kept> {
-  const kept: Kept = { adapters: new Map(), problems: [], closes: [] };
+/** Start the plugin on the fixture piece, with these options beside it, and answer what its host kept. */
+async function start(options: Record<string, unknown> = {}): Promise<Kept> {
+  const kept: Kept = { adapters: new Map(), problems: [], logged: [], closes: [] };
   const host = {
     registerAdapter: (adapter: Adapter) => { kept.adapters.set(adapter.name, adapter); },
     registerClose: (close: () => void | Promise<void>) => { kept.closes.push(close); },
     problem: (line: string) => { kept.problems.push(line); },
+    log: (line: string) => { kept.logged.push(line); },
   } as unknown as PluginHost;
-  await apply(host, { pieces: [PIECE] });
+  await apply(host, { pieces: [PIECE], ...options });
   return kept;
 }
 
@@ -60,13 +62,13 @@ afterEach(async () => {
 });
 
 /** One plugin on the fixture piece, kept for the case to stop. */
-async function started(): Promise<Kept> {
-  const one = await start();
+async function started(options: Record<string, unknown> = {}): Promise<Kept> {
+  const one = await start(options);
   kept.push(one);
   return one;
 }
 
-describe('an action runs in the child', () => {
+describe('an action runs in the engine', () => {
   it('gives the action the auth and the input, and answers its result', async () => {
     const one = await started();
 
@@ -77,12 +79,12 @@ describe('an action runs in the child', () => {
     });
   });
 
-  it('gives the child none of the daemon\'s secrets', async () => {
+  it('gives the engine none of the daemon\'s secrets', async () => {
     const before = process.env['AHPD_TOKEN'];
     process.env['AHPD_TOKEN'] = 'daemon-token';
     try {
       const one = await started();
-      expect(await running(one)(connector('work'), 'env', {})).toEqual({ token: null });
+      expect(await running(one)(connector('work'), 'env', {})).toMatchObject({ token: null });
     } finally {
       if (before === undefined) delete process.env['AHPD_TOKEN'];
       else process.env['AHPD_TOKEN'] = before;
@@ -98,15 +100,18 @@ describe('an action runs in the child', () => {
     expect((failed as Error).message).not.toContain('sk-test');
   });
 
-  it('fails a call that takes too long, and answers the next one', async () => {
+  it('fails a call that runs past Activepieces\' 600 seconds in its words, and answers the next one', async () => {
     const one = await started();
     const run = running(one);
 
     vi.useFakeTimers();
     try {
       // The handler is attached first, so the failure after the clock moves is not unhandled.
-      const slow = expect(run(connector('work'), 'slow', {})).rejects.toThrow('the action took longer than 60 seconds');
-      await vi.advanceTimersByTimeAsync(60_000);
+      const slow = expect(run(connector('work'), 'slow', {})).rejects.toThrow(
+        'Slow timed out before it finished. It may have partially completed, so do not re-run it blindly; check the app for a write from this attempt first, or ask the user.',
+      );
+      await vi.advanceTimersByTimeAsync(599_999);
+      await vi.advanceTimersByTimeAsync(1);
       await slow;
     } finally {
       vi.useRealTimers();
@@ -115,7 +120,35 @@ describe('an action runs in the child', () => {
     expect(await run(connector('work'), 'echo', { text: 'after' })).toMatchObject({ text: 'after' });
   });
 
-  it('starts the child again after it exits', async () => {
+  it('starts an engine that exited five times more, and then refuses every call in words', async () => {
+    const one = await started();
+    const run = running(one);
+
+    for (let at = 0; at < 6; at += 1) {
+      await expect(run(connector('work'), 'crash', {})).rejects.toThrow('the engine process exited (3)');
+    }
+    await expect(run(connector('work'), 'echo', { text: 'after' })).rejects.toThrow('The engine process stopped after 5 restarts.');
+    expect(one.logged).toEqual([
+      ...Array.from({ length: 5 }, () => 'activepieces: the engine process terminated unexpectedly with code 3'),
+      'activepieces: the engine process terminated with code 3, giving up after 5 restarts',
+    ]);
+  });
+
+  it('gives the engine a home of its own, and the variables the option names', async () => {
+    const before = process.env['AHPD_TOKEN'];
+    process.env['AHPD_TOKEN'] = 'daemon-token';
+    try {
+      const plain = await started();
+      expect(await running(plain)(connector('work'), 'env', {})).toEqual({ token: null, home: tmpdir(), path: null });
+      const listed = await started({ sandboxPropagatedEnvVars: ['AHPD_TOKEN'] });
+      expect(await running(listed)(connector('work'), 'env', {})).toMatchObject({ token: 'daemon-token' });
+    } finally {
+      if (before === undefined) delete process.env['AHPD_TOKEN'];
+      else process.env['AHPD_TOKEN'] = before;
+    }
+  });
+
+  it('starts the engine again after it stops', async () => {
     const one = await started();
     const run = running(one);
 

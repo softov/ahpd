@@ -6,6 +6,9 @@
   "options": {
     "pieces": {
       "description": "O pacote de cada piece do Activepieces que este plugin oferece, como @activepieces/piece-resend. O nome pode vir seguido de uma versão, como em @activepieces/piece-postgres@0.5.1; sem versão, a mais nova é instalada."
+    },
+    "sandboxPropagatedEnvVars": {
+      "description": "As variáveis do ambiente do daemon que o engine recebe, pelo nome, como AP_SANDBOX_PROPAGATED_ENV_VARS do Activepieces. Nenhuma por padrão."
     }
   }
 }

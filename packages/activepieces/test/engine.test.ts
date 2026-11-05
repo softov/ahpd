@@ -8,18 +8,18 @@ import type { ChildProcess } from 'node:child_process';
 import type { Answer, DescribedAnswer } from '../src/wire.js';
 
 /*
- * The child process, asked directly.
+ * The engine process, asked directly.
  *
- * The plugin is what forks it, but a piece is what the child must survive: a
+ * The plugin is what forks it, but a piece is what the engine must survive: a
  * piece that turns off the certificate check, a piece that is not installed,
  * and a piece that carries functions of its own. Each case forks the source the
  * plugin forks, and speaks the wire the plugin speaks.
  */
 
-/** The child's entry, which is the source in development and the build otherwise. */
-const CHILD = fileURLToPath(new URL('../src/child.ts', import.meta.url));
+/** The engine's entry, which is the source in development and the build otherwise. */
+const ENGINE = fileURLToPath(new URL('../src/engine.ts', import.meta.url));
 
-/** A fixture piece, as the child imports it: by its URL. */
+/** A fixture piece, as the engine imports it: by its URL. */
 const fixture = (name: string): string =>
   pathToFileURL(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))).href;
 
@@ -37,14 +37,14 @@ afterEach(() => {
 
 /** One empty folder for a case's attachments. */
 function madeFolder(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ahpd-child-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-engine-'));
   made.push(dir);
   return dir;
 }
 
-/** One child, forked the way the plugin forks it, with the environment a case needs. */
+/** One engine, forked the way the plugin forks it, with the environment a case needs. */
 function start(env: Record<string, string> = {}): ChildProcess {
-  const forked = fork(CHILD, [], {
+  const forked = fork(ENGINE, [], {
     execArgv: [],
     env: { ...process.env, ...env },
     stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -53,27 +53,27 @@ function start(env: Record<string, string> = {}): ChildProcess {
   return forked;
 }
 
-/** One request to the child, and the answer to it. */
-function ask(child: ChildProcess, request: Record<string, unknown>): Promise<Answer> {
+/** One request to the engine, and the answer to it. */
+function ask(engine: ChildProcess, request: Record<string, unknown>): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error('the child did not answer')); }, 10_000);
-    child.once('message', (message) => {
+    const timer = setTimeout(() => { reject(new Error('the engine did not answer')); }, 10_000);
+    engine.once('message', (message) => {
       clearTimeout(timer);
       resolve(message as Answer);
     });
-    child.send({ id: 1, ...request });
+    engine.send({ id: 1, ...request });
   });
 }
 
 /** The answer to a `describe`, which a case that got another answer should not read. */
 const described = (answer: Answer): DescribedAnswer => {
-  if (answer.type !== 'described') throw new Error(`the child answered ${answer.type}: ${answer.type === 'failed' ? answer.message : ''}`);
+  if (answer.type !== 'described') throw new Error(`the engine answered ${answer.type}: ${answer.type === 'failed' ? answer.message : ''}`);
   return answer;
 };
 
-/** The message of a request the child refused. */
+/** The message of a request the engine refused. */
 const failed = (answer: Answer): string => {
-  if (answer.type !== 'failed') throw new Error(`the child answered ${answer.type}`);
+  if (answer.type !== 'failed') throw new Error(`the engine answered ${answer.type}`);
   return answer.message;
 };
 
@@ -88,18 +88,18 @@ const run = (action: string, input: Record<string, unknown>, files?: string): Re
   ...(files === undefined ? {} : { files }),
 });
 
-/** One child's exit, and the code it exited with. */
-function exit(child: ChildProcess): Promise<number | null> {
+/** One engine's exit, and the code it exited with. */
+function exit(engine: ChildProcess): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error('the child did not exit')); }, 10_000);
-    child.once('exit', (code) => {
+    const timer = setTimeout(() => { reject(new Error('the engine did not exit')); }, 10_000);
+    engine.once('exit', (code) => {
       clearTimeout(timer);
       resolve(code);
     });
   });
 }
 
-describe('a child asks for pieces', () => {
+describe('the engine asks for pieces', () => {
   it('answers a piece as its auth and its actions, with no function in the answer', async () => {
     const answer = described(await ask(start(), { type: 'describe', pieces: [fixture('piece-simple.mjs')] }));
 
@@ -168,12 +168,39 @@ describe('a child asks for pieces', () => {
   });
 
   it('exits when the parent closes the channel', async () => {
-    const child = start();
+    const engine = start();
     // Connected, so `disconnect` is the closure a daemon exit makes.
-    await ask(child, { type: 'describe', pieces: [] });
-    const ended = exit(child);
-    child.disconnect();
+    await ask(engine, { type: 'describe', pieces: [] });
+    const ended = exit(engine);
+    engine.disconnect();
     expect(await ended).toBe(0);
+  });
+});
+
+describe('an action runs as Activepieces runs one outside a flow', () => {
+  it('runs as step_1, with canPause false and no agent member', async () => {
+    expect(await ask(start(), run('context', {}))).toEqual({
+      type: 'ran',
+      id: 1,
+      result: { canPause: false, step: 'step_1', agent: false },
+    });
+  });
+
+  it('refuses a waitpoint in the engine\'s words, whichever way the piece asks', async () => {
+    const words = 'This action pauses the run (waitpoint) and can only run inside a flow, not as a action run.';
+    expect(failed(await ask(start(), run('pause', {})))).toBe(words);
+    expect(failed(await ask(start(), run('wait', {})))).toBe(words);
+  });
+
+  it('refuses an action its piece lacks in the engine\'s words, naming the version that loaded', async () => {
+    expect(failed(await ask(start(), {
+      type: 'run',
+      piece: '@activepieces/piece-resend',
+      connector: 'work',
+      action: 'no_such_action',
+      auth: { type: 'SECRET_TEXT', secret_text: 're_test' },
+      input: {},
+    }))).toBe('Action not found for piece @activepieces/piece-resend@0.6.1');
   });
 });
 
