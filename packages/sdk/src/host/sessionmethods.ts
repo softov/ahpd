@@ -1194,6 +1194,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       if (!held)
         throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
+      /*
+       * The default chat is made with its session, so asking for it again with
+       * no first message makes nothing and is answered `null`, as the
+       * reference host answers it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2272-L2282
+       */
+      if (chatUri === held.defaultChat && params.initialMessage === undefined) return null;
       if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
         throw new RpcError(INVALID_PARAMS, `${chatUri} is not a chat URI`);
       /*
@@ -1214,8 +1221,22 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         : undefined) as Record<string, unknown> | undefined;
       if (first_ !== undefined && bag(first_.origin).kind !== 'user')
         throw new RpcError(INVALID_PARAMS, 'An initial chat message must have user origin.');
-      if (byChat.has(chatUri))
-        throw new RpcError(-32003, `${chatUri} already exists`);
+      /*
+       * A chat that is there already. The default chat takes a first message
+       * as its own turn; a fork made with one onto a chat that is there, and
+       * any other chat that is there, is refused AlreadyExists, as the
+       * reference host refuses a fork's target it finds.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7354-L7365
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7663-L7668
+       */
+      const there = byChat.get(chatUri);
+      if (there !== undefined) {
+        if (chatUri === held.defaultChat && first_ !== undefined && bag(params.source).kind !== 'fork') {
+          await acceptInitialMessage(uri, there.chat, held.agent.provider, first_);
+          return null;
+        }
+        throw new RpcError(AhpErrorCodes.AlreadyExists, `Chat already exists: ${chatUri}`);
+      }
       claimable(chatUri, 'chat');
       /*
        * Made out of another chat, when a client asks for that.
@@ -1344,7 +1365,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         if (sessions.get(uri) !== held)
           throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
         if (byChat.has(chatUri))
-          throw new RpcError(-32003, `${chatUri} already exists`);
+          throw new RpcError(AhpErrorCodes.AlreadyExists, `Chat already exists: ${chatUri}`);
         claimable(chatUri, 'chat');
         const context = withPreamble(preamble, made?.context);
         if (context !== undefined) made = { ...made, context };

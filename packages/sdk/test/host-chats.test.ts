@@ -641,6 +641,42 @@ describe('more than one chat in a session', () => {
     await host.close();
   });
 
+  /*
+   * A chat that is there already, as VS Code's host answers one: the default
+   * chat, made with its session, answered `null` with nothing made, or its
+   * first message taken as the default chat's turn; a fork with a first
+   * message onto a chat that exists, and any other chat that exists, refused
+   * AlreadyExists.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2272-L2282
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7354-L7365
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7663-L7668
+   */
+  it('answers a chat that is there already as VS Code\'s host answers it', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const added = (): number => actions(p, uri).filter((e) => e.action.type === 'session/chatAdded').length;
+    expect(await client.handle({ method: 'createChat', params: { channel: uri, chat: chatUri } })).toBeNull();
+    expect(added()).toBe(0);
+
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: chatUri, source: { kind: 'fork', chat: chatUri, turnId: 'none' }, initialMessage: { text: 'again', origin: { kind: 'user' } } },
+    })).rejects.toMatchObject({ code: -32010, message: `Chat already exists: ${chatUri}` });
+
+    expect(await client.handle({
+      method: 'createChat', params: { channel: uri, chat: chatUri, initialMessage: { text: 'over here', origin: { kind: 'user' } } },
+    })).toBeNull();
+    await settle();
+    const own = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn?: { message: { text: string } } } };
+    }).snapshot.state;
+    expect(own.activeTurn?.message.text).toBe('over here');
+    expect(added()).toBe(0);
+
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second } }))
+      .rejects.toMatchObject({ code: -32010, message: `Chat already exists: ${second}` });
+  });
+
   it('opens one, and lists both on the session', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
