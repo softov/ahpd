@@ -8,12 +8,14 @@
 
 import { existsSync } from 'node:fs';
 import { output } from '@cofold/commands';
-import type { Command, Registry } from '@cofold/commands';
+import type { Command, CommandContext, Output, Registry } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
-import { configDir, configPath, loadConfig, type Config } from '../config.js';
+import { configDir, configPath, loadConfig, oldNameOf, type Config } from '../config.js';
+import { running } from '../daemon.js';
+import { oneAtATime, readEntry, writeEntry } from '../install.js';
 import { optionsSchemaOf, pluginIdOf, schemaOf } from '../plugins.js';
-import { flagFields } from './options.js';
+import { checkConfig, configSchema, flagFields, serverFields, stop, typedValue } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /**
@@ -201,3 +203,66 @@ export const declareConfig = (registry: Registry<object>, served?: ServedFacts):
     return output({ path: at, files: loaded.files, config: answer, sources }, text);
   },
 });
+
+/** What a written setting tells the person when a daemon runs on the old value. */
+const RESTART = 'Restart the daemon to load the change: ahpd restart';
+
+/**
+ * `ahpd config set <key> <value>` and `ahpd config unset <key>`: one setting of
+ * the daemon's configuration file, written or removed.
+ *
+ * A key is written under its current name, and its old name goes, because a
+ * file that holds both is refused at the next start. The whole file is checked
+ * before it is written, so a value the start would refuse writes nothing.
+ * `plugins` is a list the `plugin` commands keep, so it is refused here.
+ */
+export const declareConfigWrite = (registry: Registry<object>, served?: ServedFacts): Command[] => {
+  const fileFields = served === undefined ? { configFile: serverFields.configFile } : {};
+  const keyField = { type: 'string', description: 'One setting, as config.json names it.' } as const;
+  const write = (doing: 'set' | 'unset') => (context: CommandContext): Promise<Output> => oneAtATime(async () => {
+    const key = context.value<string>('key');
+    if (key === 'plugins') stop('plugins is kept by the plugin commands: ahpd plugin install, remove, enable and disable.');
+    if (!Object.hasOwn(configSchema.properties, key)) stop(`${key} is not a setting ahpd knows.`);
+    const named = served === undefined ? context.optional<string>('configFile') : served.options.configFile;
+    const file = named ?? configPath();
+    const held = readEntry(file);
+    const was = oldNameOf(key);
+    if (doing === 'unset' && !Object.hasOwn(held, key) && (was === undefined || !Object.hasOwn(held, was))) {
+      context.write(`${file} sets no ${key}.\n`);
+      return output({ key }, '');
+    }
+    if (was !== undefined) delete held[was];
+    if (doing === 'set') held[key] = typedValue(context.value<string>('value'));
+    else delete held[key];
+    checkConfig(held, () => file);
+    writeEntry(file, held);
+    // A daemon reads its file when it starts, so one that runs now holds the old value.
+    const restart = served !== undefined || (named === undefined && running() !== undefined);
+    const said = `${doing === 'set' ? 'Set' : 'Unset'} ${key}.\n${restart ? `${RESTART}\n` : ''}`;
+    return output({ key, ...(restart ? { restart: true } : {}) }, said);
+  });
+  return [
+    registry.action({
+      id: 'daemon.config.set',
+      summary: 'Set one setting of the daemon',
+      description: 'The value is read as JSON when it parses, and as text otherwise.',
+      surfaces: { cli: { pattern: ['config', 'set', ':key', ':value'] }, http: { method: 'POST', path: '/config/set' } },
+      // The settings are the daemon's own, so this is done to no kind of row.
+      effect: 'change',
+      input: { ...fileFields, key: keyField, value: { type: 'string', description: 'The value: JSON when it parses, otherwise text.' } },
+      required: ['key', 'value'],
+      scopes: ['config:write'],
+      run: write('set'),
+    }),
+    registry.action({
+      id: 'daemon.config.unset',
+      summary: 'Remove one setting of the daemon',
+      surfaces: { cli: { pattern: ['config', 'unset', ':key'] }, http: { method: 'POST', path: '/config/unset' } },
+      effect: 'change',
+      input: { ...fileFields, key: keyField },
+      required: ['key'],
+      scopes: ['config:write'],
+      run: write('unset'),
+    }),
+  ];
+};
