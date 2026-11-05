@@ -450,7 +450,16 @@ it('gives the verbs back after a turn that ended in an error, and says each list
 });
 
 it('lists the changesets on the session channel, and not on a catalogue row', async () => {
-  const { client, peer: p, uri } = await watching(scripted().source);
+  const { client, peer: p, uri, chatUri } = await watching(scripted().source);
+  // Listed from its first message, run to its end.
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => {
+    expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true);
+  }, { timeout: 3000 });
 
   // `SessionState.changesets` is declared, and is where a client reads the
   // scopes it may subscribe to. Both of ahpc's readers take it from here.
@@ -480,10 +489,10 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   // The diff stat is a different field, is declared on a summary, and stays.
   expect(row).toHaveProperty('changes');
 
-  // Unread, because a new session starts read and marking it read moves nothing.
+  // Read, because a turn's end left it unread and marking it unread moves nothing.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/isReadChanged', isRead: false } },
+    params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } },
   });
   await settle();
   // Past the catalogue's 100 ms debounce, which says a session's moves together.

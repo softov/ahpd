@@ -329,6 +329,11 @@ describe('a command typed into the conversation', () => {
    */
   it('says nothing of read state at a command turn\'s end, the chat unread from its start and the session read', async () => {
     const { client, peer: p, uri, chatUri } = await shelled();
+    // Read before the turn, as a new session starts unread, and what that said
+    // set aside.
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
+    p.notes.length = 0;
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo read' } } },
@@ -353,6 +358,10 @@ describe('a command typed into the conversation', () => {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: otherChat } });
+    // Both read before their turns, as a new session starts unread.
+    for (const session of [uri, other]) {
+      await client.handle({ method: 'dispatchAction', params: { channel: session, action: { type: 'session/isReadChanged', isRead: true } } });
+    }
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!sleep 0.5; echo long' } } },

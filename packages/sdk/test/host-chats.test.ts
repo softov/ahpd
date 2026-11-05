@@ -1547,7 +1547,9 @@ describe('more than one chat in a session', () => {
       const lead = (await opened(client, LIVE)).state.defaultChat as string;
       await mark(lead, { type: 'chat/isReadChanged', isRead: true });
       await mark(PEER, { type: 'chat/isReadChanged', isRead: false });
-      await mark(TWO, { type: 'session/isReadChanged', isRead: true });
+      // The destination's default chat read, as a new session's starts unread,
+      // which reads the destination, its other chat read already.
+      await mark((await opened(client, TWO)).state.defaultChat as string, { type: 'chat/isReadChanged', isRead: true });
       const read = async (channel: string): Promise<boolean> =>
         (Number(((await opened(client, channel)).state as { status?: number }).status) & 32) !== 0;
       expect(await read(LIVE)).toBe(false);

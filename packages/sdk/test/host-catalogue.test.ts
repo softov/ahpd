@@ -610,22 +610,36 @@ describe('a chat\'s read bit and its session\'s', () => {
     return (opened.snapshot.state.status & Status.IsRead) !== 0;
   };
 
-  /** A live session with a second chat, both subscribed. */
-  const twoChats = async () => {
+  const chatRead = (on: boolean) => ({ type: 'chat/isReadChanged', isRead: on });
+  const sessionRead = (on: boolean) => ({ type: 'session/isReadChanged', isRead: on });
+
+  /** A live session somebody has read, its one chat with it, and nothing said since. */
+  const read = async () => {
     const started = await running();
+    await send(started.client, started.uri, sessionRead(true));
+    started.peer.notes.length = 0;
+    return started;
+  };
+
+  /** A live session somebody has read, with a second chat, both subscribed. */
+  const twoChats = async () => {
+    const started = await read();
     await started.client.handle({ method: 'createChat', params: { channel: started.uri, chat: second } });
     await started.client.handle({ method: 'subscribe', params: { channel: second } });
     return started;
   };
 
-  const chatRead = (on: boolean) => ({ type: 'chat/isReadChanged', isRead: on });
-  const sessionRead = (on: boolean) => ({ type: 'session/isReadChanged', isRead: on });
-
-  it('starts a new session and a new chat read', async () => {
-    const { client, peer: p, uri } = await running();
-    // Nothing has been said in either yet, so there is nothing in them to read.
-    const added = p.notes.find((n) => n.method === 'root/sessionAdded')?.params as { summary: { status: number } };
-    expect(added.summary.status & Status.IsRead).toBe(Status.IsRead);
+  /*
+   * A new session's summary is `Idle`, and its default chat's is made from
+   * it, as VS Code's host makes them; a chat added later opens `Idle |
+   * IsRead`, as VS Code's host adds one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10705-L10711
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1744-L1746
+   */
+  it('starts a new session and its default chat unread, and a chat added to it read', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(false);
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const chat = actions(p, uri).find((e) => e.action.type === 'session/chatAdded')?.action.summary as { status: number };
     expect(chat.status & Status.IsRead).toBe(Status.IsRead);
@@ -674,7 +688,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   it('marks the one chat unread after the session when a session with one chat is marked unread', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     p.notes.length = 0;
     await send(client, uri, sessionRead(false));
     expect(await isRead(client, uri)).toBe(false);
@@ -686,7 +700,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   it('marks the one chat read when its session is marked read, though the session was read already', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     // A turn's start makes the chat unread and leaves the session read.
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     expect(await isRead(client, chatUri)).toBe(false);
@@ -735,7 +749,7 @@ describe('a chat\'s read bit and its session\'s', () => {
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
    */
   it('marks a chat unread when a turn starts, as a client reduces it, saying nothing of its own, and leaves its session read', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
 
     expect(await isRead(client, chatUri)).toBe(false);
@@ -751,7 +765,7 @@ describe('a chat\'s read bit and its session\'s', () => {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
    */
   it('keeps a chat marked read while its turn runs, and marks the chat and its session unread when the turn completes', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     await send(client, chatUri, chatRead(true));
     expect(await isRead(client, chatUri)).toBe(true);
@@ -1183,8 +1197,9 @@ describe("a row lists the session's chats", () => {
     // sessions with no subscription to either reads.
     await flushed();
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === second)?.status).toBe(status);
+    // The default chat at rest, unread as a new session's starts.
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === rowOf(p, 'ahp-session:/live')?.defaultChat)?.status)
-      .toBe(Status.Idle | Status.IsRead);
+      .toBe(Status.Idle);
   });
 
   /*

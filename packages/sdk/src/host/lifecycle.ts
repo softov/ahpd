@@ -14,7 +14,6 @@ import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
 import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
@@ -2125,15 +2124,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     if (asked !== undefined) kept.setUserSettings?.(idOf(uri), asked.userSettings);
     /*
-     * What the session and its first chat open with, written down before the
-     * backend starts: the chat's state opens as `spawn` starts it, from what
-     * is kept here, and a fact written after that would be one its state never
-     * held. What started it, and that it and its chat are read: a session
-     * nobody has said anything in has nothing new in it.
+     * What the session opens with, written down before the backend starts:
+     * the chat's state opens as `spawn` starts it, from what is kept here, and
+     * a fact written after that would be one its state never held. What
+     * started it. The session and its default chat open unread, as VS Code's
+     * host makes a new session's summary `Idle` and its default chat's from
+     * it; a chat added to a session later opens read.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10705-L10711
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L685-L691
      */
     if (origin !== undefined) origins.set(uri, origin);
-    kept.setFlags(idOf(uri), kept.flags(idOf(uri)) | Status.IsRead);
-    startsRead(ctx, uri, chatUriFor(uri));
     // Named before it is announced, when the maker had a name for it: a row
     // that appears as "New session" and is renamed a moment later is two rows
     // to a client that lists once. `spawn` hands the backend the name it finds
