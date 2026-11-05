@@ -164,6 +164,31 @@ it('refuses an operation it never offered, one aimed at the wrong kind of thing,
   expect(nowhere.message).toBe('Changeset not found: ahp-session:/nobody/changeset/session');
 });
 
+/*
+ * A watched changeset is cleared on its channel before its session is said
+ * gone, as VS Code's host disposes a session's changesets first when it
+ * deletes the session.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2415-L2426
+ */
+it('clears a watched changeset on its channel before its session is said gone, as VS Code\'s', async () => {
+  const { host, client, peer: p, uri, chatUri, changeset } = await watching(scripted().source);
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  const said = p.notes.map((note) => {
+    const params = note.params as { channel?: string; session?: string; action?: { type?: string } };
+    return note.method === 'action' ? `${String(params.channel)} ${String(params.action?.type)}` : `${note.method} ${String(params.session ?? '')}`;
+  });
+  const cleared = said.indexOf(`${changeset} changeset/cleared`);
+  expect(cleared).toBeGreaterThanOrEqual(0);
+  expect(said.indexOf(`root/sessionRemoved ${uri}`)).toBeGreaterThan(cleared);
+  await host.close();
+});
+
 it('runs a write with no grant, as it runs one that writes nothing', async () => {
   const { source, invoked } = scripted();
   const { client, changeset } = await watching(source);

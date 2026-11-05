@@ -460,9 +460,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     offered.delete(uri);
     owners.delete(uri);
     lives.delete(uri);
-    for (const channel of [...ctx.shown.keys()]) {
-      if (changesetOf(channel, uri)) ctx.shown.delete(channel);
-    }
     activeSessionsMoved();
     return Promise.all(closing).then(() => undefined);
   };
@@ -638,6 +635,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * gone.
      */
     flushDeltas();
+    /*
+     * Each of its changesets a client watches, cleared on its own channel
+     * before anything else goes, so a client watching one sees it emptied
+     * rather than keeping the files it last saw, as VS Code's host disposes a
+     * session's changesets first when it deletes the session.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2415-L2426
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2645-L2653
+     */
+    for (const channel of [...ctx.shown.keys()]) {
+      if (!changesetOf(channel, uri)) continue;
+      dispatch(channel, { type: 'changeset/cleared' });
+      ctx.shown.delete(channel);
+    }
     /*
      * Read before either is let go of, and before the row's directory goes
      * with it: `dirOf` answers out of `sessions` or `wheres`, and this is the
