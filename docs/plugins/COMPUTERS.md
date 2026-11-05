@@ -341,7 +341,7 @@ This host never makes, starts, stops or removes one: it lists it, runs commands 
 | --- | --- |
 | `ssh.command` | The program that reaches a box. `ssh` when absent. |
 | `ssh.args` | Arguments before its own, for a wrapper or a jump host. |
-| `ssh.connectTimeout` | Seconds ssh is given to reach a box. 10 when absent. |
+| `ssh.connectTimeout` | Seconds ssh is given to reach a box. 30 when absent, VS Code's handshake bound for an ssh host. |
 | `ssh.pollSeconds` | Seconds between checks of each box. Absent, only a listing moves the up-time meter. |
 | `ssh.machines.<name>.destination` | `user@host`, or a name from ssh's own config. |
 | `ssh.machines.<name>.port` | The port, when it is not the one ssh would use. |

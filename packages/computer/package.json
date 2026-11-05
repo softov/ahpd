@@ -105,7 +105,7 @@
           "properties": {
             "command": { "type": "string", "description": "The program that reaches a box. ssh." },
             "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments before its own, for a wrapper or a jump host." },
-            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds ssh is given to reach a box before it refuses. 10 when absent." },
+            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds ssh is given to reach a box before it refuses. 30 when absent." },
             "pollSeconds": { "type": "integer", "minimum": 1, "description": "Seconds between checks of each box, so the up time charged for a box ends at a check rather than at the next listing. Only a listing moves the meter when absent." },
             "machines": {
               "type": "object",

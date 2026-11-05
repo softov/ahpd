@@ -192,8 +192,8 @@ it.skipIf(!posix)('lists the boxes the options name, and says why one of them is
   // Every box was asked once with the flags the operator's own machines are
   // reached through: no terminal, no prompt, and the connect bound.
   expect(recorded().map((one) => one.join(' ')).sort()).toEqual([
-    '-T -o BatchMode=yes -o ConnectTimeout=10 -p 2222 web1 -- true',
-    '-T -o BatchMode=yes -o ConnectTimeout=10 -p 2229 -i /keys/dev02 dev02 -- true',
+    '-T -o BatchMode=yes -o ConnectTimeout=30 -p 2222 web1 -- true',
+    '-T -o BatchMode=yes -o ConnectTimeout=30 -p 2229 -i /keys/dev02 dev02 -- true',
   ].sort());
 });
 
@@ -702,7 +702,7 @@ it('writes the box own directory and the variables into the remote command, and 
   // One string is the whole of what the box runs, and the box's address is
   // everything before it, as ssh spells it.
   expect(spawn?.args.at(-1)).toBe(`cd '${work}' && env 'A=1' 'B=two words' 'echo' 'hi'`);
-  expect(spawn?.args.slice(1, -1)).toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-p', '2229', 'dev02', '--']);
+  expect(spawn?.args.slice(1, -1)).toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', '-p', '2229', 'dev02', '--']);
   expect(spawn?.args.join(' ')).not.toContain('/home/me/repo');
 
   // A box with no directory of its own keeps the login directory, and a name
@@ -831,15 +831,15 @@ it('reaches a made machine through a jump, with a known-hosts file of its own', 
   // address can be removed again; the jump is reached with the person's own
   // configuration.
   expect(reach.argv('true')).toEqual([
-    '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+    '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30',
     '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=/config/computer-ssh/known_hosts', '-o', 'HashKnownHosts=no',
     '-J', 'dev02',
     '-i', '/config/computer-ssh/id_ed25519',
     'ahpd@192.168.122.40', '--', 'true',
   ]);
-  // A box an operator wrote has neither, as before.
+  // A box an operator wrote has neither.
   expect(sshReach({}, { destination: 'dev02', port: '2229' }).argv('true'))
-    .toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-p', '2229', 'dev02', '--', 'true']);
+    .toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', '-p', '2229', 'dev02', '--', 'true']);
   expect(sshReach({}, { destination: 'dev02', host: ['/opt/ahpd/ahpd/bin/ahpd'] }).hostCommand()).toEqual(['/opt/ahpd/ahpd/bin/ahpd']);
 });
 
