@@ -108,7 +108,7 @@ it('leaves any other scheme to this host, whatever client its authority happens 
   const reader = await joined(served, 'editor');
   await expect(reader.client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'virtual://logs/info' },
-  })).rejects.toMatchObject({ code: -32601, message: 'virtual://logs/info is not this host\'s to read: nothing here serves virtual:' });
+  })).rejects.toMatchObject({ code: -32008, message: 'virtual://logs/info is not this host\'s to read: nothing here serves virtual:' });
   expect(named.peer.asked).toEqual([]);
 });
 

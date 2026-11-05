@@ -83,14 +83,13 @@ export const notServedWords = (uri: string): string | undefined => {
 };
 
 /**
- * The refusal for a URI no store serves.
- *
- * `-32601` rather than a permission code, because the host having nothing that
- * serves a scheme is not a client being refused - the same answer a provider
- * gets when it does not implement a method.
+ * The refusal for a URI no store serves: NotFound, the code the reference
+ * host answers a resource it has no provider operation for with, which its
+ * client's filesystem reads as a missing file.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
  */
 export const notServed = (uri: string): RpcError =>
-  new RpcError(-32601, notServedWords(uri) ?? `${uri} is not served here`);
+  new RpcError(NOT_FOUND, notServedWords(uri) ?? `${uri} is not served here`);
 
 /**
  * The path a URI names, as the filesystem knows it.

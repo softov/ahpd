@@ -2,7 +2,7 @@ import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { notServed } from '../resources/resources.js';
 import { Status } from '../sessions/catalog.js';
-import { need } from './common.js';
+import { need, served } from './common.js';
 import { buildResourceWatchChannelUri, schemeOf } from './channels.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import type { WriteMode } from '../types/resources.js';
@@ -74,7 +74,7 @@ const CONFLICT = -32011;
     resourceList: async (params) => {
       const uri = String(params.uri ?? '');
       const store = storeFor(uri);
-      return { entries: await need(need(store, 'resourceList').list, 'resourceList')(uri, connection.principal) };
+      return { entries: await served(need(store, 'resourceList').list, 'list', uri)(uri, connection.principal) };
     },
     resourceRead: async (params) => {
       const uri = String(params.uri ?? '');
@@ -84,7 +84,7 @@ const CONFLICT = -32011;
       // plugin registered is asked after it.
       const own = await options.changes?.read?.(uri);
       if (own) return own;
-      return await need(need(storeFor(uri), 'resourceRead').read, 'resourceRead')(
+      return await served(need(storeFor(uri), 'resourceRead').read, 'read', uri)(
         uri,
         typeof params.encoding === 'string' ? params.encoding : undefined,
         connection.principal,
@@ -164,7 +164,7 @@ const CONFLICT = -32011;
        */
       const owner = ownerFor(connection);
       const writer = connection.clientId;
-      await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
+      await served(need(storeFor(uri), 'resourceWrite').write, 'write', uri)(uri, {
         data: String(params.data ?? ''),
         encoding,
         /*
@@ -199,7 +199,7 @@ const CONFLICT = -32011;
        * the same writer here as there.
        */
       const owner = ownerFor(connection);
-      await need(need(storeFor(uri), 'resourceDelete').delete, 'resourceDelete')(
+      await served(need(storeFor(uri), 'resourceDelete').delete, 'delete', uri)(
         uri, params.recursive === true, owner, connection.principal,
       );
       log(`${connection.clientId} deleted ${uri}`);
@@ -208,7 +208,7 @@ const CONFLICT = -32011;
     },
     resourceMkdir: async (params) => {
       const uri = String(params.uri ?? '');
-      await need(need(storeFor(uri), 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
+      await served(need(storeFor(uri), 'resourceMkdir').mkdir, 'mkdir', uri)(uri);
       wroteThrough(uri);
       return {};
     },
@@ -224,7 +224,7 @@ const CONFLICT = -32011;
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(source);
-      await need(need(held, 'resourceMove').move, 'resourceMove')(
+      await served(need(held, 'resourceMove').move, 'move', source)(
         source, destination, params.failIfExists === true,
       );
       log(`${connection.clientId} moved ${source} to ${destination}`);
@@ -236,7 +236,7 @@ const CONFLICT = -32011;
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(source);
-      await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
+      await served(need(held, 'resourceCopy').copy, 'copy', source)(
         source, destination, params.failIfExists === true,
       );
       wroteThrough(destination);
@@ -447,7 +447,7 @@ const CONFLICT = -32011;
     },
     resourceResolve: async (params) => {
       const uri = String(params.uri ?? '');
-      return await need(need(storeFor(uri), 'resourceResolve').resolve, 'resourceResolve')(
+      return await served(need(storeFor(uri), 'resourceResolve').resolve, 'resolve', uri)(
         uri,
         params.followSymlinks !== false,
       );

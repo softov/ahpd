@@ -71,25 +71,29 @@ it('reads a file while a provider is registered, and reaches the provider by sch
   })).toMatchObject({ uri: 'computer://local/status', type: 'file' });
 });
 
-it('answers -32601 for a method the provider left out, as a read-only store does', async () => {
+/*
+ * An operation a provider left out, and a scheme nobody serves, are NotFound,
+ * the code VS Code's host answers a resource it has no provider operation
+ * for with, and never a permission code.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+ */
+it('answers NotFound in VS Code\'s words for an operation the provider left out, as a read-only store does', async () => {
   const client = await open(host());
   await expect(client.handle({
     method: 'resourceList', params: { channel: 'ahp-root://', uri: 'computer://local' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: 'Resource operation \'list\' is not supported for: computer://local' });
   await expect(client.handle({
     method: 'resourceWrite',
     params: { channel: 'ahp-root://', uri: 'computer://local/status', data: 'x', encoding: 'utf-8' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: 'Resource operation \'write\' is not supported for: computer://local/status' });
 });
 
-it('answers a scheme nobody serves with a code that says so, not a permission code', async () => {
+it('answers a scheme nobody serves NotFound, not a permission code', async () => {
   const client = await open(host({}));
   const refused = await client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'notes://local/x' },
   }).then(() => 'read', (error: { code: number; message: string }) => error);
-  // The host has nothing that serves `notes:`, which is `-32601`; `-32009` is
-  // for a person whose role does not cover a command it does serve.
-  expect(refused).toMatchObject({ code: -32601 });
+  expect(refused).toMatchObject({ code: -32008 });
   expect((refused as { message: string }).message).toContain('nothing here serves notes:');
 });
 

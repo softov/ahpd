@@ -241,11 +241,12 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     }
   });
 
-  it('answers -32601 for a store that only reads, which is not a refusal about a path', async () => {
-    // Two different ways not to have this, and they must not be confused: a
-    // host with a read-only store does not serve the method at all, while a
-    // path the store cannot write is that store's own refusal. Neither is a
-    // grant, which this host no longer asks for.
+  /*
+   * An operation a store that only reads leaves out is NotFound in VS Code's
+   * words, as its host answers an operation a provider does not implement.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+   */
+  it('answers NotFound in VS Code\'s words for each operation a store that only reads leaves out', async () => {
     const host = createHost({
       path: REPO,
       agents: [claude({ paths: [REPO] })],
@@ -264,7 +265,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
           data: '',
           encoding: 'utf-8',
         },
-      }), method).rejects.toMatchObject({ code: -32601 });
+      }), method).rejects.toMatchObject({ code: -32008, message: expect.stringMatching(/^Resource operation '\w+' is not supported for: /) });
     }
   });
 });

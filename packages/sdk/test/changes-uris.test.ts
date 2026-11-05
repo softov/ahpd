@@ -363,10 +363,11 @@ describe('ahp-edit://pending, the file a tool would leave', () => {
     })).toEqual({ data: 'as it is\nand more\n', encoding: 'utf-8' });
 
     changes.settle?.('ahp-session:/s', 'toolu_9');
-    // Answered for while the question is open, and nobody's once it is not.
+    // Answered for while the question is open, and nobody's once it is not:
+    // NotFound, as VS Code's host answers a resource nothing serves.
     await expect(client.handle({
       method: 'resourceRead', params: { channel: 'ahp-root://', uri: after },
-    })).rejects.toMatchObject({ code: -32601 });
+    })).rejects.toMatchObject({ code: -32008 });
   });
 });
 

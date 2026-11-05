@@ -38,7 +38,7 @@ One method per act, and the grants below are per operation because of it.
 | `createResourceWatch` | A channel that reports what changes under a path |
 | `completions` | `@` completes a path, against the session's own directory |
 
-A refusal says what it is by code: `-32601` for a scheme nothing serves, which is a host with nothing for it rather than a client being refused; `-32008` for a path that is not there; `-32009` for one this client may not see; `-32010` for a `createOnly` write onto something already there; `-32011` for a write whose `ifMatch` no longer matches; `-32602` for a request that is not one this host can act on, such as a move across two schemes.
+A refusal says what it is by code: `-32008` for a path that is not there, and for a scheme nothing serves or an operation its provider left out, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95) answers those; `-32009` for one this client may not see; `-32010` for a `createOnly` write onto something already there; `-32011` for a write whose `ifMatch` no longer matches; `-32602` for a request that is not one this host can act on. A move or a copy is the source's store's to carry out.
 
 ## Schemes
 
@@ -48,7 +48,7 @@ A refusal says what it is by code: `-32601` for a scheme nothing serves, which i
 
 **A client's**, under the client scheme VS Code's host addresses one by, `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>`, an empty authority written `-`: `file:///work/a.ts` on client `editor` is `vscode-agent-client://editor/file/-/work/a.ts`. A request for one goes to the client the authority names, about the URI as that client knows it, and its answer comes back as the client gave it, refusals included. `resourceMove` and `resourceCopy` go to the source's client with both URIs as it knows them. A client whose connection has just closed is waited for through VS Code's 5 s grace, and one gone longer, or never here, is refused `-32603` `No connection for authority: <clientId>`. A watch on one is this host's own channel, fed by the watch this host keeps on the client - [AHP.md](AHP.md#server-to-client-commands). This is how a plugin's virtual files, an editor's unsaved buffers and a filesystem provider reach a session, and it is the same ten methods in both directions.
 
-**A provider's claim about itself.** A provider may answer `describe()`, which says what the scheme is called, one line about it, and the JSON Schema a write to the scheme's root makes something from. A provider may implement less than a full store: `read` is the only method required, and every other one it leaves out answers `-32601`, the same answer a read-only store's missing write half gets. That is what lets `computer:` serve bytes and say what a URI is without inventing directories it does not have.
+**A provider's claim about itself.** A provider may answer `describe()`, which says what the scheme is called, one line about it, and the JSON Schema a write to the scheme's root makes something from. A provider may implement less than a full store: `read` is the only method required, and every other one it leaves out answers `-32008` "Resource operation '<operation>' is not supported for: <uri>", the same answer a read-only store's missing write half gets. That is what lets `computer:` serve bytes and say what a URI is without inventing directories it does not have.
 
 ## A watch
 
@@ -104,7 +104,7 @@ Two things a scheme may do on top of that. A provider may answer `authorize(uri,
 
 `createResourceWatch` on a provider's scheme asks for `<scheme>:watch`, and so does the `subscribe` to the channel it hands back, which is checked against the watched root. `authorize` may let either through, the same as a read. The provider's `watch` is handed the reader whose subscribe attached it, so it can tell each watcher only what that reader may see. A scheme whose provider has `watch` lists `watch` among the operations it advertises.
 
-A scheme nobody serves is `-32601` and not a permission answer: the host has nothing for it, which is a different fact from a client being refused. A provider that implements less than a full store is held to the same answer for each missing method.
+A scheme nobody serves is `-32008` and not a permission answer: the host has nothing for it, which is a different fact from a client being refused, and a client's filesystem reads it as a missing file. A provider that implements less than a full store answers the same code for each missing method.
 
 ## See also
 

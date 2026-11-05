@@ -1,3 +1,4 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from '../rpc.js';
 
 export { reason } from '../utils/values.js';
@@ -14,6 +15,17 @@ export const need = <T>(port: T | undefined, method: string): T => {
   if (port === undefined)
     throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${method}`);
   return port;
+};
+
+/**
+ * A store's operation, or the refusal of a store that has none: NotFound in
+ * the reference host's words for a provider without the operation.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+ */
+export const served = <T>(operation: T | undefined, name: string, uri: string): T => {
+  if (operation === undefined)
+    throw new RpcError(AhpErrorCodes.NotFound, `Resource operation '${name}' is not supported for: ${uri}`);
+  return operation;
 };
 
 /** What a request that would start something is refused with once the host is closing. */
