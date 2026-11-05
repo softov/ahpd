@@ -39,7 +39,7 @@ export interface Snapshots {
 export function createSnapshots(ctx: HostContext): Snapshots {
   const {
     options, sessions, subagents, byChat, owners, decided, wheres, moves, drafts, terminals,
-    kept, watches, marksOf, resumedSessions, activeClientsOf,
+    kept, marksOf, resumedSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
     nameOf, sessionOfChat, sessionChannel, sessionFor,
@@ -411,14 +411,19 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      */
     const away = relayed.get(channel);
     if (away) return value({ resource: channel, state: away.state, fromSeq: ctx.serverSeq });
-    const watching = watches.get(channel);
-    if (watching) {
-      // The state is what the watch *is*, not what it has seen. The protocol's
-      // reducer keeps no history: `resourceWatch/changed` exists to deliver
-      // events to whoever is subscribed, and a client that arrives later has
-      // missed them the way it misses anything it was not there for.
-      return value({ resource: channel, state: watching.state, fromSeq: ctx.serverSeq });
-    }
+    /*
+     * A watch, attached at its channel's first subscribe. The state is what
+     * the watch *is*: its root, `recursive` and globs. The protocol's reducer
+     * keeps no history: `resourceWatch/changed` exists to deliver events to
+     * whoever is subscribed, and a client that arrives later has missed them
+     * the way it misses anything it was not there for. A watch channel that
+     * names no watch this host can run is refused in the reference host's
+     * words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2152-L2156
+     */
+    const watching = await ctx.attachWatch(channel, connection?.principal);
+    if (watching !== undefined) return value({ resource: channel, state: watching, fromSeq: ctx.serverSeq });
+    if (schemeOf(channel) === 'ahp-resource-watch') throw new RpcError(AhpErrorCodes.SessionNotFound, `Resource watch not found: ${channel}`);
     const at = changesetAt(channel);
     // A changeset of a session in a machine is its host's there, which
     // answers it while the session runs.

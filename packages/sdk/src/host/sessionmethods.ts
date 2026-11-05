@@ -64,7 +64,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     movable, movableMoved, openSession, openedBy, options, orderChats,
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
-    snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake, watches,
+    snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake,
   } = ctx;
 
   /**
@@ -430,10 +430,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
       ctx.touch(meant);
       ctx.reconcile();
-      // From here on, an unsubscribe means something: a watch nobody has
-      // subscribed to yet is not one everybody has finished with.
-      const held = watches.get(channel);
-      if (held) held.opened = true;
       // Nothing is awaited between the line above and this one, so
       // nothing can be dispatched in between: what the filter finds is
       // the whole of what was missed, and what it leaves is already in

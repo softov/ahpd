@@ -202,13 +202,15 @@ export interface ResourceStore {
    *
    * `onChange` is called with a *batch*, because the filesystem reports one
    * event per file and a save is several: the protocol says a server coalesces
-   * them, and an empty batch MUST NOT be dispatched. Closing the returned
-   * handle is the only way to stop it - there is no dispose command, and
-   * `unsubscribe` is what the host turns into this call.
+   * them, and an empty batch MUST NOT be dispatched. The host calls this at the
+   * first subscribe to the watch's channel. Closing the returned handle is the
+   * only way to stop it - there is no dispose command, and the last
+   * `unsubscribe`, 30 seconds on, is what the host turns into this call.
    *
-   * `reader` is whoever asked for the watch, absent in the two cases it is
-   * absent on `read`. A scheme whose objects only some people may read reports
-   * a change to a watcher who may read that object, and to nobody else.
+   * `reader` is whoever's subscribe attached the watch, absent in the two
+   * cases it is absent on `read`. A scheme whose objects only some people may
+   * read reports a change to a watcher who may read that object, and to
+   * nobody else.
    */
   watch?(
     uri: string,

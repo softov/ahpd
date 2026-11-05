@@ -11,7 +11,7 @@ Terms, one line each:
 | the file store | `file:`, the filesystem of the machine the daemon runs on |
 | a provider | A store a plugin contributes for one scheme, beside `file:` |
 | a published resource | One a connected client answers for, at `<scheme>://<clientId>/...` |
-| the resource watch | A channel per watched path, `ahp-resource-watch:/<uuid>` |
+| the resource watch | A channel that names what it watches, `ahp-resource-watch://r/<descriptor>` |
 | a scheme's manifest | The JSON Schema a scheme publishes for the form a create is drawn from |
 
 ## What `file:` serves
@@ -52,11 +52,11 @@ A refusal says what it is by code: `-32601` for a scheme nothing serves, which i
 
 ## A watch
 
-`createResourceWatch` hands back a channel, `ahp-resource-watch:/<uuid>`, and the client subscribes to it. Changes arrive as `resourceWatch/changed` with a batch of `added`, `updated` and `deleted` entries, never one event per file: a save that rewrites four files is one batch, and a filesystem that reports an event with no filename reports nothing rather than a directory that changed. `includes` and `excludes` are globs relative to the watched root.
+`createResourceWatch` checks the root first, refusing one that is not there `-32008` `Resource not found: <root>` and one this host may not read `-32009` `Permission denied: <root>`, and hands back a channel, `ahp-resource-watch://r/<descriptor>`, the root, `recursive`, `includes` and `excludes` serialised as base64url JSON into its path, as the reference host names one. The client subscribes to it, and the first subscribe attaches the watcher; a subscribe to a watch channel that names nothing this host can watch is refused `-32001` `Resource watch not found: <channel>`. Changes arrive as `resourceWatch/changed` with a batch of `added`, `updated` and `deleted` entries, never one event per file: a save that rewrites four files is one batch, and a filesystem that reports an event with no filename reports nothing rather than a directory that changed. `includes` and `excludes` are globs relative to the watched root.
 
 Each path in a batch is `added` when it appeared after the watch began and `updated` otherwise, which is read off the file's own creation time rather than from an inventory of the tree - a tree may hold a hundred thousand files and the question is only ever asked about the handful that moved. A path already reported as added is an edit from then on, so a file created and then written twice is one appearance and two edits.
 
-There is no dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. A watch is a read, and it is gated the way a read is - a client already able to read a directory learns nothing new from being told when it moved.
+There is no dispose command, as the protocol has none: the last `unsubscribe`, or the close of the last connection subscribed, releases the watcher 30 seconds later, and a subscribe inside those 30 seconds keeps it running. A client that drops and comes back resumes its watch by the channel it holds, through `reconnect` or a `subscribe`, and a watch let go is attached again by the same name. A watch is a read, and it is gated the way a read is - a client already able to read a directory learns nothing new from being told when it moved.
 
 ## What a client is told
 
@@ -102,7 +102,7 @@ A resource method is the one method family whose subject is not fixed: it carrie
 
 Two things a scheme may do on top of that. A provider may answer `authorize(uri, reader)` and let a read through that the grant would have refused - the gate asks the provider before it requires the grant, so any scheme can open part of itself to a person without a host change, and only for a read, because nothing opens a write that way. And a person reads their own `user://<id>` record with no grant at all, because a client showing somebody their own account has to be able to.
 
-`createResourceWatch` on a provider's scheme asks for `<scheme>:watch`, and so does the `subscribe` to the channel it hands back, which is checked against the watched root. `authorize` may let either through, the same as a read. The provider's `watch` is handed the reader that opened it, so it can tell each watcher only what that reader may see. A scheme whose provider has `watch` lists `watch` among the operations it advertises.
+`createResourceWatch` on a provider's scheme asks for `<scheme>:watch`, and so does the `subscribe` to the channel it hands back, which is checked against the watched root. `authorize` may let either through, the same as a read. The provider's `watch` is handed the reader whose subscribe attached it, so it can tell each watcher only what that reader may see. A scheme whose provider has `watch` lists `watch` among the operations it advertises.
 
 A scheme nobody serves is `-32601` and not a permission answer: the host has nothing for it, which is a different fact from a client being refused. A provider that implements less than a full store is held to the same answer for each missing method.
 

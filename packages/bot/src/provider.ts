@@ -905,9 +905,10 @@ export function botProvider(options: BotOptions): BotProvider {
      * A watch on every bot, `bot://`, or on one, `bot://<slug>`.
      *
      * A make is `added`, an edit is `updated` and a delete is `deleted`, each
-     * told to a watcher that may read the bot. The reader is the one that
-     * opened the watch, so a membership changed after that applies at the next
-     * watch. A bot has no children, so `recursive` and the globs change nothing.
+     * told to a watcher that may read the bot. The reader is the one whose
+     * subscribe attached this watcher, so a membership changed after that
+     * applies at the next watcher. A bot has no children, so `recursive` and
+     * the globs change nothing.
      */
     watch: async (uri, _options, onChange, reader) => {
       await store.ready();

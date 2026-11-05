@@ -34,12 +34,38 @@ const opened = async (made: ReturnType<typeof host>, token: string) => {
   return client;
 };
 
-it('hands the provider the reader who asked for the watch', async () => {
+it('hands the provider the reader whose subscribe attaches the watch', async () => {
   const { provider, readers } = watchable();
   const made = host({ users: directory({ ana: ['bot:watch'] }), resourceProviders: { bot: provider } });
   const ana = await opened(made, 'ana');
-  expect(await call(ana, 'createResourceWatch', { channel: ROOT, uri: 'bot://' })).toMatchObject({ result: { channel: expect.any(String) } });
+  const { result } = await call(ana, 'createResourceWatch', { channel: ROOT, uri: 'bot://' }) as { result: { channel: string } };
+  expect(readers).toEqual([]);
+  expect(await call(ana, 'subscribe', { channel: result.channel })).toMatchObject({ result: { snapshot: expect.anything() } });
   expect(readers).toEqual([expect.objectContaining({ id: 'ana' })]);
+});
+
+it('gives each reader of one watch a watcher of their own, its reports theirs alone', async () => {
+  const { provider, readers, told } = watchable();
+  const made = host({ users: directory({ ana: ['bot:watch'], bob: ['bot:watch'] }), resourceProviders: { bot: provider } });
+  const heard: Record<string, { method: string; params: unknown }[]> = { ana: [], bob: [] };
+  const [ana, bob] = await Promise.all(['ana', 'bob'].map(async (token) => {
+    const client = made.accept({ ...peer(), notify: (method, params) => { heard[token]?.push({ method, params }); } });
+    await hello(client, token); await signIn(client, token);
+    return client;
+  }));
+  if (ana === undefined || bob === undefined) throw new Error('Two readers were opened.');
+  const { result } = await call(ana, 'createResourceWatch', { channel: ROOT, uri: 'bot://' }) as { result: { channel: string } };
+  expect(await call(bob, 'createResourceWatch', { channel: ROOT, uri: 'bot://' })).toMatchObject({ result: { channel: result.channel } });
+  await call(ana, 'subscribe', { channel: result.channel });
+  await call(bob, 'subscribe', { channel: result.channel });
+  expect(readers).toEqual([expect.objectContaining({ id: 'ana' }), expect.objectContaining({ id: 'bob' })]);
+
+  told[0]?.([{ uri: 'bot://seen-by-ana', type: 'added' }]);
+  const changed = (who: string) => (heard[who] ?? [])
+    .map((one) => one.params as { channel?: string; action?: { type: string } })
+    .filter((one) => one.channel === result.channel && one.action?.type === 'resourceWatch/changed');
+  expect(changed('ana')).toHaveLength(1);
+  expect(changed('bob')).toEqual([]);
 });
 
 it('gates the watch channel by the scheme it watches, not by file:watch', async () => {

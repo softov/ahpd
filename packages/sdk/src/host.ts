@@ -54,6 +54,7 @@ import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
   ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
+  parseResourceWatchChannelUri, schemeOf,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
@@ -129,6 +130,13 @@ export const HOST_CLOSE_WAIT_MS = 5_000;
  * meantime, and nothing it contributes is taken away.
  */
 const CLIENT_DISCONNECT_GRACE_MS = 30_000;
+
+/**
+ * How long a resource watch's watcher is held after its last subscriber left:
+ * the reference host's `RESOURCE_WATCH_GRACE_MS`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L616
+ */
+const RESOURCE_WATCH_GRACE_MS = 30_000;
 
 /**
  * The action types the protocol knows, which are the ones a version decides.
@@ -251,13 +259,6 @@ export function createHost(options: HostOptions): Host {
    * published is the same request sent back the other way.
    */
   /**
-   * The watches clients have asked for, by the channel each was given.
-   *
-   * The protocol ties a watch's life to its subscription - there is no dispose
-   * command, and `unsubscribe` is the only handle a client needs - so this is
-   * what `unsubscribe` and a dropped connection are checked against.
-   */
-  /**
    * Who is in each session, by session URI and then by client id.
    *
    * The protocol calls these `activeClients` and makes membership the host's
@@ -274,13 +275,18 @@ export function createHost(options: HostOptions): Host {
    */
   const presence = new Map<string, Map<unknown, Bag>>();
 
+  /**
+   * The resource watches running, by the channel that names each.
+   *
+   * The protocol ties a watch's life to its subscription - there is no dispose
+   * command, and `unsubscribe` is the only handle a client needs - so a watch
+   * is attached at its channel's first subscribe and let go after the last
+   * `unsubscribe` or dropped connection, with one watcher per reader among its
+   * subscribers.
+   */
   const watches = new Claiming<{
     state: Bag;
-    watcher: { close(): void };
-    /** The connection that asked for it, which keeps it alive until it subscribes. */
-    owner: Connection;
-    /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
-    opened: boolean;
+    watchers: Map<string, { watcher: { close(): void }; grace?: ReturnType<typeof setTimeout> | undefined }>;
   }>(claims, 'watch');
   /**
    * `IsRead` and `IsArchived`, per session - by the **id** inside its URI.
@@ -1164,30 +1170,96 @@ export function createHost(options: HostOptions): Host {
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**
-   * Let a watch go once nobody is listening to it.
+   * Let a watch's watchers go once nobody has listened to them for VS Code's
+   * grace.
    *
    * The protocol's rule, and it is a MUST: when every subscriber has
    * unsubscribed, or the connection drops, the watcher is released. Checked
    * against every connection rather than the one that just left, because two
-   * clients may watch one channel and the second is still reading.
-   *
-   * The connection that *created* it counts even before it has subscribed:
-   * `createResourceWatch` hands back a channel and the client subscribes after,
-   * so releasing on "nobody is watching" alone would close every watch in the
-   * gap between the two calls.
+   * clients may watch one channel and the second is still reading. The
+   * release waits 30 s, which a subscribe inside it calls off, so a client
+   * that drops for a moment finds its watch still running, as the reference
+   * host holds a watcher through a grace after its last subscriber. A
+   * reader's watcher goes once no connection of that reader watches the
+   * channel, and the watch with the last of them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15978-L16001
    */
   const releaseWatch = (channel: string): void => {
     const held = watches.get(channel);
-    if (!held) return;
-    for (const connection of connections) {
-      if (connection.watching.has(channel)) return;
+    if (held === undefined) return;
+    const watchedBy = (reader: string): boolean => [...connections]
+      .some((connection) => connection.watching.has(channel) && (connection.principal?.id ?? '') === reader);
+    for (const [reader, one] of held.watchers) {
+      if (one.grace !== undefined || watchedBy(reader)) continue;
+      one.grace = setTimeout(() => {
+        one.grace = undefined;
+        if (held.watchers.get(reader) !== one || watchedBy(reader)) return;
+        one.watcher.close();
+        held.watchers.delete(reader);
+        if (held.watchers.size === 0 && watches.get(channel) === held) watches.delete(channel);
+        log(`released ${channel}${reader === '' ? '' : ` for ${reader}`}`);
+      }, RESOURCE_WATCH_GRACE_MS);
     }
-    // Handed out and not yet subscribed to. Its owner is still here, so it is
-    // still on its way to being watched rather than finished with.
-    if (!held.opened && connections.has(held.owner)) return;
-    held.watcher.close();
-    watches.delete(channel);
-    log(`released ${channel}`);
+  };
+  /**
+   * A watch's watcher, attached on its channel's first subscribe: the channel
+   * names what to watch, so nothing is kept between the create and the
+   * subscribe, and a subscribe inside a release's grace calls the release
+   * off, as the reference host materialises a watcher on its first subscriber.
+   * Answers the watch's state, or nothing for a name that is no watch and for
+   * a watcher its store would not start, as the reference host answers a
+   * watcher it could not attach.
+   *
+   * One watcher per reader among the subscribers, each handed that reader,
+   * whose reports go to that reader's connections alone through the audience
+   * a plugin channel's actions carry: a provider tells each reader only what
+   * that reader may see, and two people's subscribes to one watch see each
+   * their own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15921-L15976
+   */
+  const attachWatch = async (channel: string, principal?: Principal): Promise<Bag | undefined> => {
+    const reader = principal?.id ?? '';
+    const kept = watches.get(channel);
+    const running = kept?.watchers.get(reader);
+    if (kept !== undefined && running !== undefined) {
+      clearTimeout(running.grace);
+      running.grace = undefined;
+      return kept.state;
+    }
+    const descriptor = parseResourceWatchChannelUri(channel);
+    if (descriptor === undefined) return undefined;
+    const scheme = schemeOf(descriptor.root);
+    const store = scheme === '' || scheme === 'file' ? options.resources : options.resourceProviders?.[scheme];
+    const start = store?.watch;
+    if (store === undefined || start === undefined) return undefined;
+    const watcher = await start.call(store, descriptor.root, {
+      recursive: descriptor.recursive,
+      excludes: descriptor.excludes?.items ?? [],
+      includes: descriptor.includes?.items ?? [],
+    }, (changes) => {
+      // Only while it runs: a batch can be in flight as the watch is let go.
+      if (watches.get(channel)?.watchers.has(reader) !== true) return;
+      emit(channel, { type: 'resourceWatch/changed', changes: { items: changes } }, undefined, {
+        visible: (one) => (one?.id ?? '') === reader,
+      });
+    }, principal).catch((error: unknown) => {
+      log(`could not watch ${descriptor.root} for ${channel}: ${reason(error)}`);
+      return undefined;
+    });
+    if (watcher === undefined) return undefined;
+    // Two subscribes that met: the one that came second keeps the first's.
+    const held = watches.get(channel) ?? { state: { ...descriptor }, watchers: new Map() };
+    const met = held.watchers.get(reader);
+    if (met !== undefined) {
+      watcher.close();
+      clearTimeout(met.grace);
+      met.grace = undefined;
+      return held.state;
+    }
+    held.watchers.set(reader, { watcher });
+    watches.set(channel, held);
+    log(`watching ${descriptor.root}${descriptor.recursive ? ' and under it' : ''} for ${channel}${reader === '' ? '' : ` as ${reader}`}`);
+    return held.state;
   };
   /**
    * Let a channel a session's backend serves go once no connection here
@@ -1351,7 +1423,7 @@ export function createHost(options: HostOptions): Host {
         : options.catalogs?.agents?.[provider],
       HOST_CATALOGS,
     ],
-    replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
+    replayable, leaves, attachWatch, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, relaunches: new Map(), chatRelaunches: new Map(), resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
@@ -2099,7 +2171,7 @@ export function createHost(options: HostOptions): Host {
           }
           // Except for a resource watch, where the protocol says the opposite
           // in as many words: it has no dispose command, so the last
-          // unsubscribe is what releases the watcher.
+          // unsubscribe is what begins the watcher's release.
           releaseWatch(channel);
           releaseRelayed(channel);
           // And unsubscribing from a session is one of the three ways the
@@ -2286,9 +2358,11 @@ export function createHost(options: HostOptions): Host {
           for (const [channel, away] of [...relayed]) {
             if (away.owner === connection) relayed.delete(channel);
           }
-          // Before anything else looks: a watch this client owned and never
-          // subscribed to has nobody left to subscribe to it.
-          for (const channel of [...watches.keys()]) releaseWatch(channel);
+          // Each resource watch it subscribed to is released as its
+          // unsubscribe releases one, as the reference host releases a gone
+          // client's subscriptions.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1867-L1883
+          for (const channel of was) releaseWatch(channel);
           for (const channel of was) releaseRelayed(channel);
           /*
            * Gone without reconnecting, which is the second of the three ways -

@@ -1199,13 +1199,23 @@ it('tells a watch on one bot about that bot and nothing else', async () => {
   expect(soft.heard(channel)).toEqual(['updated bot://motion']);
 });
 
+/*
+ * A bot that is not there is refused when the watch is asked for, as the host
+ * checks a watch's root first. A person's chat under a bot is there, and its
+ * watcher, which the provider will not start, is refused at the subscribe
+ * that would attach it, as VS Code's host refuses a watcher it could not attach.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2152-L2156
+ */
 it('refuses a watch on a bot that does not exist, or on a path under one', async () => {
   const { host } = made({ soft: ['bot:*', 'session:create'] });
   const soft = await listening(host, 'soft');
   await write(soft.client, 'bot://motion', { name: 'Motion' }, { createOnly: true });
 
-  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://nobody' })).toMatchObject({ code: expect.any(Number) });
-  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://motion/leaf' })).toMatchObject({ code: expect.any(Number) });
+  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://nobody' }))
+    .toMatchObject({ code: -32008, message: 'Resource not found: bot://nobody' });
+  const { channel } = got(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://motion/leaf' })) as { channel: string };
+  expect(await call(soft.client, 'subscribe', { channel }))
+    .toMatchObject({ code: -32001, message: `Resource watch not found: ${channel}` });
 });
 
 it('tells a watcher only about the bots it may read', async () => {

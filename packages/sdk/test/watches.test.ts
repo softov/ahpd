@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { fileResources, list, read, resolve, complete } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -130,43 +130,110 @@ it('honours the excludes it was given', async () => {
   expect(changes(p, made.channel).some((c) => c.uri.includes('node_modules/'))).toBe(false);
 });
 
-it('lets the watcher go when the last subscriber leaves, and when the client does', async () => {
-  const { host, client, peer: p } = await connected();
-  const made = await client.handle({
-    method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}`, recursive: true },
-  }) as { channel: string };
-  await client.handle({ method: 'subscribe', params: { channel: made.channel } });
-  writeFileSync(join(root, 'seen.txt'), 'x');
-  await until(() => changes(p, made.channel).length > 0, 'the first change');
+/*
+ * The channel names the watch, and the watcher runs only while somebody
+ * subscribes: attached at the first subscribe, released 30 s after the last
+ * subscriber leaves, kept by a subscribe inside those 30 s, and attached again
+ * by a subscribe after them, as VS Code's host materialises and releases one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15921-L16001
+ */
+it('attaches the watcher at the first subscribe, and lets it go 30 s after the last subscriber leaves', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const started: string[] = [];
+    let closed = 0;
+    const store = {
+      ...fileResources(),
+      watch: async (uri: string) => {
+        started.push(uri);
+        return { close: () => { closed += 1; } };
+      },
+    };
+    const { client } = await connected(store);
+    const made = await client.handle({
+      method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}`, recursive: true },
+    }) as { channel: string };
+    expect(started).toEqual([]);
 
-  // No dispose command in the protocol: `unsubscribe` is the only handle a
-  // client needs, and it is what releases the watcher.
-  client.handle({ method: 'unsubscribe', params: { channel: made.channel } });
-  const had = changes(p, made.channel).length;
-  writeFileSync(join(root, 'unseen.txt'), 'x');
-  await new Promise((r) => { setTimeout(r, 300); });
-  expect(changes(p, made.channel).length).toBe(had);
-  // And the channel is gone with it.
-  await expect(client.handle({ method: 'subscribe', params: { channel: made.channel } })).rejects.toThrow();
+    await client.handle({ method: 'subscribe', params: { channel: made.channel } });
+    expect(started).toEqual([`file://${root}`]);
+    await client.handle({ method: 'unsubscribe', params: { channel: made.channel } });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(closed).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closed).toBe(1);
 
-  // A watch created and never subscribed to is not one everybody has finished
-  // with - it goes when its own client does.
-  const second = host.accept(peer());
-  await second.handle({ method: 'initialize', params: { clientId: 'b', protocolVersions: ['0.9.0'] } });
-  const orphan = await second.handle({
-    method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}` },
-  }) as { channel: string };
-  second.close();
-  const third = host.accept(peer());
-  await third.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
-  await expect(third.handle({ method: 'subscribe', params: { channel: orphan.channel } })).rejects.toThrow();
+    // Attached again by the name it was given, and kept by a subscribe inside the grace.
+    await client.handle({ method: 'subscribe', params: { channel: made.channel } });
+    expect(started).toHaveLength(2);
+    await client.handle({ method: 'unsubscribe', params: { channel: made.channel } });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await client.handle({ method: 'subscribe', params: { channel: made.channel } });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(started).toHaveLength(2);
+    expect(closed).toBe(1);
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
+/*
+ * A client that drops and comes back inside the grace resumes its watch by the
+ * channel it holds, the watcher still running, as VS Code's reconnect resumes
+ * a watch channel.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1527-L1545
+ */
+it('resumes a watch on reconnect by the channel the client holds', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    let told: ((changes: { uri: string; type: 'added' | 'updated' | 'deleted' }[]) => void) | undefined;
+    let started = 0;
+    let closed = 0;
+    const store = {
+      ...fileResources(),
+      watch: async (_uri: string, _options: unknown, onChange: NonNullable<typeof told>) => {
+        started += 1;
+        told = onChange;
+        return { close: () => { closed += 1; } };
+      },
+    };
+    const { host, client } = await connected(store);
+    const made = await client.handle({
+      method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}` },
+    }) as { channel: string };
+    await client.handle({ method: 'subscribe', params: { channel: made.channel } });
+    client.close();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const p = peer();
+    const back = host.accept(p);
+    const answer = await back.handle({
+      method: 'reconnect', params: { clientId: 'w', subscriptions: [made.channel], lastSeenServerSeq: 0 },
+    });
+    expect(answer).toMatchObject({ type: 'replay', missing: [] });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect([started, closed]).toEqual([1, 0]);
+    told?.([{ uri: `file://${root}/a.txt`, type: 'added' }]);
+    expect(changes(p, made.channel)).toEqual([{ uri: `file://${root}/a.txt`, type: 'added' }]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('will not watch what is not there', async () => {
   const { client } = await connected();
-  expect((await refused(client.handle({
+  expect(await refused(client.handle({
     method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}/nowhere` },
-  }))).code).toBe(-32008);
+  }))).toEqual({ code: -32008, message: `Resource not found: file://${root}/nowhere` });
+});
+
+it('refuses a watch channel that names no watch, in VS Code\'s words', async () => {
+  const { client } = await connected();
+  expect(await refused(client.handle({
+    method: 'subscribe', params: { channel: 'ahp-resource-watch://r/nothing' },
+  }))).toEqual({ code: -32001, message: 'Resource watch not found: ahp-resource-watch://r/nothing' });
 });
 
 it('says -32601 for a store that cannot watch, which is what a client degrades on', async () => {

@@ -259,6 +259,55 @@ export const retainedTerminalOf = (uri: string): { chat: string; key: string } |
   catch { return undefined; }
 };
 
+/** What a resource watch is: its root, whether it reaches below it, and the globs it leaves out and keeps. */
+export interface WatchDescriptor {
+  root: string;
+  recursive: boolean;
+  excludes?: { items: string[] };
+  includes?: { items: string[] };
+}
+
+/**
+ * How this host names a resource watch: the reference host's shape, the
+ * descriptor serialised into the channel's path under
+ * `ahp-resource-watch://r/`, so a subscribe reads back what to watch with no
+ * record kept between the two and a reconnecting client resumes its watch by
+ * the name it holds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L374-L399
+ */
+export const buildResourceWatchChannelUri = (descriptor: WatchDescriptor): string => {
+  const payload: Record<string, unknown> = { root: descriptor.root };
+  if (descriptor.recursive) payload.recursive = true;
+  if (descriptor.excludes !== undefined && descriptor.excludes.items.length > 0) payload.excludes = [...descriptor.excludes.items];
+  if (descriptor.includes !== undefined && descriptor.includes.items.length > 0) payload.includes = [...descriptor.includes.items];
+  return `ahp-resource-watch://r/${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+};
+
+/**
+ * The descriptor a resource watch channel names, read from the path of any
+ * `ahp-resource-watch:` URI, or nothing for a name that is not one, as the
+ * reference host reads one back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L401-L440
+ */
+export const parseResourceWatchChannelUri = (uri: string): WatchDescriptor | undefined => {
+  if (!URL.canParse(uri)) return undefined;
+  const { protocol, pathname } = new URL(uri);
+  if (protocol !== 'ahp-resource-watch:') return undefined;
+  const encoded = pathname.startsWith('/') ? pathname.slice(1) : pathname;
+  if (encoded === '') return undefined;
+  try {
+    const payload = bag(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')));
+    if (typeof payload.root !== 'string') return undefined;
+    return {
+      root: payload.root,
+      recursive: payload.recursive === true,
+      ...(Array.isArray(payload.excludes) ? { excludes: { items: payload.excludes.filter((one): one is string => typeof one === 'string') } } : {}),
+      ...(Array.isArray(payload.includes) ? { includes: { items: payload.includes.filter((one): one is string => typeof one === 'string') } } : {}),
+    };
+  }
+  catch { return undefined; }
+};
+
 /**
  * Whether a URI names the automations catalogue, under any spelling.
  *

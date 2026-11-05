@@ -7,6 +7,7 @@ import type { Session } from '../types/session.js';
 import type { Bag } from '../types/common.js';
 import type { AnnotationsState } from '@microsoft/agent-host-protocol';
 import type { Terminal } from '../types/terminals.js';
+import type { Principal } from '../types/users.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
@@ -233,15 +234,21 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   leaves: (asked: string, clientId: string) => void;
   /** The sequence number every snapshot and action is taken at. */
   serverSeq: number;
-  /** The watches clients have asked for, by the channel each was given. */
+  /**
+   * The resource watches running, by channel: each attached at its channel's
+   * first subscribe, with one watcher per reader among its subscribers, by the
+   * reader's id, `''` for a connection that is nobody.
+   */
   watches: Claiming<{
     state: Bag;
-    watcher: { close(): void };
-    /** The connection that asked for it, which keeps it alive until it subscribes. */
-    owner: Connection;
-    /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
-    opened: boolean;
+    watchers: Map<string, {
+      watcher: { close(): void };
+      /** The release armed when that reader's last subscriber left, which a subscribe calls off. */
+      grace?: ReturnType<typeof setTimeout> | undefined;
+    }>;
   }>;
+  /** A resource watch's watcher, attached on its channel's first subscribe, or nothing for a name that is no watch. */
+  attachWatch(channel: string, principal?: Principal): Promise<Bag | undefined>;
   /** The marks a session carries, as a snapshot of its annotations channel reports them. */
   marksOf: (id: string) => AnnotationsState;
   /** The live sessions started by resuming a recorded one, whose workers are read back. */

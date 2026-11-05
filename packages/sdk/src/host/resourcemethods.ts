@@ -1,8 +1,9 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { notServed } from '../resources/resources.js';
 import { Status } from '../sessions/catalog.js';
 import { need } from './common.js';
-import { schemeOf } from './channels.js';
+import { buildResourceWatchChannelUri, schemeOf } from './channels.js';
 import type { WriteMode } from '../types/resources.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -24,7 +25,7 @@ export function createResourceMethods(ctx: HostContext, conn: ConnectionContext)
   const { connection } = conn;
   const {
     bringBackOf, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext, opKey,
-    options, ownerFor, recordPullRequest, refreshFacts, statusOf, watches, wroteThrough,
+    options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
   } = ctx;
 
 /**
@@ -93,43 +94,40 @@ const CONFLICT = -32011;
     /**
      * Tell me when that changes.
      *
-     * The client gets a channel back and subscribes to it; there is no
-     * dispose command, and the last `unsubscribe` is what releases the
-     * watcher. Gated the way `resourceRead` is rather than the way a write
-     * is: watching is a read, and a client already able to read a
-     * directory learns nothing new by being told when it moved.
+     * The root is checked first, and the channel answered names the watch
+     * itself, as the reference host mints it: nothing runs until the
+     * channel's first subscribe attaches the watcher, there is no dispose
+     * command, and the last `unsubscribe` begins the watcher's release. A
+     * root that is not there is refused `Resource not found: <root>`, and one
+     * this host may not read `Permission denied: <root>`, in VS Code's words.
+     * Gated the way `resourceRead` is: watching is a read, and a client
+     * already able to read a directory learns nothing new by being told when
+     * it moved.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15884-L15910
      */
     createResourceWatch: async (params) => {
       const uri = String(params.uri ?? '');
       const store = need(storeFor(uri), 'createResourceWatch');
-      const start = need(store.watch, 'createResourceWatch');
+      need(store.watch, 'createResourceWatch');
       const items = (value: unknown): string[] => {
         const held = (typeof value === 'object' && value !== null ? value : {}) as { items?: unknown };
         return Array.isArray(held.items) ? held.items.filter((one): one is string => typeof one === 'string') : [];
       };
-      const recursive = params.recursive === true;
+      await store.resolve?.(uri).catch((error: unknown) => {
+        if ((error as { code?: unknown }).code === AhpErrorCodes.PermissionDenied) {
+          throw new RpcError(AhpErrorCodes.PermissionDenied, `Permission denied: ${uri}`);
+        }
+        throw new RpcError(AhpErrorCodes.NotFound, `Resource not found: ${uri}`);
+      });
       const excludes = items(params.excludes);
       const includes = items(params.includes);
-      const channel = `ahp-resource-watch:/${crypto.randomUUID()}`;
-      const watcher = await start.call(store, uri, { recursive, excludes, includes }, (changes) => {
-        // Only if it still exists: a batch can be in flight when the last
-        // subscriber leaves, and dispatching to a released channel is a
-        // client being told about a watch it has forgotten.
-        if (!watches.has(channel)) return;
-        dispatch(channel, { type: 'resourceWatch/changed', changes: { items: changes } });
-      }, connection.principal);
-      watches.set(channel, {
-        watcher,
-        owner: connection,
-        opened: false,
-        state: {
-          root: uri,
-          recursive,
-          ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
-          ...(includes.length > 0 ? { includes: { items: includes } } : {}),
-        },
+      const channel = buildResourceWatchChannelUri({
+        root: uri,
+        recursive: params.recursive === true,
+        ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
+        ...(includes.length > 0 ? { includes: { items: includes } } : {}),
       });
-      log(`${connection.clientId} is watching ${uri}${recursive ? ' and under it' : ''}`);
+      log(`${connection.clientId} may watch ${uri}${params.recursive === true ? ' and under it' : ''} on ${channel}`);
       return { channel };
     },
     /*
