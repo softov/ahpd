@@ -309,10 +309,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
    */
   const lastAt = new Map<WireTurn<Turn>, number>();
   /*
-   * Where a turn ended, in the CLI's own names: the last of its prompt, its
-   * tool results and its answers, which is the rule a live session applies to
-   * the `user` and `assistant` frames its CLI sends. A CLI echo and a compact
-   * summary are not the turn's, so neither moves it.
+   * Where a fork or a rewind of a turn cuts, in the CLI's own names: its last
+   * assistant message, as VS Code's resolveForkAnchorUuid reads it, and as a
+   * live session records it from the frames its CLI sends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
    */
   const ended = (turn: WireTurn<Turn> | undefined, frame: Bag): void => {
     const entry = str(frame.uuid);
@@ -406,10 +406,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       // A frame of tool results is part of the turn the prompt opened, so the
       // turn ends when the last of them was written.
       if (open !== undefined) lastAt.set(open, Date.parse(at));
-      if (!said) {
-        ended(open, frame);
-        continue;
-      }
+      if (!said) continue;
       // Written by the CLI rather than said by anybody: it neither shows as a
       // prompt nor ends the exchange it sits in.
       if (frame.isCompactSummary === true || isCliEcho(message.content)) continue;
@@ -444,7 +441,6 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       };
       built.push(opened);
       lastAt.set(opened, Date.parse(at));
-      ended(opened, frame);
       continue;
     }
 

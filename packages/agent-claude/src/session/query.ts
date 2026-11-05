@@ -794,15 +794,13 @@ export function createQuery(ctx: SessionContext): Query {
         }
 
         /*
-         * How far this turn has got, in the backend's own names for things.
-         *
-         * `user` and `assistant` are the frames that become entries in the
-         * transcript chain; a `stream_event` is a piece of one that is not
-         * written down separately, and a `result` closes a turn without being
-         * part of it. So the last of these two seen while a turn is active is
-         * that turn's last chain entry, which is where a rewind cuts.
+         * Where a fork or a rewind of this turn cuts: its last assistant
+         * message on the main chain, as VS Code's resolveForkAnchorUuid reads
+         * it from the transcript. A worker's frames are off the main chain,
+         * and a tool's result is no assistant message.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
          */
-        if (ctx.active !== undefined && (type === 'user' || type === 'assistant')) {
+        if (ctx.active !== undefined && type === 'assistant' && str(message.parent_tool_use_id) === undefined) {
           const entry = str(message.uuid);
           if (entry !== undefined) ends.set(String(ctx.active.id), entry);
         }

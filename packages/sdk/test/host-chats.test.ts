@@ -150,6 +150,41 @@ describe('dropping the turns after one', () => {
     expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
+  /*
+   * The cut is the kept turn's last assistant message on the main chain, as
+   * VS Code's resolveForkAnchorUuid reads it: a tool's result after it, and a
+   * worker's frames, are no anchor.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
+   */
+  it('rewinds to the kept turn\'s last assistant message, past a tool\'s result and a worker\'s frame', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }] } });
+    await emit({ type: 'user', uuid: 'result-1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a b' }] } });
+    await emit({ type: 'assistant', uuid: 'worker-1', parent_tool_use_id: 'toolu_task', message: { id: 'w1', content: [{ type: 'text', text: 'working' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    wrote('sdk-1', String(sessionQueries().at(-1)?.options.cwd));
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second' } } },
+    });
+    await settle();
+    await emit({ type: 'assistant', uuid: 'reply-2', message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.resumeSessionAt).toBe('reply-1');
+  });
+
   it('says so before it restarts, so nobody is shown what they asked to be rid of', async () => {
     const { client, peer: p, chatUri } = await twice();
     client.handle({
