@@ -12,6 +12,7 @@
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { bearerChallenge } from '@ahpd/sdk';
 import { answer } from './call.js';
 import type { Call } from './call.js';
 import type { Endpoint } from './record.js';
@@ -221,6 +222,34 @@ export function shown(endpoint: Endpoint, body: unknown): unknown {
 export function proves(endpoint: Endpoint, call: Call, now = Date.now()): boolean {
   const check = CHECKS[endpoint.auth ?? 'bearer'];
   return check !== undefined && check(endpoint, call, now);
+}
+
+/**
+ * The `WWW-Authenticate` a 401 of this endpoint carries, as HTTP has every 401
+ * carry one (RFC 9110 section 11.6.1): the host's bearer challenge, with
+ * `error="invalid_token"` when the call carried the token its scheme reads.
+ */
+export function wwwAuthenticate(endpoint: Endpoint, call: Call): string {
+  const scheme = endpoint.auth ?? 'bearer';
+  const carried = (scheme === 'bearer' && bearerOf(call) !== undefined)
+    || (scheme === 'query' && call.token !== undefined)
+    || (scheme === 'header' && headerOf(call, endpoint.header ?? '') !== undefined);
+  return bearerChallenge(carried);
+}
+
+/**
+ * The id a sender gives one delivery and gives again when it delivers the same
+ * event again, or nothing for a scheme whose sender names none: GitHub's
+ * `X-GitHub-Delivery` and Standard Webhooks' `webhook-id`.
+ * https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export function deliveryOf(endpoint: Endpoint, call: Call): string | undefined {
+  switch (endpoint.auth ?? 'bearer') {
+    case 'github': return headerOf(call, 'x-github-delivery');
+    case 'standard': return headerOf(call, 'webhook-id');
+    default: return undefined;
+  }
 }
 
 /**

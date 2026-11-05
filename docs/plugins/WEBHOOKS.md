@@ -65,14 +65,16 @@ curl -X POST http://127.0.0.1:37537/plugins/webhook/ci \
 
 | Answer | When |
 | --- | --- |
-| 202 | The call reached its target. A call `match` does not take answers `{ "skipped": true }` and fires nothing |
+| 202 | The call reached its target. A call `match` does not take answers `{ "skipped": true }` and fires nothing; a delivery sent again answers `{ "duplicate": true }` and reaches nothing |
 | 400 | The body has a JSON content type and is not JSON, or a bot call has no thread or no text |
-| 401 | The call is not proved with the endpoint's secret |
+| 401 | The call is not proved with the endpoint's secret. `WWW-Authenticate` holds `Bearer realm="ahpd"`, with `error="invalid_token"` when the call carried the token its scheme reads |
 | 403 | A Meta `GET` sent the wrong `hub.verify_token` |
 | 404 | No open connector answers for that id, or the path has more than one segment after the prefix |
-| 405 | The method is not `POST`, or it is a `GET` on a scheme other than `meta` |
+| 405 | The method is not `POST`, or it is a `GET` on a scheme other than `meta`. `Allow` names `POST`, or `GET, POST` for `meta` |
 | 409 | A bot call could not be sent: the plugin may not read the bot, the read answered no chat, or the host refused the turn |
 | 413 | The body is larger than `maxBodyBytes` |
+
+A sender that names each delivery tells a delivery sent again by its id: GitHub's `X-GitHub-Delivery`, which a redelivery repeats, and Standard Webhooks' `webhook-id`, which a retry repeats. A proved call whose id this endpoint took in the last five minutes, Standard Webhooks' example window, answers `{ "duplicate": true }`, so the event reaches its target once. An id whose call was answered with anything but a 2xx is let go, since its sender sends it again.
 
 ## The schemes
 
