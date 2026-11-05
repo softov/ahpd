@@ -643,7 +643,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         displayName: String(call.displayName),
         readied: true,
         asked: true,
-        ...(owner === undefined ? {} : { owner }),
+        ...(owner === undefined ? {} : { contributor: owner }),
       });
     }
     emit('chat', {
@@ -684,9 +684,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
     const calls = [...(ctx.mapping?.calls.values() ?? [])];
     const reported = calls.find((call) => call.toolCallId === meta?.[TOOL_USE_ID])
-      ?? calls.findLast((call) => (call.owner === undefined
+      ?? calls.findLast((call) => (call.contributor === undefined
         ? [call.toolName, call.displayName].some((one) => referenceName(one) === `${HOST_TOOLS}/${name}`)
-        : `${call.owner}__${call.toolName}` === name));
+        : `${call.contributor}__${call.toolName}` === name));
     if (reported === undefined || ctx.mapping === undefined) {
       ctx.options.log?.(`${provider}: refusing ${HOST_TOOLS}/${name}: the agent reported no call for it to ask on`);
       return false;

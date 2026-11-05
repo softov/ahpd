@@ -116,7 +116,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     displayName: title,
     readied: false,
     asked: false,
-    ...(owner === undefined ? {} : { owner }),
+    ...(owner === undefined ? {} : { contributor: owner }),
   };
   turn.calls.set(update.toolCallId, call);
   const toolKind = 'kind' in update && update.kind !== undefined && update.kind !== null ? KINDS[update.kind] : undefined;
@@ -153,7 +153,7 @@ const KINDS: Partial<Record<ToolKind, string>> = { execute: 'terminal', search: 
  * `contributor` key at all.
  */
 const contributorOf = (call: AcpCall): Bag =>
-  (call.owner === undefined ? {} : { contributor: { kind: 'client', clientId: call.owner } });
+  (call.contributor === undefined ? {} : { contributor: { kind: 'client', clientId: call.contributor } });
 
 /**
  * Whether the agent has moved the call off `pending`.
@@ -227,7 +227,7 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
  */
 const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[] => {
   const finished = call.status === 'completed' || call.status === 'failed';
-  if (call.owner !== undefined && !finished) turn.opening.push(call);
+  if (call.contributor !== undefined && !finished) turn.opening.push(call);
   return [ready(turn, call, input)];
 };
 

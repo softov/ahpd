@@ -396,12 +396,14 @@ export interface AcpCall {
    */
   startedAt?: number;
   /**
-   * The client whose tool this call is for, when the agent reached one.
+   * The client whose tool this call is for, by its id, when the agent reached
+   * one: the spec's `contributor` of a client's call.
    *
-   * Read off what the agent reported - see `AcpTurn.ownerOf` - and never set on
-   * a call that is the agent's own, the host's, or one nobody's tool matches.
+   * Read off what the agent reported - see `AcpTurn.ownerOf` - and set on a
+   * call of a client's tool alone: the agent's own calls, the host's, and one
+   * nobody's tool matches carry none.
    */
-  owner?: string;
+  contributor?: string;
 }
 
 /**

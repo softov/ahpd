@@ -78,15 +78,15 @@ const inputOf = (bound: BoundTool): CofoldInput => {
  *
  * The session holds one of these from the moment cofold tries to execute an
  * owner-bound tool until the owning client answers or goes away. The fields
- * are what `completeToolCall` and `clientGone` need: the owner tells one
+ * are what `completeToolCall` and `clientGone` need: the contributor tells one
  * client's call from another's, and the name is what a call failed by a lost
  * client can say it was.
  */
 export interface ClientToolCall {
   /** The model's own id for the call, which every chat action names. */
   callId: string;
-  /** The client that announced the tool, and the only one that may answer. */
-  owner: string;
+  /** The client that announced the tool, by its id, and the only one that may answer: the spec's `contributor` of the call. */
+  contributor: string;
   /** The offered name, for the result a client that went away earns. */
   name: string;
   /** The arguments, held for as long as the round trip lasts. */
@@ -135,7 +135,7 @@ export const cofoldTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Reco
         // means a caller wrapped one by hand.
         throw new Error(`${bound.definition.name} is ${bound.owner}'s to run, and no session is here to wait on it`);
       }
-      return await relay.call({ callId: ctx.callId, owner: bound.owner, name: bound.definition.name, input });
+      return await relay.call({ callId: ctx.callId, contributor: bound.owner, name: bound.definition.name, input });
     }
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);

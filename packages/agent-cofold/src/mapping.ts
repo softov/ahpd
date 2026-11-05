@@ -200,8 +200,8 @@ interface OpenCall {
    * and the row is titled by the tool's name.
    */
   subject: string | undefined;
-  /** The client that runs it, when one does; undefined for a host tool. */
-  owner: string | undefined;
+  /** The client that runs it, by its id, when one does: the spec's `contributor` of a client's call; undefined for a host tool. */
+  contributor: string | undefined;
   /** Whether `chat/toolCallReady` has gone out yet. */
   readied: boolean;
   /**
@@ -315,7 +315,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
       shown,
       input: undefined,
       subject: undefined,
-      owner,
+      contributor: owner,
       readied: false,
       awaited: false,
       invocation: undefined,
@@ -554,7 +554,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             shown,
             input: event.input,
             subject: event.subject,
-            owner,
+            contributor: owner,
             readied: false,
             awaited: false,
             invocation: undefined,
@@ -577,7 +577,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const displayName = options.displayNameOf(event.name);
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
-          const owner = held?.owner ?? options.ownerOf(event.name);
+          const owner = held?.contributor ?? options.ownerOf(event.name);
           const shown = held?.shown ?? shownName(event.name, owner);
           const meta = toolMetaOf(event.name);
           // The ask carries the input but not the subject, so the one the
@@ -717,7 +717,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             toolCallId: event.callId,
             invocationMessage: held.invocation ?? describe(held.shown, held.subject),
             confirmed: held.awaited ? 'user-action' : 'not-needed',
-            ...contributorOf(held.owner),
+            ...contributorOf(held.contributor),
             ...(written !== undefined ? { toolInput: written } : {}),
             ...(call._meta === undefined ? {} : { _meta: bag(call._meta) }),
           }]);
@@ -765,7 +765,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.owner, held.subject)];
+            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.contributor, held.subject)];
           actions.push(toolCompleteAction(turnId, event.callId, held.name, held.shown, event.reason, true, held.subject));
           return only(actions);
         }

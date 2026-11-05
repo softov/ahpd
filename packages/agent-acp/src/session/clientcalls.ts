@@ -106,7 +106,7 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    * longer holds is no call to ask anybody about.
    */
   const openCall = (call: AcpCall, turnId: string): void => {
-    const owner = call.owner;
+    const owner = call.contributor;
     if (owner === undefined || offered(`${owner}__${call.toolName}`)?.owner !== owner) return;
     calls.open({
       turnId,

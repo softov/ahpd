@@ -256,10 +256,10 @@ export const createTurnAgent = (
   const openedCall = (call: ClientToolCall): void => {
     calls.open({
       turnId: String(ctx.active?.id ?? ''),
-      owner: call.owner,
+      owner: call.contributor,
       toolCall: {
         toolCallId: call.callId,
-        toolName: bareName(call.name, call.owner),
+        toolName: bareName(call.name, call.contributor),
         displayName: call.name,
         invocationMessage: describe(call.name),
         confirmed: 'not-needed',
