@@ -448,17 +448,19 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     /**
      * The four the window asks of its own host about itself.
      *
-     * `shutdown` answers first and stops after, so the window hears yes
-     * rather than a dropped socket. The network diagnostics are what the
-     * process can see - the proxy variables, and the endpoints its
-     * backends name - and `diagnosticsFetch` tries one. Managed settings
-     * are a policy layer this host has no counterpart to, and an empty
-     * list is the honest shape of that.
+     * `shutdown` closes the host, every backend stopped and every store
+     * closed, then the debug logs, and answers once that is done, the
+     * process and the connection left running, as the reference host's
+     * shutdown shuts its providers down and answers after. The network
+     * diagnostics are what the process can see - the proxy variables, and
+     * the endpoints its backends name - and `diagnosticsFetch` tries one.
+     * Managed settings answer an empty list, the host holding no managed
+     * policy layer.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
      */
     shutdown: async () => {
-      const stop = options.diagnostics?.shutdown;
-      if (stop === undefined) throw new RpcError(METHOD_NOT_FOUND, 'Method not found: shutdown');
-      setTimeout(() => { void Promise.resolve(logs.close()).then(() => stop()); }, 0);
+      await ctx.shutdown();
+      await logs.close();
       return {};
     },
     getNetworkDiagnosticsInfo: async () => {

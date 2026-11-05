@@ -203,17 +203,27 @@ describe('what the window asks', () => {
     await expect(client.handle({ method: 'diagnosticsFetch', params: { url: 'not a url' } })).rejects.toMatchObject({ code: -32602 });
   });
 
-  it('stops when told, and only where the host was given a way to', async () => {
+  /*
+   * VS Code's shutdown: the providers shut down, then the answer, the host
+   * process and its connection left running.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
+   */
+  it('stops its backends when told, answers once they have stopped, and keeps the connection', async () => {
     const dir = scratch();
-    const { client: cannot } = await serving(dir)();
-    await expect(cannot.handle({ method: 'shutdown', params: {} })).rejects.toMatchObject({ code: -32601 });
-    let stopped = 0;
-    const { client } = await serving(dir, {}, { shutdown: () => { stopped += 1; } })();
-    // Answered before it stops, so the window hears yes rather than a dropped socket.
+    const stopped: string[] = [];
+    const { client } = await serving(dir, {
+      create: (start) => {
+        const session = echo({ path: dir, pace: 0 }).create(start);
+        return { ...session, close: (why) => { stopped.push(String(why)); return session.close(why); } };
+      },
+    })();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
     expect(await client.handle({ method: 'shutdown', params: {} })).toEqual({});
-    expect(stopped).toBe(0);
-    await new Promise((r) => { setTimeout(r, 20); });
-    expect(stopped).toBe(1);
+    expect(stopped).toEqual(['stopping']);
+    // The connection still answers, and the closed host starts nothing new.
+    expect(await client.handle({ method: 'getManagedSettingsDiagnostics', params: {} })).toEqual([]);
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } }))
+      .rejects.toMatchObject({ message: 'This host is closing, so nothing new starts on it' });
   });
 });
 

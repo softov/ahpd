@@ -237,12 +237,13 @@ own for the host it runs - `shutdown`, `getNetworkDiagnosticsInfo`,
 `diagnosticsFetch`, `getManagedSettingsDiagnostics`,
 `vscode/getAgentHostSessionStateFile`, `vscode/collectAgentHostDebugLogs` and
 `vscode/readAgentHostDebugLogsChunk` - and this is what the host answers them
-from: `version` goes into `serverInfo` and the network report, `logs()` names
-the files a "collect logs" packs up under `agenthost/`, and `shutdown()` is
-run once the request has been answered. Leave it out and the host still
-answers the network and log requests with what it has; `shutdown` alone
-answers `-32601`. The session's own file comes from the agent's `stateFile`,
-and the endpoints to probe from its `endpoints()`.
+from: `version` goes into `serverInfo` and the network report, and `logs()`
+names the files a "collect logs" packs up under `agenthost/`. Leave it out and
+the host still answers the network and log requests with what it has.
+`shutdown` is the host's own: it closes the host, every backend stopped and
+every store closed, and answers once that is done, the process left running.
+The session's own file comes from the agent's `stateFile`, and the endpoints
+to probe from its `endpoints()`.
 
 ## The agents
 

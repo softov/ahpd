@@ -586,15 +586,17 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * And the one departure that is refused rather than answered.
    *
-   * `shutdown` stops the daemon, and this host was built with no way to stop,
-   * so it answers `-32601`. Which makes it the only frame in the capture that
-   * is not an answer, and the only exercise the recorder's refusal branch
-   * gets - a branch nothing goes down is a branch that does not hold.
+   * A chunk read of an artifact this host never made is refused, which makes
+   * it the only frame in the capture that is not an answer, and the only
+   * exercise the recorder's refusal branch gets - a branch nothing goes down
+   * is a branch that does not hold.
    */
-  await ask('shutdown', {});
+  await ask('vscode/readAgentHostDebugLogsChunk', { resource: 'file:///nowhere.zip', position: 0 });
 
   await ask('disposeSession', { channel: uri });
   await ask('disposeSession', { channel: echoUri });
+  // The window's shutdown last, since it closes the host.
+  await ask('shutdown', {});
   await settle();
   rmSync(home, { recursive: true, force: true });
 
@@ -767,7 +769,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // And exactly one request in the capture is refused, which is the departure
   // that refuses by design. Anything else here is a request that stopped
   // working, recorded as an error frame rather than as an answer.
-  expect(refused).toEqual(['shutdown']);
+  expect(refused).toEqual(['vscode/readAgentHostDebugLogsChunk']);
 
   /*
    * The other half of everything this host sends: the names it invents.

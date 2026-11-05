@@ -839,9 +839,9 @@ export interface HostOptions {
    * What this host says about itself when a window asks.
    *
    * The reference window has requests of its own for the host's version, its
-   * logs, its network and its shutdown, and this is where a host answers
-   * them from. All optional: a host embedded in something else has its own
-   * answers to most of these, and the daemon fills in its own.
+   * logs and its network, and this is what a host answers them from. All
+   * optional: a host embedded in something else has its own answers to most
+   * of these, and the daemon fills in its own.
    */
   diagnostics?: Diagnostics;
   /** Called with one line per notable event, for a log. */
@@ -962,8 +962,6 @@ export interface Diagnostics {
    * error.
    */
   logs?(): string[];
-  /** What the window's `shutdown` request runs, once it has been answered. */
-  shutdown?(): void | Promise<void>;
 }
 
 /**

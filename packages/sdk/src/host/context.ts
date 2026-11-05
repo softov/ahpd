@@ -150,6 +150,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** Set by `close`: no session, terminal or automation run starts after it. */
   closed: boolean;
   /**
+   * The host's close, once: every backend stopped and every store closed, the
+   * process left running, as the reference host's shutdown shuts its providers
+   * down.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
+   */
+  shutdown(): Promise<void>;
+  /**
    * Why this host is taking no new turn, or nothing: what `refuseTurns` was
    * last given, in the embedder's words.
    */
