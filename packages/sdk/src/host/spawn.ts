@@ -441,11 +441,14 @@ export function createSpawn(ctx: HostContext): Spawn {
         if (state === 'complete') sendSubagent(uri, { type: 'chat/turnComplete', turnId, duration });
         else if (state === 'cancelled') sendSubagent(uri, { type: 'chat/turnCancelled', turnId, duration });
         else {
+          // VS Code's error type for a failed subagent, with the failure's own
+          // words, or VS Code's where it has none.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2983-L2998
           sendSubagent(uri, {
             type: 'chat/error',
             turnId,
             duration,
-            part: { kind: 'error', error: { errorType: 'turnFailed', message: why ?? 'The subagent failed' } },
+            part: { kind: 'error', error: { errorType: 'subagentFailed', message: why ?? 'Subagent failed.' } },
           });
         }
         // Something new to read in the worker's chat, which a turn's end says

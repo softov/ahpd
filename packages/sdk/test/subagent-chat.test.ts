@@ -780,6 +780,7 @@ it('refuses anything else on a worker chat as read-only', async () => {
 
 /** Lets the busy fake's background worker end. */
 let finishWorker = (): void => {};
+let failWorker = (_why?: string): void => {};
 
 /**
  * A backend whose chats each run until told otherwise, by what they are sent.
@@ -852,6 +853,7 @@ function busy(stoppable = false): Agent {
             worker.emit({ type: 'chat/activityChanged', activity: undefined });
             worker.end('complete');
           };
+          failWorker = (why?: string) => { worker.end('error', why); };
         },
         abort: () => {},
         setDraft: () => {},
@@ -1013,6 +1015,28 @@ it('says a worker chat unread when its turn ends, though nobody read it', async 
   const ended = said.findIndex((one) => one.type === 'chat/turnComplete' || one.type === 'chat/turnCancelled' || one.type === 'chat/error');
   expect(ended).toBeGreaterThanOrEqual(0);
   expect(said.slice(ended).filter((one) => one.type === 'chat/isReadChanged')).toEqual([{ type: 'chat/isReadChanged', isRead: false }]);
+});
+
+/*
+ * A worker that failed ends its turn with VS Code's error type for a failed
+ * subagent and the failure's own words, or VS Code's where it has none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2983-L2998
+ */
+it('ends a failed worker\'s turn with errorType subagentFailed and the failure\'s words', async () => {
+  for (const [why, message] of [['the model refused', 'the model refused'], [undefined, 'Subagent failed.']] as const) {
+    const { host, ask, uri, lead } = await busyHost();
+    const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+    await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
+    await settle();
+    failWorker(why);
+    await settle();
+    const answer = await host.accept(peer()).handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+    }) as { actions?: { channel: string; action: { type: string; part?: unknown } }[] };
+    const errored = (answer.actions ?? []).find((one) => one.channel === worker && one.action.type === 'chat/error');
+    expect(errored?.action.part).toEqual({ kind: 'error', error: { errorType: 'subagentFailed', message } });
+  }
 });
 
 /*
