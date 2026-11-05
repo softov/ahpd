@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { Adapter, AgentView, Bag, Connector, ConnectorOwner, Engine, MessageAttachment, PluginHost, Start } from '@ahpd/sdk';
 import { startedNow } from '../../sdk/test/support/started.js';
 
@@ -888,7 +889,12 @@ describe('the plugin', () => {
   /** One connector of `claude-login`, as the host hands it to `open` and `check`. */
   const connectorOf = (id: string, token: string): Connector => ({ id, adapter: 'claude-login', owner: 'host', config: { token } });
 
-  it("logs a login's failure, asks the host to check that connector and to keep each call of it, on one connection", async () => {
+  /*
+   * A failed call noted and logged, and no check run, as the model proxy
+   * keeps a failed attempt; the connection offers every version the protocol
+   * package speaks, as ahpd's own nested client does.
+   */
+  it("logs a login's failure and asks the host to keep each call of it, on one connection, checking nothing", async () => {
     const { apply } = await import('../src/plugin.js');
     const { host, adapters, engines, requests, logged, connects } = fakeHost();
     // Before the load, which is when the adapter takes the `fetch` it checks with.
@@ -921,26 +927,25 @@ describe('the plugin', () => {
       session.sendMessage('t2', 'two');
       await settle();
       sdk.push(...failure('authentication_failed', denied));
-      await until(() => requests.length >= 4);
+      await until(() => requests.length >= 3);
       expect(requests).toEqual([
-        { method: 'initialize', params: { clientId: 'agent-claude', protocolVersions: ['0.9.0'] } },
+        { method: 'initialize', params: { clientId: 'agent-claude', protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] } },
         // The first turn's calls went through.
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: true } },
-        { method: 'x-ahpd/connectors/check', params: { id: 'work' } },
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: false, error: `authentication_failed: ${denied}` } },
       ]);
       expect(logged.some((line) => line.includes('work') && line.includes('authentication_failed') && line.includes(denied))).toBe(true);
-      // The check asks the API with the login's token.
+      // The check is the adapter's to answer when the host asks, and the
+      // failure asked it nothing.
+      expect(fetcher).toHaveBeenCalledTimes(0);
       expect(await adapter.check?.(connectorOf('work', 'token-work'))).toEqual({ result: 'ok' });
-      expect(fetcher).toHaveBeenCalledTimes(1);
 
-      // A failure that moves the turn is checked and kept too, on the same connection.
+      // A failure that moves the turn is kept too, on the same connection.
       session.sendMessage('t3', 'three');
       await settle();
       sdk.push(...failure('rate_limit'));
-      await until(() => requests.length >= 6);
-      expect(requests.slice(4)).toEqual([
-        { method: 'x-ahpd/connectors/check', params: { id: 'work' } },
+      await until(() => requests.length >= 4);
+      expect(requests.slice(3)).toEqual([
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: false, error: `rate_limit: ${SPENT}` } },
       ]);
       expect(tokenOf()).toBe('token-personal');

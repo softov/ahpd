@@ -16,6 +16,7 @@
  * the ordinary install.
  */
 
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { ModelEntry, ModelSource } from './models.js';
 import type { Engine, Plugin, PluginHost, PluginPeer } from '@ahpd/sdk';
 import { reason } from '@ahpd/sdk';
@@ -140,31 +141,31 @@ const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine =
 const CLIENT = 'agent-claude';
 
 /**
- * Log each failure of a login and ask the host to check that connector, and
- * have the host keep each call of a login in the connector's health, so its
- * row shows both.
+ * Log each failure of a login, and have the host keep each call of a login in
+ * the connector's health, so its row shows it.
  *
  * The model proxy logs each failed attempt and notes its outcome on the
- * connector's health, in `packages/server/src/proxy/listener.ts`. A plugin
- * does both through the connectors channel's own commands, as a client does:
- * the host runs the adapter's check, keeps a call `x-ahpd/connectors/note`
- * names, and sends every reader the row. The connection is opened by the first
- * of them, as the bot plugin opens its own by the first message, and one that
- * failed is dropped so the next one tries again.
+ * connector's health, in `packages/server/src/proxy/listener.ts`, and runs no
+ * check. A plugin notes through the connectors channel's own command, as a
+ * client does: the host keeps a call `x-ahpd/connectors/note` names, and sends
+ * every reader the row. The connection is opened by the first note, as the
+ * bot plugin opens its own by the first message, offering every version the
+ * protocol package speaks, as ahpd's own nested client offers them, and one
+ * that failed is dropped so the next one tries again.
  *
  * The connection carries the grants the plugin's configuration gives it, as
  * `docs/plugins/PLUGINS.md` says under *A plugin is a client of its own host*.
- * A check or a note of a host login takes `connector:put` and
- * `connector:host`, and a person's login is never a plugin's to check, as
- * `ownerAllows` in `packages/sdk/src/channels/owners.ts` holds. A command the
- * host refuses is one line in the log.
+ * A note of a host login takes `connector:put` and `connector:host`, and a
+ * person's login is never a plugin's to note, as `ownerAllows` in
+ * `packages/sdk/src/channels/owners.ts` holds. A command the host refuses is
+ * one line in the log.
  */
 const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'> => {
   let opened: Promise<PluginPeer> | undefined;
   const connection = (): Promise<PluginPeer> => {
     opened ??= (async () => {
       const conn = host.connect();
-      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
       return conn;
     })();
     const failed = (): void => { opened = undefined; };
@@ -174,9 +175,6 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'>
   return {
     onFailure: (id, why) => {
       host.log(`${name}: login ${id} failed: ${why}`);
-      void connection()
-        .then((conn) => conn.request('x-ahpd/connectors/check', { id }))
-        .catch((error: unknown) => { host.log(`${name}: the host did not check login ${id}: ${reason(error)}`); });
     },
     onCall: (id, outcome) => {
       void connection()
