@@ -674,6 +674,22 @@ it('applies and reloads as a role holding plugin:write, and refuses one holding 
   await close();
 });
 
+/*
+ * An install npm refuses is the daemon's own work failing, which VS Code
+ * answers with InternalError; a source the daemon cannot take is a parameter
+ * refused, InvalidParams.
+ */
+it('answers an install npm fails with InternalError, and a source it cannot take with InvalidParams', async () => {
+  const { runner } = fakeNpm({}, { fail: (argv) => (argv[0] === 'install' ? 'npm error code E404' : undefined) });
+  const { host, users, close } = await served({ run: runner });
+  const jo = await as(host, users, 'jo');
+
+  expect(await jo.call('x-ahpd/plugins/install', { source: 'github:someone/demo' }))
+    .toMatchObject({ code: -32603, message: expect.stringContaining('npm error code E404') });
+  expect(await jo.call('x-ahpd/plugins/install', {})).toMatchObject({ code: -32602 });
+  await close();
+});
+
 it('installs a source as a role holding plugin:install, and lists the new row', async () => {
   const { runner, calls } = fakeNpm({ demo: 'github:someone/demo' });
   const { host, users, close } = await served({ run: runner });
@@ -825,7 +841,7 @@ it('leaves the files the daemon runs when a rewrite fails in npm', async () => {
     id: 'demo',
     source: writing('second', marker),
     packageJson: { name: 'demo-plugin', version: '2.0.0' },
-  })).toMatchObject({ code: -32602, message: expect.stringContaining('npm error code E404') });
+  })).toMatchObject({ code: -32603, message: expect.stringContaining('npm error code E404') });
 
   expect(readFileSync(join(folder, 'index.ts'), 'utf8')).toBe(first);
   expect(readFileSync(join(folder, 'package.json'), 'utf8')).toBe(packageJson);

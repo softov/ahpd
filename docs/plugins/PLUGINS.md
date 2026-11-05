@@ -1603,6 +1603,8 @@ Six commands change the file the daemon loads, one moves an installed package, a
 | `x-ahpd/plugins/disable` | `plugin:disable` | Turns it off the same way. Takes `id` |
 | `x-ahpd/plugins/options` | `plugin:options` | Writes one option, checked against the plugin's own schema. Takes `id`, `key` and a `value`; a `value` left out takes the option out |
 
+An `install`, `update`, `remove` or `write` that npm fails is refused `-32603` with npm's own reason, as VS Code refuses a failure of its own work; a parameter the method cannot take is refused `-32602`.
+
 The `id` is the plugin's id, which is also the row's id and the root config key
 it is edited by. A value the schema marks `writeOnly` is answered `<set>`. A
 running daemon loads the change before the command answers; only a plugin with a
