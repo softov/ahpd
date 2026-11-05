@@ -761,7 +761,14 @@ export function chatAction(
    */
   const stopped = (turn: string): void => {
     const resumed = ctx.resumedTurns.get(`${channel}\n${turn}`);
-    dispatch(channel, resumed === undefined ? action : { ...action, duration: resumed.duration + (Date.now() - resumed.since) }, origin);
+    if (resumed !== undefined) {
+      dispatch(channel, { ...action, duration: resumed.duration + (Date.now() - resumed.since) }, origin);
+      return;
+    }
+    // A duration the client left out is the time the held turn ran: the
+    // protocol requires one, and every reducer reads it.
+    const ran = typeof action.duration === 'number' ? action.duration : Date.now() - Date.parse(String(activeHeld?.startedAt ?? ''));
+    dispatch(channel, { ...action, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
   };
   /** `running`'s backend told to stop what it runs; one that cannot is a line in the log. */
   const aborted = (running: NonNullable<typeof held>): void => {

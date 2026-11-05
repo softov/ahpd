@@ -34,6 +34,11 @@ export interface Terminals {
    * with the terminal once it exits is its own, which is `onAction`'s.
    */
   heldShell(shells: TerminalStore, asked: HeldShellOptions): Terminal;
+  /**
+   * A client's action on a terminal of the host's own, once this host has
+   * said it, handed to whoever opened the terminal as its own actions are.
+   */
+  terminalSaid(uri: string, action: Bag): void;
   /** The output terminals a backend may open, handed on `Start`. */
   heldOutputs(sessionUri: string): OutputTerminals;
 }
@@ -144,6 +149,18 @@ export function createTerminals(ctx: HostContext): Terminals {
    * caller's, through `onAction`; a terminal whose output is kept when the
    * session goes is the caller's `kept`.
    */
+  /** What each held terminal's opener hears, by the terminal's URI. */
+  const openers = new Map<string, { terminal: Terminal; onAction: (action: Bag) => void }>();
+  const terminalSaid = (uri: string, action: Bag): void => {
+    const opener = openers.get(uri);
+    if (opener === undefined) return;
+    if (terminals.get(uri) !== opener.terminal) {
+      openers.delete(uri);
+      return;
+    }
+    opener.onAction(action);
+  };
+
   const heldShell = (shells: TerminalStore, asked: HeldShellOptions): Terminal => {
     if (ctx.closed) throw new Error(CLOSING);
     const terminal = shells.create({
@@ -168,6 +185,7 @@ export function createTerminals(ctx: HostContext): Terminals {
       },
     });
     terminals.set(asked.uri, terminal);
+    if (asked.onAction !== undefined) openers.set(asked.uri, { terminal, onAction: asked.onAction });
     return terminal;
   };
 
@@ -543,7 +561,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     },
   });
 
-  return { bang, terminalInfo, heldTerminals, heldShell, heldOutputs };
+  return { bang, terminalInfo, heldTerminals, heldShell, terminalSaid, heldOutputs };
 }
 
 /**

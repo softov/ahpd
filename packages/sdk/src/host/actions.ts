@@ -1020,6 +1020,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           }
           terminal.setClaim(claimed);
           dispatch(channel, action, origin);
+          ctx.terminalSaid(channel, action);
           break;
         }
         default:
