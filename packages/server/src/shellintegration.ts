@@ -373,10 +373,15 @@ export const getShellIntegrationInjection = (
  * `machine` is the computer a terminal's process was placed in, and is always
  * absent today: the store asks no port for a shell in a machine. It is passed
  * so a runtime that can copy or mount the scripts there answers for one.
+ *
+ * The injection is asked as VS Code's agent host asks it, with no environment,
+ * so the zsh files a person's own `.zshrc` stands beside are the home folder's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L364-L376
  */
 export const shellIntegration: ShellIntegration = (shell, args, env, nonce, machine) => {
   void machine;
-  const asked = getShellIntegrationInjection(shell, [...args], nonce, env);
+  void env;
+  const asked = getShellIntegrationInjection(shell, [...args], nonce, undefined);
   if (asked.type !== 'injection') return undefined;
   for (const file of asked.filesToCopy ?? []) {
     try {
