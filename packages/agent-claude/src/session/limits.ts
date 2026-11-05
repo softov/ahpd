@@ -28,6 +28,8 @@ interface Plan {
   snapshots?: QuotaSnapshots | undefined;
   /** The plan type and the provider the account named. Absent until it answers. */
   account?: ConnectorAccount;
+  /** Whether the account's answer says it has no plan limits at all. */
+  planless?: boolean;
   /** When the usage request last ran, or nought when only events have spoken. */
   askedAt: number;
   /** What the host was last told, as text, so an unchanged answer says nothing. */
@@ -60,29 +62,35 @@ export const limitsOf = (ctx: SessionContext): QuotaSnapshots | undefined => pla
 export const accountOf = (ctx: SessionContext): ConnectorAccount | undefined => planOf(ctx)?.account;
 
 /**
- * Whether an account has no plan limits at all.
+ * Whether an `accountInfo()` answer says the account has no plan limits.
  *
- * Only an Anthropic account on a plan has them: a cloud provider bills by the
- * token, and a first-party account with no plan type is an API key's.
+ * A cloud provider bills by the token, and so does an API key: a first-party
+ * answer with a key's source, no token's source and no plan type. A token from
+ * `claude setup-token` names its source and no plan type, because the CLI
+ * reads the plan only for its own sign-in, so it is not taken for a key.
  */
-const planless = (account: ConnectorAccount | undefined): boolean =>
-  account !== undefined && (account.apiProvider !== 'firstParty' || account.subscriptionType === undefined);
+const planlessOf = (found: Record<string, unknown>): boolean => {
+  const apiProvider = str(found.apiProvider);
+  if (apiProvider !== undefined && apiProvider !== 'firstParty') return true;
+  return str(found.subscriptionType) === undefined && str(found.tokenSource) === undefined && str(found.apiKeySource) !== undefined;
+};
 
 /**
  * The windows a plan holds, or an empty map for an account with no plan limits.
  *
  * An event's window is the account's own word that a limit applies, so a
- * plan that holds one keeps it whatever the account's plan type suggests.
+ * plan that holds one keeps it whatever the account's answer suggests.
  */
-const windowsOf = (plan: Plan | undefined, account: ConnectorAccount | undefined): QuotaSnapshots | undefined =>
-  planless(account) && Object.keys(plan?.snapshots ?? {}).length === 0 ? {} : plan?.snapshots;
+const windowsOf = (plan: Plan | undefined, planless: boolean | undefined): QuotaSnapshots | undefined =>
+  planless === true && Object.keys(plan?.snapshots ?? {}).length === 0 ? {} : plan?.snapshots;
 
 /**
  * Keep the plan type and the provider of the account a session signs in to.
  *
  * `accountInfo()` also answers the email, the organization and where the
- * token came from; none of them is kept, so none can leave the host. An answer
- * with neither field says nothing and changes nothing.
+ * token came from. The two sources say whether the account has a plan, and
+ * none of the four is kept, so none can leave the host. An answer with neither
+ * kept field says nothing and changes nothing.
  */
 export const noteAccount = (ctx: SessionContext, info: unknown): void => {
   const found = bag(info);
@@ -93,8 +101,9 @@ export const noteAccount = (ctx: SessionContext, info: unknown): void => {
     ...(subscriptionType === undefined ? {} : { subscriptionType }),
     ...(apiProvider === undefined ? {} : { apiProvider }),
   };
+  const planless = planlessOf(found);
   const held = planOf(ctx);
-  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, account, snapshots: windowsOf(held, account) });
+  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, account, planless, snapshots: windowsOf(held, planless) });
 };
 
 /** A finite number, or nothing. A utilization of zero is a measurement. */
@@ -253,7 +262,7 @@ export const refreshLimits = async (ctx: SessionContext, now: number = Date.now(
    */
   if (found.rate_limits_available === false) {
     const after = planOf(ctx);
-    publish(ctx, { ...after, askedAt: now, snapshots: windowsOf(after, after?.account) });
+    publish(ctx, { ...after, askedAt: now, snapshots: windowsOf(after, after?.planless) });
     return;
   }
   const rateLimits = bag(found.rate_limits);

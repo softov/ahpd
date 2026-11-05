@@ -34,7 +34,7 @@ ahpw reads them before the first message, and each turn refreshes them.
 5. Put the session's last `contextAttribution`, `ahpd.context` and `quotaSnapshots` in `sessionState()._meta`.
 6. Emit `session/metaChanged` when any of the four keys changes, at the handshake and after each turn.
 7. Treat `rate_limits_available: false` as no answer: keep the windows the events gave.
-8. Write `quotaSnapshots: {}` only when `apiProvider` is not `firstParty` or the account has no `subscriptionType`, and no event gave a window.
+8. Write `quotaSnapshots: {}` only for an API key or a provider other than `firstParty`, with no event window.
 9. Send a login's `ahpd.account` to the host with `note`, and keep it in the connector's health as `account`.
 10. Write the tests of *Files*, with a session that never runs a turn.
 

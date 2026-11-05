@@ -227,6 +227,19 @@ it('keeps an empty map for a login whose account has no plan limits', async () =
   expect(fake.noted).toEqual([{ id: 'limits-none', quotaSnapshots: {}, account: { apiProvider: 'bedrock' } }]);
 });
 
+it('keeps no map for a setup token, whose account names no plan type', async () => {
+  const login: Login = { id: 'limits-setup', token: 'token-setup' };
+  const fake = fakeOf(login, {
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false, rate_limits: null }),
+  });
+  const ctx = ctxOf(fake);
+  // The CLI reads the plan type only for its own sign-in.
+  noteAccount(ctx, { tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' });
+  await refreshLimits(ctx, 1_000);
+  expect(limitsOf(ctx)).toBeUndefined();
+  expect(fake.noted).toEqual([{ id: 'limits-setup', account: { apiProvider: 'firstParty' } }]);
+});
+
 it('keeps the events\' windows when the usage request has no limits to answer', async () => {
   const login: Login = { id: 'limits-unavailable', token: 'token-unavailable' };
   const fake = fakeOf(login, {
