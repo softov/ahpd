@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -32,6 +32,18 @@ describe('the files of each scope', () => {
     const root = tree({ 'managed/.claude/skills/policy/SKILL.md': named('policy') });
     expect(filesOf({ configDir: join(root, 'config'), managedDir: join(root, 'managed') })).toEqual([
       { kind: 'skill', name: 'policy', scope: 'managed', path: join(root, 'managed', '.claude', 'skills', 'policy', 'SKILL.md') },
+    ]);
+  });
+
+  /*
+   * The managed subagents, which the CLI reads from the managed directory's
+   * `.claude/agents` and ranks over a project's and a person's.
+   * https://code.claude.com/docs/en/sub-agents
+   */
+  it('reads the managed agents from the managed directory', () => {
+    const root = tree({ 'managed/.claude/agents/auditor.md': named('auditor') });
+    expect(filesOf({ configDir: join(root, 'config'), managedDir: join(root, 'managed') })).toEqual([
+      { kind: 'agent', name: 'auditor', scope: 'managed', path: join(root, 'managed', '.claude', 'agents', 'auditor.md') },
     ]);
   });
 
@@ -115,6 +127,21 @@ describe('what each file is read for', () => {
       'skills/synced/SKILL.md': named('outside'),
     });
     expect(filesOf({ configDir: root }).filter((one) => one.scope === 'synced').map((one) => one.name)).toEqual(['here']);
+  });
+
+  it('walks a rules folder once when links in it point back up', () => {
+    const root = tree({ 'rules/style.md': '# Style\n' });
+    symlinkSync('.', join(root, 'rules', 'a'), 'dir');
+    symlinkSync('.', join(root, 'rules', 'b'), 'dir');
+    expect(filesOf({ configDir: root }).filter((one) => one.kind === 'rule').map((one) => one.path))
+      .toEqual([join(root, 'rules', 'style.md')]);
+  }, 5000);
+
+  it('reads the rules of a linked folder that is not a loop', () => {
+    const root = tree({ 'rules/own.md': '# Own\n', 'shared/api.md': '# Api\n' });
+    symlinkSync(join(root, 'shared'), join(root, 'rules', 'shared'), 'dir');
+    expect(filesOf({ configDir: root }).filter((one) => one.kind === 'rule').map((one) => one.name).sort())
+      .toEqual(['api.md', 'own.md']);
   });
 
   it('takes a rule\'s globs from its paths, as a list or one value', () => {

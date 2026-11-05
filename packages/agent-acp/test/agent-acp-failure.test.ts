@@ -51,10 +51,11 @@ const pause = async (times: number): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 1); });
 };
 
-/** A session of `command`, with every action it emits kept. */
-function start(command: string, args: string[] = []): { session: Session; actions: Bag[] } {
+/** A session of `command`, with every action it emits kept, and every line the agent logs. */
+function start(command: string, args: string[] = []): { session: Session; actions: Bag[]; logged: string[] } {
   const actions: Bag[] = [];
-  const agent = acpAgent({ command, args, provider: 'acp-failure' });
+  const logged: string[] = [];
+  const agent = acpAgent({ command, args, provider: 'acp-failure', log: (line) => { logged.push(line); } });
   const opening: Start = {
     uri: 'ahp-session:/failure',
     chatUri: 'ahp-chat:/failure',
@@ -71,7 +72,7 @@ function start(command: string, args: string[] = []): { session: Session; action
   };
   const session = agent.create(opening);
   started.push(session);
-  return { session, actions };
+  return { session, actions, logged };
 }
 
 /** The message on the `chat/error` that ended a turn, once one has. */
@@ -121,46 +122,34 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
   expect(escaped).toEqual([]);
 });
 
-it('fails the turn with what the server wrote on stderr before it died', async () => {
-  const { session, actions } = start(process.execPath, [FIXTURE]);
+it('fails the turn with the failure\'s own words, as a failed send, and logs what the server wrote on stderr', async () => {
+  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'be noisy');
-  await until(() => failure(actions) !== undefined);
+  await until(() => failure(actions) !== undefined && logged.some((line) => line.includes('backend.js:41')));
 
+  // The error a client is shown is the failure's own, typed by the stage VS
+  // Code's host names for a send that failed; the trace went to the log, as
+  // VS Code's agents log a runtime's stderr.
+  const error = (actions.find((action) => action.type === 'chat/error') as { part?: { error?: Bag } } | undefined)?.part?.error;
+  expect(error?.errorType).toBe('sendFailed');
   expect(failure(actions)).toContain('exited with code 4');
-  expect(failure(actions)).toContain('the model backend refused the request');
-  expect(failure(actions)).toContain('at Backend.send (backend.js:41)');
+  expect(failure(actions)).not.toContain('the model backend refused the request');
+  expect(logged.join('\n')).toContain('stderr: the model backend refused the request');
+  expect(logged.join('\n')).toContain('stderr:     at Backend.send (backend.js:41)');
   expect(escaped).toEqual([]);
 });
 
-it('never surfaces the stderr of a server that answered', async () => {
-  const { session, actions } = start(process.execPath, [FIXTURE]);
+it('never surfaces the stderr of a server that answered, and logs it', async () => {
+  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'chatter a little');
-  await until(() => actions.some((action) => action.type === 'chat/turnComplete'));
+  await until(() => actions.some((action) => action.type === 'chat/turnComplete') && logged.length > 0);
 
-  // The line went to the connection and stayed there: a client hears about a
-  // server's own output when it failed, never while it is working.
+  // The line went to the log and stayed there: a client hears nothing of a
+  // server's own output.
   expect(actions.some((action) => action.type === 'chat/error')).toBe(false);
   expect(JSON.stringify(actions)).not.toContain('a line the server said to nobody');
+  expect(logged.some((line) => line.endsWith('stderr: a line the server said to nobody'))).toBe(true);
   expect(escaped).toEqual([]);
-});
-
-it('keeps the last 8 KB of stderr, cut at a line boundary', async () => {
-  const lines = Array.from({ length: 2000 }, (_one, at) => `line ${String(at)}`);
-  const connection = connectAcp({
-    command: process.execPath,
-    args: ['-e', `process.stderr.write(${JSON.stringify(lines.join('\n'))}, () => { process.exit(5); });`],
-    handlers: { update: () => {} },
-  });
-  await expect(connection.initialize()).rejects.toThrow('exited with code 5');
-  const tail = await connection.stderrTail();
-
-  expect(tail.length).toBeLessThanOrEqual(8 * 1024);
-  // The oldest line went, and what is left begins at a whole one rather than at
-  // the middle of it.
-  expect(tail).not.toContain('line 0\n');
-  expect(tail.split('\n')[0]).toMatch(/^line \d+$/);
-  expect(tail.endsWith('line 1999')).toBe(true);
-  connection.close();
 });
 
 it('settles a close once the server process has gone, and never rejects', async () => {

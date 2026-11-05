@@ -1,11 +1,11 @@
 {
   "meta": {
     "title": "Conectores de Activepieces",
-    "description": "Cada piece de Activepieces instalada es un adaptador, y cada una de sus acciones es una herramienta del host."
+    "description": "Usa piezas de Activepieces como conectores, con cada acción disponible como herramienta del host."
   },
   "options": {
     "pieces": {
-      "description": "El paquete de cada piece de Activepieces que ofrece este plugin, como @activepieces/piece-resend. El nombre puede ir seguido de una versión, como en @activepieces/piece-postgres@0.5.1; sin versión, se instala la más reciente."
+      "description": "Paquetes de Activepieces que se ofrecen, como '@activepieces/piece-resend'. Añade una versión para fijarla, como en '@activepieces/piece-postgres@0.5.1'. Por defecto, la versión más reciente."
     },
     "networkMode": {
       "description": "El AP_NETWORK_MODE de Activepieces para el engine: STRICT rechaza toda conexión de una piece a una dirección privada, de loopback, link-local o multicast; UNRESTRICTED no rechaza ninguna."

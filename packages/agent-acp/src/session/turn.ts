@@ -1,7 +1,6 @@
 import type { ContentBlock, StopReason, Usage } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
-import { partsOf, titleFrom } from '@ahpd/sdk';
-import { closePlan } from '../mapping.js';
+import { endedParts, partsOf, titleFrom } from '@ahpd/sdk';
 import type { AcpConnection } from '../types.js';
 import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
@@ -10,9 +9,10 @@ import type { SessionContext } from './context.js';
 export interface Turn {
   /**
    * Send a turn the host said: prompted now when the server runs nothing, and
-   * once the turn in front of it is over when it runs another.
+   * once the turn in front of it is over when it runs another. VS Code's
+   * `sendMessage`.
    */
-  begin(
+  sendMessage(
     turnId: string,
     text: string,
     model?: Chosen,
@@ -20,44 +20,30 @@ export interface Turn {
     attachments?: MessageAttachment[],
     options?: TurnOptions,
   ): void;
-  finish(
+  /** The running turn's end, VS Code's turn end, whoever ended it. */
+  endTurn(
     turnId: string,
     ending: 'complete' | 'cancelled' | 'error',
     failure?: { errorType: string; message: string },
   ): void;
 }
 
-/**
- * What each stop reason that is not an answer says, by name.
- *
- * `end_turn` is absent because it is the server saying it is done and the turn is
- * what the client asked for. The other three are the server saying it stopped
- * early, and a turn that stopped early is not an answer: the model ran out of
- * room, the session used up the requests it was allowed, or the agent declined.
- *
- * A reason absent here - `end_turn`, and anything a later version of the
- * protocol names and this bridge has not heard of - ends the turn complete,
- * because a stop this code cannot describe is better read as an answer than
- * reported as a failure with no reason.
- */
-const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
-  max_tokens: 'The agent ran out of tokens before it answered',
-  max_turn_requests: 'The agent used every turn request this session allowed',
-  refusal: 'The agent declined to answer this prompt',
-};
-
 export function createTurn(ctx: SessionContext): Turn {
-  const { emit, provider, start, inside, turns, doing, touch } = ctx;
+  const { emit, provider, start, inside, turns } = ctx;
 
   /**
-   * The first message titles a session nobody has named.
+   * The first message titles a session nobody has named, and replaces a title
+   * a local command suggested, as VS Code's title controller seeds one.
    *
-   * A message of nothing but blanks answers the fallback, which is the title
-   * already held - so nothing moves and nothing is said about it.
+   * A message of nothing but blanks names nothing, so the title held stays
+   * and nothing is said about it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L229
    */
   const titled = (text: string): void => {
-    if (ctx.title !== UNTITLED || text === '') return;
-    const said = titleFrom(text, UNTITLED);
+    if (ctx.title !== UNTITLED && !ctx.provisional) return;
+    const said = titleFrom(text, '');
+    if (said === '') return;
+    ctx.provisional = false;
     if (said === ctx.title) return;
     ctx.title = said;
     if (ctx.record !== undefined) ctx.record.title = said;
@@ -65,8 +51,8 @@ export function createTurn(ctx: SessionContext): Turn {
     emit('session', { type: 'session/titleChanged', title: said });
   };
 
-  /** Hold a turn the host said as the one running, before the prompt is sent. */
-  const openTurn = (turnId: string, text: string, from: MessageFrom | undefined): void => {
+  /** Start a turn the host said: hold it as the one running, before the prompt is sent. */
+  const startTurn = (turnId: string, text: string, from: MessageFrom | undefined): void => {
     ctx.active = {
       id: turnId,
       startedAt: new Date().toISOString(),
@@ -77,6 +63,7 @@ export function createTurn(ctx: SessionContext): Turn {
       },
       responseParts: [],
     };
+    ctx.setModifiedAt(String(ctx.active.startedAt));
     ctx.watchedTurn = {
       turnId,
       startedAt: String(ctx.active.startedAt),
@@ -86,9 +73,7 @@ export function createTurn(ctx: SessionContext): Turn {
       },
       state: 'complete',
       updates: [],
-      ...(start.plan === true ? { hostPlan: true } : {}),
     };
-    doing('Thinking');
   };
 
   /**
@@ -98,16 +83,16 @@ export function createTurn(ctx: SessionContext): Turn {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    */
   const sendNext = (): void => {
-    if (ctx.closed || ctx.active !== undefined) return;
-    const next = ctx.waiting.shift();
+    if (ctx.disposed || ctx.active !== undefined) return;
+    const next = ctx.pendingTurns.shift();
     if (next === undefined) return;
     ctx.cancelRequested = false;
-    ctx.failed = undefined;
+    ctx.error = undefined;
     titled(next.text);
-    openTurn(next.turnId, next.text, next.from);
+    startTurn(next.turnId, next.text, next.from);
     // What the host has to say on this turn, asked now that the turn exists.
     const instructions = (next.options?.instructions?.() ?? []).filter((one) => one.trim() !== '');
-    void run(next.turnId, next.text, next.model, next.attachments, instructions);
+    void send(next.turnId, next.text, next.model, next.attachments, instructions);
   };
 
   /*
@@ -115,11 +100,11 @@ export function createTurn(ctx: SessionContext): Turn {
    * client's state, so the one it replaced runs on and ends in no history; a
    * turn the server still runs after a stop already ended there.
    */
-  const begin: Turn['begin'] = (turnId, text, model, from, attachments, options) => {
-    if (ctx.closed) return;
-    const shown = ctx.waiting.at(-1)?.turnId ?? (ctx.cancelRequested || ctx.active === undefined ? undefined : String(ctx.active.id));
+  const sendMessage: Turn['sendMessage'] = (turnId, text, model, from, attachments, options) => {
+    if (ctx.disposed) return;
+    const shown = ctx.pendingTurns.at(-1)?.turnId ?? (ctx.cancelRequested || ctx.active === undefined ? undefined : String(ctx.active.id));
     if (shown !== undefined) ctx.replaced.add(shown);
-    ctx.waiting.push({ turnId, text, model, from, attachments, options });
+    ctx.pendingTurns.push({ turnId, text, model, from, attachments, options });
     sendNext();
   };
 
@@ -127,21 +112,21 @@ export function createTurn(ctx: SessionContext): Turn {
    * End the running turn, whoever ended it.
    *
    * How it ended is the server's to say: `stopReasonFor` reads the stop reason
-   * into one of the three endings. A connection that failed before a stop reason
-   * arrived is an error, with the reason on the turn and the type this bridge
-   * uses for a failure of its own.
+   * into an ending. A send that failed before a stop reason arrived is an
+   * error typed by the stage VS Code's host names for it, `sendFailed`, with
+   * the failure's own words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
    */
-  const finish = (
+  const endTurn = (
     turnId: string,
     ending: 'complete' | 'cancelled' | 'error',
     failure: { errorType: string; message: string } = {
-      errorType: 'turnFailed',
+      errorType: 'sendFailed',
       message: 'The ACP server did not answer',
     },
   ): void => {
     const turn = ctx.active;
     if (turn === undefined || String(turn.id) !== turnId) return;
-    doing(undefined);
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
     turn.duration = duration;
@@ -166,16 +151,12 @@ export function createTurn(ctx: SessionContext): Turn {
       if (ctx.record !== undefined && !ctx.record.turns.includes(ctx.watchedTurn)) ctx.record.turns.push(ctx.watchedTurn);
       ctx.watchedTurn = undefined;
     }
-    // Nothing in the protocol says when the agent has finished writing a plan,
-    // so the turn ending is what closes the call it is held in.
-    if (ctx.mapping !== undefined) {
-      const closing = closePlan(ctx.mapping);
-      // Before the closing actions go out: what they name is background work if
-      // its terminal still runs, and every other running terminal is named by
-      // the turn's end rather than by a call.
-      ctx.settleTerminals(closing);
-      for (const action of closing) emit('chat', action);
-    }
+    // A terminal still running when the turn ends is background work, which
+    // the turn's end names.
+    if (ctx.mapping !== undefined) ctx.settleTerminals();
+    // Held as the reducer holds it once the ending is reduced, so a chat first
+    // opened after this turn draws what one that watched it end does.
+    turn.responseParts = endedParts(Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []);
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
     ctx.active = undefined;
@@ -186,7 +167,7 @@ export function createTurn(ctx: SessionContext): Turn {
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
       const message = failure.message === '' ? 'The ACP server did not answer' : failure.message;
-      if (!gone) ctx.failed = message;
+      if (!gone) ctx.error = message;
       emit('chat', {
         type: 'chat/error',
         turnId,
@@ -194,7 +175,9 @@ export function createTurn(ctx: SessionContext): Turn {
         part: { kind: 'error', error: { errorType: failure.errorType, message } },
       });
     }
-    touch();
+    // A turn's end moves the stamp to its start plus its duration, as the
+    // reducer's does; a turn a later one took the place of ends in no state.
+    if (!gone) ctx.setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + duration).toISOString());
     // The turn handed behind this one runs whatever the ending: each send is its own.
     sendNext();
   };
@@ -202,16 +185,14 @@ export function createTurn(ctx: SessionContext): Turn {
   /**
    * End the turn the way the server's stop reason says to.
    *
-   * The reason is the error's type as well as its sentence, so a client can tell
-   * a refusal from a ceiling reached without reading prose, and the sentence
-   * says the agent declined rather than that something broke - a refusal is
-   * something the agent did.
+   * A stop is the end of what the agent did, so every reason but `cancelled`
+   * completes the turn: a turn the model ended at its token or request limit,
+   * or by declining, is one VS Code's agents complete, an error being a turn
+   * whose send or execution failed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
    */
   const stopReasonFor = (turnId: string, reason: StopReason): void => {
-    if (reason === 'cancelled') return finish(turnId, 'cancelled');
-    const said = NOT_AN_ANSWER[reason];
-    if (said === undefined) return finish(turnId, 'complete');
-    finish(turnId, 'error', { errorType: reason, message: said });
+    endTurn(turnId, reason === 'cancelled' ? 'cancelled' : 'complete');
   };
 
   /**
@@ -314,7 +295,7 @@ export function createTurn(ctx: SessionContext): Turn {
     attachments: MessageAttachment[] | undefined,
     instructions: string[],
   ): Promise<ContentBlock[]> => {
-    const parts = await partsOf(text, attachments, { images: ctx.takes?.image === true });
+    const parts = await partsOf(text, attachments, { images: ctx.promptCapabilities?.image === true });
     const blocks: ContentBlock[] = [];
     if (!told && start.instructions !== undefined && start.instructions.length > 0) {
       blocks.push({ type: 'text', text: start.instructions.join('\n\n') });
@@ -339,7 +320,7 @@ export function createTurn(ctx: SessionContext): Turn {
        * names nothing to point at and stays text.
        */
       const source = part.source;
-      if (ctx.takes?.embeddedContext === true && source?.uri !== undefined && source.text !== undefined) {
+      if (ctx.promptCapabilities?.embeddedContext === true && source?.uri !== undefined && source.text !== undefined) {
         blocks.push({ type: 'resource', resource: { uri: source.uri, text: source.text } });
         continue;
       }
@@ -357,7 +338,7 @@ export function createTurn(ctx: SessionContext): Turn {
    * agent.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2316
    */
-  const run = async (
+  const send = async (
     turnId: string,
     text: string,
     chosen: Chosen | undefined,
@@ -371,15 +352,15 @@ export function createTurn(ctx: SessionContext): Turn {
       // what this turn runs on, and one that can no longer be used refuses it.
       const refused = ctx.refreshOptions();
       if (refused !== undefined) {
-        finish(turnId, 'error', { errorType: 'turnFailed', message: refused });
+        endTurn(turnId, 'error', { errorType: 'sendFailed', message: refused });
         return;
       }
       const held = await ctx.open();
       connection = held.connection;
       const turn = ctx.active;
-      if (ctx.closed || turn === undefined || String(turn.id) !== turnId) return;
+      if (ctx.disposed || turn === undefined || String(turn.id) !== turnId) return;
       if (ctx.cancelRequested) {
-        finish(turnId, 'cancelled');
+        endTurn(turnId, 'cancelled');
         return;
       }
       /*
@@ -396,12 +377,15 @@ export function createTurn(ctx: SessionContext): Turn {
         parts: turn.responseParts as Bag[],
         calls: new Map(),
         opening: [],
-        ...(start.plan === true ? { hostPlan: true } : {}),
         reach: {
           within: inside,
           changed: (path, before) => {
             if (before !== undefined) start.onFileEdit?.(turnId, path, 'before', before);
             start.onFileEdit?.(turnId, path, 'after');
+          },
+          completed: (toolCallId, path, before, after) => {
+            const edit = start.onEditCompleted?.(toolCallId, path, before, after);
+            return edit === undefined ? undefined : { type: 'fileEdit', ...edit };
           },
           // A server's terminal id is the host's name for it, which the
           // session holds its handle under.
@@ -413,11 +397,21 @@ export function createTurn(ctx: SessionContext): Turn {
         ownerOf: ctx.ownerOf,
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
-      await ctx.chooseModel(held, chosen);
+      /*
+       * A model the server would not take ends the turn as a failed model
+       * selection, the stage VS Code's host names for it, and leaves the
+       * server running for the next turn.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2232-L2235
+       */
+      try { await ctx.changeModel(held, chosen); }
+      catch (why: unknown) {
+        endTurn(turnId, 'error', { errorType: 'modelSelectionFailed', message: messageOf(why) });
+        return;
+      }
       const blocks = await blocksFor(text, attachments, instructions);
       if (ctx.active !== turn) return;
       if (ctx.cancelRequested) {
-        finish(turnId, 'cancelled');
+        endTurn(turnId, 'cancelled');
         return;
       }
       ctx.mapping.prompted = true;
@@ -436,29 +430,20 @@ export function createTurn(ctx: SessionContext): Turn {
       /*
        * A server that wants to be signed in says so with its own error, and
        * the turn ends as that rather than as a failure nobody can act on: the
-       * sentence names the methods the handshake offered, because a client is
-       * not sent back to the server for them and `authenticate` takes an id
-       * out of that list.
+       * sentence names the `authMethods` the server's `initialize` answer
+       * offered, because a client is not sent back to the server for them and
+       * `authenticate` takes an id out of that list.
        */
-      const signIn = ctx.signInFailure(why);
-      if (signIn !== undefined) {
-        finish(turnId, 'error', signIn);
+      const authentication = ctx.authenticationFailure(why);
+      if (authentication !== undefined) {
+        endTurn(turnId, 'error', authentication);
         return;
       }
-      /*
-       * Whatever the server said on stderr rides on the failure, because an
-       * exit code is rarely why and the trace under it is. Read from the
-       * connection this turn prompted: a server that died is already off
-       * `live`, which is exactly the case a person most wants the trace for.
-       */
-      const said = messageOf(why);
-      const tail = connection === undefined ? '' : await connection.stderrTail();
-      finish(turnId, 'error', {
-        errorType: 'turnFailed',
-        message: tail === '' ? said : `${said}\n${tail}`,
-      });
+      // The failure's own words: what the server wrote on stderr went to the
+      // log as it arrived, as VS Code's agents log a runtime's stderr.
+      endTurn(turnId, 'error', { errorType: 'sendFailed', message: messageOf(why) });
     }
   };
 
-  return { begin, finish };
+  return { sendMessage, endTurn };
 }

@@ -1,19 +1,18 @@
 {
   "name": "@ahpd/push",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Push notifications for the ahpd daemon: a push: resource provider a phone registers its Expo token with or a browser its Web Push subscription, and the senders that tell a device when a session needs a person",
+  "description": "Push notifications for ahpd. Tells a phone or browser when a session needs you, through Expo or Web Push.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
     "plugin",
-    "resource",
     "push",
-    "notification",
+    "notifications",
     "expo",
+    "web-push",
     "apns",
     "fcm"
   ],
@@ -69,7 +68,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Push",
-    "description": "Delivers push notifications to connected devices when agent sessions require user attention.",
+    "description": "Send push notifications to your devices when a session needs your attention.",
     "categories": [],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -83,16 +82,16 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "accessToken": { "type": "string", "writeOnly": true, "secretAtUse": true, "description": "An Expo access token, where the project has push security on. A name may be given instead of the token, as {\"$secret\": \"host:expo\"}." },
+        "accessToken": { "type": "string", "writeOnly": true, "secretAtUse": true, "description": "Expo access token, for projects with push security on. Can be a vault reference, such as {\"$secret\": \"host:expo\"}." },
         "webPushHosts": {
           "type": "array",
           "items": { "type": "string" },
           "default": ["*.push.apple.com", "fcm.googleapis.com", "updates.push.services.mozilla.com", "*.notify.windows.com"],
-          "description": "The hosts a browser's push endpoint may be at, where a pattern of *.<domain> matches every host under that domain. An endpoint at another host is refused at the write."
+          "description": "Hosts allowed as a browser's push endpoint. '*.<domain>' matches any host under that domain. Other hosts are refused."
         },
         "contact": {
           "type": "string",
-          "description": "A mailto: or https: URI sent as the VAPID sub claim, which a push service may use to contact the operator. Absent means no sub claim."
+          "description": "mailto: or https: URI sent as the VAPID 'sub' claim, so a push service can reach the operator. Not sent when unset."
         }
       }
     }

@@ -25,6 +25,7 @@ import type { SessionStore } from '../src/types/sessions.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 import type { MessageAttachment, MessageFrom } from '../src/types/session.js';
+import { startedNow } from './support/started.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
@@ -167,7 +168,7 @@ const senderOn = (turn: Bag | undefined): unknown =>
 const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agent => ({
   ...agent,
   create: (start) => {
-    const session = agent.create(start);
+    const session = startedNow(agent.create(start));
     return {
       ...session,
       sendMessage: (turnId, text, from, attachments) => {
@@ -190,7 +191,7 @@ const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agen
 const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
   ...agent,
   create: (start) => {
-    const session = agent.create(start);
+    const session = startedNow(agent.create(start));
     // The agent a send picked, handed before it, read with the send's sender.
     let picked: { uri: string } | undefined;
     return {
@@ -1257,6 +1258,38 @@ it('ignores a file written by a version that shaped it differently', () => {
   const store = fileSessions({ dir, onProblem: (message) => said.push(message) });
   expect(store.flags('a')).toBe(0);
   expect(said.join(' ')).toContain('not a session store this version can read');
+});
+
+it('moves a file it cannot read aside, so a write for its id keeps it', async () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.json'), 'this is not json');
+  const said: string[] = [];
+  const store = fileSessions({ dir, onProblem: (message) => said.push(message) });
+  store.setFlags('a', READ);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  const aside = readdirSync(dir).filter((name) => name.startsWith('a.json.unreadable-'));
+  expect(aside).toHaveLength(1);
+  expect(aside[0]).toMatch(/^a\.json\.unreadable-\d{8}T\d{6}Z$/);
+  expect(readFileSync(join(dir, aside[0] as string), 'utf8')).toBe('this is not json');
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', flags: READ });
+  expect(said.join(' ')).toContain('Moved');
+  expect(said.join(' ')).not.toContain('this is not json');
+});
+
+it('moves a file of a version it does not know aside', async () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  const newer = JSON.stringify({ version: 2, id: 'a', flags: 64 });
+  writeFileSync(join(dir, 'a.json'), newer);
+  const store = fileSessions({ dir });
+  store.setFlags('a', READ);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  const aside = readdirSync(dir).filter((name) => name.startsWith('a.json.unreadable-'));
+  expect(aside).toHaveLength(1);
+  expect(readFileSync(join(dir, aside[0] as string), 'utf8')).toBe(newer);
+  // A later load reads the new file and leaves the moved one alone.
+  expect(fileSessions({ dir }).flags('a')).toBe(READ);
 });
 
 it('forgets a session in a directory it read, and keeps one in a directory it did not', async () => {

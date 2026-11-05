@@ -125,6 +125,28 @@ export const hostHoldsTasks = (values: Bag, offering: BoundTool[]): boolean =>
   values['hostTasks'] !== false && offering.some((one) => one.definition.name === 'task_add');
 
 /**
+ * The host's agent terminal tool, under the name the CLI calls it.
+ *
+ * The host serves its own tools as the in-process MCP server `host`, and the
+ * CLI names a tool of an MCP server `mcp__<server>__<tool>`.
+ */
+export const HOST_SHELL_TOOL = 'mcp__host__bash';
+
+/**
+ * Whether the host runs Claude's shell commands instead of Claude.
+ *
+ * The host offers its agent terminal tool, `bash`, only while the root
+ * config's `enableCustomTerminalTool` is on, and marks it as taking the place
+ * of the agent's own shell, as the reference host marks it
+ * (`overridesBuiltInTool`, VS Code `node/copilot/copilotShellTools.ts`). The
+ * Claude Agent SDK's own way to do that is to disallow `Bash` and alias its
+ * name to the replacement (`disallowedTools` and `toolAliases`, `sdk.d.ts` in
+ * 0.3.301). A tool that is not marked leaves `Bash` alone, whatever its name.
+ */
+export const hostRunsShell = (offering: BoundTool[]): boolean =>
+  offering.some((one) => one.overridesBuiltInTool === true && one.definition.name === 'bash');
+
+/**
  * Whether Claude's own task tools are turned on when Claude keeps them.
  *
  * On by default, and read where the CLI's environment is built: a session that

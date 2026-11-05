@@ -22,8 +22,10 @@ const sdk = vi.hoisted(() => ({ frames: [] as Record<string, unknown>[] }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: () => ({
+  query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
     async *[Symbol.asyncIterator]() {
+      // The frames answer the turn's prompt, as a CLI's do.
+      await prompt[Symbol.asyncIterator]().next();
       for (const frame of sdk.frames) yield frame;
     },
     interrupt: async () => {},
@@ -59,12 +61,15 @@ const settle = async (times = 30): Promise<void> => {
 async function replay(frames: Record<string, unknown>[]) {
   sdk.frames = frames;
   const sent: { channel: string; action: Record<string, unknown> }[] = [];
-  createSession({
+  const session = createSession({
     uri: 'ahp-session:/round',
     chatUri: 'ahp-chat:/round',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-round-')),
     emit: (channel, action) => { sent.push({ channel, action: action as Record<string, unknown> }); },
   });
+  await settle();
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
   await settle();
   const parts = sent
     .filter((one) => one.action.type === 'chat/responsePart')

@@ -353,13 +353,14 @@ it('makes the machine when a disposable profile is picked before the first turn'
   const box = held(state).machines[0]?.name as string;
   expect(held(state).machines[0]?.labels).toMatchObject({ 'ahpd.disposable': 'claude', 'ahpd.agents': 'echo' });
 
-  // What the client is told is the machine the session actually has, not the
-  // source it picked: a chip holding the source would name nothing.
+  // The client's pick is said as it sent it, and then the machine the
+  // session actually has, which is what the client holds last: a chip holding
+  // the source would name nothing.
   const told = actions(p, 'ahp-session:/one')
     .filter((action) => action.type === 'session/configChanged')
-    .map((action) => (action.config as Record<string, unknown>).computer);
-  expect(told).toContain(`computer://${box}`);
-  expect(told).not.toContain('disposable:claude');
+    .map((action) => (action.config as Record<string, unknown>).computer)
+    .filter((one) => one !== undefined);
+  expect(told.at(-1)).toBe(`computer://${box}`);
 
   // It is a real user, so the delay does not run while the session is in it.
   await vi.advanceTimersByTimeAsync(10000);

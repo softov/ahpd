@@ -6,7 +6,7 @@ plans:
 
 # Check /mcp from a real MCP client
 
-host/20261102-1347 is on main. The daemon serves its sessionless tools at `/mcp` when `httpApi` is on and `mcpTools` is `all`. Your `config-dev.json` has neither key now.
+host/20261102-1347 is on main. The daemon serves its sessionless tools at `/mcp` when `httpApi` is on and `mcpTools` is `all`. Your `config-dev.json` sets `http`, the old name of `httpApi`, so the API is on. It does not set `mcpTools`. Do not add `httpApi` too, because the daemon refuses a file that holds both names.
 
 ## Set up
 
@@ -14,7 +14,7 @@ host/20261102-1347 is on main. The daemon serves its sessionless tools at `/mcp`
 
 ```bash
 cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
-node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=JSON.parse(fs.readFileSync(f,"utf8"));c.httpApi=true;c.mcpTools="all";fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
+node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=JSON.parse(fs.readFileSync(f,"utf8"));c.mcpTools="all";fs.writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
 node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
 ```
 
@@ -44,7 +44,7 @@ cd /github/ahpd && node --conditions development --import ./scripts/dev.mjs pack
 2. Ask the chat to list your sessions. Check that the answer holds only that person's sessions.
 3. Ask it to create a session with `relationship: independent` and a named `agent`. Check that the session runs that agent and belongs to that person.
 4. Ask it to send a message to that session. Check that the turn shows that person as the sender.
-5. Mint a guest's token the same way, and put it in `mcp.json`. Check that the server lists only `list_sessions` and `get_session_context`.
+5. Mint a guest's token the same way, and put it in `mcp.json`. Check that `/mcp` refuses it with 403, because the built-in `guest` role does not hold `mcp:call`.
 6. Set `mcpTools` to `none` in `config-dev.json`, and restart the daemon. Check that VS Code cannot reach `/mcp`.
 
 ## Reply

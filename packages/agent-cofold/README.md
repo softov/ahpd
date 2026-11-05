@@ -142,7 +142,7 @@ The workspace check resolves symlinks with cofold's own resolver, including a li
 
 A write or an edit needs the file to have been read in this session, and cofold refuses one it has not seen. A file that changed since it was read is refused too. What a session read is held in the process, so a restart means reading it again. `"files": { "requireRead": false }` turns the rule off for the session, and the rule stays on when the key is absent.
 
-Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in the daemon's current directory. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
+Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in a scratch folder of its own, `~/.copilot/chats/<session id>`, as VS Code's agents run a session with no workspace. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
 
 `tools` turns one off by naming it `false`, and gives `web_search` its providers:
 
@@ -154,7 +154,7 @@ The named providers are tried in the order the configuration lists them, and a f
 
 ## Messages sent while a turn runs
 
-A steering message goes into the running turn: cofold appends it to the run's transcript before the model's next step. The session says it back as the chat's steering message as it takes it, and takes it out once cofold has written it. A run that ends before a step reads it leaves it to a turn of its own, which starts once the chat is idle, ahead of any queued message; after a run a client stopped, it waits until the chat's next turn ends.
+A steering message goes into the running turn: cofold appends it to the run's transcript before the model's next step. The session says it back as the chat's steering message as it takes it, and takes it out once cofold has written it. A run that ends before a step reads it leaves it to a turn of its own, which starts once the chat is idle, ahead of any queued message; a stop lets go of it.
 
 A turn a client sends while another runs is said at once and takes that one's place in every client's chat, as the protocol's reducer replaces the active turn. It runs once the run in front of it is over, because one run reads the session at a time; the turn it replaced runs on, and is in no history. A stop of the turn that took its place stops that run, and the turns waiting with it go. A message queued while a stopped run still winds down is started at once the same way, because every client holds the chat idle once the stop is said.
 

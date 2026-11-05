@@ -29,6 +29,7 @@ The host ships a set of brand marks, and any plugin names one with `{ "src": "ma
 - `packages/server/test/plugin-icons.test.ts`, `packages/sdk/test/adapters-channel.test.ts`, `packages/sdk/test/agents-channel.test.ts` and `packages/activepieces/test/logos.test.ts` cover the new paths.
 - The full gate passed, except for a timeout in `computer-plugin.test.ts` that fails on main too.
 - CI passed on #102, with all 8 checks, `check-windows` and `install-windows` included.
+- On 2026-11-04 Softov checked the connectors and agents pages in ahpw, in light and dark: the Jira, Linear, Resend, WhatsApp, webhook and Codex marks show, and the CDN is not fetched for them.
 
 ## Departures from the plan
 

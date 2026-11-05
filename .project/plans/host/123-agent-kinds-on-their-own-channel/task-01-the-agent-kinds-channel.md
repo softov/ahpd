@@ -1,6 +1,6 @@
 ---
 title: The agent kinds channel
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A snapshot follows the subscribe's view
-status: implemented
+status: done
 depends:
   - task-01-the-cut-is-shown.md
 layer: sdk

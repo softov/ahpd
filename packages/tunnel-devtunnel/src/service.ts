@@ -139,8 +139,13 @@ export interface Service {
 
 /** What the SDK side is built with. */
 export interface ServiceOptions {
-  /** The token of one open connector, or nothing when it is not open. */
-  token(connector: string): { token: string } | undefined;
+  /**
+   * The token of one open connector, or nothing when it is not open.
+   *
+   * It answers once a refresh that is running has ended, so no call goes out
+   * with the token that refresh replaces.
+   */
+  token(connector: string): Promise<{ token: string } | undefined>;
   /** What the Dev Tunnel is called: the plugin's `name` option, or the machine's, as VS Code names it. */
   name: string;
   /** Where the tunnel each connector hosted is kept between runs. */
@@ -305,7 +310,7 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
     'ahpd-tunnel-devtunnel (https://github.com/softov/ahpd)',
     ManagementApiVersions.Version20230927preview,
     async () => {
-      const open = options.token(connector);
+      const open = await options.token(connector);
       return open === undefined ? null : `github ${open.token}`;
     },
   );

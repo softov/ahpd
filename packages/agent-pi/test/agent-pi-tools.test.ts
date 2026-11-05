@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { createAgentSession, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
@@ -59,20 +63,61 @@ it('rejects the call when the host tool throws', async () => {
   await expect(callTool(tool, {})).rejects.toThrow('no such file');
 });
 
-it('drops a tool that would shadow one of pi own', async () => {
-  expect(await toPiTool({ definition: { name: 'bash' }, run: async () => 'no' }, noClient)).toBeUndefined();
+it("drops a client's tool named like one of pi's own", async () => {
+  expect(await toPiTool({ definition: { name: 'bash' }, owner: 'editor' }, noClient)).toBeUndefined();
+});
+
+it("offers a host tool named like one of pi's own in the place of pi's", async () => {
+  /*
+   * pi registers a custom tool of a built-in's name in the built-in's place,
+   * so the model is offered the host's tool and pi's own is left out, as
+   * VS Code's host tools override the runtime's built-in of the same name.
+   */
+  const host = await toPiTool({ definition: { name: 'bash', title: 'Host shell' }, run: async () => 'ran' }, noClient);
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-pi-override-'));
+  try {
+    const { session } = await createAgentSession({
+      cwd: dir,
+      agentDir: dir,
+      sessionManager: SessionManager.inMemory(dir),
+      settingsManager: SettingsManager.inMemory(),
+      ...(host === undefined ? {} : { customTools: [host] }),
+    });
+    expect(session.getActiveToolNames().filter((name) => name === 'bash')).toEqual(['bash']);
+    expect(session.getToolDefinition('bash')?.label).toBe('Host shell');
+    session.dispose();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('keeps a marked host tool that takes the place of one of pi own', async () => {
+  let seen: string | undefined;
+  const tool = await toPiTool({
+    definition: { name: 'bash' },
+    overridesBuiltInTool: true,
+    run: async (_input, call) => {
+      seen = call?.toolCallId;
+      return 'the host ran it';
+    },
+  }, noClient);
+  expect(tool?.name).toBe('bash');
+  // The call's own id reaches the tool, as it does for every other host tool.
+  const result = await callTool(tool, { command: 'echo hi' });
+  expect(result.content).toEqual([{ type: 'text', text: 'the host ran it' }]);
+  expect(seen).toBe('c1');
 });
 
 it('hands the host tools to pi as custom tools', async () => {
   const { session, pi } = opened({
     tools: [
-      { definition: { name: 'bash' }, run: async () => 'no' },
+      { definition: { name: 'bash' }, run: async () => 'ran' },
       { definition: { name: 'open_file', title: 'Open file' }, run: async () => 'ok' },
     ],
   } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['open_file']);
+  expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['bash', 'open_file']);
 });
 
 /** The client's tools one session offered pi, by the name the model calls them. */
@@ -181,6 +226,24 @@ it('raises the call on the session, and takes the entry down with the answer', a
   session.completeToolCall?.('c1', 'editor', { text: 'opened', ok: true, content: [{ type: 'text', text: 'opened' }] });
   await settled();
   expect(needed(session).some((one) => one.id === raised[0]?.id)).toBe(false);
+});
+
+it('names a client\'s call in its row by the name the client announced', async () => {
+  const { session, pi, sent } = opened({
+    tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', { path: '/a.txt' });
+
+  // The tool the client has, as VS Code's agents strip their client tool
+  // server's prefix: the chat's row and the session's entry name one tool.
+  const start = sent.find((one) => one.action.type === 'chat/toolCallStart' && one.action.toolCallId === 'c1')?.action;
+  expect(start).toMatchObject({ toolName: 'open', displayName: 'open', contributor: { kind: 'client', clientId: 'editor' } });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ toolName: 'open', displayName: 'open' });
 });
 
 it('keeps the answer a client gives between the ready and the run', async () => {
@@ -454,7 +517,7 @@ it('rebuilds pi on the same session and the model it was on', async () => {
   } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  const before = pi.asked.filter((one) => one.kind === 'choose').length;
+  const before = pi.asked.filter((one) => one.kind === 'setModel').length;
   await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }]);
   session.sendMessage('t2', 'again');
   await settled();
@@ -465,10 +528,10 @@ it('rebuilds pi on the same session and the model it was on', async () => {
   expect(second.instructions).toEqual(['be nice']);
   expect(second.onToolCall).toBeDefined();
   // The model and thinking level the session was on are applied again.
-  const chooses = pi.asked.filter((one) => one.kind === 'choose');
-  expect(chooses.length).toBeGreaterThan(before);
-  expect(chooses[chooses.length - 1]).toEqual({
-    kind: 'choose',
+  const moves = pi.asked.filter((one) => one.kind === 'setModel');
+  expect(moves.length).toBeGreaterThan(before);
+  expect(moves[moves.length - 1]).toEqual({
+    kind: 'setModel',
     id: 'anthropic/claude-opus-5',
     config: { [THINKING_KEY]: 'off' },
   });

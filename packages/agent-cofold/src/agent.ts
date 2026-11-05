@@ -18,7 +18,7 @@ import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Sto
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
 import { titleFrom, uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
@@ -460,13 +460,22 @@ export const storeOf = (options: CofoldOptions = {}): Store =>
     : createFileStore({ root: options.store ?? defaultStoreRoot() });
 
 /**
+ * A cofold backend: a session asked for no fork and no truncation is answered
+ * at once, and one asked for either once the store has made it.
+ */
+export interface CofoldAgent extends Agent {
+  create(start: Start & { forkAt?: undefined; rewindAt?: undefined }): Session;
+  create(start: Start): Session | Promise<Session>;
+}
+
+/**
  * One AHP backend over cofold.
  *
  * The provider id is per registration rather than per package, so two of these
  * with two stores and two models are two backends, which is how the register
  * surface gets exercised with a harness behind it.
  */
-export function cofoldAgent(options: CofoldOptions = {}): Agent {
+export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   const provider = options.provider ?? 'cofold';
   const displayName = options.displayName ?? 'Cofold';
   const configDir = options.computerConfigDir === undefined ? '/ahpd/cofold' : options.computerConfigDir;
@@ -479,6 +488,18 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
    * into, which is a catalogue that lists nothing it can open.
    */
   const store = storeOf(options);
+  /*
+   * Where each turn of a conversation ended, as the last read of it named it,
+   * by the conversation's id.
+   *
+   * A session names the end of a turn it watched from the run that wrote it,
+   * and the turns a resumed session opens with were written by runs it never
+   * watched. The host reads the conversation before it resumes it, so the read
+   * names them and the session that resumes it starts from them, as the Claude
+   * backend's sessions start from what its read of a transcript named. Each
+   * read of a conversation replaces what an earlier one named.
+   */
+  const readEnds = new Map<string, ReadonlyMap<string, string>>();
   /*
    * The harness configuration, read once for this backend.
    *
@@ -717,6 +738,51 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     };
   };
 
+  /*
+   * A session, answered at once; or for a fork or a truncation, once the
+   * store has made it, as VS Code's agent provisions a fork inside the
+   * `createChat` that asked for it, so one the store cannot make fails the
+   * request that asked.
+   *
+   * `Start.forkAt` copies the resumed conversation through that message into a
+   * cofold session of its own, `Store.sessions.fork`, and `Start.rewindAt` drops
+   * what followed it from the resumed one, `Store.sessions.truncate`. Either
+   * way the session is then the conversation as the store holds it, resumed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7132-L7132
+   */
+  function create(start: Start & { forkAt?: undefined; rewindAt?: undefined }): Session;
+  function create(start: Start): Session | Promise<Session>;
+  function create(start: Start): Session | Promise<Session> {
+    const opened = (resumed: Start): Session => cofoldSession(
+      options,
+      resumed,
+      store,
+      harness,
+      (settings, credentials) => connectionsOf(options, settings, credentials, harness)
+        .flatMap((connection) => knownCatalogue(connection)),
+      held,
+      // Where the turns it opens with ended, for a session that carries a
+      // conversation on, a fork's copy included: a fork keeps the message ids
+      // it copies.
+      start.resume === undefined ? undefined : readEnds.get(start.resume),
+    );
+    const { forkAt, rewindAt, ...resumed } = start;
+    if (forkAt === undefined && rewindAt === undefined) return opened(start);
+    return (async (): Promise<Session> => {
+      if (forkAt !== undefined && rewindAt !== undefined) throw new Error(`${provider}: a session cannot fork and rewind at once`);
+      if (start.resume === undefined) {
+        throw new Error(`${provider}: a ${forkAt !== undefined ? 'fork needs the conversation it copies' : 'rewind needs the conversation it cuts'}`);
+      }
+      if (forkAt !== undefined) {
+        const sessionId = crypto.randomUUID();
+        await store.sessions.fork({ fromSessionId: start.resume, throughMessageId: forkAt, sessionId });
+        return opened({ ...resumed, resume: sessionId });
+      }
+      await store.sessions.truncate({ sessionId: start.resume, throughMessageId: String(rewindAt) });
+      return opened(resumed);
+    })();
+  }
+
   return {
     provider,
     displayName,
@@ -914,19 +980,15 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     transcript: async (id) => {
       const record = await store.sessions.get({ sessionId: id });
       if (record === undefined) return undefined;
-      return await turnsOf(store, id);
+      const ends = new Map<string, string>();
+      const turns = await turnsOf(store, id, ends);
+      readEnds.set(id, ends);
+      return turns;
     },
     /*
      * The session runs a cofold agent: a turn becomes `run()`'s event stream
      * and each event becomes the AHP action a client expects. The work is in
      * `session.ts`, `mapping.ts` and `tools.ts`.
-     *
-     * `Start.forkAt` and `Start.rewindAt` are the cut the session was asked
-     * for: a fork copies the resumed conversation through that message into a
-     * cofold session of its own, and a rewind drops what followed it from the
-     * resumed one, which is `Store.sessions.fork` and `Store.sessions.truncate`
-     * doing the work before the first turn runs. `session.ts` refuses a turn if
-     * the cut could not be made, rather than carrying on from the wrong place.
      *
      * `runsNested` is the machine half. cofold's loop, tools and shell all run
      * in this process, so a session that names a computer cannot be served
@@ -934,16 +996,6 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      * machine and gives the session the SDK's proxy instead.
      */
     runsNested: true,
-    create: (start) => {
-      return cofoldSession(
-        options,
-        start,
-        store,
-        harness,
-        (settings, credentials) => connectionsOf(options, settings, credentials, harness)
-          .flatMap((connection) => knownCatalogue(connection)),
-        held,
-      );
-    },
+    create,
   };
 }

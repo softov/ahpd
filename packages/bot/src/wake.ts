@@ -532,10 +532,11 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
 
   /**
    * The person's message as the back session is handed it, as the reference
-   * Agents window sends a message from one session into another: a queued
-   * message, whatever the session is doing, since the host it runs on takes it
-   * up in the order messages came, and the message an agent's, naming the
-   * session and the chat it came from. The text is the person's words with the
+   * Agents window sends a message from one session into another: an agent's
+   * message, naming the session and the chat it came from. One that began a
+   * main turn is queued, since the host the back session runs on takes it up in
+   * the order messages came. One the person steered into the open main turn
+   * steers the back turn that answers it, as the person chose to steer. The text is the person's words with the
    * context block in front of them, one blank line between: what was said, and
    * the chat, the person and the time it was said in.
    *
@@ -545,9 +546,9 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/meta/vscode/agentRemoteSessionMeta.ts#L78-L89
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L810-L827
    */
-  const queued = (block: string, message: ChatMessage): Bag => ({
+  const pending = (block: string, message: ChatMessage): Bag => ({
     type: 'chat/pendingMessageSet',
-    kind: 'queued',
+    kind: message.steered === true ? 'steering' : 'queued',
     id: randomUUID(),
     message: {
       text: `${block}\n\n${message.text}`,
@@ -724,11 +725,14 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * the answer after it belongs to, and keeps what was posted into that
          * turn and the messages it sent still waiting.
          */
-        const action = queued(block, message);
+        const action = pending(block, message);
         const before = answering.get(session);
         const same = before !== undefined && before.handle === handle && before.turnId === message.turnId;
         const waiting = same ? before.waiting : new Set<string>();
-        waiting.add(String(action['id']));
+        // A steer goes into the back turn that already answers this main turn,
+        // so no turn of its own is waited on.
+        const steers = same && message.steered === true;
+        if (!steers) waiting.add(String(action['id']));
         answering.set(session, {
           session: message.session, turnId: message.turnId, handle, bot: bot.name, waiting,
           ...(same && before.posted === true ? { posted: true } : {}),
@@ -749,6 +753,13 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           // rather than the host's answer to the action: the message reached
           // nobody, which the person is owed in the same words.
           refused = reason(error);
+        }
+        if (refused !== undefined && steers) {
+          // The steer was not taken, and the back turn it was meant for still
+          // runs and still answers this main turn: the binding stays, and the
+          // operator is told.
+          seams.problem(`a message steered into ${session} was refused: ${refused}`);
+          return;
         }
         if (refused !== undefined) {
           // Nothing was said, so nothing is coming: the turn ends here rather

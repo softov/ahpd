@@ -1,6 +1,6 @@
 ---
 title: Computer and isolation come first
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

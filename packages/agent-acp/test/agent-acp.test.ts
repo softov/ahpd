@@ -1,10 +1,11 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { uriOf } from '@ahpd/sdk';
 import type { Agent, Session, Start, StartTerminals } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { acpAgent } from '../src/index.js';
@@ -43,7 +44,7 @@ const scratch = (): string => {
 };
 
 /** A backend on the scripted server, with the flags a case needs. */
-const backend = (flags: string[]): Agent => acpAgent({
+const backend = (flags: string[]): Agent<Session> => acpAgent({
   command: process.execPath,
   args: [FIXTURE, ...flags],
   provider: 'acp',
@@ -74,11 +75,14 @@ it('carries an approvals control on the session, with the named model as the def
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const schema = agent.schema();
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  expect(Object.keys(properties)).toEqual(['permissionMode']);
+  expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
   expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
   // The server's modes are unknown until a session asks it, so there is no
-  // enum here; a session that has asked reports the learned one instead.
+  // enum here; a session that has asked reports them as its own, read-only.
   expect(properties.permissionMode?.enum).toBeUndefined();
+  expect(properties.availableApprovalModes).toEqual({
+    type: 'array', title: 'Available Permissions', readOnly: true, items: { type: 'string', title: 'Permission Mode' },
+  });
   /*
    * The model is not a control, because it belongs to the turn rather than to
    * the conversation - but the configured id is still the default a client is
@@ -105,34 +109,67 @@ it('will not take two backends that call themselves the same thing', () => {
   })).toThrow(/acp/);
 });
 
+it('works in a scratch folder of its own when the client gave it none', () => {
+  // The home the folder is made under is this case's own, so nothing is made
+  // in the person's.
+  const home = scratch();
+  // `os.homedir()` reads `HOME` on POSIX and `USERPROFILE` on Windows.
+  const was = process.env.HOME;
+  const wasProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const session = backend([]).create(opening('scratched'));
+    started.push(session);
+    const folder = join(home, '.copilot', 'chats', 'scratched');
+    expect(session.workingDirectories()).toEqual([uriOf(folder)]);
+    expect(existsSync(folder)).toBe(true);
+  }
+  finally {
+    if (was === undefined) delete process.env.HOME;
+    else process.env.HOME = was;
+    if (wasProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = wasProfile;
+  }
+});
+
+/**
+ * A session whose server has spoken: one turn run to its end, which is what
+ * spawns the server and shakes hands with it.
+ */
+const spoken = async (agent: Agent<Session>, id: string): Promise<Session> => {
+  let ended = (): void => {};
+  const done = new Promise<void>((resolve) => { ended = resolve; });
+  const session = agent.create({
+    ...opening(id),
+    emit: (_channel, action) => { if (action.type === 'chat/turnComplete') ended(); },
+  });
+  started.push(session);
+  void session.sendMessage('t1', 'hi');
+  await done;
+  return session;
+};
+
 /*
  * Whether the server could be handed this conversation again, which the host
  * asks before it offers a chat as movable: a move starts the backend once more
  * with the id the conversation was kept under, so a server that would open a
  * new one instead is a chat that must stay where it is.
  *
- * A setting is set to make the handshake happen, because that answer only
- * exists once the server has spoken.
+ * A turn is run to make the handshake happen, because that answer only exists
+ * once the server has spoken.
  */
 it('says a conversation can be taken back when the server advertised loadSession', async () => {
-  const agent = backend([]);
-  const session = agent.create(opening('movable'));
-  started.push(session);
-
-  await session.setConfig?.('permissionMode', 'code');
+  const session = await spoken(backend([]), 'movable');
 
   expect(session.agentId()).toBeDefined();
   expect(session.resumable?.()).toBe(true);
 });
 
 it('says it cannot when the server advertised neither loadSession nor a resume', async () => {
-  // The id is still there - this bridge can name what it is running - so the
-  // answer comes from the handshake rather than from whether there is a name.
-  const agent = backend(['--no-load', '--no-resume']);
-  const session = agent.create(opening('fixed'));
-  started.push(session);
-
-  await session.setConfig?.('permissionMode', 'code');
+  // The id is still there, since this bridge can name what it is running, so
+  // the answer comes from the handshake and never from whether there is a name.
+  const session = await spoken(backend(['--no-load', '--no-resume']), 'fixed');
 
   expect(session.agentId()).toBeDefined();
   expect(session.resumable?.()).toBe(false);

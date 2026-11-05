@@ -43,15 +43,17 @@ export const BEFORE_TOKEN = [
 ] as const;
 
 /**
- * The SDK's kinds of a request that failed with no connection, a 429 or a 5xx:
- * the failures the model proxy hands to its next entry, as
- * `docs/server/PROXY.md` says under *When a provider fails*.
+ * The SDK's kinds of a request that failed with a 429 or a 5xx: the failures
+ * the model proxy hands to its next entry, as `docs/server/PROXY.md` says
+ * under *When a provider fails*.
  *
  * Each kind is placed by its HTTP status, as the CLI 2.1.301 that the SDK runs
  * gives it and the API's errors page names it: a 429 is `rate_limit`, a 5xx
  * and a 529 are `server_error`, and so is a connection that never arrived,
  * timed out or was lost; `overloaded` is a 529 where the CLI names one. The
- * CLI sends them once its own retries on the same login are spent.
+ * CLI sends them once its own retries on the same login are spent, each retry
+ * saying the status it had, null where no answer came: a server's failure
+ * with no answer may have run at the provider and moves to no other login.
  * https://docs.claude.com/en/api/errors
  */
 export const FAILOVER: ReadonlySet<string> = new Set(['rate_limit', 'server_error', 'overloaded']);

@@ -191,7 +191,7 @@ const TOKEN = 'gho_made-up-token';
 
 /** A service over the real arrangement and the fake SDK, with the tunnels it keeps in `kept`. */
 const serviceOver = (cloud: Cloud, kept = new Map<string, Kept>(), name = 'dev03'): Service => sdkService({
-  token: () => ({ token: TOKEN }),
+  token: async () => ({ token: TOKEN }),
   cloud: () => cloud,
   name,
   kept: {

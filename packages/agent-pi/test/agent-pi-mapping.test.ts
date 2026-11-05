@@ -10,21 +10,19 @@ it('streams text into the part its block opened, and into the snapshot', () => {
   const one = turn();
   const [started] = streamed([]);
   mapEvent(one, started!);
-  // A text block opens its part at its first words, not at its start.
+  // A text block opens its part at its start, whatever it goes on to hold, as
+  // VS Code's Claude mapper opens one at a content block's start.
   expect(mapEvent(one, {
     type: 'message_update',
     message: {} as never,
     assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} as never },
-  })).toEqual([]);
+  })).toEqual([{ type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } }]);
   const actions = mapEvent(one, {
     type: 'message_update',
     message: {} as never,
     assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hello', partial: {} as never },
   });
-  expect(actions).toEqual([
-    { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
-    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' },
-  ]);
+  expect(actions).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' }]);
   // The snapshot is the parts, not a replay of the actions.
   expect(one.parts[0]?.content).toBe('hello');
 });
@@ -38,12 +36,14 @@ it('keeps the whitespace a text block starts with in its one part', () => {
     message: {} as never,
     assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta, partial: {} as never },
   });
-  expect(mapEvent(one, text(' '))).toEqual([]);
-  expect(mapEvent(one, text('\n'))).toEqual([]);
-  expect(mapEvent(one, text('hello'))).toEqual([
+  // The block's first text opens its part, whitespace or not, and each delta
+  // goes out as it came.
+  expect(mapEvent(one, text(' '))).toEqual([
     { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
-    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' \nhello' },
+    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' ' },
   ]);
+  expect(mapEvent(one, text('\n'))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: '\n' }]);
+  expect(mapEvent(one, text('hello'))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' }]);
   expect(mapEvent(one, text(' '))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' ' }]);
   expect(one.parts.map((p) => [p.kind, p.content])).toEqual([['markdown', ' \nhello ']]);
 });
@@ -104,10 +104,11 @@ it('keeps thinking, a call and thinking again in the order pi wrote them, live a
   }
 });
 
-it('opens no part for a text block that is only whitespace, live and replayed', async () => {
+it('opens a part for a text block that is only whitespace, live and replayed', async () => {
   const { replayEntries } = await import('../src/replay.js');
   const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.ts' } };
-  // Kimi K2.6's shape: a blank text block between each thought and its call.
+  // Kimi K2.6's shape: a blank text block between each thought and its call,
+  // which opens a part at its start as any block does.
   const messages: Bag[][] = [
     [{ type: 'thinking', thinking: 'THINK-1' }, { type: 'text', text: ' ' }, call],
     [{ type: 'thinking', thinking: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
@@ -118,9 +119,10 @@ it('opens no part for a text block that is only whitespace, live and replayed', 
   const seen = live.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
   // A tool call part has no id of its own: the id is its call's.
   expect(seen).toEqual([
-    ['u1:1:0', 'reasoning', 'THINK-1'], [undefined, 'toolCall', 'c1'], ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
+    ['u1:1:0', 'reasoning', 'THINK-1'], ['u1:1:1', 'markdown', ' '], [undefined, 'toolCall', 'c1'],
+    ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
   ]);
-  expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual(['REPLY']);
+  expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual([' ', 'REPLY']);
 
   const at = new Date().toISOString();
   const entries: Bag[] = [
@@ -151,6 +153,19 @@ it('opens a call\'s row when the model starts writing it, and starts it once', (
   expect((starts[0]![0] as Bag).assistantMessageEvent).toMatchObject({ type: 'toolcall_start' });
 });
 
+it('says the kind of a call of pi\'s own tools, for a client to draw it by', () => {
+  const one = turn();
+  const kindOf = (id: string, name: string): unknown => {
+    const start = mapEvent(one, { type: 'tool_execution_start', toolCallId: id, toolName: name, args: {} }, 1_000)
+      .find((action) => action.type === 'chat/toolCallStart');
+    return (start?._meta as Bag | undefined)?.toolKind;
+  };
+  // pi's shell is a terminal, its read a read, and grep, find and ls search,
+  // as VS Code's agents stamp the kind of their harness's tools.
+  expect(['bash', 'read', 'grep', 'find', 'ls', 'edit'].map((name, index) => kindOf(`c${index}`, name)))
+    .toEqual(['terminal', 'read', 'search', 'search', 'search', undefined]);
+});
+
 it('opens a tool call and leaves its ready to the hook', () => {
   const one = turn();
   const actions = mapEvent(one, {
@@ -179,6 +194,20 @@ it('lands a shell delta on the call that opened the row, and drops an orphan', (
   expect(mapEvent(one, { type: 'bash_execution_update', id: 'nobody', delta: 'x' })).toEqual([]);
 });
 
+/*
+ * A content change replaces what a call shows, so each chunk of a shell's
+ * output is added to what it printed before and the whole of it is said, as
+ * VS Code's Codex mapping says a command's output.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
+ */
+it('says a shell\'s whole output so far with each chunk', () => {
+  const one = turn();
+  mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
+  mapEvent(one, { type: 'bash_execution_update', id: 'c1', delta: 'one\n' });
+  const said = mapEvent(one, { type: 'bash_execution_update', id: 'c1', delta: 'two\n' });
+  expect(said.map((action) => action.content)).toEqual([[{ type: 'text', text: 'one\ntwo\n' }]]);
+});
+
 it('says nothing for an event it has no action for, rather than throwing', () => {
   expect(mapEvent(turn(), { type: 'summarization_retry_finished' })).toEqual([]);
   expect(mapEvent(turn(), { type: 'queue_update', steering: [], followUp: [] })).toEqual([]);
@@ -201,26 +230,17 @@ it('tells "this event says nothing about activity" from "it is idle now"', () =>
 // When a call ran ----------------------------------------------------------
 
 /*
- * When a pi tool call started and ended, live and replayed.
+ * How long a pi tool call ran, live and replayed.
  *
- * The protocol gives a call no time of its own, so the times ride in its
- * `_meta`, stamped from this plugin's clock live and from pi's own entries on a
- * replay. An action carrying a `_meta` replaces the call's whole bag, so the
- * ready, the approval and the completion each carry them again.
+ * The protocol gives a call no time of its own, so how long it ran rides its
+ * `_meta` at its completion, under the key VS Code's client reads it from:
+ * measured on this plugin's clock live and from pi's own entries on a replay.
  */
 
 /** The `_meta` an action carries, or an empty bag for one that carries none. */
 const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
-
-it('says when a live call started and ended, on its ready and its complete', async () => {
+it('says how long a live call ran at its completion, and nothing of its times before', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
@@ -228,27 +248,26 @@ it('says when a live call started and ended, on its ready and its complete', asy
   await driveCall(pi, 'c1', 'bash', { command: 'ls' });
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
   const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 'c1')?.action;
-  const ready = for1('chat/toolCallReady');
-  const complete = for1('chat/toolCallComplete');
-  expect(metaOf(ready)['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-  expect(timed(complete)).toBe(true);
+  expect(for1('chat/toolCallReady')?._meta).toEqual({ toolKind: 'terminal' });
+  expect(metaOf(for1('chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(timed(callIn(parts, 'c1'))).toBe(true);
+  expect(callIn(parts, 'c1')?._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
-it('says when a call started, on the start pi opened the row for', async () => {
+it('measures a call from when pi began running it, on a row the model opened', async () => {
   const one = turn();
   const message = { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } }] };
   mapEvent(one, { type: 'message_update', message, assistantMessageEvent: { contentIndex: 0, partial: message, type: 'toolcall_start' } } as unknown as AgentSessionEvent);
-  // The model's stream names the call; pi runs it afterwards, which is when the
-  // start is stamped - the start action has been sent by then and cannot say.
+  // The model's stream names the call; pi runs it afterwards, which is when it
+  // started.
   const opened_ = mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} }, 1_700_000_000_000);
   expect(opened_).toEqual([]);
-  expect(metaOf(one.parts[0]?.toolCall as Bag)['ahpd.startedAt']).toBe('2023-11-14T22:13:20.000Z');
+  expect((one.parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
+  const ended_ = mapEvent(one, { type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false }, 1_700_000_002_500);
+  expect(metaOf(ended_.find((action) => action.type === 'chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 2_500 });
 });
 
-it('starts an approved call when it was approved, and says none for a denied one', async () => {
+it('measures an approved call from its approval, and a denied one not at all', async () => {
   let now = 1_700_000_000_000;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
@@ -262,12 +281,13 @@ it('starts an approved call when it was approved, and says none for a denied one
   const approved = now;
   session.confirm('c1', true);
   await waiting;
-  const confirmed = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c1')?.action;
-  // The question waited for a person, which is not work: the start is the
-  // approval's, not the one the asked ready already carried.
-  expect(metaOf(sent.find((one) => one.action.type === 'chat/toolCallReady' && one.action.toolCallId === 'c1')?.action)['ahpd.startedAt'])
-    .toBe(new Date(asked).toISOString());
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(new Date(approved).toISOString());
+  now += 2_000;
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
+  const complete = sent.find((one) => one.action.type === 'chat/toolCallComplete' && one.action.toolCallId === 'c1')?.action;
+  // The question waited for a person, which is not work: the call ran from its
+  // approval, not from the ready that asked.
+  expect(approved - asked).toBe(30_000);
+  expect(metaOf(complete)['vscode.toolCallDurationMs']).toBe(2_000);
 
   session.sendMessage('t2', 'again');
   await settled();
@@ -275,16 +295,14 @@ it('starts an approved call when it was approved, and says none for a denied one
   await settled();
   session.confirm('c2', false);
   await refused;
-  const denied = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c2')?.action;
-  expect(metaOf(denied)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(denied)['ahpd.durationMs']).toBeUndefined();
-  // And the snapshot the person would read says the same.
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c2', toolName: 'bash', result: 'blocked', isError: true });
+  // A call refused never ran, so nothing says how long it ran.
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
+  expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('vscode.toolCallDurationMs');
   clock.mockRestore();
 });
 
-it('gives a replayed call the times of the entries that ran it', async () => {
+it('measures a replayed call between the entries that ran it', async () => {
   const { replayEntries } = await import('../src/replay.js');
   const call = { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } };
   const entries: Bag[] = [
@@ -301,11 +319,7 @@ it('gives a replayed call the times of the entries that ran it', async () => {
   const { turns } = replayEntries(entries as never);
   const row = callIn(turns[0]!.parts, 'c1') as Bag;
   // pi's own times, not the moment this process read the file.
-  expect(row._meta).toMatchObject({
-    'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
-    'ahpd.endedAt': '2020-01-01T00:00:09.500Z',
-    'ahpd.durationMs': 4500,
-  });
+  expect(row._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 4500 });
 });
 
 it('never writes a bare timing key on a pi tool call', async () => {

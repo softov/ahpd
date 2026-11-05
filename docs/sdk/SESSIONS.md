@@ -62,7 +62,7 @@ A session's `status` is a bitset, and the low bits are what it is doing now:
 
 A session of several chats reads as VS Code's host aggregates one: `InputNeeded` while any chat waits on somebody, else `InProgress` while any chat runs, a worker's chat included, else the default chat's bits. A chat that failed says so on its own row in the session's list of chats, and the session's `activity` is the activity of the chat that decided its status.
 
-`createdAt` is when the session was first started and never moves; a resumed session takes the catalogue's value rather than the moment it was resumed. `modifiedAt` is the last change, and `activity` is what the session is doing in one line, absent when it is idle.
+`createdAt` is when the session was first started and never moves; a resumed session takes the catalogue's value rather than the moment it was resumed. `modifiedAt` is where the protocol's reducer leaves it, a turn's start as it starts and its start plus its duration as it ends, and `activity` is what the session waits on before its turn can run, in one line, absent otherwise.
 
 `workingDirectories` are the directories the agent has tool access to. The first is the process root: the protocol says a client MUST NOT remove it, and moving it is `workingDirectoryReplaced` rather than a removal and an addition, which would be a client briefly holding a session with no directory at all. The rest are peers of the first, and a backend that cannot take them is told none. A summary leaves out a `file:` folder that is not a directory on this host.
 

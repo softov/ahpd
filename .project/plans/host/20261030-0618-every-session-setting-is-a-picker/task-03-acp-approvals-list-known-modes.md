@@ -1,6 +1,6 @@
 ---
 title: ACP approvals list the known modes
-status: implemented
+status: done
 depends: []
 layer: agent-acp
 refs:

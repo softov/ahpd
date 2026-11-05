@@ -3,13 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
-import type { ModelAdapter } from '@cofold/agents';
+import type { ModelAdapter, ModelStreamEvent } from '@cofold/agents';
 import { createHost } from '../../sdk/src/host.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { cofoldAgent } from '../src/index.js';
 import { metaKeys } from '../../../tools/wire.mjs';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
+import type { Session } from '../../sdk/src/types/session.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * What a cofold turn says it used, as the steps of that turn go by.
@@ -349,4 +351,88 @@ it('holds one provider for an endpoint and key, so a later turn keeps its transp
   expect(first.chat()).toBe(2);
   expect(second.chat()).toBe(0);
   expect(second.calls).toEqual([]);
+});
+
+/**
+ * A host over one cofold backend, and the sessions the backend made: a
+ * session's own `chatState` is the state a subscription opens its chat with,
+ * which a case reads beside what the host said.
+ */
+async function holding(model: ModelAdapter, tools: HostTool[] = []) {
+  const agent = cofoldAgent({ adapter: model, memory: true });
+  const made: Session[] = [];
+  const watched = await watching(createHost({
+    path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-usage-')),
+    agents: [{ ...agent, create: (start) => { const session = startedNow(agent.create(start)); made.push(session); return session; } }],
+    ...(tools.length > 0 ? { tools } : {}),
+  }));
+  return { ...watched, made };
+}
+
+/** The usage a session holds on each of its turns, by the turn's id. */
+const heldUsage = (session: Session | undefined): unknown[][] =>
+  ((session?.chatState().turns ?? []) as Record<string, unknown>[]).map((turn) => [turn.id, turn.usage]);
+
+/*
+ * A turn holds the usage it said, as the protocol's reducer holds each
+ * `chat/usage` on the active turn, so the state a subscription opens the chat
+ * with holds what a client that watched the turn was told.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L772-L779
+ */
+it('holds the usage a turn said, in the state a subscription opens with', async () => {
+  const model = createFakeModel({
+    script: [{ text: 'done', usage: { inputTokens: 50, outputTokens: 10 } }],
+    stream: true,
+    pricing: PRICING,
+  });
+  const { client, peer: p, chatUri, made } = await holding(model);
+  begin(client, chatUri, 't1', 'say it');
+  await until(() => ended(p, chatUri));
+
+  const said = totals(p, chatUri).at(-1);
+  expect(said).toMatchObject({ inputTokens: 50, outputTokens: 10 });
+  expect(heldUsage(made[0])).toEqual([['t1', said]]);
+});
+
+/*
+ * A resumed turn holds the usage the host said for it, the resumed run's
+ * merged over the run before's as VS Code's host merges them: the later run's
+ * counts, both runs' cost.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+ */
+it('holds the usage the host said for a resumed turn, both runs merged', async () => {
+  const answers = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'lookup', input: { query: 'x' } }], usage: { inputTokens: 100, outputTokens: 20 } },
+      { text: 'recovered', usage: { inputTokens: 50, outputTokens: 10 } },
+    ],
+    stream: true,
+    pricing: PRICING,
+  });
+  // The run's second call fails, after the first has been counted.
+  let calls = 0;
+  const model: ModelAdapter = {
+    ...answers,
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      calls += 1;
+      if (calls === 2) throw new Error('the model gave up');
+      yield* answers.stream!(request);
+    },
+  };
+  const { client, peer: p, chatUri, made } = await holding(model, [lookup]);
+  begin(client, chatUri, 't1', 'find x');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  const before = totals(p, chatUri).at(-1);
+  expect(before).toMatchObject({ inputTokens: 100, outputTokens: 20 });
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+  const said = totals(p, chatUri).at(-1);
+  const cost = (usage: unknown): number => Number(((usage as { _meta?: Record<string, { amount?: number }> })._meta?.['ahpd.cost'])?.amount);
+  expect(said).toMatchObject({ inputTokens: 50, outputTokens: 10 });
+  expect(cost(said)).toBeGreaterThan(cost(before));
+  expect(heldUsage(made[0])).toEqual([['t1', said]]);
 });

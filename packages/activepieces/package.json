@@ -1,17 +1,18 @@
 {
   "name": "@ahpd/activepieces",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Activepieces pieces as connectors for the ahpd daemon: each piece is an adapter, each action a host tool",
+  "description": "Activepieces integration for the Agent Host Protocol. Each piece becomes an ahpd connector, and each action a host tool.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
     "plugin",
     "connector",
-    "activepieces"
+    "activepieces",
+    "automation",
+    "integrations"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -81,7 +82,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Activepieces connectors",
-    "description": "Each installed Activepieces piece is an adapter, and each of its actions is a host tool.",
+    "description": "Use Activepieces pieces as connectors, with each action available as a host tool.",
     "categories": ["connector"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [{ "src": "./icon.svg" }],
@@ -98,7 +99,7 @@
             "type": "string",
             "pattern": "^@activepieces/piece-[a-z0-9][a-z0-9-]*(?:@[^@\\s]+)?$"
           },
-          "description": "The package of each Activepieces piece this plugin offers, such as @activepieces/piece-resend. A version may follow the name, as in @activepieces/piece-postgres@0.5.1; the newest version is installed when none is written."
+          "description": "Activepieces packages to offer, such as '@activepieces/piece-resend'. Add a version to pin one, as in '@activepieces/piece-postgres@0.5.1'. Defaults to the latest version."
         },
         "networkMode": {
           "type": "string",

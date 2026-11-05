@@ -26,6 +26,7 @@ A person can edit a bot file, and the provider, its watchers and the catalogue s
 - `rg -n "node:fs" packages/bot/src/store.ts` finds nothing.
 - A copy of the five bots in `~/.config/ahpd/bots` converted with every field the same. Each gains `instructions: ''`, and an empty prompt opens a silent session, as before.
 - After the restart on 2026-10-11, the five real bots converted and show in the clients.
+- On 2026-11-04 Softov checked by hand: a hand edit of a bot's description shows in ahpw without a restart. A deleted bot leaves the list.
 
 ## Departures from the plan
 

@@ -154,6 +154,9 @@ async function open(extra: Partial<ClaudeSessionOptions> = {}, outputs: ReturnTy
     ...extra,
   });
   await settle();
+  // The turn the frames a case feeds answer.
+  session.sendMessage('t1', 'go');
+  await settle();
   return { session, sent, kept: outputs?.kept ?? new Map<string, { output: string; exitCode?: number }>() };
 }
 
@@ -213,7 +216,7 @@ it('keeps the output Claude saved for the chat, and names its terminal after the
     {
       type: 'terminal',
       resource: 'ahp-terminal://shell/chat/toolu_1',
-      title: 'Bash',
+      title: 'Run shell command',
       isPty: false,
       result: { exitCode: 0, preview: 'FULL_OUTPUT_BEGIN', truncated: true },
     },
@@ -241,7 +244,7 @@ it('keeps no exit code for a command that failed', async () => {
   expect((result.content as Bag[]).at(-1)).toEqual({
     type: 'terminal',
     resource: 'ahp-terminal://shell/chat/toolu_1',
-    title: 'Bash',
+    title: 'Run shell command',
     isPty: false,
     result: { preview: 'FULL_OUTPUT_BEGIN', truncated: true },
   });

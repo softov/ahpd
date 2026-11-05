@@ -17,9 +17,9 @@
 
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
-import type { Bag } from '@ahpd/sdk';
-import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
-import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
+import type { Bag, CommandTerminal } from '@ahpd/sdk';
+import { bag, str, withToolCallDuration } from '@ahpd/sdk';
+import { contributorOf, describe, intentionOf, pastTenseOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -36,10 +36,11 @@ export interface OpenRequest {
   kind: 'approval' | 'input';
   /** The tool call an approval is about, when the pause named one. */
   callId?: string;
-  /** The entry id a client was told, carried by the set and the removal. */
-  entryId: string;
-  /** The entry itself, held so a subscription snapshot can repeat it. */
-  entry: Bag;
+  /**
+   * The session's input request a client was told of, held so a subscription
+   * snapshot can repeat it; its id is what the set and the removal carry.
+   */
+  request: Bag;
   /** The choices an approval offered, which the person's `selectedOptionId` names one of. */
   options?: Bag[];
 }
@@ -110,6 +111,14 @@ export interface TurnMappingOptions {
 export interface TurnMapping {
   /** What one event means. */
   actions(event: RunEvent): MappedEvent;
+  /**
+   * Put a terminal a host tool opened on its call, and answer the action.
+   *
+   * The call's own change, as a `!` command's call carries one, so a client
+   * watches the output arrive. The block is kept for the completion, which
+   * replaces the call's whole content.
+   */
+  opened(callId: string, terminal: CommandTerminal): Bag[];
   /**
    * Take a request down, once.
    *
@@ -183,6 +192,13 @@ const failurePart = (message: string, resumable = false): Bag => ({
 /** One tool call as it is held between its proposal and its result. */
 interface OpenCall {
   name: string;
+  /**
+   * The name the call's row draws: a client's tool by the name the client
+   * announced, off the `<clientId>__<name>` the model was offered, as VS Code's
+   * agents strip their client tool server's prefix.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+   */
+  shown: string;
   input: unknown;
   /**
    * What the call acts on, as cofold resolved it.
@@ -240,6 +256,10 @@ const questionOf = (question: AskQuestion): Bag => {
   };
 };
 
+/** A call's row name: a client's tool by the name the client announced, off the `<clientId>__<name>` it was offered as. */
+const shownName = (name: string, owner: string | undefined): string =>
+  (owner !== undefined && name.startsWith(`${owner}__`) ? name.slice(owner.length + 2) : name);
+
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, parts } = options;
   /**
@@ -266,8 +286,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * step holds at most one of each here too.
    */
   const blocks = new Map<'reasoning' | 'text', Bag>();
-  /** The whitespace the current step's text has written before its part opened. */
-  let waiting = '';
   /**
    * Whether the current step streamed its text and its reasoning.
    *
@@ -285,9 +303,41 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * counts them all - but only once it is over. Held here so a client watches
    * the number grow, and sent as it stands rather than only at the end.
    */
-  let spent: Usage = ZERO_USAGE;
+  let usage: Usage = ZERO_USAGE;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
+  /*
+   * A call a reopened turn still holds waiting on a person, known by its own
+   * row: the run that resumes the turn raises its question again, and that
+   * request has to find the call it asks about rather than open a second row.
+   * The input stays on the row, which already carries it.
+   */
+  for (const part of parts) {
+    const call = part.kind === 'toolCall' && typeof part.toolCall === 'object' && part.toolCall !== null ? part.toolCall as Bag : undefined;
+    if (call === undefined || call.status !== 'pending-confirmation') continue;
+    const contributor = bag(call.contributor);
+    const owner = contributor.kind === 'client' ? str(contributor.clientId) : undefined;
+    const shown = String(call.toolName);
+    open.set(String(call.toolCallId), {
+      name: owner === undefined ? shown : `${owner}__${shown}`,
+      shown,
+      input: undefined,
+      subject: undefined,
+      owner,
+      readied: false,
+      awaited: false,
+      invocation: undefined,
+      part,
+    });
+  }
+  /**
+   * The terminals a call showed while it ran, by the call's id.
+   *
+   * Held apart from the call so one that opens a terminal before its proposal
+   * is mapped still shows it, and so the completion keeps the block after it
+   * replaces the call's whole content.
+   */
+  const terminals = new Map<string, Bag[]>();
   /** Requests a client is being asked about, by the run's request id. */
   const requests = new Map<string, OpenRequest>();
   /**
@@ -347,20 +397,12 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * pairs each append action with the kind of part it may append to, and one
    * naming the other kind is dropped.
    *
-   * A step's text is held while it is only whitespace and leads the part it
-   * opens once it writes something else, so text that is only whitespace, as
-   * some models write before a call, opens nothing.
+   * Any text opens its part, whitespace included, as VS Code's agents open a
+   * part for whatever text their runtime sends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
    */
-  const write = (kind: 'reasoning' | 'text', written: string): Bag[] => {
-    let text = written;
-    if (kind === 'text' && !blocks.has('text')) {
-      text = `${waiting}${written}`;
-      if (text.trim() === '') {
-        waiting = text;
-        return [];
-      }
-      waiting = '';
-    }
+  const write = (kind: 'reasoning' | 'text', text: string): Bag[] => {
+    if (text === '') return [];
     const { part, opened } = blockOf(kind);
     part.content = `${String(part.content ?? '')}${text}`;
     return [...opened, {
@@ -371,15 +413,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   /**
    * Take a request down, once.
    *
-   * The entry id is the one the set used, so a client matches the two by it;
-   * a request that is already gone answers nothing, which is what stops the
+   * The id is the one the set used, so a client matches the two by it; a
+   * request that is already gone answers nothing, which is what stops the
    * session's own removal and the resolution event's from being two.
    */
   const settle = (requestId: string): Bag | undefined => {
     const held = requests.get(requestId);
     if (held === undefined) return undefined;
     requests.delete(requestId);
-    return { type: 'session/inputNeededRemoved', id: held.entryId };
+    return { type: 'session/inputNeededRemoved', id: String(held.request.id) };
   };
 
   /** The actions one event means, with nothing else. */
@@ -412,7 +454,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'model.started':
           step += 1;
           blocks.clear();
-          waiting = '';
           textStreamed = false;
           reasoningStreamed = false;
           return only([]);
@@ -450,8 +491,8 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // mistaken for this one having been silent.
           textStreamed = true;
           reasoningStreamed = true;
-          spent = addUsage(spent, event.usage);
-          return only([{ type: 'chat/usage', turnId, usage: usageOf(spent, options.model) }]);
+          usage = addUsage(usage, event.usage);
+          return only([{ type: 'chat/usage', turnId, usage: usageOf(usage, options.model) }]);
         }
         /*
          * The turn folded its own history into a summary.
@@ -514,6 +555,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'tool.proposed': {
           const displayName = options.displayNameOf(event.name);
           const owner = options.ownerOf(event.name);
+          const shown = shownName(event.name, owner);
           /*
            * The kind a client routes by and the line it draws, both off the
            * tool's name: a shell call is a terminal running a command rather
@@ -525,17 +567,18 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const intention = intentionOf(event.name, event.subject);
           const held: OpenCall = {
             name: event.name,
+            shown,
             input: event.input,
             subject: event.subject,
             owner,
             readied: false,
             awaited: false,
             invocation: undefined,
-            part: toolCallPart(event.callId, event.name, displayName, owner, meta, intention),
+            part: toolCallPart(event.callId, shown, displayName, owner, meta, intention),
           };
           open.set(event.callId, held);
           parts.push(held.part);
-          return only([toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention)]);
+          return only([toolStartAction(turnId, event.callId, shown, displayName, owner, meta, intention)]);
         }
 
         /*
@@ -551,6 +594,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
           const owner = held?.owner ?? options.ownerOf(event.name);
+          const shown = held?.shown ?? shownName(event.name, owner);
           const meta = toolMetaOf(event.name);
           // The ask carries the input but not the subject, so the one the
           // proposal resolved is what the row keeps, as the live title does.
@@ -559,7 +603,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call: Bag = held === undefined
             ? {
                 toolCallId: event.callId,
-                toolName: event.name,
+                toolName: shown,
                 displayName,
                 ...(intention !== undefined ? { intention } : {}),
                 ...(meta !== undefined ? { _meta: meta } : {}),
@@ -595,7 +639,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            */
           if (held === undefined) {
             parts.push({ kind: 'toolCall', toolCall: call });
-            actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention));
+            actions.push(toolStartAction(turnId, event.callId, shown, displayName, owner, meta, intention));
           } else {
             held.awaited = true;
             held.invocation = prompt;
@@ -611,18 +655,16 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             options: choices,
           });
 
-          const entryId = `approval:${event.requestId}`;
-          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
+          const request: Bag = { id: `approval:${event.requestId}`, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
           const opened: OpenRequest = {
             requestId: event.requestId,
             kind: 'approval',
             callId: event.callId,
-            entryId,
-            entry,
+            request,
             options: choices,
           };
           requests.set(event.requestId, opened);
-          actions.push({ type: 'session/inputNeededSet', request: entry });
+          actions.push({ type: 'session/inputNeededSet', request });
           return { actions, opened };
         }
 
@@ -635,23 +677,21 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
          */
         case 'input.requested': {
-          const entryId = `input:${event.requestId}`;
-          const request: Bag = {
+          const chatRequest: Bag = {
             id: event.requestId,
             message: 'The agent has a question',
             questions: event.questions.map(questionOf),
           };
-          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'chatInput', request };
+          const request: Bag = { id: `input:${event.requestId}`, chat: options.chatUri, kind: 'chatInput', request: chatRequest };
           const opened: OpenRequest = {
             requestId: event.requestId,
             kind: 'input',
             callId: event.callId,
-            entryId,
-            entry,
+            request,
           };
           requests.set(event.requestId, opened);
           return {
-            actions: [{ type: 'chat/inputRequested', request }, { type: 'session/inputNeededSet', request: entry }],
+            actions: [{ type: 'chat/inputRequested', request: chatRequest }, { type: 'session/inputNeededSet', request }],
             opened,
           };
         }
@@ -677,15 +717,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? describe(held.name, held.subject);
+          call.invocationMessage = held.invocation ?? describe(held.shown, held.subject);
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
-          /*
-           * The call starts when cofold says it started, which for a call a
-           * person was asked about is after they allowed it.
-           */
-          call._meta = withCallTimes(bag(call._meta), callTimes(event.at));
           /*
            * Built here rather than through `toolReadyAction`, because an
            * approved call has to keep saying a person allowed it: the same
@@ -696,29 +731,33 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? describe(held.name, held.subject),
+            invocationMessage: held.invocation ?? describe(held.shown, held.subject),
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
-            _meta: bag(call._meta),
+            ...(call._meta === undefined ? {} : { _meta: bag(call._meta) }),
           }]);
         }
 
         case 'tool.completed': {
           const held = open.get(event.callId);
           open.delete(event.callId);
+          const shownTerminals = terminals.get(event.callId) ?? [];
+          terminals.delete(event.callId);
           let meta: Bag | undefined;
           if (held !== undefined) {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
-            call.pastTenseMessage = describe(held.name, held.subject);
-            if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
+            call.pastTenseMessage = pastTenseOf(held.name, held.shown, held.subject, !event.isError);
+            const shown = [...shownTerminals, ...(event.content === '' ? [] : [{ type: 'text', text: event.content }])];
+            if (shown.length > 0) call.content = shown;
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
-            call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? event.at, event.at, event.durationMs));
-            meta = bag(call._meta);
+            // How long it ran, as cofold measured it from its start.
+            call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), event.durationMs);
+            meta = call._meta === undefined ? undefined : bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta)]);
+          return only([toolCompleteAction(turnId, event.callId, held?.name ?? event.name, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta, shownTerminals)]);
         }
 
         /*
@@ -729,6 +768,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          */
         case 'tool.denied': {
           const held = open.get(event.callId);
+          terminals.delete(event.callId);
           /*
            * An unknown tool never got a proposal, so there is no call on the
            * client to close. The refusal still reaches the model as the tool
@@ -739,14 +779,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
           call.success = false;
-          call.pastTenseMessage = describe(held.name, held.subject);
+          call.pastTenseMessage = pastTenseOf(held.name, held.shown, held.subject, false);
           call.error = { message: event.reason };
           // A refusal can land before the call ever reached `running`; the
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner, held.subject)];
-          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.subject));
+            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.owner, held.subject)];
+          actions.push(toolCompleteAction(turnId, event.callId, held.name, held.shown, event.reason, true, held.subject));
           return only(actions);
         }
 
@@ -810,6 +850,20 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
   return {
     settle,
+
+    opened(callId: string, terminal: CommandTerminal): Bag[] {
+      const block: Bag = {
+        type: 'terminal',
+        resource: terminal.uri,
+        title: 'Terminal',
+        ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+      };
+      const content = [...(terminals.get(callId) ?? []), block];
+      terminals.set(callId, content);
+      const part = open.get(callId);
+      if (part !== undefined) (part.part.toolCall as Bag).content = [...content];
+      return [{ type: 'chat/toolCallContentChanged', turnId, toolCallId: callId, content }];
+    },
 
     actions(event: RunEvent): MappedEvent {
       /*

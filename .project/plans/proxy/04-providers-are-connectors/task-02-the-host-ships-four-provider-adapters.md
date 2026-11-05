@@ -1,6 +1,6 @@
 ---
 title: The host ships four provider adapters
-status: implemented
+status: done
 depends: [task-01-an-adapter-can-serve-models.md]
 layer: "server"
 refs:

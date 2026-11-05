@@ -6,6 +6,7 @@ import type { ModelAdapter } from '@cofold/agents';
 import type { Bag, Start } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { cofoldAgent, modelOf } from '../src/index.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
 /*
@@ -372,13 +373,13 @@ it('answers a session with the same catalogue, and its own model until then', as
   answering({ data: LISTED });
   const agent = cofoldAgent({});
   const offered = await agent.probe?.();
-  const session = agent.create({
+  const session = startedNow(agent.create({
     uri: 'ahp-session:/models',
     chatUri: 'ahp-chat:/models',
     settings: agent.defaults(),
     schema: () => agent.schema(),
     emit: () => {},
-  } as unknown as Start);
+  } as unknown as Start));
 
   // A session whose endpoint the probe already asked answers the catalogue, so
   // it cannot shrink the list the picker was drawn from.
@@ -388,13 +389,13 @@ it('answers a session with the same catalogue, and its own model until then', as
   // session would run on rather than nothing at all.
   const refused = refusing();
   const quiet = cofoldAgent({ baseUrl: 'https://never.example/v1', model: 'open_router/deepseek/deepseek-chat' });
-  const silent = quiet.create({
+  const silent = startedNow(quiet.create({
     uri: 'ahp-session:/quiet',
     chatUri: 'ahp-chat:/quiet',
     settings: quiet.defaults(),
     schema: () => quiet.schema(),
     emit: () => {},
-  } as unknown as Start);
+  } as unknown as Start));
   expect(silent.models()).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
   // The ask is in the background, so it lands a tick after `models()` answered;
   // cofold's provider reads its headers before it fetches.

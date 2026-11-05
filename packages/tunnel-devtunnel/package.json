@@ -1,19 +1,19 @@
 {
   "name": "@ahpd/tunnel-devtunnel",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "A Dev Tunnel plugin for ahpd: forwards the bound port through a Microsoft Dev Tunnel so VS Code can find and reach the daemon from anywhere",
+  "description": "Microsoft Dev Tunnels for ahpd. Reach the daemon from anywhere, VS Code included.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
     "plugin",
     "tunnel",
     "devtunnel",
     "dev-tunnels",
-    "vscode"
+    "vscode",
+    "remote-access"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -74,7 +74,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Dev Tunnel",
-    "description": "A Dev Tunnel that forwards the bound port, so a client reaches the daemon from anywhere.",
+    "description": "Reach the daemon from anywhere through a Microsoft Dev Tunnel.",
     "categories": [],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -89,11 +89,11 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "connector": { "type": "string", "minLength": 1, "description": "The devtunnel connector this host's own tunnel uses. Absent, no tunnel is opened until one is set." },
-        "name": { "type": "string", "description": "What a Dev Tunnel this plugin makes is called in a client's list. This machine's hostname by default." },
-        "keep": { "type": "boolean", "description": "Whether the tunnel outlives the daemon. true by default." },
-        "anonymous": { "type": "boolean", "description": "Whether somebody not signed in to this account may reach it. false by default." },
-        "allowAccountChange": { "type": "boolean", "description": "Whether a second sign-in may replace a connector's GitHub account. false by default." }
+        "connector": { "type": "string", "minLength": 1, "description": "Dev Tunnel connector for this host's tunnel. No tunnel opens until one is set." },
+        "name": { "type": "string", "description": "Tunnel name shown in clients. Defaults to this machine's hostname." },
+        "keep": { "type": "boolean", "description": "Keep the tunnel after the daemon stops. On by default." },
+        "anonymous": { "type": "boolean", "description": "Let people not signed in to this account reach the tunnel. Off by default." },
+        "allowAccountChange": { "type": "boolean", "description": "Let a new sign-in replace the connector's GitHub account. Off by default." }
       }
     }
   }

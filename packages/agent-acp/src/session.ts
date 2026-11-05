@@ -24,7 +24,7 @@
  */
 
 import { resolve, sep } from 'node:path';
-import { activityOf, statusOf, uriOf } from '@ahpd/sdk';
+import { ensureWorkspacelessScratchDir, statusOf, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
@@ -50,25 +50,24 @@ const CLOSE_GRACE_MS = 1000;
  * `options` is the backend's identity and wiring; `start` is what this
  * particular session was told. The server is spawned lazily, on the first
  * turn, so a session somebody opened and never used costs no subprocess.
- *
- * `heardModes` is how this session tells its agent the modes its server named,
- * which the agent's schema lists until a later session hears others.
  */
 export function acpSession(
   options: AcpOptions,
   start: Start,
-  heardModes?: (modes: { id: string; name: string }[]) => void,
 ): Session {
   const provider = options.provider ?? 'acp';
   const emit = start.emit;
   /*
    * The directory the server works in.
    *
-   * The client's choice wins, then the package's, then the daemon's own: a
-   * session resumed or continued in another directory is where the client said
-   * it is, and a server that was pointed somewhere says so on `session/new`.
+   * The client's choice wins, then the package's: a session resumed or
+   * continued in another directory is where the client said it is, and a
+   * server that was pointed somewhere says so on `session/new`. A session
+   * given neither works in a scratch folder of its own, as VS Code's agents
+   * run a session with no workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
    */
-  const where = start.workingDirectory ?? options.cwd ?? process.cwd();
+  const cwd = start.workingDirectory ?? options.cwd ?? ensureWorkspacelessScratchDir(start.uri);
 
   /**
    * Whether a path is one this session was given to work in.
@@ -76,22 +75,25 @@ export function acpSession(
    * Both sides are resolved first, so a path that climbs out of a directory
    * with `..` is judged by where it lands rather than by how it was written.
    */
-  const directories = [where, ...(start.additional ?? [])].map((one) => resolve(one));
+  const directories = [cwd, ...(start.additional ?? [])].map((one) => resolve(one));
   const inside = (path: string): boolean => {
     const full = resolve(path);
     // The system's separator: `resolve` answers `C:\work` on Windows, never `C:/work`.
     return directories.some((dir) => full === dir || full.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`));
   };
 
-  /** What it is doing, and the one handle that says it. */
-  const activity = activityOf(emit);
   let modified = new Date().toISOString();
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
 
-  const touch = (): void => {
-    modified = new Date().toISOString();
-    if (ctx.record !== undefined) ctx.record.modifiedAt = modified;
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => {
+    modified = at;
+    if (ctx.record !== undefined) ctx.record.modifiedAt = at;
   };
 
   /*
@@ -106,11 +108,9 @@ export function acpSession(
     start,
     provider,
     emit,
-    where,
+    cwd,
     inside,
-    touch,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: activity.say,
+    setModifiedAt,
     /*
      * A permission the server is blocked on is the session waiting for
      * somebody, which is what a client draws the input request from, and a
@@ -119,17 +119,16 @@ export function acpSession(
     status: (): number => statusOf({
       waiting: ctx.permissions.size > 0 || ctx.elicitations.size > 0,
       active: ctx.active !== undefined,
-      failed: ctx.failed !== undefined,
+      failed: ctx.error !== undefined,
     }),
     offering: [...(start.tools ?? [])],
-    settings: { ...start.settings },
+    values: { ...start.settings },
     turns: [...(start.seed ?? [])],
     seeds: [...(start.seedCustomizations ?? [])],
     commands: [],
     modes: undefined,
-    heardModes,
     active: undefined,
-    waiting: [],
+    pendingTurns: [],
     replaced: new Set<string>(),
     mapping: undefined,
     cumulative: undefined,
@@ -139,16 +138,17 @@ export function acpSession(
     loads: false,
     resumes: false,
     forks: false,
-    takes: undefined,
+    promptCapabilities: undefined,
     replay: [],
     loading: false,
     opening: undefined,
     startedWith: '',
     cancelRequested: false,
-    closed: false,
-    failed: undefined,
+    disposed: false,
+    error: undefined,
     title: UNTITLED,
     renamed: false,
+    provisional: false,
     record: undefined,
     watchedTurn: undefined,
     permissions: new Map(),
@@ -156,7 +156,7 @@ export function acpSession(
     elicitations: new Map(),
   } as unknown as SessionContext;
 
-  const { settings, turns, seeds, replay, permissions, terminals } = ctx;
+  const { values, turns, seeds, replay, permissions, terminals } = ctx;
 
   Object.assign(ctx, createConfig(ctx));
   Object.assign(ctx, createHandlers(ctx));
@@ -207,7 +207,13 @@ export function acpSession(
       return last !== undefined && String(last.id ?? '') === turnId ? turnId : undefined;
     },
     status: () => ctx.status(),
-    activity: () => activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => ctx.title,
     /*
      * A person's rename, which the host announces and this only keeps. The
@@ -218,11 +224,23 @@ export function acpSession(
       if (said === '') return;
       ctx.title = said;
       ctx.renamed = true;
+      ctx.provisional = false;
       if (ctx.record !== undefined) ctx.record.title = said;
-      touch();
+    },
+    /*
+     * A title a local command suggests, taken while the session has none of its
+     * own or holds an earlier one of these, and said, as VS Code's host seeds
+     * one; the first real message's title replaces it.
+     */
+    seedTitle: (said) => {
+      if (said === '' || ctx.renamed || (ctx.title !== UNTITLED && !ctx.provisional) || said === ctx.title) return;
+      ctx.title = said;
+      ctx.provisional = true;
+      if (ctx.record !== undefined) ctx.record.title = said;
+      emit('session', { type: 'session/titleChanged', title: said });
     },
     modifiedAt: () => modified,
-    workingDirectories: () => [uriOf(where)],
+    workingDirectories: () => [uriOf(cwd)],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -233,7 +251,7 @@ export function acpSession(
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(where)],
+      workingDirectories: [uriOf(cwd)],
       customizations: [...seeds, ...ctx.commands],
       /*
        * The calls this session has out with its clients, which is what a client
@@ -246,12 +264,11 @@ export function acpSession(
        * sometimes empty is not a thing a client has to guess about.
        */
       ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits. The schema carries the server's modes once they
       // are known, so `permissionMode` has an enum exactly when it can have one.
-      config: { schema: ctx.schemaOf(), values: { ...settings } },
+      config: { schema: ctx.schemaOf(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -261,7 +278,6 @@ export function acpSession(
       modifiedAt: modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 
@@ -269,7 +285,7 @@ export function acpSession(
     sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      ctx.begin(turnId, text, model, from, attachments, turnOptions);
+      ctx.sendMessage(turnId, text, model, from, attachments, turnOptions);
     },
 
     changeModel: (model) => { chosen = model; },
@@ -297,13 +313,12 @@ export function acpSession(
      * and neither is any longer anything this turn will finish.
      */
     abort: () => {
-      ctx.waiting.length = 0;
+      ctx.pendingTurns.length = 0;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();
       ctx.settleElicitations();
       ctx.calls.release('The turn was stopped');
-      ctx.doing('Cancelling');
       const connection = ctx.live;
       if (connection !== undefined && ctx.acpSessionId !== undefined) {
         // Fire and forget: the prompt's own resolution is what ends the turn.
@@ -358,10 +373,10 @@ export function acpSession(
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     close: async (): Promise<void> => {
-      ctx.closed = true;
+      ctx.disposed = true;
       /*
        * Everything anybody is still waiting on is let go first.
        *
@@ -403,7 +418,7 @@ export function acpSession(
       // conversation and the transcript a row opens onto is this process's own
       // record of it. Only the live connection goes.
       // A turn still open has nobody left to answer it.
-      if (ctx.active !== undefined) ctx.finish(String(ctx.active.id), 'cancelled');
+      if (ctx.active !== undefined) ctx.endTurn(String(ctx.active.id), 'cancelled');
       // The connection goes last, and settles on the server's processes being
       // gone rather than on the request having been sent.
       await saying;

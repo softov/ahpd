@@ -9,6 +9,7 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { posix } from '../../../tools/posix.js';
 import { name } from '../src/plugin.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { keyVariablesOf, presets as shipped } from '../src/presets.js';
 
 /*
@@ -98,7 +99,7 @@ const sessionOf = (
   label: string,
   extra: Record<string, unknown> = {},
 ): Session => {
-  const session = kind.open(viewOf(id, held)).create(startOf(label, extra));
+  const session = startedNow(kind.open(viewOf(id, held)).create(startOf(label, extra)));
   started.push(session);
   return session;
 };
@@ -406,7 +407,7 @@ it('lists the modes a row found, and keeps a text box where it found none', asyn
   expect(approvalsOf('cline')).not.toHaveProperty('enum');
 });
 
-it('replaces a row\'s modes with the ones a session hears', async () => {
+it('keeps a row\'s modes on the agent, and the modes a session hears on that session', async () => {
   const { kind } = await load();
   const log = join(scratch('heard'), 'requests.jsonl');
   const agent = kind.open(viewOf('codex', () => ({
@@ -418,16 +419,18 @@ it('replaces a row\'s modes with the ones a session hears', async () => {
   expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
 
   const ended: string[] = [];
-  const session = agent.create(startOf('heard', {
+  const session = startedNow(agent.create(startOf('heard', {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/turnComplete' || action.type === 'chat/error') ended.push(String(action.type));
     },
-  }));
+  })));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   expect(ended).toEqual(['chat/turnComplete']);
 
-  // The fixture names `ask` and `code`, which are not the row's own.
-  expect(approvalsOf()).toMatchObject({ enum: ['ask', 'code'], enumLabels: ['Ask', 'Code'] });
+  // The fixture names `ask` and `code`, which are not the row's own: they are
+  // that session's, and the next session of the agent is offered the row's.
+  expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
+  expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
 });

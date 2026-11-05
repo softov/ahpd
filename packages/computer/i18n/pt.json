@@ -1,71 +1,71 @@
 {
   "meta": {
     "title": "Computador",
-    "description": "Fornece ambientes isolados em Docker ou contêineres para as sessões de agente, com gestão do ciclo de vida e ferramentas."
+    "description": "Máquinas isoladas para sessões de agente: contêineres Docker, VMs libvirt ou Proxmox e máquinas por ssh."
   },
   "options": {
     "runtime": {
-      "description": "Qual runtime usar: docker, que cria máquinas, ou ssh, que só as lista."
+      "description": "Como as máquinas são fornecidas. 'docker' (padrão) cria as máquinas; 'ssh' só lista as máquinas em ssh."
     },
     "command": {
-      "description": "O programa a executar. docker."
+      "description": "O programa que executa as máquinas. Padrão: 'docker'."
     },
     "args": {
-      "description": "Argumentos que vêm antes dos dele, para um wrapper ou um contexto."
+      "description": "Argumentos colocados antes dos do programa, para um wrapper ou um contexto do Docker."
     },
     "ssh": {
-      "description": "Máquinas que este host alcança por ssh. Cada uma é listada, não criada: nada deste host está nela, então nenhuma pode ser criada, iniciada ou removida daqui."
+      "description": "Máquinas que este host alcança por ssh. Elas são listadas, nunca criadas, iniciadas ou removidas aqui."
     },
     "libvirt": {
-      "description": "Como um perfil com runtime libvirt cria suas máquinas: cada uma é uma VM no libvirt do seu servidor, um clone ligado de um disco modelo, alcançada por ssh através desse servidor."
+      "description": "VMs para perfis com runtime 'libvirt': clones vinculados de um disco modelo no libvirt do servidor, acessados por ssh através desse servidor."
     },
     "env": {
-      "description": "Variáveis de ambiente mescladas sobre as do daemon. Uma variável é uma credencial onde quer que a imagem guarde uma, então cada uma aparece como <set>."
+      "description": "Variáveis de ambiente somadas às do daemon. Os valores são tratados como segredos e aparecem como <set>."
     },
     "image": {
-      "description": "A imagem de que uma máquina é criada quando uma chamada não indica nenhuma."
+      "description": "A imagem usada para criar máquinas quando nenhuma é indicada. Padrão: 'debian:bookworm-slim'."
     },
     "cpus": {
-      "description": "Um limite de CPU para cada máquina que este host cria."
+      "description": "Limite de CPU de cada máquina, no formato do --cpus do Docker."
     },
     "memory": {
-      "description": "Um limite de memória para cada máquina que este host cria."
+      "description": "Limite de memória de cada máquina, no formato do --memory do Docker."
     },
     "max": {
-      "description": "Quantas máquinas podem existir ao mesmo tempo quando a ferramenta do agente pede mais uma."
+      "description": "Máximo de máquinas existindo ao mesmo tempo quando a ferramenta do agente pede outra. Padrão: 3."
     },
     "label": {
-      "description": "O label que toda máquina leva."
+      "description": "O rótulo que toda máquina recebe. Padrão: 'ahpd.computer=1'."
     },
     "prefix": {
-      "description": "Com o que começa o nome de cada máquina que este host cria."
+      "description": "Prefixo do nome de cada máquina. Padrão: 'ahpd-computer'."
     },
     "sessionSetting": {
-      "description": "Se uma configuração de sessão indica a máquina em que uma sessão roda."
+      "description": "Mostra uma configuração de sessão para a máquina onde a sessão roda. Ativado por padrão."
     },
     "sessionDefault": {
-      "description": "O valor padrão dessa configuração."
+      "description": "A máquina padrão dessa configuração, como uma URI computer://<id>."
     },
     "needs": {
-      "description": "Valores para as necessidades de máquina de qualquer agente, pelo nome da necessidade."
+      "description": "Valores para as necessidades de máquina dos agentes, pelo nome da necessidade."
     },
     "mounts": {
-      "description": "O que cada máquina que este plugin cria pode ver."
+      "description": "Montagens que toda máquina deste plugin recebe."
     },
     "profiles": {
-      "description": "Os conjuntos nomeados que uma pessoa escolhe ao criar uma máquina."
+      "description": "Configurações de máquina com nome, que a pessoa escolhe ao criar uma máquina."
     },
     "bodyMounts": {
-      "description": "Se quem cria uma máquina pode indicar montagens próprias."
+      "description": "Permite que a pessoa indique as próprias montagens ao criar uma máquina. Desativado por padrão."
     },
     "imageMounts": {
-      "description": "Se uma part pode ser montada da sua própria imagem. false monta cada part de um volume preenchido uma vez a partir dela."
+      "description": "Permite montar uma part a partir da própria imagem. Use false para montar cada part de um volume preenchido uma vez a partir dela."
     },
     "images": {
-      "description": "As imagens de que uma máquina pode ser criada, como escopos de imagem do containers-policy.json: docker.io/library/node:22 uma imagem, docker.io/library/node um repositório, ghcr.io/acme um namespace, ghcr.io um registro, *.example.com seus subdomínios."
+      "description": "As imagens de que uma máquina pode ser criada, como escopos de imagem do containers-policy.json: docker.io/library/node:22 uma imagem, docker.io/library/node um repositório, ghcr.io/acme um namespace, ghcr.io um registro, *.example.com seus subdomínios. Sem isso, qualquer imagem é permitida."
     },
     "devcontainer": {
-      "description": "A CLI do Dev Container, como launcher e como criador de máquinas, e as pastas de que ela pode criar uma; false desliga todas as rotas de dev container."
+      "description": "A CLI de Dev Containers, como launcher e criadora de máquinas, e as pastas a partir das quais ela pode criar. Use false para desligar os dev containers."
     }
   },
   "session": {

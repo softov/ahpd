@@ -937,6 +937,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // Sent on another channel of the session, it is answered on that one:
         // the bit moved on the session's own.
         if (!moved || channel !== uri) dispatch(channel, said, origin);
+        /*
+         * A session whose lead chat runs on another host has its bits there
+         * too: that host runs the session, and says its bits as they move.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+         */
+        const held = sessions.get(uri);
+        if (held !== undefined) ctx.leadOf(held)?.flag?.(read ? 'read' : 'archived', on, 'session');
         const sole = chats.length === 1 ? chats[0] : undefined;
         if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
       };
@@ -1013,6 +1020,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           }
           terminal.setClaim(claimed);
           dispatch(channel, action, origin);
+          ctx.terminalSaid(channel, action);
           break;
         }
         default:

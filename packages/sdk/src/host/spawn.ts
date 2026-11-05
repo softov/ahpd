@@ -3,7 +3,7 @@ import type { ChatAction, ChatState, SessionInputRequestKind, ToolCallConfirmati
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
 import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
-import { reason } from '../utils/values.js';
+import { bag, reason } from '../utils/values.js';
 import { computerId, computersFor } from '../machines/computers.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { deepFreeze, frozenCopy } from '../utils/frozen.js';
@@ -16,7 +16,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING } from './common.js';
-import { chatFlag, commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -93,7 +93,7 @@ export interface Spawn {
     sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
-  ): Session;
+  ): Promise<Session>;
   /**
    * Set every plugin plan's `changed` on the entry it closes over.
    *
@@ -101,6 +101,8 @@ export interface Spawn {
    * holds an entry nothing has set this on yet.
    */
   wirePlan(): void;
+  /** Complete the Plan call the host drew in a chat's turn, before that turn's end is said. */
+  completePlan(chat: string, turn: string): void;
 }
 
 /**
@@ -683,7 +685,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
   wirePlan();
 
-  const spawn = (
+  const spawn = async (
     agent: Agent,
     uri: string,
     chatUri: string,
@@ -696,7 +698,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
-  ): Session => {
+  ): Promise<Session> => {
     /*
      * The backend that actually runs this session.
      *
@@ -981,6 +983,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       trusted: trustedBy,
       getAutoApproval,
       ...(userSettings === undefined ? {} : { userSettings }),
+      ...(sender?.principal === undefined ? {} : { reader: sender.principal }),
       /*
        * The tools bound to this session: this host's own, and whatever the
        * clients already in it provide.
@@ -1190,35 +1193,37 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
-        if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);
+        // The origin goes with it where the turn was not a person's, so a turn
+        // an automation began reads back as one.
+        if (channel === 'chat' && action.type === 'chat/turnStarted') {
+          const startedFrom = bag(bag(action.message).origin);
+          ctx.turnRecordedAs(uri, chatUri, turn, turn,
+            typeof startedFrom.kind === 'string' && startedFrom.kind !== 'user' ? startedFrom : undefined);
+        }
         const sender = senderOf(turn);
         /*
-         * A Plan call the host drew is closed by the turn ending, the way the
-         * ACP bridge closes its own: the protocol never closes this row, so
-         * nothing else would. Sent before the ending action, which is what a
-         * client reads as the turn being over.
+         * The bits of a session and a chat whose backend runs them on another
+         * host, as that host says them: kept here, where every row and state
+         * of the session and the chat reads them. The session's read bit
+         * follows a chat's there, and comes out as the session's action, which
+         * is said here only where it moves the bit: a client's own was said
+         * when this host took it.
          */
-        if (channel === 'chat' && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
-          || action.type === 'chat/error')) {
-          completePlan(chatUri, turn);
-        }
-        /*
-         * The bits of a chat whose backend runs it on another host, as that
-         * host says them: kept here, where every row and state of the chat
-         * reads them, and the session's read bit follows a read, as it follows
-         * any chat's.
-         */
-        const bit = channel === 'chat' && sessions.get(uri)?.chats.get(chatUri)?.flag !== undefined
+        const relays = sessions.get(uri)?.chats.get(chatUri)?.flag !== undefined;
+        const bit = relays && channel === 'chat'
           ? (action.type === 'chat/isReadChanged' ? Status.IsRead : action.type === 'chat/isArchivedChanged' ? Status.IsArchived : undefined)
           : undefined;
-        const readBefore = (kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0;
         if (bit !== undefined) {
           const flags = kept.chatFlags(idOf(uri), chatUri);
           const on = bit === Status.IsRead ? action.isRead === true : action.isArchived === true;
           kept.setChatFlags(idOf(uri), chatUri, on ? flags | bit : flags & ~bit);
         }
+        if (relays && channel === 'session' && (action.type === 'session/isReadChanged' || action.type === 'session/isArchivedChanged')) {
+          const read = action.type === 'session/isReadChanged';
+          sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, read ? action.isRead === true : action.isArchived === true, asSent(action));
+          return;
+        }
         dispatch(where, asSent(action), answering);
-        if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.
         // The row's counts move with it: the turn has no checkpoint yet, so
@@ -1409,8 +1414,9 @@ export function createSpawn(ctx: HostContext): Spawn {
          * and leaves the session's as it is. The bits move while the session
          * holds the chat, whose row they mark.
          *
-         * A chat whose backend runs it on another host has its read bit moved
-         * there, and said as the chat's action.
+         * A chat whose backend runs it on another host has its read bit, and
+         * its session's, moved there, and said as the chat's and the session's
+         * actions.
          */
         const commandKey = commandTurnKey(chatUri, turn);
         const ownBit = moved !== undefined && moved.flag === undefined;
@@ -1434,8 +1440,8 @@ export function createSpawn(ctx: HostContext): Spawn {
             ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
           }
           ctx.commandTurns.delete(commandKey);
-          if (moved !== undefined) {
-            if (ownBit) chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
+          if (moved !== undefined && ownBit) {
+            chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
             const row = chatSummary(uri, chatUri, moved);
             if (!command && (row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
               sessionFlag(ctx, uri, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
@@ -1541,6 +1547,11 @@ export function createSpawn(ctx: HostContext): Spawn {
         options.changes?.settle?.(uri, toolCallId);
       },
       /*
+       * An edit a call made, both sides of which the agent said: held by the
+       * same source, which mints the URIs a client reads them from.
+       */
+      onEditCompleted: (toolCallId, path, before, after) => options.changes?.complete?.(uri, toolCallId, path, before, after),
+      /*
        * A turn the backend has written under an id of its own.
        *
        * What the host keeps against a turn is kept against the id the client
@@ -1555,7 +1566,9 @@ export function createSpawn(ctx: HostContext): Spawn {
        */
       onTurnRecorded: (turnId, transcriptId) => {
         if (transcriptId === turnId) return;
-        ctx.turnRecordedAs(uri, chatUri, turnId, transcriptId);
+        // The origin the turn began with goes to the record under the id it
+        // will be read back by.
+        ctx.turnRecordedAs(uri, chatUri, turnId, transcriptId, ctx.turnOriginOf(chatUri, turnId));
       },
       onHandshake: () => { learnModels(uri); },
       /*
@@ -1581,7 +1594,14 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     const existing = sessions.get(uri);
     const foreign = existing !== undefined ? agent !== existing.agent : own !== undefined && agent !== own.agent;
-    const session = used.create(wired);
+    /*
+     * A backend answers its session at once, and the rest of this start runs in
+     * the same tick it was asked in; or it answers a promise, for a step to
+     * make first, and the session is held once that step is made, the start's
+     * failure being the failure of whatever asked for it.
+     */
+    const made = used.create(wired);
+    const session = made instanceof Promise ? await made : made;
     titled = session;
     const held = existing ?? {
       agent: own?.agent ?? agent,
@@ -1801,6 +1821,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     unstamped, withWorkerUri, stampedCalls, asSentChat,
     sendSubagent, endedWorkers,
     openSubagent, formerChatUri, titleOf, keepTitle, keepProvider,
-    spawn, wirePlan,
+    spawn, wirePlan, completePlan,
   };
 }

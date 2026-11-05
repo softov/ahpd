@@ -70,11 +70,14 @@ export type RunClientTool = (
  * use for this. An ACP agent calls this server over HTTP with its client out of
  * the path, so the server itself is the only place a person can be asked before
  * the tool runs - the backend supplies the question, and a `false` answer is the
- * call refused, with the model told so in the tool's own result.
+ * call refused, with the model told so in the tool's own result. It is handed
+ * what `RunClientTool` is, the request's `_meta` among them, so the call an
+ * agent named there is the one the question is put on.
  */
 export type MayRunTool = (
   tool: BoundTool,
   input: Record<string, unknown>,
+  meta: Record<string, unknown> | undefined,
 ) => Promise<boolean> | boolean;
 
 /** One session's endpoint, as a backend is handed it. */
@@ -252,7 +255,7 @@ const answered = async (serving: ToolsServing, said: Message, info: ToolsInfo): 
    * throws: the model is the one that made the call, so the sentence belongs in
    * the content it reads.
    */
-  if (serving.mayRun !== undefined && !(await serving.mayRun(found, input))) {
+  if (serving.mayRun !== undefined && !(await serving.mayRun(found, input, params._meta as Record<string, unknown> | undefined))) {
     return result(said.id, {
       content: [{ type: 'text', text: `${String(params.name)} was declined by a person` }],
       isError: true,

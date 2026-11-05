@@ -22,10 +22,15 @@ import type { Listed } from '@ahpd/sdk';
  * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
  * spelling answers with every session on the machine and looks like it worked.
  */
-/** One SDK session as a row, under the directory it was asked for. */
+/**
+ * One SDK session as a row, under the directory it was asked for, titled by
+ * its custom title or else the SDK's summary, as VS Code's Claude agent titles
+ * a row; a session with neither is listed untitled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L191-L198
+ */
 const listed = (info: SDKSessionInfo, dir: string): Listed => ({
   id: info.sessionId,
-  title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
+  title: info.customTitle ?? info.summary ?? '',
   createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
   modifiedAt: new Date(info.lastModified).toISOString(),
   workingDirectories: [uriOf(info.cwd ?? dir)],

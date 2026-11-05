@@ -84,7 +84,7 @@ const offered: BoundTool = {
 } as unknown as BoundTool;
 
 /** The name the CLI calls the client's tool by. */
-const CALLED = 'mcp__ahp__room__post_message';
+const CALLED = 'mcp__client__room__post_message';
 
 /** The model calling the client's tool, as the CLI reports the call. */
 const calling = {
@@ -115,7 +115,7 @@ async function started(emit: (channel: string, action: Bag) => void = () => {}):
 
 /** The handler the SDK server was handed for the client's tool, which is what runs a call. */
 const handler = (): ((input: Bag, extra: unknown) => Promise<unknown>) => {
-  const tools = (sdk.servers.get('ahp')?.tools ?? []) as { name: string; handler: (input: Bag, extra: unknown) => Promise<unknown> }[];
+  const tools = (sdk.servers.get('client')?.tools ?? []) as { name: string; handler: (input: Bag, extra: unknown) => Promise<unknown> }[];
   const tool = tools.find((one) => one.name === 'room__post_message');
   if (tool === undefined) throw new Error('the SDK server was handed no room__post_message');
   return tool.handler;

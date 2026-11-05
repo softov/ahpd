@@ -1,7 +1,7 @@
 ---
 title: An async command is a background row
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -74,8 +74,8 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | todo | - |
-| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | todo | 01 |
+| [01 - an async command is a row](task-01-an-async-command-is-a-row.md) | done | - |
+| [02 - an async command's end wakes the session](task-02-an-async-commands-end-wakes-the-session.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,13 +84,11 @@ bash { mode: async } -> shell manager starts the command -> answer: the shell id
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-async-command-is-a-row.md](task-01-an-async-command-is-a-row.md), after the agent terminal tool is built.
-- **Open questions:** none.
-- **Watch out for:** the end of a command must not call `setWake`.
+- **Done so far:** built, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] `pnpm --filter @ahpd/sdk test` passes.
-- [ ] On a test daemon, `sleep 5; echo done` with `mode=async` shows a row, and five seconds later a turn starts with `done`.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
+- [x] `pnpm --filter @ahpd/sdk test` passes.
+- [x] On a test daemon, `sleep 5; echo done` with `mode=async` shows a row, and five seconds later a turn starts with `done`.

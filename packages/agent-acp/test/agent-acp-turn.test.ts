@@ -282,7 +282,7 @@ it('opens a part per run of one kind, in the order the server wrote them', async
   expect(said.filter((one) => one.partId === kept[2]?.id).map((one) => one.content).join('')).toBe('second thought');
 });
 
-it('opens no part for a message that is only whitespace, and keeps the whitespace an answer starts with', async () => {
+it('opens a part for a message that is only whitespace, and streams each chunk as it came', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'blank it');
   await until(() => ended(p, chatUri));
@@ -291,79 +291,38 @@ it('opens no part for a message that is only whitespace, and keeps the whitespac
   const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: Part[] }[] } };
   }).snapshot.state.turns[0]?.responseParts ?? [];
-  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  // Any text opens its part, as VS Code's agents open one for whatever their
+  // runtime sends.
+  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'markdown', 'toolCall', 'reasoning', 'markdown']);
   expect(kept.map((part) => part.content ?? part.toolCall?.toolCallId))
-    .toEqual(['first thought', 'call-2', 'second thought', ' \nthe answer']);
+    .toEqual(['first thought', ' ', 'call-2', 'second thought', ' \nthe answer']);
   // A prose part's own id; a tool call part has none, as the protocol declares it.
-  expect(kept.map((part) => part.id)).toEqual(['t1:0', undefined, 't1:2', 't1:3']);
+  expect(kept.map((part) => part.id)).toEqual(['t1:0', 't1:1', undefined, 't1:3', 't1:4']);
 
-  // The held whitespace goes out with the words it came before, in their part.
+  // What streamed into each part, however the host gathered the deltas.
   const said = actions(p, chatUri).map((e) => e.action);
-  expect(said.filter((one) => one.type === 'chat/delta').map((one) => [one.partId, one.content]))
-    .toEqual([['t1:3', ' \nthe answer']]);
+  const streamed = new Map<string, string>();
+  for (const one of said.filter((action) => action.type === 'chat/delta')) {
+    streamed.set(String(one.partId), `${streamed.get(String(one.partId)) ?? ''}${String(one.content)}`);
+  }
+  expect([...streamed]).toEqual([['t1:1', ' '], ['t1:4', ' \nthe answer']]);
   expect(said.filter((one) => one.type === 'chat/responsePart').map((one) => (one.part as Part).id))
-    .toEqual(['t1:0', 't1:2', 't1:3']);
+    .toEqual(['t1:0', 't1:1', 't1:3', 't1:4']);
 });
 
-it('holds the plan in one call, which each update rewrites and the turn closes', async () => {
+it('draws no call of its own for a plan, which no call of the agent\'s carried', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'plan it');
   await until(() => ended(p, chatUri));
 
-  // One row for two plans: opened and readied by the first, rewritten by each
-  // one after it, and completed by the turn ending rather than by an update.
-  const plan = actions(p, chatUri).filter((e) => e.action.toolCallId === 't1:plan'
-    && String(e.action.type).startsWith('chat/toolCall'));
-  expect(plan.map((e) => e.action.type)).toEqual([
-    'chat/toolCallStart',
-    'chat/toolCallReady',
-    'chat/toolCallContentChanged',
-    'chat/toolCallContentChanged',
-    'chat/toolCallComplete',
-  ]);
-  // Nothing in the protocol says when the agent has finished writing a plan,
-  // so the call is still running when the second one arrives and completes
-  // after both.
-  expect(plan[2]?.action.content).toEqual([
-    { type: 'text', text: '- [ ] Read the file (in_progress)' },
-    { type: 'text', text: '- [ ] Write the answer' },
-  ]);
-  expect(plan[4]?.action.result).toMatchObject({
-    success: true,
-    content: [
-      { type: 'text', text: '- [x] Read the file' },
-      { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-    ],
-  });
-
-  /*
-   * The client's own fold, which is what the screen is drawn from: one part,
-   * holding the last plan, which the snapshot has to agree with.
-   */
-  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
-  for (const one of actions(p, chatUri)) {
-    state = chatReducer(state, one.action as unknown as ChatAction);
-  }
-  const parts = state.turns.flatMap((turn) => turn.responseParts) as { kind: string; toolCall?: {
-    toolCallId: string; toolName?: string; status?: string; success?: boolean; content?: unknown;
-  } }[];
-  const held = parts.filter((part) => part.kind === 'toolCall' && part.toolCall?.toolCallId === 't1:plan');
-  expect(held).toHaveLength(1);
-  expect(held[0]?.toolCall).toMatchObject({ toolName: 'plan', status: 'completed', success: true });
-  expect(held[0]?.toolCall?.content).toEqual([
-    { type: 'text', text: '- [x] Read the file' },
-    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-  ]);
-
+  // A plan update is no tool call, so it is no row of the chat, as VS Code
+  // draws nothing for a plan notification that is no tool call.
+  expect(actions(p, chatUri).some((e) => String(e.action.type).startsWith('chat/toolCall'))).toBe(false);
   const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-    snapshot: { state: { turns: { responseParts: { kind: string; toolCall?: { content?: unknown } }[] }[] } };
+    snapshot: { state: { turns: { responseParts: { kind: string }[] }[] } };
   }).snapshot.state.turns[0]?.responseParts ?? [];
-  // The plan call and the words that followed it, which are a part of their own.
-  expect(kept.map((part) => part.kind)).toEqual(['toolCall', 'markdown']);
-  expect(kept[0]?.toolCall?.content).toEqual([
-    { type: 'text', text: '- [x] Read the file' },
-    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
-  ]);
+  // The words that followed it, and nothing for the plan.
+  expect(kept.map((part) => part.kind)).toEqual(['markdown']);
 });
 
 it('reports a tool call as start, ready and complete, with its result', async () => {
@@ -589,6 +548,20 @@ it('raises the session entry a client reads when its call starts running', async
   });
 });
 
+it('names a client\'s call in its row by the name the client announced', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  await until(() => ended(p, chatUri));
+
+  // The tool the client has, as VS Code's agents strip their client tool
+  // server's prefix: the row and the entry name the same tool.
+  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'call-client-1');
+  expect(start?.action).toMatchObject({ toolName: 'openFile', contributor: { kind: 'client', clientId: 'a' } });
+  const set = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet');
+  expect((set?.action.request as Bag | undefined)?.toolCall).toMatchObject({ toolName: 'openFile', displayName: start?.action.displayName });
+});
+
 it('opens no entry for a call the agent has not started', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
@@ -679,8 +652,8 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
   // The shell is the host's own, so the block is the one a `!command` builds.
   expect(content[0]).toMatchObject({ type: 'terminal', title: 'Terminal', isPty: false });
   expect(String((content[0] as Bag).resource)).toContain('terminal');
-  // The file, as the edit a client draws: the after side is the file itself,
-  // and there is no before here because no URI names what a file used to be.
+  // The file, as the edit a client draws, from a source that holds no sides
+  // of a call's own: the block names the file as it is.
   expect(content[1]).toEqual({
     type: 'fileEdit',
     after: { uri: uriOf(join(path, 'painted.txt')), content: { uri: uriOf(join(path, 'painted.txt')) } },
@@ -692,6 +665,22 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
     { turnId: 't1', path: join(path, 'painted.txt'), phase: 'before' },
     { turnId: 't1', path: join(path, 'painted.txt'), phase: 'after' },
   ]);
+});
+
+it('shows a diff as both sides the call said, with the lines each lacks', async () => {
+  const changes = gitChanges();
+  const { client, peer: p, chatUri, path } = await talking({ changes });
+  begin(client, chatUri, 't1', 'paint it');
+  await until(() => ended(p, chatUri));
+
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  const edit = (done?.action.result as { content: Bag[] }).content[1] as { before?: Bag; after?: Bag };
+  const file = uriOf(join(path, 'painted.txt'));
+  // Both sides are the diff's own texts, held as the call's, and the counts
+  // are the lines each has that the other lacks, so a client draws a diff.
+  expect(edit).toMatchObject({ type: 'fileEdit', before: { uri: file }, after: { uri: file }, diff: { added: 1, removed: 1 } });
+  expect(await text(changes, String((edit.before?.content as Bag).uri))).toBe('a blank canvas\n');
+  expect(await text(changes, String((edit.after?.content as Bag).uri))).toBe('a line of paint\n');
 });
 
 it('holds the before side a diff carried, which the file itself no longer has', async () => {
@@ -739,14 +728,15 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 
   /*
    * The stop is said when it is taken. The fixture holds the prompt open
-   * until `session/cancel` arrives, so the backend letting its turn go - its
-   * activity cleared - is what proves the notification reached the server,
-   * and the turn it ended is not ended twice.
+   * until `session/cancel` arrives, and a turn handed after the stop runs only
+   * once the backend has let the stopped one go, so its end is what proves the
+   * notification reached the server, and the turn it ended is not ended twice.
    */
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
-  const said = types(p, chatUri);
-  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
-  expect(said).not.toContain('chat/turnComplete');
+  begin(client, chatUri, 't2', 'hi');
+  await until(() => actions(p, chatUri).slice(before).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
+  const said = actions(p, chatUri);
+  expect(said.filter((e) => e.action.type === 'chat/turnCancelled').map((e) => e.action.turnId)).toEqual(['t1']);
+  expect(said.filter((e) => e.action.type === 'chat/turnComplete').map((e) => e.action.turnId)).toEqual(['t2']);
 });
 
 /*
@@ -786,10 +776,24 @@ it('stops nothing on a cancel that names no turn', async () => {
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
-  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
+  // A turn handed after the stop runs once the backend has let the stopped one go.
+  begin(client, chatUri, 't2', 'hi');
+  await until(() => actions(p, chatUri).slice(before).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
 
   const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
   expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
+});
+
+it('says no activity while a turn thinks, runs a tool and answers', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'think then tool');
+  await until(() => ended(p, chatUri));
+
+  // A chat's activity is a wait before its turn can run, as VS Code's host
+  // says one; this turn's work is in its own parts.
+  const said = [...actions(p, chatUri), ...actions(p, uri)]
+    .filter((e) => (e.action.type === 'chat/activityChanged' || e.action.type === 'session/activityChanged') && e.action.activity !== undefined);
+  expect(said).toEqual([]);
 });
 
 it("runs a !command in the host's shell rather than asking the server", async () => {
@@ -896,7 +900,7 @@ const startedFrom = (p: ReturnType<typeof peer>, chatUri: string): unknown[] => 
  */
 it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
-  begin(client, chatUri, 't1', 'hold it stop=refusal');
+  begin(client, chatUri, 't1', 'hold it erroratend');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   await queue(client, chatUri, 'waiting', 'second');
   await queue(client, chatUri, 'later', 'third');
@@ -1013,22 +1017,20 @@ const stoppedWith = async (reason: string): Promise<{ type?: string | undefined;
   return { type: types(p, chatUri).at(-1), ...(part === undefined ? {} : { error: part.error }) };
 };
 
-it('ends a turn the server stopped for its own reasons as an error naming the reason', async () => {
-  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
-    const stopped = await stoppedWith(reason);
-    // Not a finished answer: a turn that stopped early is not what was asked for.
-    expect(stopped.type).toBe('chat/error');
-    // The reason is the error's type, so a client can tell the three apart
-    // without reading the sentence.
-    expect(stopped.error?.errorType).toBe(reason);
-    expect(String(stopped.error?.message)).not.toBe('');
+it('completes a turn the server stopped at a limit or by declining, as VS Code\'s agents complete one', async () => {
+  for (const reason of ['end_turn', 'max_tokens', 'max_turn_requests', 'refusal']) {
+    // A stop is the end of what the agent did: an error is a turn whose send
+    // or execution failed.
+    expect((await stoppedWith(reason)).type).toBe('chat/turnComplete');
   }
 });
 
-it('completes an end_turn, and words a refusal as the agent declining', async () => {
-  expect((await stoppedWith('end_turn')).type).toBe('chat/turnComplete');
-  // A refusal is the agent declining, and its sentence says so.
-  expect(String((await stoppedWith('refusal')).error?.message)).toContain('declined');
+it('ends a turn whose prompt failed as a failed send, in the failure\'s own words', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'tell me something erroratend');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  const part = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part as { error?: Bag } | undefined;
+  expect(part?.error).toEqual({ errorType: 'sendFailed', message: expect.stringContaining('the model gave up at the end') });
 });
 
 it('completes a turn whose stop reason this bridge does not know', async () => {
@@ -1061,6 +1063,20 @@ it('titles a session after the first line of what was said', async () => {
   // the message is a row drawn as a paragraph.
   const title = await named(client, p, uri);
   expect(title.said).toEqual(['Fix the build']);
+  expect(title.last).toBe('Fix the build');
+});
+
+it('titles a session a command opened with the command, until its first message replaces it', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', '!echo acp-ran-it');
+  await until(() => finished(p, chatUri, 1));
+  // A provisional title, as VS Code's host seeds one from a local command.
+  expect((await named(client, p, uri)).last).toBe('echo acp-ran-it');
+
+  begin(client, chatUri, 't2', 'Fix the build');
+  await until(() => finished(p, chatUri, 2));
+  const title = await named(client, p, uri);
+  expect(title.said).toEqual(['echo acp-ran-it', 'Fix the build']);
   expect(title.last).toBe('Fix the build');
 });
 

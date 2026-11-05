@@ -12,10 +12,12 @@
 
 import type { AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { bag } from '@ahpd/sdk';
 import type { Bag, SessionAt } from '@ahpd/sdk';
 import { lookupDirectories } from './catalog.js';
 import { addUsage, callPartOf, mapEvent, readyRow } from './mapping.js';
 import { loadPi } from './pi.js';
+import { INTERRUPTED, MESSAGE_ENTRY } from './types.js';
 import type { PiOptions, PiTurn, WatchedTurn } from './types.js';
 
 /** A session rebuilt from its file. */
@@ -49,11 +51,12 @@ const textOf = (content: unknown): string => {
 /** One turn while its entries are read. */
 interface Reading {
   mapping: PiTurn;
-  watched: WatchedTurn;
+  /** The turn as it is read back, sealed once its entries are read. */
+  turn: WatchedTurn;
   /** The last assistant message, which is how the turn ended, as live. */
   answered?: AssistantMessage;
   /** What every answer in the turn used, summed as a live turn sums it. */
-  spent?: Bag;
+  usage?: Bag;
   /** The model in force when the turn ran, as `provider/modelId`. */
   model?: string;
   /** The last entry that belongs to the turn. */
@@ -91,9 +94,16 @@ const raise = (turn: PiTurn, event: Bag, at?: number): void => {
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
  * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
  *
+ * A turn's message is the one this host kept as the prompt's parent entry
+ * (`MESSAGE_ENTRY`), as the turn had it: the person's words, the attachments
+ * and the model. A prompt with none, one typed into pi itself, is its text with
+ * the model in force, as VS Code's reader puts the model in force on a restored
+ * message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L890
+ *
  * Entries with no turn meaning are skipped: pi's leading system message, the
  * model and thinking level changes, context edits, labels, session info and
- * an extension's own entries. A model change still names the model the turns
+ * every other extension entry. A model change still names the model the turns
  * after it ran on, for a turn whose answer does not say.
  */
 export function replayEntries(entries: readonly SessionEntry[]): Replayed {
@@ -101,10 +111,12 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
   const ends = new Map<string, string>();
   let model: string | undefined;
   let open: Reading | undefined;
+  /** The message this host kept last, by the entry it is kept under. */
+  let kept: { id: string; message: Bag } | undefined;
 
   const seal = (): void => {
     if (open === undefined) return;
-    const { watched, answered } = open;
+    const { turn, answered } = open;
     const failed = answered?.stopReason === 'error';
     if (failed) {
       const message = answered?.errorMessage === undefined || answered.errorMessage === ''
@@ -112,9 +124,9 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         : answered.errorMessage;
       // The part `chat/error` carries, which a client that watched the turn
       // end holds on it.
-      watched.parts.push({ kind: 'error', error: { errorType: 'turnFailed', message } });
+      turn.parts.push({ kind: 'error', error: { errorType: 'turnFailed', message } });
     }
-    watched.state = failed ? 'error' : answered?.stopReason === 'aborted' ? 'cancelled' : 'complete';
+    turn.state = failed ? 'error' : answered?.stopReason === 'aborted' ? 'cancelled' : 'complete';
     /*
      * A call the file holds no result for never finished: the turn ended
      * around it. It reads back cancelled as skipped, which is how the
@@ -124,7 +136,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
      * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
      */
     let unfinished = false;
-    for (const part of watched.parts) {
+    for (const part of turn.parts) {
       const row = part.kind === 'toolCall' ? part.toolCall as Bag : undefined;
       if (row === undefined || row.status === 'completed' || row.status === 'cancelled') continue;
       unfinished = true;
@@ -139,21 +151,26 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         ...(row._meta === undefined ? {} : { _meta: row._meta }),
       };
     }
-    if (unfinished && watched.state === 'complete') watched.state = 'cancelled';
-    const duration = Date.parse(open.endedAt) - Date.parse(watched.startedAt);
-    watched.duration = Number.isFinite(duration) && duration > 0 ? duration : 0;
-    const used = open.spent;
+    if (unfinished && turn.state === 'complete') turn.state = 'cancelled';
+    const duration = Date.parse(open.endedAt) - Date.parse(turn.startedAt);
+    turn.duration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    const used = open.usage;
     const ran = open.model;
-    if (used !== undefined) watched.usage = used.model === undefined && ran !== undefined ? { ...used, model: ran } : used;
-    else if (ran !== undefined) watched.usage = { model: ran };
-    ends.set(watched.turnId, open.end);
-    turns.push(watched);
+    if (used !== undefined) turn.usage = used.model === undefined && ran !== undefined ? { ...used, model: ran } : used;
+    else if (ran !== undefined) turn.usage = { model: ran };
+    ends.set(turn.turnId, open.end);
+    turns.push(turn);
     open = undefined;
   };
 
   for (const entry of entries) {
     if (entry.type === 'model_change') {
       model = `${entry.provider}/${entry.modelId}`;
+      continue;
+    }
+    if (entry.type === 'custom' && entry.customType === MESSAGE_ENTRY) {
+      const message = bag(bag(entry.data).message);
+      if (typeof message.text === 'string') kept = { id: entry.id, message };
       continue;
     }
     if (entry.type !== 'message') continue;
@@ -164,11 +181,13 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
       const turnId = entry.id;
       const parts: Bag[] = [];
       open = {
-        mapping: { turnId, messages: 0, blocks: new Map(), waiting: new Map(), parts, calls: new Map() },
-        watched: {
+        mapping: { turnId, messages: 0, blocks: new Map(), parts, calls: new Map() },
+        turn: {
           turnId,
           startedAt: entry.timestamp,
-          message: { text: textOf(message.content), origin: { kind: 'user' } },
+          message: kept !== undefined && entry.parentId === kept.id
+            ? { ...kept.message }
+            : { text: textOf(message.content), origin: { kind: 'user' }, ...(model !== undefined ? { model: { id: model } } : {}) },
           parts,
           state: 'complete',
         },
@@ -208,8 +227,8 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         }
       });
       open.answered = answer;
-      const spent = addUsage(open.spent, answer);
-      if (spent !== undefined) open.spent = spent;
+      const usage = addUsage(open.usage, answer);
+      if (usage !== undefined) open.usage = usage;
       open.end = entry.id;
       open.endedAt = entry.timestamp;
       continue;
@@ -231,10 +250,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
   seal();
   if (running) {
     const cut = turns.at(-1) as WatchedTurn;
-    cut.parts.push({
-      kind: 'error',
-      error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
-    });
+    cut.parts.push({ kind: 'error', error: { ...INTERRUPTED } });
     cut.state = 'error';
   }
   /*

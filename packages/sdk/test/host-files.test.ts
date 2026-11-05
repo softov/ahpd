@@ -1093,7 +1093,7 @@ describe('a session entering a folder nobody vouched for', () => {
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
         tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
       }> | undefined;
-      const tool = servers?.ahp?.tools.find((one) => one.name === 'set_workspace');
+      const tool = servers?.host?.tools.find((one) => one.name === 'set_workspace');
       if (!tool) throw new Error('the host offered no set_workspace');
       await tool.handler({ workspaceFolder: folder, isolation });
       // The move is made when the turn that asked for it is over, and not

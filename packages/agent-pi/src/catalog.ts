@@ -18,11 +18,13 @@ import type { FileEntry } from '@earendil-works/pi-coding-agent';
 import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, Listed, SessionAt } from '@ahpd/sdk';
 import { loadedPi, loadPi } from './pi.js';
-import { UNTITLED } from './types.js';
 import type { PiOptions, WatchedSession } from './types.js';
 
 /** What this process watched, by provider and then by pi's own id. */
 const watched = new Map<string, Map<string, WatchedSession>>();
+
+/** The first message pi's listing answers for a session nobody said anything in. */
+const NO_MESSAGES = '(no messages)';
 
 /** Record a session this process is running, and answer with the record. */
 export function watch(provider: string, session: WatchedSession): WatchedSession {
@@ -186,7 +188,9 @@ export async function catalogue(
     for (const one of found) {
       rows.set(one.id, {
         id: one.id,
-        title: one.name ?? titleFrom(one.firstMessage, UNTITLED),
+        // pi's listing answers `(no messages)` as the first message of a session
+        // nobody said anything in, which is listed untitled, as `rowOfFile` lists it.
+        title: one.name ?? (one.firstMessage === NO_MESSAGES ? '' : titleFrom(one.firstMessage, '')),
         createdAt: one.created.toISOString(),
         modifiedAt: one.modified.toISOString(),
         workingDirectories: [uriOf(one.cwd === '' ? directory : one.cwd)],
@@ -247,7 +251,8 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
   if (!Number.isFinite(headerTime)) return undefined;
 
   let name: string | undefined;
-  let words = '';
+  // The first message's words, as pi's own listing's `firstMessage`.
+  let firstMessage = '';
   let lastActivity: number | undefined;
   for (const entry of entries) {
     // The latest `session_info` wins, a clear included, as pi reads it.
@@ -258,18 +263,21 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
     if (message.role !== 'user' && message.role !== 'assistant') continue;
     const at = typeof message.timestamp === 'number' ? message.timestamp : Date.parse(entry.timestamp);
     if (Number.isFinite(at)) lastActivity = Math.max(lastActivity ?? 0, at);
-    if (words === '' && message.role === 'user') {
+    if (firstMessage === '' && message.role === 'user') {
       const text = wordsOf(message.content);
-      if (text !== '') words = text;
+      if (text !== '') firstMessage = text;
     }
   }
 
   const cwd = typeof header.cwd === 'string' ? header.cwd : '';
   return {
     id: header.id,
-    // `(no messages)` is what pi titles a session nobody said anything in, and
-    // the title is what pi itself would have called this row.
-    title: name ?? titleFrom(words === '' ? '(no messages)' : words, UNTITLED),
+    // pi's name for the row, or its first message's words; a session nobody
+    // said anything in is listed with an empty title, which a client draws as
+    // an untitled session, as VS Code lists a provider's session that has no
+    // summary.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6141-L6146
+    title: name ?? titleFrom(firstMessage, ''),
     createdAt: created.toISOString(),
     modifiedAt: (lastActivity !== undefined && lastActivity > 0 ? new Date(lastActivity) : created).toISOString(),
     workingDirectories: [uriOf(cwd === '' ? directory : cwd)],

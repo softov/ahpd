@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { textOf } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
-import type { ModelAdapter, Policy } from '@cofold/agents';
+import type { ModelAdapter, ModelStreamEvent, Policy } from '@cofold/agents';
 import type { Agent, Bag, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
@@ -80,10 +80,14 @@ const allowAll = (): Partial<Policy> => ({ decide: () => ({ behavior: 'allow' })
 const backend = (root: string, model: ModelAdapter): Agent =>
   cofoldAgent({ adapter: model, store: root, policy: allowAll() });
 
-/** Open one session on a backend, with everything the harness would have handed it. */
-function open(agent: Agent, id: string, workingDirectory: string, extra: Partial<Start> = {}) {
+/**
+ * Open one session on a backend, with everything the harness would have handed
+ * it, once the backend has answered for it: a fork or a rewind is answered once
+ * the store has made it.
+ */
+async function open(agent: Agent, id: string, workingDirectory: string, extra: Partial<Start> = {}) {
   const view = channels();
-  const session: Session = agent.create({
+  const session: Session = await agent.create({
     uri: `ahp-session:/${id}`,
     chatUri: `ahp-chat:/${id}`,
     settings: agent.defaults(),
@@ -131,7 +135,7 @@ const threeTurns = async () => {
     stream: true,
   });
   const agent = backend(root, model);
-  const one = open(agent, 'one', sweep);
+  const one = await open(agent, 'one', sweep);
   await runTurn(one, 't1', 'question one');
   await runTurn(one, 't2', 'question two');
   await runTurn(one, 't3', 'question three');
@@ -165,7 +169,7 @@ it('forks at a turn into a conversation of its own and leaves the source whole',
 
   // The host forks a chat by resuming the conversation it copies and naming
   // the prompt to resume at; the target id is the backend's to mint.
-  const forked = open(agent, 'one', sweep, { resume: source, forkAt: point });
+  const forked = await open(agent, 'one', sweep, { resume: source, forkAt: point });
   const target = String(forked.session.agentId());
   expect(target).not.toBe(source);
   await waitTurns(agent, target, 2);
@@ -184,7 +188,7 @@ it('rewinds the same conversation to a turn, dropping what followed', async () =
   const id = String(one.session.agentId());
   const at = pointOf(one.session.endPoint?.('t2'));
 
-  const rewound = open(agent, 'one', sweep, { resume: id, rewindAt: at });
+  const rewound = await open(agent, 'one', sweep, { resume: id, rewindAt: at });
   expect(String(rewound.session.agentId())).toBe(id);
   await waitTurns(agent, id, 2);
   expect(await questions(agent, id)).toEqual(['question one', 'question two']);
@@ -197,43 +201,78 @@ it('rewinds the same conversation to a turn, dropping what followed', async () =
   expect(await questions(agent, id)).toEqual(['question one', 'question two', 'question four']);
 });
 
-it('answers no point for a turn this session did not watch', async () => {
-  const { agent, one, sweep } = await threeTurns();
-  // Read back off the store rather than watched, which is what a restart has.
-  const readBack = open(agent, 'one', sweep, { resume: String(one.session.agentId()) });
-  expect(readBack.session.forkPoint?.('t1')).toBeUndefined();
-  expect(readBack.session.endPoint?.('t1')).toBeUndefined();
+/*
+ * An agent that offers a fork forks at any turn that ended, restored ones
+ * included, as VS Code's Copilot restores each turn under the boundary its
+ * fork and truncate cut at.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L882-L888
+ */
+it('answers, for a turn read back after a restart, the point the run that wrote it ended at', async () => {
+  const { root, agent, one, sweep } = await threeTurns();
+  const id = String(one.session.agentId());
+  const watched = ['t1', 't2', 't3'].map((turn) => pointOf(one.session.forkPoint?.(turn)));
+  await one.session.close();
+
+  // A restart: a fresh backend reads the conversation and resumes it on what
+  // it read, in the host's order.
+  const again = backend(root, createFakeModel({ script: [{ text: 'answer four' }], stream: true }));
+  const seed = (await again.transcript?.(id)) ?? [];
+  expect(seed.map((turn) => turn.id)).toEqual(['t1', 't2', 't3']);
+  const readBack = await open(again, 'one', sweep, { resume: id, seed });
+  expect(seed.map((turn) => readBack.session.forkPoint?.(String(turn.id)))).toEqual(watched);
+  expect(seed.map((turn) => readBack.session.endPoint?.(String(turn.id)))).toEqual(watched);
   expect(readBack.session.forkPoint?.('nobody')).toBeUndefined();
   // The capability is the backend's; the point is the session's, and a host
   // offers the control only when both are there.
-  expect(agent.chats?.fork).toBe(true);
+  expect(again.chats?.fork).toBe(true);
+
+  // A fork at a turn read back copies the conversation through it.
+  const forked = await open(again, 'one', sweep, { resume: id, forkAt: pointOf(readBack.session.forkPoint?.('t2')) });
+  const target = String(forked.session.agentId());
+  await waitTurns(again, target, 2);
+  expect(await questions(again, target)).toEqual(['question one', 'question two']);
+  expect(await questions(agent, id)).toEqual(['question one', 'question two', 'question three']);
 });
 
+it('answers no point for a turn handed in a seed no read of the store named', async () => {
+  const { root, one, sweep } = await threeTurns();
+  const id = String(one.session.agentId());
+  await one.session.close();
+  // The turns come from one backend's read, and the session from another
+  // that read nothing.
+  const reader = backend(root, createFakeModel({ script: [], stream: true }));
+  const seed = (await reader.transcript?.(id)) ?? [];
+  const fresh = backend(root, createFakeModel({ script: [], stream: true }));
+  const unnamed = await open(fresh, 'one', sweep, { resume: id, seed });
+  expect(unnamed.session.forkPoint?.('t1')).toBeUndefined();
+  expect(unnamed.session.endPoint?.('t1')).toBeUndefined();
+});
+
+/*
+ * A fork or a rewind the store cannot make is the failure of the request that
+ * asked for the session, as VS Code's agent provisions a fork inside the
+ * `createChat` that asked for it: no session is answered to run turns on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7132-L7132
+ */
 it('refuses a session asked to fork and rewind at once', async () => {
   const { agent, one, sweep } = await threeTurns();
-  const both = open(agent, 'one', sweep, {
+  await expect(open(agent, 'one', sweep, {
     resume: String(one.session.agentId()),
     forkAt: pointOf(one.session.forkPoint?.('t2')),
     rewindAt: pointOf(one.session.endPoint?.('t2')),
-  });
-  await runTurn(both, 't4', 'question four');
-  const failure = both.view.failure();
-  expect(failure).toBeDefined();
-  expect(String(((failure?.part as Bag).error as Bag).message)).toMatch(/cannot fork and rewind at once/);
+  })).rejects.toThrow(/cannot fork and rewind at once/);
 });
 
-it('fails the turn when the point is not in the conversation, rather than continuing', async () => {
+it('refuses the session when the point is not in the conversation, and leaves the conversation as it was', async () => {
   const { root, agent, one, sweep } = await threeTurns();
   const store = createFileStore({ root });
   const id = String(one.session.agentId());
   const before = (await store.sessions.listMessages({ sessionId: id })).length;
 
-  const bad = open(agent, 'one', sweep, { resume: id, rewindAt: 'no-such-message' });
-  await runTurn(bad, 't4', 'question four');
-  expect(bad.view.types('chat')).toContain('chat/error');
-  // The refusal lands before any run: a turn that failed must not have
-  // appended the question it was asked.
+  await expect(open(agent, 'one', sweep, { resume: id, rewindAt: 'no-such-message' })).rejects.toThrow();
+  await expect(open(agent, 'one', sweep, { resume: id, forkAt: 'no-such-message' })).rejects.toThrow();
   expect((await store.sessions.listMessages({ sessionId: id })).length).toBe(before);
+  expect((await store.sessions.list({})).map((record) => record.sessionId)).toEqual([id]);
 });
 
 /**
@@ -280,10 +319,9 @@ it('copies the kept turns with their records, not just their text', async () => 
     'question one', 'answer one', 'question two', 'answer two', 'question three', 'answer three',
   ]);
 
-  const forked = open(agent, 'one', sweep, { resume: id, forkAt: pointOf(one.session.forkPoint?.('t2')) });
+  const forked = await open(agent, 'one', sweep, { resume: id, forkAt: pointOf(one.session.forkPoint?.('t2')) });
   const target = String(forked.session.agentId());
-  // The target session does not exist until the fork lands, and asking for its
-  // messages before that is `not_found` rather than an empty list.
+  // A session that does not exist is `not_found` rather than an empty list.
   const copied = async (): Promise<string[]> => {
     try {
       return (await store.sessions.listMessages({ sessionId: target })).map(textOf);
@@ -300,11 +338,11 @@ it('copies the kept turns with their records, not just their text', async () => 
   expect(runs.every((run) => run.inputMessageId !== undefined && run.lastMessageId !== undefined)).toBe(true);
 });
 
-it('still opens a session when neither was asked', () => {
+it('still opens a session when neither was asked', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({ script: [{ text: 'unused' }], stream: true });
   const agent = backend(root, model);
-  const session = open(agent, 'plain', sweep).session;
+  const session = (await open(agent, 'plain', sweep)).session;
   expect(session.uri).toBe('ahp-session:/plain');
   expect(session.forkPoint?.('t1')).toBeUndefined();
 });
@@ -320,12 +358,11 @@ it('still opens a session when neither was asked', () => {
  */
 
 /** A connected client with one cofold session, watching both its channels. */
-async function throughHost(root: string) {
+async function throughHost(root: string, model: ModelAdapter = createFakeModel({
+  script: [{ text: 'answer one' }, { text: 'answer two' }, { text: 'answer three' }, { text: 'answer four' }],
+  stream: true,
+})) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-fork-host-'));
-  const model = createFakeModel({
-    script: [{ text: 'answer one' }, { text: 'answer two' }, { text: 'answer three' }, { text: 'answer four' }],
-    stream: true,
-  });
   const agent = cofoldAgent({ adapter: model, store: root, policy: allowAll() });
   const host = createHost({ path, agents: [agent] });
   const notes: { method: string; params: unknown }[] = [];
@@ -389,22 +426,13 @@ it('forks through the host, from the source chat into a chat of its own', async 
   await through.client.handle({ method: 'subscribe', params: { channel: forkedChat } });
 
   const store = createFileStore({ root });
-  // The cut is a store call the session makes before its first turn, so the
-  // target appears a moment after the chat does.
-  const targets = async (): Promise<string[]> =>
-    (await store.sessions.list({})).map((record) => record.sessionId).filter((id) => id !== 'one');
-  await untilAsync(async () => (await targets()).length === 1);
-  const target = String((await targets())[0]);
+  // The copy is made before the chat is answered, as VS Code's agent
+  // provisions a fork inside the `createChat` that asked for it.
+  const targets = (await store.sessions.list({})).map((record) => record.sessionId).filter((id) => id !== 'one');
+  expect(targets).toHaveLength(1);
+  const target = String(targets[0]);
   // Through the chosen turn, answer included: the host hands the backend the
   // point the turn ended at, and the copy stops there.
-  await untilAsync(async () => {
-    try {
-      return (await store.sessions.listMessages({ sessionId: target })).length === 4;
-    }
-    catch {
-      return false;
-    }
-  });
   expect((await store.sessions.listMessages({ sessionId: target })).map(textOf))
     .toEqual(['question one', 'answer one', 'question two', 'answer two']);
 
@@ -438,5 +466,91 @@ it('rewinds through the host, under the id the session already had', async () =>
   await say(through, through.chatUri, 't4', 'question four');
   expect((await store.sessions.listMessages({ sessionId: 'one' })).map(textOf))
     .toEqual(['question one', 'answer one', 'question two', 'answer two', 'question four', 'answer four']);
+  expect(told(through.notes, through.chatUri).some((action) => action.type === 'chat/error')).toBe(false);
+});
+
+/*
+ * A fork the store cannot make is the failure of the `createChat` that asked
+ * for it, and no chat is made, as VS Code's agent provisions a fork inside the
+ * request: here the source conversation is being written by a run, which the
+ * store refuses to copy from.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7132-L7132
+ */
+it('fails the fork request when the store cannot copy the conversation, and makes no chat', async () => {
+  const { root } = place();
+  const answers = createFakeModel({ script: [{ text: 'answer one' }, { text: 'answer two' }], stream: true });
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let calls = 0;
+  // The second turn's run holds the conversation's writer until released.
+  const model: ModelAdapter = {
+    ...answers,
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      calls += 1;
+      if (calls === 2) await gate;
+      yield* answers.stream!(request);
+    },
+  };
+  const through = await throughHost(root, model);
+  await say(through, through.chatUri, 't1', 'question one');
+  through.notes.length = 0;
+  void through.client.handle({
+    method: 'dispatchAction',
+    params: { channel: through.chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'question two', origin: { kind: 'user' } } } },
+  });
+  await until(() => calls === 2);
+
+  const forkedChat = 'ahp-chat:/one/fork';
+  await expect(through.client.handle({
+    method: 'createChat',
+    params: { channel: through.uri, chat: forkedChat, source: { kind: 'fork', chat: through.chatUri, turnId: 't1' } },
+  })).rejects.toThrow(/being written/);
+  expect(told(through.notes, through.uri).some((action) => action.type === 'session/chatAdded')).toBe(false);
+  expect((await createFileStore({ root }).sessions.list({})).map((record) => record.sessionId)).toEqual(['one']);
+  release();
+  await until(() => told(through.notes, through.chatUri).some((action) => action.type === 'chat/turnComplete'));
+});
+
+/*
+ * A truncation the store cannot make is logged and the chat comes back on the
+ * conversation it had, as VS Code's host logs a truncation its provider failed
+ * and the provider keeps its history: the chat goes on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1983-L1988
+ */
+it('keeps the chat going when the store cannot truncate the conversation', async () => {
+  const { root } = place();
+  const answers = createFakeModel({ script: [{ text: 'answer one' }, { text: 'answer two' }, { text: 'answer three' }], stream: true });
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let calls = 0;
+  // The second turn's run holds the conversation's writer until released,
+  // stopped or not, so the store refuses to truncate under it.
+  const model: ModelAdapter = {
+    ...answers,
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      calls += 1;
+      if (calls === 2) await gate;
+      yield* answers.stream!(request);
+    },
+  };
+  const through = await throughHost(root, model);
+  await say(through, through.chatUri, 't1', 'question one');
+  void through.client.handle({
+    method: 'dispatchAction',
+    params: { channel: through.chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'question two', origin: { kind: 'user' } } } },
+  });
+  await until(() => calls === 2);
+
+  await through.client.handle({
+    method: 'dispatchAction',
+    params: { channel: through.chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+  });
+  // The stopped run lets go of the writer once it ends.
+  release();
+  const store = createFileStore({ root });
+  await untilAsync(async () => (await store.runs.list({ sessionId: 'one' })).every((run) => run.status !== 'running'));
+  await say(through, through.chatUri, 't3', 'question three');
+  expect(told(through.notes, through.chatUri).filter((action) => action.type === 'chat/turnComplete').map((action) => action.turnId))
+    .toEqual(['t3']);
   expect(told(through.notes, through.chatUri).some((action) => action.type === 'chat/error')).toBe(false);
 });

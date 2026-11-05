@@ -62,7 +62,7 @@ A call with no session is the agent's own, with no delegation `_meta`, so no tur
 
 ## A client's tools
 
-A client announces them when it becomes active in a session, and this host offers them to the model beside its own. They are named `<clientId>__<name>`, because two clients in one session may both provide `openFile` and the model is offered one list. A client with no id, or a name that is not letters, digits, `_` or `-`, is dropped rather than offered as a tool the model will fail to call.
+A client announces them when it becomes active in a session, and this host offers them to the model beside its own. They are named `<clientId>__<name>`, because two clients in one session may both provide `openFile` and the model is offered one list. A call of one is drawn in its chat under the name its client announced, `openFile`, on every backend. A client with no id, or a name that is not letters, digits, `_` or `-`, is dropped rather than offered as a tool the model will fail to call.
 
 None of them runs here. The call is reported against the client that provides it, and only that client may complete it, which is what unblocks the agent. A client that never answers is one the call is failed on after `clientToolTimeoutMs`: ten minutes, or never when it is `0`. This host hands the number to the backend when the session starts rather than timing a call itself, so what a call waits is one number decided once.
 
@@ -131,7 +131,7 @@ Claude appends the instructions to its preset prompt, and pi and cofold add them
 
 ## How a model reaches them
 
-A backend that can call the host's tools in process is handed them as `Start.tools`, and the harness's own server is what the model sees them through: by name they are all `mcp__ahp__*`, whether they came from this host or from a client.
+A backend that can call the host's tools in process is handed them as `Start.tools`, and the Claude harness's two in-process servers are what the model sees them through, by [VS Code's Claude's names](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L11-L21): this host's are `mcp__host__*` and a client's `mcp__client__*`.
 
 A backend that cannot - an ACP agent, which asks its client for tools - is handed an endpoint instead. `start.toolsServer()` opens one MCP server per session on the host's own listener, under `/ahp-mcp`, with one path and one bearer token for that session, speaking streamable HTTP at revision `2025-06-18` and answering `initialize`, `tools/list` and `tools/call`. The same list as the in-process case, and a `tools/call` for a client's tool is handed to the backend's runner rather than run here. The endpoint is opened once per session and closed when the session goes. A daemon over stdio has nothing to serve on, so a session there is offered none. The shape that goes to an agent, and what a server that cannot take an `http` server is told, is [PLUGINS.md](../plugins/PLUGINS.md).
 

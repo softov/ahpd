@@ -62,7 +62,7 @@ The list reaches a client on three surfaces, and all three are views of the same
 
 A turn shows one Plan call, drawn by the host from the session's plan: the plan whose scope is `{"kind":"session","session":"one"}`, plus the tasks whose `session` field names it. The call's content is one line per task, `- [x] <title>` for `done` and `- [ ] <title>` for every other status. The host opens the call on the first change to the plan in the turn, rewrites its content on each later change, and completes it as the turn ends.
 
-When no plugin gives the host lines, a backend draws its own call as it did before. When one does, the host tells the backend with `Start.plan`, so an ACP bridge draws no Plan call of its own and a Claude session writes no `TodoWrite` row: one turn, one call.
+When a plugin gives the host lines, the host tells the backend with `Start.plan`, so a Claude session writes no `TodoWrite` row: one turn, one call. An ACP bridge draws no call for a plan update in any case, since a plan update is no tool call its agent made.
 
 ### The open count
 

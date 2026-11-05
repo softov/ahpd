@@ -9,7 +9,7 @@ import type { Opening } from './opening.js';
 import type { Turn } from './turn.js';
 
 /** A turn handed while the server ran another: what `sendMessage` was handed. */
-export interface Waiting {
+export interface PendingTurn {
   turnId: string;
   text: string;
   model?: Chosen | undefined;
@@ -28,8 +28,8 @@ export interface Waiting {
  */
 export interface HeldTerminal {
   handle: OpenedTerminal;
-  /** The byte limit the request that opened it asked for. */
-  limit?: number;
+  /** The most bytes of output a read hands back, as the request that opened it asked. */
+  outputByteLimit?: number;
   /** Whether the process has exited. */
   exited?: boolean;
   /** When the host opened it, as the row's `startedAt`. */
@@ -72,23 +72,26 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   offering: BoundTool[];
   /** Say one thing on one channel, to every client watching it. */
   emit: Emit;
-  /** The directory the server works in. */
-  where: string;
+  /** The directory the server works in, ACP's `cwd`. */
+  cwd: string;
   /** Whether a path is one this session was given to work in. */
   inside: (path: string) => boolean;
-  /** Move the session's modified stamp, and its record's with it. */
-  touch: () => void;
-  /** Say what it is doing, on both channels, the way a session mirrors its chat. */
-  doing: (said: string | undefined) => void;
+  /**
+   * Set the chat's `modifiedAt`, and its record's with it.
+   *
+   * Set where the protocol's reducer sets it and nowhere else: to a turn's
+   * start as it starts, and to its start plus its duration as it ends.
+   */
+  setModifiedAt: (at: string) => void;
   /** `SessionStatus`: 8 is in progress, 4 waits on a person and 1 is idle. */
   status: () => number;
-  /** The config in force, by key. `session/configChanged` merges into this. */
-  settings: Record<string, unknown>;
+  /** The config values in force, by key. `session/configChanged` merges into this. */
+  values: Record<string, unknown>;
   /** Finished turns. The running one is `active` and is deliberately not here. */
   turns: Bag[];
   /** What the host offered until the server reports its own. */
   seeds: Bag[];
-  /** The commands the server last advertised, as customizations. */
+  /** The commands the server last advertised, as the built-in skills container a client draws. */
   commands: Bag[];
   /**
    * The modes the server named, once it has.
@@ -98,14 +101,6 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * own schema carries the property without one.
    */
   modes: SessionModeState | undefined;
-  /**
-   * How this session tells its agent the modes the server named.
-   *
-   * The agent's schema lists a preset's modes until a session of it hears the
-   * server's own, so this is where a new session box of the same agent reads
-   * the list the server just gave.
-   */
-  heardModes?: (modes: { id: string; name: string }[]) => void;
   active: Bag | undefined;
   /**
    * The turns handed while the server ran another, in the order they came,
@@ -116,7 +111,7 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
    */
-  waiting: Waiting[];
+  pendingTurns: PendingTurn[];
   /** The turns a later one took the place of, which run on and end in no history. */
   replaced: Set<string>;
   /** The running turn's mapping, so an update knows what it belongs to. */
@@ -160,8 +155,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * answer, and what decides whether a turn has a fork point at all.
    */
   forks: boolean;
-  /** What the server said it can take in a prompt, once the handshake has said it. */
-  takes: PromptCapabilities | undefined;
+  /** What the server said it can take in a prompt, once its `initialize` answer has said it. */
+  promptCapabilities: PromptCapabilities | undefined;
   /**
    * The updates a server replayed while this session was opening.
    *
@@ -185,9 +180,10 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   startedWith: string;
   /** Whether a client asked to stop, read when the prompt settles. */
   cancelRequested: boolean;
-  closed: boolean;
+  /** Whether the session was disposed, after which no turn starts. */
+  disposed: boolean;
   /** Why the last turn failed, or nothing. Cleared when a turn starts. */
-  failed: string | undefined;
+  error: string | undefined;
   title: string;
   /**
    * Whether a person named this session themselves.
@@ -197,6 +193,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * is read as nothing to do.
    */
   renamed: boolean;
+  /** Whether the title is one a local command suggested, which the first real message replaces. */
+  provisional: boolean;
   /** The catalogue's record of this session, once the server has named it. */
   record: WatchedSession | undefined;
   /** The turn being watched, while one runs. Kept for the transcript. */

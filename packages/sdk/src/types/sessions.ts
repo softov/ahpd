@@ -53,6 +53,19 @@ export interface RemoteOrigin {
 }
 
 /**
+ * What started a session, for one an automation began.
+ *
+ * The protocol calls this provenance durable: a session a run made outlives the
+ * process that made it, and its summary names the automation and the run after
+ * a restart as it did before one.
+ */
+export interface AutomationOrigin {
+  kind: 'automation';
+  automation: string;
+  run: string;
+}
+
+/**
  * The worktree a session runs in, as this host made it.
  *
  * `base` is what the tree was cut from, and `branch` the branch made for the
@@ -396,6 +409,18 @@ export interface SessionStore {
   createdBy?(id: string): CreatedBy | undefined;
   /** Record it, or forget it with `undefined`. */
   setCreatedBy?(id: string, value: CreatedBy | undefined): void;
+  /**
+   * What started this session, for one an automation began, or nothing.
+   *
+   * Kept with the rest of a session's record rather than in memory, because a
+   * session a run made outlives the process that made it and a summary read
+   * after a restart names the automation and the run.
+   *
+   * Optional: a store without it takes every session as one a person began.
+   */
+  automationOrigin?(id: string): AutomationOrigin | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setAutomationOrigin?(id: string, value: AutomationOrigin | undefined): void;
   /**
    * The folder this session works in, as a path, or nothing where none was
    * recorded.

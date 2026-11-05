@@ -125,7 +125,7 @@ describe('the filters list_sessions takes', () => {
       workingDirectories: ['file:///github/ahpc'],
       project: { uri: 'file:///github/ahpc', displayName: 'ahpc' },
       changes: { files: 1 },
-      _meta: { github: { pullRequestUrls: ['https://github.com/softov/ahpc/pull/1'] } },
+      _meta: { github: { pullRequestUrls: ['https://github.com/ahpio/ahpc/pull/1'] } },
     }),
   ];
   const names = (args: Record<string, unknown>) => filterSessions(rows, args).map((one) => one.resource.slice('ahp-session:/'.length));
@@ -283,7 +283,7 @@ describe('what a session tool asks of the turn it runs in', () => {
   /** One session's tools, as the model reaches them. */
   const toolsOf = (index = -1): Record<string, Tool> => {
     const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index = -1): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -561,7 +561,7 @@ describe("VS Code's limits on spawning and messaging", () => {
   /** One session's tools, as the model of the session at `index` reaches them. */
   const toolsOf = (index: number): Record<string, Tool> => {
     const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index: number): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -827,7 +827,7 @@ describe('a chat opened on a backend of its own', () => {
     });
     await settle(8);
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.ahp?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
+    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
     if (tool === undefined) throw new Error('no make_chat');
     return { client, call: (input) => tool.handler(input) };
   };
@@ -1026,7 +1026,7 @@ describe('a tool a person calls with no session', () => {
     // The session's own tools run in the turn that message began, so a write
     // through them is allowed only where the turn's sender is the member.
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const rename = servers?.ahp?.tools.find((one) => one.name === 'rename_chat');
+    const rename = servers?.host?.tools.find((one) => one.name === 'rename_chat');
     if (rename === undefined) throw new Error('no rename_chat');
     const answered = await rename.handler({ title: 'Woken by a person' });
     expect(answered.isError).toBeFalsy();
@@ -1132,7 +1132,7 @@ describe('a tool a person calls with no session', () => {
     });
     await settle(8);
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const create = servers?.ahp?.tools.find((one) => one.name === 'create_session');
+    const create = servers?.host?.tools.find((one) => one.name === 'create_session');
     if (create === undefined) throw new Error('no create_session');
     const made = await create.handler({
       relationship: 'currentSession', prompt: 'say hi', title: 'Another backend', agent: 'other',

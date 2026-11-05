@@ -1,25 +1,42 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import { isShellName } from '@ahpd/sdk';
-import type { ConfigTaken, Session, ShellEnv } from '@ahpd/sdk';
+import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
+import type { ConfigTaken, Session } from '@ahpd/sdk';
 import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
- * The effort levels this backend has, weakest first.
- *
- * One list, because two of them drifted: a model's own `thinkingLevel` form
- * and the session-wide `effortLevel` key are the same five words reaching the
- * same setting, and a client that read one set of labels from one control and
- * another set from the other is being told they are different things.
+ * The effort levels this backend has, weakest first: what a model's own
+ * `thinkingLevel` form offers and a turn's message names, the five VS Code's
+ * Claude resolves a model selection to.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L66-L81
  */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 /** What a person reads instead of an effort level. The reference client's words. */
 export const EFFORT_LABELS: Record<typeof EFFORTS[number], string> = {
   low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
+};
+
+/**
+ * The SDK's alias row for the model the CLI is set to use, which names a
+ * model the list already holds, so it is no model of its own to offer, as
+ * VS Code's Claude agent leaves it out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L147-L164
+ */
+export const SDK_DEFAULT_MODEL_VALUE = 'default';
+
+/**
+ * What each effort does, in VS Code's words for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L72-L84
+ */
+export const EFFORT_DESCRIPTIONS: Record<typeof EFFORTS[number], string> = {
+  low: 'Faster responses with less reasoning',
+  medium: 'Balanced reasoning and speed',
+  high: 'Greater reasoning depth but slower',
+  xhigh: 'Highest reasoning depth but slowest',
+  max: 'Absolute maximum capability with no constraints',
 };
 
 /** One client-generated script, sourced before every shell command. */
@@ -29,14 +46,15 @@ interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 const MAX_SHELL_INIT_SCRIPT = 64 * 1024;
 
 /**
- * The `shellInitScripts` value, checked to the reference host's rule.
+ * The `shellInitScripts` value, checked to VS Code's `isShellInitScriptList`.
  *
- * A list of `{ shell, script }`, each script non-empty and no longer than a
- * generated one could be. `undefined` for anything else, which is what lets
- * `setConfig` refuse it rather than write it to disk.
+ * A list of at most one `{ shell, script }`, its script non-empty and no
+ * longer than a generated one could be. `undefined` for anything else, which
+ * is what keeps it off the disk.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/shellInitScript.ts#L110-L126
  */
 const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
+  if (!Array.isArray(value) || value.length > 1) return undefined;
   const list: ShellInitScript[] = [];
   for (const entry of value) {
     const one = bag(entry);
@@ -55,33 +73,6 @@ const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
  * hidden, since a profile that fails is something the model should hear.
  */
 const sourcing = (path: string): string => `{ . '${path.replaceAll("'", "'\\''")}'; } 2>/dev/null || printf 'shell init script exited %s\\n' "$?"`;
-
-/**
- * One word, quoted for a POSIX shell, by the rule `terminals.ts` uses.
- *
- * Single quotes make everything literal except the quote itself, which is
- * written by closing, escaping and reopening: `it's` becomes `'it'\''s'`.
- */
-const quoted = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
-
-/**
- * The operator's environment, as the lines that give a shell it.
- *
- * One `export` for each name the operator set the value of and one `unset` for
- * each name they removed. A name that is not a shell variable name is left
- * out: `export 2FA=on` is a syntax error, and a session whose every command
- * failed to parse would be worse than one variable a deployment cannot set
- * this way. The daemon refuses such a name in its config as well; this is what
- * keeps a session built by hand from writing the line.
- */
-const shellEnvLines = (shellEnv?: ShellEnv): string => {
-  const lines: string[] = [];
-  for (const [name, value] of Object.entries(shellEnv ?? {})) {
-    if (!isShellName(name)) continue;
-    lines.push(value === null ? `unset ${name}` : `export ${name}=${quoted(value)}`);
-  }
-  return lines.join('\n');
-};
 
 /**
  * A `permissions` value, if it is one.
@@ -105,11 +96,11 @@ export interface Config {
   initScript: string;
   /** Take a `shellInitScripts` value, or say why it is not one. */
   setShellInit: (value: unknown) => true | string;
-  /** The `PreToolUse` hook that puts the operator's environment and that script in front of a command. */
+  /** The `PreToolUse` hook that puts that script in front of a command. */
   sourceFirst: HookCallback;
   /**
-   * The command a call was written as, before `sourceFirst` put the operator's
-   * lines in front of it, by the call's id.
+   * The command a call was written as, before `sourceFirst` put the script's
+   * line in front of it, by the call's id.
    *
    * The owner's rules match the line the model wrote, and `canUseTool` is
    * handed the rewritten input: this is where the original is kept for it.
@@ -131,16 +122,14 @@ export function createConfig(ctx: SessionContext): Config {
    * this file in front of every command. One path for the session's life,
    * rewritten on each change, because the hook is built once with the query
    * and reads the file by name. The bash entry only: the CLI's shell tool is
-   * bash on every platform it runs on.
-   *
-   * The operator's `shellEnv` goes through the same hook and ahead of the
-   * script, because a Bash command is the one place this session reaches a
-   * shell at all - the CLI starts no other.
+   * bash on every platform it runs on. The operator's environment reaches the
+   * same shells through the CLI's own environment (`query.ts`), so the script
+   * sourced here can still change what the operator set.
    */
   const initScript = join(tmpdir(), `ahpd-shell-init-${crypto.randomUUID()}.sh`);
   let sourced = false;
   /*
-   * What each rewritten command was before the operator's lines were put in
+   * What each rewritten command was before the script's line was put in
    * front of it, by the call's id.
    *
    * The hook is told the id of the call it is rewriting, and `canUseTool` is
@@ -149,20 +138,18 @@ export function createConfig(ctx: SessionContext): Config {
    * session runs.
    */
   const unprefixed = new Map<string, string>();
-  /*
-   * The operator's environment, as the lines that go in front of every
-   * command.
-   *
-   * Built once, when the session starts: the map is the operator's and cannot
-   * move under a running session, the way the session's own `shellInitScripts`
-   * can. The operator's lines come before a client's script, so a script can
-   * still change what the operator set - which is what `shellInitScripts` is
-   * for.
-   */
-  const environment = shellEnvLines(ctx.options.shellEnv);
   const setShellInit = (value: unknown): true | string => {
     const list = shellInitScripts(value);
-    if (list === undefined) return 'shellInitScripts takes a list of { shell, script }';
+    /*
+     * A malformed value is held as it was set and the last valid script stays
+     * in force, as VS Code's Copilot ignores one and keeps the script it had.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8469-L8473
+     */
+    if (list === undefined) {
+      console.warn('@ahpd/agent-claude: ignoring a malformed shellInitScripts; the last valid script stays in force');
+      ctx.settings.shellInitScripts = value;
+      return true;
+    }
     const bash = list.find((one) => one.shell === 'bash');
     try {
       if (bash === undefined) rmSync(initScript, { force: true });
@@ -179,25 +166,20 @@ export function createConfig(ctx: SessionContext): Config {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const given = bag(input.tool_input);
     const command = str(given.command);
-    if (command === undefined) return {};
-    // The operator's lines, then the client's script, then the command.
-    const before = [environment, sourced ? sourcing(initScript) : ''].filter((one) => one !== '').join('\n');
-    // Nothing to put in front of it: the command goes as the client wrote it.
-    if (before === '') return {};
+    // No script in force: the command goes as the model wrote it.
+    if (command === undefined || !sourced) return {};
     // Kept for the question the CLI asks about this call after the hook runs.
     unprefixed.set(input.tool_use_id, command);
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${before}\n${command}` } } };
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${sourcing(initScript)}\n${command}` } } };
   };
 
   const methods: Config['methods'] = {
     /**
-     * A key this backend's schema declares, and the model a turn may name.
-     *
-     * A refusal for anything else, since only a key the schema declares may
-     * be changed, and a refusal is a real answer: a setter that reported
-     * success and changed nothing would leave a client showing a session in a
-     * state it is not in.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+     * Every key a client sets, taken as VS Code's host takes any key but its
+     * own: `permissions`, `shellInitScripts` and `permissionMode` act on the
+     * CLI, and any other is held as it was set. A value the CLI cannot take
+     * is refused, so a client never shows a session in a state it is not in.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
      */
     setConfig: async (key, value) => {
       /*
@@ -217,32 +199,17 @@ export function createConfig(ctx: SessionContext): Config {
         return true;
       }
       if (key === 'shellInitScripts') return setShellInit(value);
-      const said = typeof value === 'string' ? value : '';
-      if (key === 'model') {
-        try {
-          await ctx.handle.setModel(said === 'default' ? undefined : said);
-          ctx.chosen = said;
-          ctx.settings.model = said;
-          return true;
-        }
-        catch { return `The harness would not take model ${said}`; }
-      }
-      if (key === 'effortLevel') {
-        const found = EFFORTS.find((one) => one === said);
-        if (!found) return `The harness has no effort level called ${said}`;
-        ctx.settings.effortLevel = found;
-        // The level in force from here, over any a turn's model set.
-        ctx.turnEffort = undefined;
-        void ctx.handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
+      if (key !== 'permissionMode') {
+        ctx.settings[key] = value;
         return true;
       }
-      if (key !== 'permissionMode') return `${key} is not a config key this backend takes`;
-      // The schema's own property, whose six values are the CLI's.
-      const modes = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
+      // The schema's own property, whose five values are the CLI's.
+      const said = typeof value === 'string' ? value : '';
+      const modes = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
       ctx.settings.permissionMode = found;
-      void ctx.handle.setPermissionMode(found).catch(() => {});
+      void ctx.query.setPermissionMode(found).catch(() => {});
       return true;
     },
 

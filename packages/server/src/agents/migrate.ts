@@ -139,7 +139,7 @@ const plansOf = (spec: PluginSpec, engine: PresetEngine, builtin: boolean): Desc
     const described: Described[] = [];
     if (presets['claude'] !== false && (presets['claude'] !== undefined || builtin)) {
       const given = bag(presets['claude']);
-      described.push({ key: 'claude', plan: { engine, id: 'claude', name: text(given['name']) ?? 'Claude Code', config: without(given, ['name']) } });
+      described.push({ key: 'claude', plan: { engine, id: 'claude', name: text(given['name']) ?? 'Claude', config: without(given, ['name']) } });
     }
     for (const [id, one] of Object.entries(presets)) {
       if (id === 'claude' || one === false) continue;
@@ -390,7 +390,7 @@ export const planPresets = (options: PlanOptions): PresetPlan => {
   /** The built-in claude one spec would have registered, unless it turned it off. */
   const builtinOf = (spec: PluginSpec): Described | undefined => {
     if (bag(specOptions(spec)['presets'])['claude'] === false) return undefined;
-    return { key: 'claude', plan: { engine: 'claude', id: 'claude', name: 'Claude Code', config: {} } };
+    return { key: 'claude', plan: { engine: 'claude', id: 'claude', name: 'Claude', config: {} } };
   };
 
   /** The run's specs that load a claude, whatever the file holds. */

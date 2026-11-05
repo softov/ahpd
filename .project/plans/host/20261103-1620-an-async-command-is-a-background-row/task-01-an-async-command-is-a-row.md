@@ -1,6 +1,6 @@
 ---
 title: An async command is a row
-status: todo
+status: done
 depends: []
 layer: "@ahpd/sdk tools, host"
 refs:

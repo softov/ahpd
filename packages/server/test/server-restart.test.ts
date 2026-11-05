@@ -963,7 +963,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     while (Date.now() < until && host.turning().length > 0) await settle(1);
   };
 
-  it('refuses a turn started while it stops, rather than having the close end one', async () => {
+  it('ends a turn started while it stops unrun, rather than having the close end one', async () => {
     const { host, client, said, chat } = await live();
     const log: string[] = [];
     let release = (): void => {};
@@ -994,8 +994,14 @@ describe('a turn and a restart that is stopping the daemon', () => {
 
     // On its way down, with the host still answering: the window a turn can
     // start in, and be ended by the close at the end of this restart.
+    // Said, then ended unrun by the host's admission, as the reference host
+    // ends a turn it will not run.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
     await say(client, chat, 'hello', 't1');
-    expect(answeredOn(said, chat)?.rejectionReason).toBe('The daemon is restarting');
+    const ended = answeredOn(said, chat) as { action: { type: string; turnId?: string; part?: { error?: { message?: string } } } } | undefined;
+    expect(ended?.action.type).toBe('chat/error');
+    expect(ended?.action.turnId).toBe('t1');
+    expect(ended?.action.part?.error?.message).toBe('The daemon is restarting');
 
     release();
     await over;

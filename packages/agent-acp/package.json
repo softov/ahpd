@@ -1,23 +1,23 @@
 {
   "name": "@ahpd/agent-acp",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "An AHP backend over the Agent Client Protocol: any ACP server is one provider instead of one package",
+  "description": "Agent Client Protocol integration for the Agent Host Protocol. Run any ACP agent as an ahpd plugin or use it directly with @ahpd/sdk.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
-    "protocol",
-    "json-rpc",
-    "backend",
-    "adapter",
+    "ahpio",
+    "ai-agent",
     "acp",
     "agent-client-protocol",
     "copilot",
     "codex",
-    "gemini"
+    "gemini",
+    "agent-backend",
+    "agent-sdk",
+    "plugin",
+    "adapter"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -72,7 +72,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Agent ACP",
-    "description": "Connects any ACP-compatible agent, including Copilot, Codex, Gemini, and custom ACP servers.",
+    "description": "Run any ACP agent, including Copilot, Codex, Gemini and custom ACP servers.",
     "categories": ["agent"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -86,11 +86,11 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "hostTools": { "type": "boolean", "description": "Offer the host's own tools to each session as an MCP server, on by default." },
+        "hostTools": { "type": "boolean", "description": "Offer the host's tools to each session as an MCP server. On by default. Each agent can override it." },
         "toolsChanged": {
           "type": "string",
           "enum": ["notify", "list"],
-          "description": "How each session's agent hears that the tools it listed have moved, over each record's own: notify sends notifications/tools/list_changed down a stream the host holds open, list says nothing and leaves it to the agent's next tools/list. Both serve the current list; defaults to notify."
+          "description": "How an agent learns that its tool list changed. 'notify' (default) sends notifications/tools/list_changed; 'list' sends nothing and waits for the agent's next tools/list. Each agent can override it."
         }
       }
     }

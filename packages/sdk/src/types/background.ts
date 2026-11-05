@@ -59,3 +59,18 @@ export interface BackgroundTasks {
   /** Report that a task has ended. */
   remove(chat: string, id: string): void;
 }
+
+/**
+ * One chat's half of the seam, for a host tool that draws its own row.
+ *
+ * A tool runs where it runs: it sets a row on the chat of its call and takes
+ * it back there, and it never names another chat. The host binds the chat, so
+ * the same report a backend makes through `BackgroundTasks` reaches a tool
+ * without letting it draw a row somewhere it does not run.
+ */
+export interface ChatBackgroundTasks {
+  /** Report a task on the calling chat, or report a running one again. */
+  set(task: BackgroundTask): void;
+  /** Report that a task on the calling chat has ended. */
+  remove(id: string): void;
+}

@@ -5,24 +5,25 @@ import { bag } from '@ahpd/sdk';
 import { expect, it } from 'vitest';
 import { spawnInside } from '../src/spawn.js';
 import { createSession } from '../src/session.js';
-import { failureOf } from '../src/session/failure.js';
 import type { Asked, Spawned } from '../src/spawn.js';
 
 /*
- * A CLI that never started says one sentence, and names no path.
+ * A CLI that never started fails its turn in the SDK's own words, as VS Code's
+ * host ends a send that failed with the error's own message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
  *
- * The SDK keeps its own words for a process that would not come up - the
- * bundled binary's path, the libc it wanted, the syscall - and those are about
- * the host rather than about the session. This runs the real SDK, because the
- * classification being read is the SDK's own and a mock of it would only pin
- * what the mock was told to say.
+ * This runs the real SDK, because the words being read are the SDK's own and a
+ * mock of it would only pin what the mock was told to say.
  */
 
 /** A command no host has, so the spawn fails the way a missing CLI does. */
 const MISSING = '/definitely/not/here/claude';
 
-/** The one sentence a person reads for either. */
-const COULD_NOT_START = 'Claude Code process could not start';
+/**
+ * What the SDK says of a CLI whose process could not be found, naming the
+ * executable it was configured with, which is `claude` behind a spawn hook.
+ */
+const NOT_FOUND = 'Claude Code native binary not found at claude';
 
 /** What the session said, and nothing while it has not said it yet. */
 const until = async (check: () => boolean, times = 4000): Promise<void> => {
@@ -60,36 +61,19 @@ const failureUnder = async (spawn: (asked: Asked) => Spawned): Promise<string> =
   return said[0] ?? '';
 };
 
-it('answers a hook whose command is not there with the errno, and no path', async () => {
+it('fails a turn whose hook command is not there in the SDK own words', async () => {
   const said = await failureUnder((asked) => spawnInside(asked, async () => ({ command: MISSING, args: [] }), 'computer://box'));
-  expect(said).toBe(`${COULD_NOT_START} (ENOENT)`);
-  expect(said).not.toContain('/');
+  expect(said).toContain(NOT_FOUND);
 });
 
-it('answers a hook that rejected with the errno it carries, and no path', async () => {
+it('fails a turn whose hook rejected with an errno in the SDK own words', async () => {
   const said = await failureUnder((asked) => spawnInside(asked, async () => {
     throw Object.assign(new Error('connect ENOENT /var/run/docker.sock'), { code: 'ENOENT', syscall: 'connect' });
   }, 'computer://box'));
-  expect(said).toBe(`${COULD_NOT_START} (ENOENT)`);
-  expect(said).not.toContain('/');
+  expect(said).toContain(NOT_FOUND);
 });
 
-it('names a machine that is not there, which holds no path', async () => {
+it('names a machine that is not there', async () => {
   const said = await failureUnder((asked) => spawnInside(asked, async () => undefined, 'computer://gone'));
   expect(said).toContain('There is no computer called computer://gone');
-});
-
-it('keeps the message of an error that is not a failure to start', () => {
-  // What the SDK files a CLI that ran and then failed under.
-  expect(failureOf(Object.assign(new Error('Claude Code process exited with code 3'), { errorClass: 'process_error' })))
-    .toBe('Claude Code process exited with code 3');
-  // A value that is not an Error at all, which is what a rejected port may throw.
-  expect(failureOf('docker is not running')).toBe('docker is not running');
-  expect(failureOf(undefined)).toBe('undefined');
-});
-
-it('reads the classification and the errno off the error, not off its type', () => {
-  expect(failureOf(Object.assign(new Error('the whole story'), { errorClass: 'spawn_failed' }))).toBe(COULD_NOT_START);
-  expect(failureOf(Object.assign(new Error('the whole story'), { errorClass: 'executable_not_found', code: 'EACCES' })))
-    .toBe(`${COULD_NOT_START} (EACCES)`);
 });

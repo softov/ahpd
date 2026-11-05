@@ -41,7 +41,7 @@ const backend = (root: string, model: ModelAdapter): Agent =>
 /** Run one session to its end and close it, leaving the record on disk. */
 const spoken = async (agent: Agent, id: string, workingDirectory: string): Promise<void> => {
   const notes: Bag[] = [];
-  const session = agent.create({
+  const session = await agent.create({
     uri: `ahp-session:/${id}`,
     chatUri: `ahp-chat:/${id}`,
     settings: agent.defaults(),

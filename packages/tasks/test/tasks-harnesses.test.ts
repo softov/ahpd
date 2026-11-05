@@ -8,6 +8,7 @@ import { cofoldAgent } from '../../agent-cofold/src/index.js';
 import { toPiTool } from '../../agent-pi/src/tools.js';
 import { apply, name } from '../src/plugin.js';
 import type { Bag, BoundTool, ClientCallAnswer, HostTool, LoaderContext, Start, ToolCall } from '@ahpd/sdk';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * The ten tools as a harness is offered them.
@@ -108,7 +109,7 @@ describe('pi and cofold are offered the task tools', () => {
         finished = true;
       }
     };
-    const session = agent.create({
+    const session = startedNow(agent.create({
       uri: 'ahp-session:/cofold',
       chatUri: 'ahp-chat:/cofold',
       settings: { ...agent.defaults() },
@@ -116,7 +117,7 @@ describe('pi and cofold are offered the task tools', () => {
       schema: () => agent.schema(),
       emit,
       tools: boundFor(tools, 'ana', 'ahp-session:/cofold'),
-    } as unknown as Start);
+    } as unknown as Start));
     session.sendMessage('t1', 'hello');
     await when(() => finished);
     const offered = (model.requests[0]?.tools ?? []).map((one) => one.name);

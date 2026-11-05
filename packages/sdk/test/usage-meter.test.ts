@@ -267,9 +267,9 @@ const open = (client: Client): Promise<unknown> => client.handle({
   method: 'createSession', params: { channel: uri, provider: 'meter', config: {} },
 });
 
-const ask = (client: Client, text = 'go', turn = 't1'): Promise<unknown> => client.handle({
+const ask = (client: Client, text = 'go', turn = 't1', startedAt = new Date().toISOString()): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt, message: { text, origin: { kind: 'user' } } } },
 });
 
 /** Watch the chat, which is what makes its actions arrive on this connection. */
@@ -298,7 +298,8 @@ it('writes one record for a turn that completed, saying what its last report sai
   ], usage, directory());
   await settle();
   await open(client);
-  await ask(client);
+  // The client's start is the one said, so its time is when the turn began.
+  await ask(client, 'go', 't1', '2026-10-04T10:00:00.000Z');
   await settle();
 
   expect(usage.entries).toHaveLength(1);

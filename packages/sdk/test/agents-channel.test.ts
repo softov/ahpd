@@ -845,6 +845,31 @@ it('lets agent:all read every agent and remove one however it is owned', async (
   await close();
 });
 
+it('says on the row why a record did not open at start, and clears it once it opens', async () => {
+  const { host, users, collection, lists, close } = await served();
+  await collection.put({
+    id: 'theirs', engine: 'checker', owner: 'host', name: 'Theirs', config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_AGENT_KEY' } },
+  });
+  expect(process.env['AHPD_TEST_AGENT_KEY']).toBeUndefined();
+  await lists.openAll();
+  const fa = await as(host, users, 'fa');
+  expect((await fa.rows())['theirs']).toMatchObject({
+    state: 'invalid',
+    health: { result: 'failed', message: 'the environment holds no AHPD_TEST_AGENT_KEY' },
+  });
+
+  process.env['AHPD_TEST_AGENT_KEY'] = 'sk-from-env';
+  try {
+    await lists.openAll();
+    const row = (await fa.rows())['theirs'];
+    expect(row).toMatchObject({ state: 'ready' });
+    expect(row).not.toHaveProperty('health');
+  } finally {
+    delete process.env['AHPD_TEST_AGENT_KEY'];
+  }
+  await close();
+});
+
 it('refuses an agent whose backend serves another id, and does not serve it', async () => {
   const { host, users, collection, lists, problems, close } = await served();
   const cy = await as(host, users, 'cy');

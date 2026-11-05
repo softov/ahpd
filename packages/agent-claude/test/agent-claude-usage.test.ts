@@ -194,7 +194,6 @@ const round = (usage: Bag, output: number): Record<string, unknown>[] => [
 /** Replay frames through a real session with a recording host seam. */
 async function replay(frames: Record<string, unknown>[]) {
   sdk.reset();
-  sdk.push(...frames);
   const main: Bag[] = [];
   const workers = new Map<string, Bag[]>();
   const subagent = (toolCallId: string, _request: SubagentRequest): SubagentChat => {
@@ -214,6 +213,11 @@ async function replay(frames: Record<string, unknown>[]) {
     emit: (_channel, action) => { main.push(action as Bag); },
     subagent,
   });
+  await settle();
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
+  await settle();
+  sdk.push(...frames);
   await settle();
   return { main, workers, session };
 }

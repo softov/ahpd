@@ -193,7 +193,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   /** The tunnel each connector hosted, by connector id, which the next run looks up first. */
   const kept = plugin.records('devtunnel-tunnels');
   const service = seams.service ?? sdkService({
-    token: (id) => tunnels.held(id),
+    token: (id) => tunnels.ready(id),
     name: wanted,
     kept: {
       read: async (id) => {

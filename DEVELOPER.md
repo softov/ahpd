@@ -118,7 +118,7 @@ A drive against VS Code found two bugs that were invisible from the source; both
 
 The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
 
-The two repositories share one file: `packages/sdk/test/fixtures/resource-write.json` is identical in [`ahpc`](https://github.com/softov/ahpc), and each repository's CI compares its copy against the other's `main`.
+The two repositories share one file: `packages/sdk/test/fixtures/resource-write.json` is identical in [`ahpc`](https://github.com/ahpio/ahpc), and each repository's CI compares its copy against the other's `main`.
 Change it in both.
 
 ## Publishing

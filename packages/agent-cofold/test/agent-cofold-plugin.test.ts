@@ -418,21 +418,39 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   const chatUri = session.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   /*
-   * A queued message wakes the session and waits behind the run the resume
-   * reopens; a turn sent instead would take that run's place, as a turn sent
-   * while one runs does.
+   * The paused run's turn reads back as VS Code reads a turn still running when
+   * its agent went away: interrupted, an error the client may resume, and the
+   * client's resume is what continues the run on its question. A queued
+   * message then waits behind the resumed turn.
    */
+  const read = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { id: string; state: string; responseParts: { kind: string; resumable?: boolean }[] }[] } };
+  };
+  const interrupted = read.snapshot.state.turns.at(-1);
+  expect(interrupted?.state).toBe('error');
+  expect(interrupted?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: String(interrupted?.id) } },
+  });
+  await until(() => actions(p, 'ahp-session:/one').some((e) => e.action.type === 'session/inputNeededSet'));
   await client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'carry on', origin: { kind: 'user' } } } },
   });
-  await until(() => actions(p, 'ahp-session:/one').some((e) => e.action.type === 'session/inputNeededSet'));
+  /*
+   * The status says the reopened run waits on somebody; the activity does not
+   * say it again, and keeps whatever it had before the wait.
+   */
+  const said = [...actions(p, 'ahp-session:/one'), ...actions(p, chatUri)]
+    .filter((e) => String(e.action.type).endsWith('activityChanged'))
+    .map((e) => e.action.activity);
+  expect(said).not.toContain('Waiting on you');
 
   /*
    * A client that arrives after the resume reads the chat snapshot the way a
-   * subscription does. The open turn must appear once: as the active turn the
-   * replay rebuilt, and not again in the history the host seeded from
-   * `transcript(id)`.
+   * subscription does. The resumed turn must appear once: as the active turn,
+   * and not again in the history the host seeded from `transcript(id)`.
    */
   const late = peer();
   const lateClient = after.accept(late);

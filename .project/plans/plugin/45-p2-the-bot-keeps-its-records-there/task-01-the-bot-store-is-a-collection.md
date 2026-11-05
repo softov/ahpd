@@ -1,6 +1,6 @@
 ---
 title: The bot store is a collection
-status: implemented
+status: done
 depends: []
 layer: "packages/bot"
 refs:

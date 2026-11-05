@@ -6,7 +6,7 @@ refs:
   - code://.project/ideas/deliberate-duplication.md - the idea this restates, the first instance
   - git://ff332ad - the fixture and the runner that check the first copy
   - code://packages/sdk/src/resources/resources.ts#L225 - the comment that names the other copy
-  - https://github.com/softov/ahpc - the client, which does not depend on `@ahpd/sdk`
+  - https://github.com/ahpio/ahpc - the client, which does not depend on `@ahpd/sdk`
 ---
 
 ## Context

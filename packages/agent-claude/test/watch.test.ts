@@ -74,6 +74,21 @@ describe('the watcher of the Claude folders', () => {
     expect(calls()).toBe(0);
   });
 
+  /*
+   * The project's MCP servers are a customization source at the top of the
+   * working directory, which VS Code's Claude watcher triggers on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L461-L520
+   */
+  it('calls for the working directory\'s .mcp.json', async () => {
+    const root = fresh();
+    const work = join(root, 'work');
+    mkdirSync(work);
+    const { calls } = await watched({ configDir: join(root, 'config'), cwd: work });
+    writeFileSync(join(work, '.mcp.json'), '{ "mcpServers": {} }\n');
+    await until(calls, 1);
+    expect(calls()).toBe(1);
+  });
+
   it('calls for the list of installed plugins, and not for the other files the CLI writes beside it', async () => {
     const root = fresh();
     mkdirSync(join(root, 'plugins'));

@@ -1,8 +1,9 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { Status, idOf, uriOf } from '@ahpd/sdk';
+import { Status, bag, idOf, steerOf, steerPart, str, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { BOTS_DIR, logsOf } from './names.js';
+import { mayRead } from './provider.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
 
@@ -118,6 +119,8 @@ export interface ChatMessage {
   turnId: string;
   /** What was said. */
   text: string;
+  /** True for a message steered into the open turn, rather than one that began a turn. */
+  steered?: boolean;
 }
 
 /**
@@ -343,6 +346,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
   /** Where each turn read so far sits, so the line that ends it can replace it. */
   const at = new Map<string, number>();
   let mark: Bag | undefined;
+  /** Each steering line read, by the turn it went into. */
+  const steered: { turn: string; id: string; words: string }[] = [];
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     let said: unknown;
@@ -362,6 +367,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
      */
     if (held['steering'] === true) {
       mark ??= markIn(held);
+      const words = str(bag(held['message'])['text']);
+      if (words !== undefined) steered.push({ turn: String(held['id'] ?? ''), id: str(held['steeringId']) ?? `${String(held['id'] ?? '')}:${String(steered.length)}`, words });
       continue;
     }
     const one = turnOf(held);
@@ -373,6 +380,19 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
       turns.push(one);
     }
     else turns[known] = one;
+  }
+  /*
+   * A steer shows as its part in the turn it went into. The line that ends a
+   * turn holds the part already, where it was said; a turn whose log was
+   * written before steers were shown, or whose daemon died before it ended,
+   * gets it here, after what the turn holds. A turn ended while a steer was a
+   * markdown quote holds it under the id `steer:<id>`.
+   */
+  for (const one of steered) {
+    const turn = turns[at.get(one.turn) ?? -1];
+    if (turn === undefined) continue;
+    if (turn.responseParts.some((part) => steerOf(part) === one.id || part['id'] === `steer:${one.id}`)) continue;
+    turn.responseParts.push(steerPart(one.id, one.words));
   }
   return { turns, mark };
 };
@@ -458,7 +478,7 @@ export function botChatAgent(
   store: BotStore,
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
   stopped?: (session: string, turnId: string) => void,
-): Agent {
+): Agent<Session> {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
    *
@@ -1049,9 +1069,13 @@ export function botChatAgent(
         const held = open;
         if (held === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
-        append(dir, id, { id: held.id, steering: true, message, _meta: mark });
-        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text });
+        append(dir, id, { id: held.id, steering: true, steeringId: pendingId, message, _meta: mark });
+        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steered: true });
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
+        // Out of the queue and into the turn it went into, where it stays.
+        const part = steerPart(pendingId, text);
+        held.responseParts.push(part);
+        start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
         // The modified time stays, as the protocol's reducer moves it only at
         // a turn's end and its start.
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L227-L232
@@ -1219,7 +1243,10 @@ export function botChatAgent(
       bot: async (ask) => {
         await store.ready();
         const query = ask.query.toLowerCase();
+        const reader = ask.reader;
+        // Only the bots this person may read, as a read of `bot://` answers.
         return store.all()
+          .filter((one) => reader === undefined || mayRead(one, reader))
           .map((one) => ({ value: one.id, label: one.name }))
           .filter((one) => one.value.toLowerCase().includes(query) || one.label.toLowerCase().includes(query));
       },
@@ -1276,7 +1303,9 @@ export function botChatAgent(
       const slug = typeof asked === 'string' ? asked.trim() : '';
       // The store's cache, which is what a read of `bot://` answers from too.
       // A chat is started by one of those reads, so the bot is here by then.
-      const bot = slug === '' ? undefined : store.get(slug);
+      const found = slug === '' ? undefined : store.get(slug);
+      // A bot this person may not read is one they are not told exists.
+      const bot = found !== undefined && start.reader !== undefined && !mayRead(found, start.reader) ? undefined : found;
       // A plain sentence rather than a coded refusal: the host answers whatever
       // a backend throws out of `create` as its own `INVALID_PARAMS`, keeping
       // the words and dropping the code, so a code here would be one no client

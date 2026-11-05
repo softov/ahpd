@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { activityOf, bag, idOf, reason, str, uriOf } from '@ahpd/sdk';
+import { bag, ensureWorkspacelessScratchDir, idOf, reason, str, uriOf } from '@ahpd/sdk';
 import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -81,25 +81,28 @@ export function cofoldSession(
    * their own.
    */
   held?: Held,
+  /**
+   * Where each turn of the conversation this session resumes ended, as the
+   * backend's last read of it named them, by turn id.
+   */
+  seedEnds?: ReadonlyMap<string, string>,
 ): Session {
   const provider = options.provider ?? 'cofold';
   /**
-   * The cofold session this chat reads and writes.
-   *
-   * A fresh session and a plain resume are the id the host named - the chat's
-   * own where it has one, and the session's otherwise - or the one the URI
-   * spells. A rewind is that same id: AHP keeps the session and drops a tail.
-   * A fork is the one case that does not continue what it was resumed with -
-   * AHP forks a *chat* into another chat of the same session, so
-   * `start.resume` names the conversation to copy from and the target has to
-   * be a new one, or the fork would append to the conversation it was told to
-   * preserve.
+   * The cofold session this chat reads and writes: the conversation it
+   * resumes, a fork's copy or a truncated conversation included, which the
+   * agent's `create` made in the store first; otherwise the id the host named,
+   * the chat's own where it has one and the session's otherwise, or the one
+   * the URI spells.
    */
-  const sessionId = start.forkAt !== undefined
-    ? crypto.randomUUID()
-    : start.resume ?? start.chatId ?? sessionIdOf(start.uri);
-  /** The directory the agent works in; the host's when it named one. */
-  const where = start.workingDirectory ?? process.cwd();
+  const sessionId = start.resume ?? start.chatId ?? sessionIdOf(start.uri);
+  /**
+   * The directory the agent works in: the host's when it named one, and a
+   * scratch folder of the session's own otherwise, as VS Code's agents run a
+   * session with no workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1564-L1570
+   */
+  const where = start.workingDirectory ?? ensureWorkspacelessScratchDir(start.uri);
   /**
    * The store every turn of this session shares.
    *
@@ -163,27 +166,35 @@ export function cofoldSession(
    */
   const pending = new Map<string, OpenRequest>();
   /**
-   * Where each watched turn ended, in cofold's own message ids.
+   * Where each turn ended, in cofold's own message ids.
    *
    * `forkPoint` and `endPoint` are asked synchronously and a store read is
-   * not, so the id is read once when the turn ends - before the client is told
-   * it ended - and kept here for the two methods to answer from. A turn this
-   * process did not watch has no entry, which is what makes the host offer no
-   * cut at it: a point nobody can name is worse than none.
+   * not, so the id is read once when a watched turn ends - before the client
+   * is told it ended - and kept here for the two methods to answer from. A turn
+   * the session opens with takes the point the backend's read of the store
+   * named for it; the seed holds the turns a fork or a rewind kept. A turn
+   * with no entry is one nobody named a point for, which makes the host offer
+   * no cut at it: a point nobody can name is worse than none.
    */
-  const points = new Map<string, string>();
+  const seeded = new Set((start.seed ?? []).map((turn) => String(turn.id)));
+  const points = new Map<string, string>([...seedEnds ?? []].filter(([turnId]) => seeded.has(turnId)));
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
-   * The config in force, by key.
+   * The config values in force, by key.
    *
    * `session/configChanged` merges into this, and the agent for the next turn
    * is built from it, so a session-mutable key changes what runs rather than
    * being recorded and ignored.
    */
-  const settings: Record<string, unknown> = { ...start.settings };
+  const values: Record<string, unknown> = { ...start.settings };
 
-  const touch = (): void => { ctx.modified = new Date().toISOString(); };
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => { ctx.modified = at; };
 
   const ctx = {
     options,
@@ -198,25 +209,26 @@ export function cofoldSession(
     editing,
     pending,
     points,
-    settings,
-    touch,
+    values,
+    setModifiedAt,
     refreshOptions,
     offered: start.tools ?? [],
     active: undefined,
-    waiting: [] as SessionContext['waiting'],
+    pendingTurns: [] as SessionContext['pendingTurns'],
     replaced: new Set<string>(),
     withdrawn: new Set<string>(),
     handle: undefined,
     activeMapping: undefined,
     cancelRequested: false,
-    failed: undefined,
+    error: undefined,
     title: 'Cofold session',
+    provisional: false,
     modified: new Date().toISOString(),
-    closed: false,
+    disposed: false,
     opening: undefined,
-    refused: undefined,
+    paused: undefined,
+    resumedFrom: undefined,
     steering: undefined,
-    activity: activityOf(start.emit),
   } as SessionContext;
 
   const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
@@ -228,24 +240,16 @@ export function cofoldSession(
   Object.assign(ctx, pauses);
 
   /*
-   * A resumed conversation may be paused, and a fork or a rewind has a cut to
-   * make, and both have to land before the first turn reads the session.
-   * Nothing else in the session reads the store first, so this is the one
-   * deferral for all three.
+   * A resumed conversation may hold a paused run, which has to be known before
+   * the first turn reads the session. Nothing else in the session reads the
+   * store first, so this is the one deferral. A lookup the store fails runs
+   * the turns all the same, on the conversation as the store holds it.
    */
-  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.closed) {
-    const pending = (async (): Promise<void> => {
-      await ctx.cut();
-      if (start.resume !== undefined) await ctx.reopen();
-    })();
+  if (start.resume !== undefined && !ctx.disposed) {
+    const pending = ctx.findPaused();
     ctx.opening = pending;
     const settledOpening = (): void => { if (ctx.opening === pending) ctx.opening = undefined; };
-    void pending.then(settledOpening, (why: unknown) => {
-      // The refusal is kept rather than thrown into an unhandled rejection:
-      // the turn paths read it and answer the client with it.
-      ctx.refused = why instanceof Error ? why : new Error(String(why));
-      settledOpening();
-    });
+    void pending.then(settledOpening, settledOpening);
   }
 
   /** The model a client picked, taken by the next send: cofold keeps a model it took. */
@@ -266,28 +270,45 @@ export function cofoldSession(
      * answer a turn, and an empty list is the form of that.
      */
     models: () => {
-      const listed = catalogue(settings, start.credentials ?? {}).map(rowOf);
+      const listed = catalogue(values, start.credentials ?? {}).map(rowOf);
       if (listed.length > 0) return listed;
-      const id = str(settings.model) ?? options.model ?? options.adapter?.modelId;
+      const id = str(values.model) ?? options.model ?? options.adapter?.modelId;
       return id === undefined ? [] : [{ id, name: id }];
     },
     agentId: () => sessionId,
     /*
-     * Where a fork and a rewind cut, in cofold's own message ids.
-     *
-     * A turn this process did not watch run has no entry: it was read back off
-     * a transcript, and cofold names a run's span rather than a turn's, so the
-     * point is not something this session can promise. Answering nothing is
-     * what makes the host offer no cut at that turn rather than offer one that
+     * Where a fork and a rewind cut, in cofold's own message ids: the last
+     * message of the turn, as the run that wrote it recorded it or the read of
+     * the store named it, as an agent that offers a fork forks at any turn that
+     * ended, restored ones included. A turn nobody named a point for answers
+     * nothing, which makes the host offer no cut at it rather than one that
      * fails when it is used.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L882-L888
      */
     forkPoint: (turnId) => points.get(turnId),
     endPoint: (turnId) => points.get(turnId),
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
     status: ctx.status,
-    activity: () => ctx.activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => ctx.title,
+    /*
+     * A title a local command suggests, taken while the session has none of its
+     * own or holds an earlier one of these, and said, as VS Code's host seeds
+     * one; the first real message's title replaces it.
+     */
+    seedTitle: (said) => {
+      if (said === '' || (ctx.title !== 'Cofold session' && !ctx.provisional) || said === ctx.title) return;
+      ctx.title = said;
+      ctx.provisional = true;
+      start.emit('session', { type: 'session/titleChanged', title: said });
+    },
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(where)],
 
@@ -302,7 +323,6 @@ export function cofoldSession(
       chats: [{ resource: start.chatUri, title: ctx.title }],
       workingDirectories: [uriOf(where)],
       customizations: start.seedCustomizations ?? [],
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       /*
        * What a client is being asked - the person's questions and the calls a
        * client has to run - so a session channel a client subscribed to
@@ -313,7 +333,7 @@ export function cofoldSession(
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits.
-      config: { schema: start.schema(), values: { ...settings } },
+      config: { schema: start.schema(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -323,7 +343,6 @@ export function cofoldSession(
       modifiedAt: ctx.modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 
@@ -340,11 +359,14 @@ export function cofoldSession(
     /**
      * Run the latest turn again, without adding a message.
      *
-     * What `chat/turnResume` asks for, answered by the turn area: the turn is
-     * reopened as it was and its prompt runs again under the same id, after
-     * the store is cut back to the turn before it.
+     * What `chat/turnResume` asks for, answered by the turn area once the
+     * session has opened: the turn is reopened as it was, and the run a
+     * restart left paused continues on its question, or the turn's prompt
+     * runs again under the same id after the store is cut back to the turn
+     * before it.
      */
-    resumeTurn: (turnId) => {
+    resumeTurn: async (turnId) => {
+      await ctx.opening?.catch(() => undefined);
       if (!ctx.resumeTurn(turnId)) throw new Error(`${turnId} is not a turn this backend can run again`);
     },
 
@@ -359,11 +381,11 @@ export function cofoldSession(
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
      */
     abort: () => {
-      ctx.waiting.length = 0;
+      ctx.pendingTurns.length = 0;
       ctx.steering = undefined;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
-      ctx.stop('the client stopped the turn');
+      ctx.abort('the client stopped the turn');
     },
 
     /**
@@ -401,7 +423,7 @@ export function cofoldSession(
       ctx.steering = { id, message };
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
-        : partsFor(text, attachments, ctx.takesImages())
+        : partsFor(text, attachments, ctx.supportsVision())
           .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
       return submitted.then(
         () => {
@@ -410,7 +432,6 @@ export function cofoldSession(
           if (ctx.withdrawn.delete(id)) return true;
           if (ctx.steering?.id === id) ctx.steering = undefined;
           start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-          ctx.touch();
           return true;
         },
         () => {
@@ -434,7 +455,6 @@ export function cofoldSession(
         ctx.withdrawn.add(id);
         ctx.steering = undefined;
       }
-      ctx.touch();
     },
 
     // The draft the host said, held for the chat's state.
@@ -469,7 +489,7 @@ export function cofoldSession(
       const declared = bag(bag(start.schema()).properties);
       if (declared[key] === undefined) return `${provider}: ${key} is not a config key this backend takes`;
       if (typeof value !== 'string') return `${provider}: ${key} takes a string`;
-      settings[key] = value;
+      values[key] = value;
       return true;
     },
 
@@ -480,11 +500,11 @@ export function cofoldSession(
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     close: () => {
-      ctx.closed = true;
-      ctx.stop('the session closed');
+      ctx.disposed = true;
+      ctx.abort('the session closed');
     },
   };
 }

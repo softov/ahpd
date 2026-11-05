@@ -11,8 +11,8 @@
  * record, the way Claude's transcript reader reads Claude's.
  *
  * The run log is read beside the messages for the two facts a message does not
- * carry: a tool call's timing, which is in its `tool.started` and
- * `tool.completed` events, and the request a paused run is waiting on, which
+ * carry: how long a tool call ran, which its `tool.completed` event measured,
+ * and the request a paused run is waiting on, which
  * `Store.requests` holds. Everything else comes from the messages themselves,
  * in the order cofold appended them, because a transcript that reorders a tool
  * call and its answer is a conversation read wrong.
@@ -21,9 +21,9 @@
 import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { bag, callTimes, str } from '@ahpd/sdk';
+import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { compactionNotice } from './mapping.js';
-import { describe, toolMetaOf } from './tools.js';
+import { describe, pastTenseOf, toolMetaOf } from './tools.js';
 
 /**
  * The turns `Agent.transcript` answers with.
@@ -41,17 +41,17 @@ type WireMessage = TranscriptTurn['message'];
 type WireUsage = NonNullable<TranscriptTurn['usage']>;
 type WireState = TranscriptTurn['state'];
 
-/** How a tool call moved, as its events recorded it. */
-interface Timing {
-  startedAt?: string;
-  endedAt?: string;
-  durationMs?: number;
-}
-
 /** What a run is waiting on, by the call it is about. */
 interface Waiting {
   prompt?: string;
 }
+
+/** The error a turn ends with when its run was cut off, as VS Code's reader words it. */
+const INTERRUPTED: Bag = {
+  kind: 'error',
+  error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+  resumable: true,
+};
 
 /**
  * cofold's token counts, in the protocol's spelling.
@@ -98,36 +98,24 @@ const inputOf = (call: ToolCallPart): string | undefined => {
 };
 
 /**
- * The times a restored call ran at, in the `ahpd.` names.
- *
- * A run that recorded a result but no `tool.started` still says how long the
- * call took, so its start is its end less that; a call with only a start keeps
- * that alone, and one with neither says nothing.
- */
-const timesOf = (timing: Timing | undefined): Bag => {
-  if (timing === undefined) return {};
-  const end = timing.endedAt;
-  if (end === undefined) return timing.startedAt === undefined ? {} : callTimes(timing.startedAt);
-  const start = timing.startedAt ?? (timing.durationMs === undefined ? undefined : Date.parse(end) - timing.durationMs);
-  return callTimes(start ?? end, end, timing.durationMs);
-};
-
-/**
  * The part a tool call holds between its proposal and its result.
  *
  * A call with no result and no open request is left `running`: nothing in the
  * store says it finished, and inventing a completion would draw a spinner that
  * stopped for a reason nobody recorded. A call a paused run is waiting on is
  * `pending-confirmation`, which is what a client draws a question from.
+ *
+ * `durationMs` is how long the call ran, as cofold's completion measured it,
+ * for a call that completed.
  */
 const callPartOf = (
   call: ToolCallPart,
-  timing: Timing | undefined,
+  durationMs: number | undefined,
   waiting: Waiting | undefined,
   subject: string | undefined,
 ): Bag => {
   const written = inputOf(call);
-  const meta: Bag = { ...toolMetaOf(call.name), ...timesOf(timing) };
+  const meta: Bag = withToolCallDuration(toolMetaOf(call.name), durationMs) ?? {};
   const held: Bag = {
     toolCallId: call.callId,
     toolName: call.name,
@@ -135,11 +123,11 @@ const callPartOf = (
     invocationMessage: invocationOf(call, waiting, subject),
     ...(written !== undefined ? { toolInput: written } : {}),
     /*
-     * AHP's tool-call states have no field for when a call ran or how long it
-     * took, and the events measured both, so they ride the provider metadata
-     * rather than being dropped or flattened into a field that means something
-     * else. The kind goes with them: an action's `_meta` replaces the whole
-     * bag, so a restored call that lost it would draw as a generic tool.
+     * How long it ran rides the call's `_meta` under VS Code's key, as VS
+     * Code's restored history carries it, and the kind goes with it: an
+     * action's `_meta` replaces the whole bag, so a restored call that lost it
+     * would draw as a generic tool.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1459
      */
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
@@ -161,10 +149,10 @@ const callPartOf = (
  * subscription already holds. `content` and `error` are where a client looks
  * for what happened, and a failed call keeps both.
  */
-const completeCall = (held: Bag, result: ToolResultPart, said: string): void => {
+const completeCall = (held: Bag, result: ToolResultPart, pastTenseMessage: string | { markdown: string }): void => {
   held.status = 'completed';
   held.success = !result.isError;
-  held.pastTenseMessage = said;
+  held.pastTenseMessage = pastTenseMessage;
   held.confirmed = held.confirmed ?? 'not-needed';
   if (result.content !== '') held.content = [{ type: 'text', text: result.content }];
   if (result.isError) held.error = { message: result.content === '' ? 'The tool failed' : result.content };
@@ -178,8 +166,6 @@ interface Building {
   parts: Bag[];
   /** The calls of this turn, by call id, so a result finds the part it closes. */
   calls: Map<string, Bag>;
-  /** What each of those calls runs on, by call id, which its result is titled by too. */
-  said: Map<string, string>;
   usage: WireUsage | undefined;
   state: WireState;
   duration: number | undefined;
@@ -187,6 +173,8 @@ interface Building {
   commanded: boolean;
   /** Whether this turn holds a compaction notice, which stands for the command's own output. */
   compacted: boolean;
+  /** The id of the last message read into this turn, which is where it ended. */
+  end: string;
 }
 
 /**
@@ -213,13 +201,17 @@ const eventsOf = async (store: Store, sessionId: string, runId: string): Promise
  *
  * The store is the only input, so a session read here is the same conversation
  * a resumed session appends to rather than a second rendering of it.
+ *
+ * `ends` is given where each turn ended, by its id: the last message read into
+ * it, which a fork copies through and a rewind keeps, as a live turn's run
+ * records its last message. A paused run's turn has not ended and names none.
  */
-export async function turnsOf(store: Store, sessionId: string): Promise<TranscriptTurn[]> {
+export async function turnsOf(store: Store, sessionId: string, ends?: Map<string, string>): Promise<TranscriptTurn[]> {
   const messages = await store.sessions.listMessages({ sessionId });
   const runs = await store.runs.list({ sessionId });
 
-  /** When each call ran, by call id, gathered once from every run's events. */
-  const timing = new Map<string, Timing>();
+  /** How long each completed call ran, by call id, gathered once from every run's events. */
+  const durations = new Map<string, number>();
   /**
    * What each call acts on, by call id, from the `tool.proposed` that named it.
    *
@@ -230,6 +222,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const subject = new Map<string, string>();
   /** The request a paused run is waiting on, by the call it is about. */
   const waiting = new Map<string, Waiting>();
+  /** The turns whose run a restart left paused, by their message's id. */
+  const interrupted = new Set<string>();
   /**
    * What each compaction had folded, by the summary message it wrote.
    *
@@ -251,8 +245,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     /*
      * The events are read before anything about the run is recorded, so a run
      * that a rewind removed mid-read leaves nothing behind: no usage, no
-     * ending, no model, no duration, and none of the timing, subjects or
-     * compaction numbers its events carried.
+     * ending, no model, no duration, and none of the call durations, subjects
+     * or compaction numbers its events carried.
      */
     const events = await eventsOf(store, sessionId, run.runId);
     if (events === undefined) continue;
@@ -263,31 +257,26 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         ...(run.model !== undefined ? { model: run.model } : {}),
       });
       if (run.model !== undefined) model.set(run.inputMessageId, run.model);
-      // An `awaiting` run has not ended, and AHP's three states have no word
-      // for that; the turn reads complete while its open call says the rest.
+      /*
+       * A run a restart left paused reads back as VS Code reads a turn still
+       * running when its agent went away: interrupted, an error a client may
+       * resume, which continues the run on its question.
+       */
       ending.set(
         run.inputMessageId,
-        run.status === 'failed' ? 'error' : run.status === 'cancelled' ? 'cancelled' : 'complete',
+        run.status === 'failed' || run.status === 'awaiting' ? 'error' : run.status === 'cancelled' ? 'cancelled' : 'complete',
       );
+      if (run.status === 'awaiting') interrupted.add(run.inputMessageId);
       const spent = Date.parse(run.updatedAt) - Date.parse(run.createdAt);
       if (Number.isFinite(spent) && spent >= 0) duration.set(run.inputMessageId, spent);
     }
 
-    /** The moment each call started, so its completion can carry a start too. */
-    const started = new Map<string, string>();
     for (const event of events) {
-      if (event.type === 'tool.started') started.set(event.callId, event.at);
       if (event.type === 'tool.proposed' && event.subject !== undefined) subject.set(event.callId, event.subject);
       if (event.type === 'context.compacted') {
         compacted.set(event.messageId, { before: event.estimatedTokens, after: event.afterTokens });
       }
-      if (event.type !== 'tool.completed') continue;
-      const at = started.get(event.callId);
-      timing.set(event.callId, {
-        ...(at !== undefined ? { startedAt: at } : {}),
-        endedAt: event.at,
-        durationMs: event.durationMs,
-      });
+      if (event.type === 'tool.completed') durations.set(event.callId, event.durationMs);
     }
 
     if (run.status !== 'awaiting' || run.pendingRequestId === undefined) continue;
@@ -303,20 +292,32 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const turns: TranscriptTurn[] = [];
   let open: Building | undefined;
 
-  /** The turn as the contract wants it, so a half-built one never leaves. */
+  /**
+   * The turn as the contract wants it, so a half-built one never leaves.
+   *
+   * A paused run's turn ends with VS Code's error for a turn cut off, after its
+   * parts, marked resumable, since a resume continues the run.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L499-L500
+   */
   const sealed = (turn: Building): TranscriptTurn => ({
     id: turn.id,
     startedAt: turn.startedAt,
     message: turn.message,
-    responseParts: turn.parts,
+    responseParts: interrupted.has(turn.id) ? [...turn.parts, { ...INTERRUPTED }] : turn.parts,
     usage: turn.usage,
     state: turn.state,
     ...(turn.duration !== undefined ? { duration: turn.duration } : {}),
   });
 
+  /** A finished turn into the read, and where it ended into `ends`, unless its run is paused. */
+  const close = (turn: Building): void => {
+    turns.push(sealed(turn));
+    if (!interrupted.has(turn.id)) ends?.set(turn.id, turn.end);
+  };
+
   /** Open a turn for a message; the previous one is finished by definition. */
   const begin = (message: Message, origin: 'user' | 'agent'): void => {
-    if (open !== undefined) turns.push(sealed(open));
+    if (open !== undefined) close(open);
     const ran = model.get(message.id);
     open = {
       id: message.id,
@@ -329,12 +330,12 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       },
       parts: [],
       calls: new Map(),
-      said: new Map(),
       usage: usage.get(message.id),
       state: ending.get(message.id) ?? 'complete',
       duration: duration.get(message.id),
       commanded: message.source === 'command',
       compacted: false,
+      end: message.id,
     };
   };
 
@@ -350,7 +351,10 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
      * and the reply that follows it is its answer.
      */
     // A prompt command's expanded text belongs to the turn its typed line began.
-    if (message.source === 'skill') continue;
+    if (message.source === 'skill') {
+      if (open !== undefined) open.end = message.id;
+      continue;
+    }
     if (message.role === 'user' && message.source !== 'system' && message.source !== 'summary' && message.source !== 'notice') {
       begin(message, 'user');
       continue;
@@ -380,6 +384,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       if (open === undefined) begin({ ...message, parts: [] }, 'agent');
       const live = open;
       if (live === undefined) continue;
+      live.end = message.id;
       if (message.source === 'notice' && live.compacted) continue;
       const summary = message.source === 'summary';
       const said = summary ? compactionNotice(compacted.get(message.id), { asked: live.commanded }) : textOf(message);
@@ -392,19 +397,19 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       ensure(message);
       const live = open;
       if (live === undefined) continue;
+      live.end = message.id;
       for (const [index, part] of message.parts.entries()) {
         const id = `${message.id}:${index}`;
         if (part.type === 'text') {
-          // Text that is only whitespace opens no part, as it opens none live.
-          if (part.text.trim() !== '') live.parts.push({ id, kind: 'markdown', content: part.text });
+          // Any text is a part, whitespace included, as it is live.
+          if (part.text !== '') live.parts.push({ id, kind: 'markdown', content: part.text });
         } else if (part.type === 'reasoning') {
           live.parts.push({ id, kind: 'reasoning', content: part.text });
         } else if (part.type === 'toolCall') {
-          const held = callPartOf(part, timing.get(part.callId), waiting.get(part.callId), subject.get(part.callId));
+          const held = callPartOf(part, durations.get(part.callId), waiting.get(part.callId), subject.get(part.callId));
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
-          live.said.set(part.callId, describe(part.name, subject.get(part.callId)));
           live.parts.push({ kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
@@ -422,6 +427,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     ensure(message);
     const live = open;
     if (live === undefined) continue;
+    live.end = message.id;
     for (const part of message.parts) {
       if (part.type !== 'toolResult') continue;
       const held = live.calls.get(part.callId);
@@ -431,10 +437,11 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         live.parts.push({ kind: 'systemNotification', content: part.content });
         continue;
       }
-      completeCall(held, part, live.said.get(part.callId) ?? part.name);
+      // Worded as the live turn worded it.
+      completeCall(held, part, pastTenseOf(String(held.toolName), String(held.displayName), subject.get(part.callId), !part.isError));
     }
   }
 
-  if (open !== undefined) turns.push(sealed(open));
+  if (open !== undefined) close(open);
   return turns;
 }

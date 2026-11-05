@@ -794,7 +794,7 @@ describe('a request signs in', () => {
     await directory.add('ana', ['laptop']);
     const minted = await directory.mintToken!('ana', { grants: ['proxy:read'], label: 'laptop' });
     const one = await daemon(
-      { httpApi: true,plugins: [BACKEND] },
+      { httpApi: true, modelApi: true, plugins: [BACKEND] },
       ['--connection-token', 'root-secret', '--users', usersFile],
     );
     const base = `http://127.0.0.1:${String(one.port)}`;
@@ -823,7 +823,7 @@ describe('a request signs in', () => {
     await directory.addTeam('backend');
     const minted = await directory.mintToken!(undefined, { team: 'backend', grants: ['proxy:call', 'proxy:models'], label: 'ci' });
     const one = await daemon(
-      { httpApi: true,plugins: [BACKEND] },
+      { httpApi: true, modelApi: true, plugins: [BACKEND] },
       ['--connection-token', 'root-secret', '--users', usersFile],
     );
     const base = `http://127.0.0.1:${String(one.port)}`;

@@ -7,6 +7,7 @@ import { createFakeModel } from '@cofold/agents/testing';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Engine, AgentView, Bag, Session, Start } from '@ahpd/sdk';
 
 /*
@@ -118,7 +119,7 @@ function opened(
     emit: (_channel, action) => { actions.push(action as Bag); },
     workingDirectory: folder,
   };
-  const session = agent.create(start);
+  const session = startedNow(agent.create(start));
   started.push(session);
   return { agent, session, actions };
 }

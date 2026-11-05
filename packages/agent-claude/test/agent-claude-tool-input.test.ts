@@ -13,11 +13,10 @@ import type { Bag, Session } from '@ahpd/sdk';
  * whose `toolInput` is its command, because a terminal row reads the command
  * there.
  *
- * The row line is never cut JSON. It is the call's `description` for Bash, Task,
- * Agent and Monitor; otherwise VS Code's line for a tool VS Code maps, as
- * markdown where VS Code sends markdown; otherwise the subject of
- * AskUserQuestion, WebSearch or an MCP tool, or the display name. The past
- * tense is the same rule, success or not.
+ * The row line is never cut JSON. It is VS Code's line for a tool VS Code
+ * maps, as markdown where VS Code sends markdown, a Task or Agent call's own
+ * description, and the call's display name for any other tool. The past tense
+ * is VS Code's past line, success or not.
  */
 
 const sdk = vi.hoisted(() => ({
@@ -27,6 +26,8 @@ const sdk = vi.hoisted(() => ({
   /** What the stream waits on after its frames, so a test can keep it open. */
   hold: Promise.resolve() as Promise<void>,
   canUseTool: undefined as undefined | ((name: string, input: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
+  /** The MCP servers the CLI reports. */
+  mcp: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -34,28 +35,36 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   // A transcript as the SDK reads it back, which leaves each entry's
   // `toolUseResult` out: its `SessionMessage` has no field for it.
   getSessionMessages: async () => sdk.frames.map(({ toolUseResult: _left, ...kept }) => kept),
-  query: ({ options }: { options: Record<string, unknown> }) => ({
-    async *[Symbol.asyncIterator]() {
-      sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
-      for (const frame of sdk.frames) yield frame;
-      await sdk.hold;
-      while (sdk.pushed.length > 0) yield sdk.pushed.shift() as Record<string, unknown>;
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    let close = (): void => {};
+    const closed = new Promise<void>((resolve) => { close = resolve; });
+    return {
+      async *[Symbol.asyncIterator]() {
+        sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+        // The frames answer the turn's prompt, as a CLI's do, and the CLI stays
+        // open until it is closed.
+        await prompt[Symbol.asyncIterator]().next();
+        for (const frame of sdk.frames) yield frame;
+        await sdk.hold;
+        while (sdk.pushed.length > 0) yield sdk.pushed.shift() as Record<string, unknown>;
+        await closed;
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => sdk.mcp,
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close,
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
@@ -102,12 +111,12 @@ const calls = [
 /** Each call's row line and past tense, as the task names them. */
 const rows: [string, unknown, unknown][] = [
   ['toolu_long', 'Update todo list', 'Update todo list'],
-  ['toolu_bash', 'List files', 'List files'],
-  ['toolu_ask', 'Which colour?', 'Which colour?'],
+  ['toolu_bash', { markdown: 'Running `ls -la`' }, { markdown: 'Ran `ls -la`' }],
+  ['toolu_ask', 'Ask user a question', 'Ask user a question'],
   ['toolu_fetch', { markdown: 'Fetching [https://example.com/page](https://example.com/page)' }, { markdown: 'Fetched [https://example.com/page](https://example.com/page)' }],
-  ['toolu_search', 'kqueue linux', 'kqueue linux'],
-  ['toolu_mcp', 'kqueue', 'kqueue'],
-  ['toolu_numbers', 'mcp__pager__page', 'mcp__pager__page'],
+  ['toolu_search', 'WebSearch', 'WebSearch'],
+  ['toolu_mcp', 'Run MCP tool docs__search', 'Run MCP tool docs__search'],
+  ['toolu_numbers', 'Run MCP tool pager__page', 'Run MCP tool pager__page'],
 ];
 
 /** The text of a line, whether it is a string or markdown. */
@@ -131,6 +140,9 @@ async function live(frames: Record<string, unknown>[] = [{
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-input-')),
     emit: (_channel, action) => { sent.push(action as Bag); },
   });
+  await settle();
+  // The turn the frames answer, and a call is asked about inside.
+  session.sendMessage('t1', 'go');
   await settle();
   if (asking !== undefined) {
     asking();
@@ -158,14 +170,6 @@ const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 /** The one action of a call's kind that a session sent, or nothing. */
 const actionOf = (sent: Bag[], type: string, id: string): Bag | undefined =>
   sent.find((one) => one.type === type && one.toolCallId === id);
-
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
 
 /** The same calls read back from a transcript, with any frames that follow them. */
 async function restored(content: Bag[] = calls, after: Record<string, unknown>[] = []): Promise<Map<string, Bag>> {
@@ -205,11 +209,11 @@ it('keeps Bash\'s command in toolInput, live and restored', async () => {
   const back = (await restored()).get('toolu_bash');
   for (const call of [ready.get('toolu_bash'), held.get('toolu_bash'), back]) {
     expect(call?.toolInput).toBe('ls -la');
-    expect(call?.invocationMessage).toBe('List files');
+    expect(call?.invocationMessage).toEqual({ markdown: 'Running `ls -la`' });
   }
 });
 
-it('draws each live call\'s row line as its subject or its display name', async () => {
+it('draws each live call\'s row line as VS Code\'s line or its display name', async () => {
   const { held, ready } = await live();
   for (const [id, line] of rows) {
     for (const call of [ready.get(id), held.get(id)]) {
@@ -257,8 +261,9 @@ it('gives a call confirmed while it streams its whole input', async () => {
 /** Calls whose row lines mirror VS Code's, each with its line and past tense. */
 const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   {
+    // The one that failed, whose past tense says so in VS Code's words.
     block: { type: 'tool_use', id: 'toolu_said', name: 'Bash', input: { command: 'ls -la /tmp/scratch', description: 'Check scratch directory' } },
-    line: 'Check scratch directory', past: 'Check scratch directory',
+    line: { markdown: 'Running `ls -la /tmp/scratch`' }, past: '"Run shell command" failed',
   },
   {
     block: { type: 'tool_use', id: 'toolu_plain', name: 'Bash', input: { command: 'ls -la' } },
@@ -294,11 +299,11 @@ const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   },
   {
     block: { type: 'tool_use', id: 'toolu_task', name: 'Task', input: { description: 'Find the reducer', prompt: 'Look for it', subagent_type: 'Explore' } },
-    line: 'Find the reducer', past: 'Find the reducer',
+    line: 'Find the reducer', past: 'Ran subagent',
   },
   {
     block: { type: 'tool_use', id: 'toolu_monitor', name: 'Monitor', input: { description: 'Watch the build log', command: 'tail -f build.log', timeout_ms: 1000 } },
-    line: 'Watch the build log', past: 'Watch the build log',
+    line: 'Monitor', past: 'Monitor',
   },
   {
     block: { type: 'tool_use', id: 'toolu_done', name: 'TaskUpdate', input: { taskId: '3', status: 'completed', description: 'A new body for the task' } },
@@ -310,26 +315,22 @@ const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   },
   {
     block: { type: 'tool_use', id: 'toolu_topic', name: 'mcp__docs__search', input: { limit: 5, topic: 'kqueue' } },
-    line: 'kqueue', past: 'kqueue',
+    line: 'Run MCP tool docs__search', past: 'Run MCP tool docs__search',
   },
   {
     block: { type: 'tool_use', id: 'toolu_body', name: 'mcp__docs__write', input: { body: `${'z'.repeat(100)}\nsecond line` } },
-    line: `${'z'.repeat(80)}…`, past: `${'z'.repeat(80)}…`,
+    line: 'Run MCP tool docs__write', past: 'Run MCP tool docs__write',
   },
   {
     block: {
       type: 'tool_use', id: 'toolu_ask_wide', name: 'AskUserQuestion',
       input: { questions: [{ question: `${'q'.repeat(100)}\nwhy`, header: 'Why', multiSelect: false, options: [{ label: 'Red' }] }] },
     },
-    line: `${'q'.repeat(80)}…`, past: `${'q'.repeat(80)}…`,
+    line: 'Ask user a question', past: 'Ask user a question',
   },
   {
     block: { type: 'tool_use', id: 'toolu_search_wide', name: 'WebSearch', input: { query: 's'.repeat(100) } },
-    line: `${'s'.repeat(80)}…`, past: `${'s'.repeat(80)}…`,
-  },
-  {
-    block: { type: 'tool_use', id: 'toolu_body_blank', name: 'mcp__docs__write', input: { body: '\n\nfirst words\nmore' } },
-    line: 'first words', past: 'first words',
+    line: 'WebSearch', past: 'WebSearch',
   },
 ];
 
@@ -372,40 +373,90 @@ it('draws a restored call\'s row line and past tense as the live one does', asyn
   expect(back.get('toolu_said')?.success).toBe(false);
 });
 
-it('cuts a subject over 80 characters to its first line', async () => {
-  const { held, ready } = await live([
-    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: mirrored.map(({ block }) => block) } },
-  ]);
-  for (const id of ['toolu_body', 'toolu_ask_wide', 'toolu_search_wide']) {
-    for (const line of [ready.get(id)?.invocationMessage, held.get(id)?.pastTenseMessage]) {
-      const text = textOf(line);
-      expect(text, id).not.toMatch(/\n/);
-      expect(text.length, id).toBeLessThanOrEqual(81);
-    }
-  }
-});
-
-it('gives a confirmation card the row line, not the CLI\'s title', async () => {
+it('gives a confirmation card the row line, and the title of its tool\'s permission', async () => {
   sdk.hold = new Promise(() => {});
   const input = { command: 'rm -rf /tmp/scratch', description: 'Clear scratch directory' };
   const { held, ready } = await live([], () => {
     void sdk.canUseTool?.('Bash', input, { toolUseID: 'toolu_card', title: 'Claude wants to run rm -rf /tmp/scratch' });
   });
   sdk.hold = Promise.resolve();
-  expect(held.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
-  expect(ready.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
-  expect(held.get('toolu_card')?.confirmationTitle).toBe('Claude wants to run rm -rf /tmp/scratch');
+  expect(held.get('toolu_card')?.invocationMessage).toEqual({ markdown: 'Running `rm -rf /tmp/scratch`' });
+  expect(ready.get('toolu_card')?.invocationMessage).toEqual({ markdown: 'Running `rm -rf /tmp/scratch`' });
+  expect(held.get('toolu_card')?.confirmationTitle).toBe('Run in terminal?');
   expect(held.get('toolu_card')?.toolInput).toBe('rm -rf /tmp/scratch');
 });
 
 /*
- * When a tool call ran, live and restored.
+ * A call's name and its card's title, as VS Code's Claude agent draws them:
+ * the CLI's own tools from Claude's display table, an MCP call by its server
+ * and tool, a tool the table lacks by its own name, and a card titled by the
+ * kind of permission its tool needs, whatever the SDK called them. An MCP call
+ * names as its contributor the customization of a server the session lists.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L142-L244
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L427-L441
+ */
+it('names each call from Claude\'s display table, live and read back', async () => {
+  const names: Record<string, string> = {
+    toolu_long: 'Update todo list',
+    toolu_bash: 'Run shell command',
+    toolu_ask: 'Ask user a question',
+    toolu_fetch: 'Fetch URL',
+    toolu_search: 'WebSearch',
+    toolu_mcp: 'Run MCP tool docs__search',
+  };
+  const { held, sent, session } = await live();
+  const back = await restored();
+  for (const [id, name] of Object.entries(names)) {
+    expect(actionOf(sent, 'chat/toolCallStart', id)?.displayName, id).toBe(name);
+    expect(held.get(id)?.displayName, id).toBe(name);
+    expect(back.get(id)?.displayName, id).toBe(name);
+  }
+  await session.close();
+});
+
+it('titles a confirmation card by the permission its tool needs, and names it from the table', async () => {
+  sdk.hold = new Promise(() => {});
+  const asked: [string, string, Bag, string][] = [
+    ['toolu_t_bash', 'Bash', { command: 'ls' }, 'Run in terminal?'],
+    ['toolu_t_edit', 'Edit', { file_path: '/tmp/none', old_string: 'a', new_string: 'b' }, 'Edit file?'],
+    ['toolu_t_fetch', 'WebFetch', { url: 'https://example.com', prompt: 'read it' }, 'Fetch URL?'],
+    ['toolu_t_skill', 'Skill', { skill: 'review' }, 'Run skill?'],
+    ['toolu_t_mcp', 'mcp__docs__search', { topic: 'kqueue' }, 'Allow tool from docs?'],
+    ['toolu_t_other', 'Monitor', { command: 'tail -f log' }, 'Allow tool call?'],
+  ];
+  const { held, ready, session } = await live([], () => {
+    for (const [toolUseID, name, input] of asked) {
+      void sdk.canUseTool?.(name, input, { toolUseID, title: 'Claude wants to', displayName: 'Something' });
+    }
+  });
+  sdk.hold = Promise.resolve();
+  for (const [id, , , title] of asked) {
+    expect(ready.get(id)?.confirmationTitle, id).toBe(title);
+    expect(held.get(id)?.confirmationTitle, id).toBe(title);
+  }
+  expect(held.get('toolu_t_bash')?.displayName).toBe('Run shell command');
+  expect(held.get('toolu_t_other')?.displayName).toBe('Monitor');
+  await session.close();
+});
+
+it('names an MCP call\'s contributor by its server\'s customization, and none for a server the session does not list', async () => {
+  sdk.mcp = [{ name: 'docs', status: 'connected' }];
+  const { held, sent, session } = await live();
+  sdk.mcp = [];
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_numbers')?.contributor).toBeUndefined();
+  expect(held.get('toolu_numbers')?.contributor).toBeUndefined();
+  await session.close();
+});
+
+/*
+ * How long a tool call ran, live and restored.
  *
- * The protocol gives a call no time of its own, so the times ride in its
- * `_meta` and this plugin's clock stamps them: the ready for a call nobody is
- * asked about, the approval for one that is, and the result for the end. An
- * action carrying a `_meta` replaces the call's whole bag, so every action
- * after the start has to carry them again.
+ * The protocol gives a call no time of its own, so how long it ran rides its
+ * `_meta` at its completion, under the key VS Code's client reads it from, on
+ * this plugin's clock: from the ready for a call nobody is asked about, or the
+ * approval for one that is, to its result.
  */
 
 const bash = { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls -la', description: 'List files' } };
@@ -415,26 +466,18 @@ const result = (id: string, uuid: string): Record<string, unknown> => ({
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'a b c' }] },
 });
 
-it('says when a live call started, and when it ended', async () => {
+it('says how long a live call ran at its completion, and nothing of its times before', async () => {
   const { held, ready, sent } = await live([...opened, result('toolu_bash', 'u2')]);
   const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
-  // The start is said at the ready, before there is any end to say.
-  expect(metaOf(ready.get('toolu_bash'))['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(metaOf(ready.get('toolu_bash'))['ahpd.endedAt']).toBeUndefined();
-  // And both, with how long it took, on the completion and on the call itself.
-  expect(timed(complete)).toBe(true);
-  expect(timed(held.get('toolu_bash'))).toBe(true);
-  expect(metaOf(complete)).toMatchObject({
-    'ahpd.startedAt': metaOf(complete)['ahpd.startedAt'],
-    'ahpd.durationMs': expect.any(Number),
-  });
-  expect(Date.parse(metaOf(complete)['ahpd.endedAt'] as string))
-    .toBeGreaterThanOrEqual(Date.parse(metaOf(complete)['ahpd.startedAt'] as string));
-  // The kind a shell call carries rides along rather than being replaced.
-  expect(metaOf(complete).toolKind).toBe('terminal');
+  // The ready carries the kind alone.
+  expect(metaOf(ready.get('toolu_bash'))).toEqual({ toolKind: 'terminal' });
+  // The completion and the call itself carry how long it ran, beside the kind
+  // a shell call carries, on the key VS Code's client reads.
+  expect(metaOf(complete)).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
+  expect(metaOf(held.get('toolu_bash'))).toEqual(metaOf(complete));
 });
 
-it('carries the times on the progress a running call says', async () => {
+it('says no times on the progress a running call says', async () => {
   const frames = [
     ...opened,
     { type: 'system', parent_tool_use_id: null, uuid: 's1', subtype: 'task_progress', tool_use_id: 'toolu_bash', summary: 'Listing files' },
@@ -442,16 +485,14 @@ it('carries the times on the progress a running call says', async () => {
   ];
   const { sent } = await live(frames);
   const progress = actionOf(sent, 'chat/toolCallContentChanged', 'toolu_bash');
-  expect(metaOf(progress).progressMessage).toBe('Listing files');
-  expect(metaOf(progress)['ahpd.startedAt']).toEqual(expect.any(String));
-  // And the progress line is gone with the completion, which keeps the times.
-  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash')).progressMessage).toBeUndefined();
+  expect(metaOf(progress)).toEqual({ toolKind: 'terminal', progressMessage: 'Listing files' });
+  // And the progress line is gone with the completion, which says the duration.
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
-it('starts an approved call when it was approved, not at the ready before the question', async () => {
+it('measures an approved call from when it was approved, not from the ready before the question', async () => {
   let now = 1_700_000_000_000;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
-  const openedAt = new Date(now).toISOString();
   let held: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { held = resolve; });
   const { sent, session } = await live(opened, () => {
@@ -459,23 +500,19 @@ it('starts an approved call when it was approved, not at the ready before the qu
     void sdk.canUseTool?.('Bash', bash.input, { toolUseID: 'toolu_bash' });
   });
   now += 30_000;
-  const approvedAt = new Date(now).toISOString();
   session.confirm('toolu_bash', true);
   await settle();
-  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
-  expect(metaOf(sent.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === 'toolu_bash'))['ahpd.startedAt']).toBe(openedAt);
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(approvedAt);
   // The completion measures from the approval, not from the ready.
   sdk.pushed.push(result('toolu_bash', 'u2'));
   now += 1000;
   held?.();
   await settle();
-  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))['ahpd.durationMs']).toBe(1000);
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))['vscode.toolCallDurationMs']).toBe(1000);
   clock.mockRestore();
   sdk.hold = Promise.resolve();
 });
 
-it('says no times for a call a person denied', async () => {
+it('says no confirmation of its own and no duration for a call a person denied', async () => {
   let held: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { held = resolve; });
   const { held: calls, sent, session } = await live(opened, () => {
@@ -483,21 +520,17 @@ it('says no times for a call a person denied', async () => {
   });
   session.confirm('toolu_bash', false);
   await settle();
-  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
-  expect(metaOf(confirmed)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(confirmed)['ahpd.endedAt']).toBeUndefined();
-  expect(metaOf(confirmed)['ahpd.durationMs']).toBeUndefined();
-  // The kind it was announced with is all a call that never ran has left.
-  expect(metaOf(confirmed).toolKind).toBe('terminal');
-  expect(metaOf(calls.get('toolu_bash'))['ahpd.startedAt']).toBeUndefined();
-  // And the result the harness sends for it carries none either.
+  // The confirmation is the client's, which the host says as it was sent.
+  expect(actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash')).toBeUndefined();
+  // The kind it was announced with is all a call that never ran has.
+  expect(metaOf(calls.get('toolu_bash'))).toEqual({ toolKind: 'terminal' });
+  // And the result the harness sends for it says no duration either.
   sdk.pushed.push(result('toolu_bash', 'u2'));
   held?.();
   await settle();
   const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
   expect(complete).toBeDefined();
-  expect(metaOf(complete)['ahpd.startedAt']).toBeUndefined();
-  expect(metaOf(complete)['ahpd.durationMs']).toBeUndefined();
+  expect(metaOf(complete)).toEqual({ toolKind: 'terminal' });
   sdk.hold = Promise.resolve();
 });
 
@@ -514,11 +547,10 @@ it('never writes a bare timing key on a tool call', async () => {
 /*
  * An answered question, live.
  *
- * A client draws the questions and what was picked from the call itself, so a
- * completed AskUserQuestion carries the input the tool ran with: its questions
- * plus the answers, keyed by each question's own text and a multi-select as an
- * array. A question nobody answered carries no answers and keeps its input as
- * sent.
+ * The tool runs with its questions plus the answers, keyed by each question's
+ * own text and a multi-select as an array, and a client draws what was picked
+ * from the turn's input request part. A question nobody answered keeps its
+ * input as sent.
  */
 
 const asked = {
@@ -530,18 +562,19 @@ const asked = {
 const picked = { 'Which colour?': 'Red', 'Which sizes?': ['S', 'L'] };
 /** What a client settles a question with, which carries the answers two levels in. */
 const said = {
-  q1: { state: 'submitted', value: { kind: 'selected', value: 'Red' } },
-  q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+  Colour: { state: 'submitted', value: { kind: 'selected', value: 'Red' } },
+  Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
 };
 
 /** The question asked and then answered, or not, and the result the CLI sent. */
-async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Session; held: Map<string, Bag>; part: Bag | undefined }> {
+async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Session; held: Map<string, Bag>; part: Bag | undefined; decision: Promise<unknown> | undefined }> {
   let woken: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { woken = resolve; });
+  let decision: Promise<unknown> | undefined;
   const { sent, session, held } = await live([
     { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
   ], () => {
-    void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+    decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
   });
   session.answer('toolu_ask', accepted, said);
   await settle();
@@ -565,20 +598,44 @@ async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Sessio
   woken?.();
   await settle();
   sdk.hold = Promise.resolve();
-  return { sent, session, held, part };
+  return { sent, session, held, part, decision };
 }
 
-it('carries the questions and the answers of a live answered question', async () => {
-  const { sent, held } = await asking(true);
-  const answered = { questions: asked.questions, answers: picked };
-  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).toMatchObject({ structuredContent: answered });
-  expect(held.get('toolu_ask')?.structuredContent).toEqual(answered);
+/*
+ * An answered question reaches the tool with its answers, and the call
+ * completes with the tool's text alone, the answers staying on the request
+ * part; a question nobody answered is denied in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L14
+ */
+it('completes a live answered question with its text alone, the answers on its request part', async () => {
+  const { sent, held, part, decision } = await asking(true);
+  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: picked } });
+  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
+  expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
+  expect(((part?.request as Bag | undefined)?.answers)).toBeDefined();
   // The input stays what the model sent, which has no answers in it.
   expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
 });
 
-it('carries no answers for a live question nobody answered', async () => {
-  const { sent, held } = await asking(false);
+it('holds a part-way answer on the request, and says nothing of the client\'s answer', async () => {
+  sdk.hold = new Promise<void>(() => {});
+  const { sent, session } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+  ], () => {
+    void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+  });
+  expect(session.setAnswer?.('toolu_ask', 'Colour', said.Colour as never)).toBe(true);
+  // The client's answer is the host's to say, as the client sent it.
+  expect(sent.some((one) => one.type === 'chat/inputAnswerChanged')).toBe(false);
+  // A client that arrives now reads it off the request.
+  const needed = (session.sessionState().inputNeeded ?? []) as Bag[];
+  expect((needed.find((one) => one.kind === 'chatInput')?.request as Bag | undefined)?.answers).toEqual({ Colour: said.Colour });
+  sdk.hold = Promise.resolve();
+});
+
+it('denies a live question nobody answered in VS Code\'s words, and carries no answers', async () => {
+  const { sent, held, decision } = await asking(false);
+  expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
@@ -600,17 +657,11 @@ const answerWith = (toolUseResult?: Bag): Record<string, unknown> => ({
   ...(toolUseResult === undefined ? {} : { toolUseResult }),
 });
 
-it('carries the questions and the answers of a replayed answered question', async () => {
+it('reads a replayed answered question back with its text alone, as it completed live', async () => {
   const back = await restored([ask], [answerWith({ questions: asked.questions, answers: picked })]);
-  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
+  expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
   // The input stays what the model sent, which has no answers in it.
   expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
-});
-
-it('carries the same object live and replayed when the input holds more than its questions', async () => {
-  const wider = { ...ask, input: { ...asked, metadata: { source: 'plan' } } };
-  const back = await restored([wider], [answerWith({ questions: asked.questions, answers: picked })]);
-  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
 });
 
 it('carries no answers for a replayed question that was never answered', async () => {
@@ -658,28 +709,36 @@ it('draws no question for a restored one that was never answered', async () => {
 });
 
 /*
- * Each question's header, as its title.
+ * Each question's header, as its key and its title.
  *
  * AskUserQuestion gives every question a short `header`, and a client draws it
- * above the question as the question's `title`. The request's own line stays
- * the default one: the input has no header of its own.
+ * above the question as the question's `title`.
  */
 
-it('titles each question by its header, and leaves a question with none untitled', () => {
+/*
+ * The request as VS Code's Claude agent builds it: each question keyed by its
+ * header, or `q-<index>` with none, typed answers only where a question allows
+ * them, no request message and nothing required, and the AskUser purpose.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L89-L125
+ */
+it('keys and titles each question by its header, as VS Code\'s Claude builds the request', () => {
   const { request, asked: keys } = questionRequest({
     header: 'Not a field AskUserQuestion has',
     questions: [
       { question: 'Which colour?', header: 'Colour', options: [{ label: 'Red' }] },
-      { question: 'Which size?', options: [{ label: 'S' }] },
+      { question: 'Which size?', options: [{ label: 'S' }], allowFreeformInput: true },
       { question: 'Which shape?', header: 'Shape', multiSelect: true, options: [{ label: 'Round' }] },
     ],
   }, 'toolu_ask');
-  expect(request.message).toBe('The agent has a question');
-  expect(request.questions?.map((one) => one.id)).toEqual(['q1', 'q2', 'q3']);
+  expect(request).not.toHaveProperty('message');
+  expect((request as unknown as Bag)._meta).toEqual({ purpose: 'askUser' });
+  expect(request.questions?.map((one) => one.id)).toEqual(['Colour', 'q-1', 'Shape']);
   expect(request.questions?.map((one) => one.message)).toEqual(['Which colour?', 'Which size?', 'Which shape?']);
   expect(request.questions?.map((one) => one.title)).toEqual(['Colour', undefined, 'Shape']);
   expect(request.questions?.[1]).not.toHaveProperty('title');
-  expect([...keys.entries()]).toEqual([['q1', 'Which colour?'], ['q2', 'Which size?'], ['q3', 'Which shape?']]);
+  expect(request.questions?.map((one) => (one as Bag).allowFreeformInput)).toEqual([false, true, false]);
+  for (const one of request.questions ?? []) expect(one).not.toHaveProperty('required');
+  expect([...keys.entries()]).toEqual([['Colour', 'Which colour?'], ['q-1', 'Which size?'], ['Shape', 'Which shape?']]);
 });
 
 it('titles a live question and its restored part by the same headers', async () => {
@@ -701,7 +760,7 @@ it('titles a live question and its restored part by the same headers', async () 
  */
 
 /** What the tool is handed for one answer, synced first or carried by the completion. */
-async function toolReads(question: 'q1' | 'q2', value: Bag, synced: boolean): Promise<unknown> {
+async function toolReads(question: 'Colour' | 'Size', value: Bag, synced: boolean): Promise<unknown> {
   let decision: Promise<unknown> | undefined;
   const { session } = await live([
     { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
@@ -717,19 +776,19 @@ async function toolReads(question: 'q1' | 'q2', value: Bag, synced: boolean): Pr
     session.answer('toolu_ask', true, { [question]: answer });
   }
   const settled = await decision as { updatedInput: { answers: Record<string, unknown> } };
-  return settled.updatedInput.answers[question === 'q1' ? 'Which colour?' : 'Which sizes?'];
+  return settled.updatedInput.answers[question === 'Colour' ? 'Which colour?' : 'Which sizes?'];
 }
 
 for (const synced of [true, false]) {
   const how = synced ? 'a synced answer' : 'a completion\'s own answer';
   it(`joins a selection and the text beside it, through ${how}`, async () => {
-    expect(await toolReads('q1', { kind: 'selected', value: 'Blue', freeformValues: ['teal'] }, synced)).toBe('Blue, teal');
+    expect(await toolReads('Colour', { kind: 'selected', value: 'Blue', freeformValues: ['teal'] }, synced)).toBe('Blue, teal');
   });
   it(`joins a multiple selection and the text beside it, through ${how}`, async () => {
-    expect(await toolReads('q2', { kind: 'selected-many', value: ['A', 'B'], freeformValues: ['c'] }, synced)).toBe('A, B, c');
+    expect(await toolReads('Size', { kind: 'selected-many', value: ['A', 'B'], freeformValues: ['c'] }, synced)).toBe('A, B, c');
   });
   it(`hands a text answer over as its text, through ${how}`, async () => {
-    expect(await toolReads('q1', { kind: 'text', value: 'teal' }, synced)).toBe('teal');
+    expect(await toolReads('Colour', { kind: 'text', value: 'teal' }, synced)).toBe('teal');
   });
 }
 
@@ -741,8 +800,8 @@ it('records the joined answer as what the tool ran with', async () => {
     decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
   });
   session.answer('toolu_ask', true, {
-    q1: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
-    q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+    Colour: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
+    Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
   });
   expect(await decision).toEqual({
     behavior: 'allow',
@@ -783,7 +842,9 @@ it('closes a confirmation the SDK cancels, and answers the tool with a deny', as
   expect(entriesOf(sent, 'session/inputNeededSet', 'toolu_cancelled')).toHaveLength(1);
 
   abort();
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // Declined, as VS Code's bridge answers a parked confirmation its signal aborted.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L113
+  expect(await decision).toEqual({ behavior: 'deny', message: 'User declined' });
   // And the entry goes with the answer, so no client is left drawing a question
   // that changes nothing.
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_cancelled')).toHaveLength(1);
@@ -794,19 +855,20 @@ it('closes a question the SDK cancels', async () => {
   expect(entriesOf(sent, 'session/inputNeededSet', 'toolu_ask_cancelled')).toHaveLength(1);
 
   abort();
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // Cancelled, as VS Code's bridge answers a parked question its signal aborted.
+  expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_ask_cancelled')).toHaveLength(1);
 });
 
-it('removes an entry once when an answer came before the abort', async () => {
+it('takes no entry down for a confirmation, which the host takes down by the chat\'s state, nor at an abort after it', async () => {
   const { sent, session, abort } = await abortable('Bash', { command: 'ls' }, 'toolu_both');
   session.confirm('toolu_both', true);
   await settle();
   abort();
   await settle();
-  // The abort reaches a question the answer already took away, and adding
-  // nothing is the whole of what it does.
-  expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_both')).toHaveLength(1);
+  // The host said the confirmation that moved the call, and took the entry
+  // down with it; the abort reaches a question the answer already took away.
+  expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_both')).toHaveLength(0);
 });
 
 /*
@@ -862,7 +924,8 @@ it('puts nothing on the chat for a call whose signal is already aborted', async 
   const { sent } = await live([], () => {
     decision = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_gone', signal: held.signal });
   });
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
+  expect(await decision).toEqual({ behavior: 'deny', message: 'SDK aborted the tool request' });
   expect(sent.filter((one) => one.type === 'session/inputNeededSet' || one.type === 'chat/toolCallStart'))
     .toEqual([]);
 });

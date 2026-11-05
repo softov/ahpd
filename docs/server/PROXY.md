@@ -6,13 +6,27 @@ A provider is a connector of one of the four adapters the host ships. Its key is
 
 ## Turning it on
 
-The proxy is served under `/v1` on the listener that carries the [HTTP API](REMOTE.md#http-api), and only while `httpApi` is on:
+The proxy is the model API. It is served under `/v1` and at the root paths only while `modelApi` is on:
 
-```json
-{ "httpApi": true }
+```bash
+ahpd config set modelApi true
 ```
 
-With `httpApi.port` it moves with `/api` to the API's own port. With `httpApi` off, `/v1` answers 404 as `/api` does.
+`modelApi` and `httpApi` are two gates on the same token. Each one is on or off on its own:
+
+| `httpApi` | `modelApi` | Served |
+| --- | --- | --- |
+| on | off | `/api` and `/mcp`; the model paths answer 404 |
+| off | on | the model paths; `/api` answers 404 |
+| on | on | both |
+
+`modelApi: true` is served on the listener of the HTTP API, or on the daemon's port when `httpApi` is off. A port gives it a listener of its own:
+
+```bash
+ahpd config set modelApi '{"port":9300}'
+```
+
+A `host` binds that listener, and needs a `port`. Restart the daemon after a change.
 
 ## Pointing a tool at it
 

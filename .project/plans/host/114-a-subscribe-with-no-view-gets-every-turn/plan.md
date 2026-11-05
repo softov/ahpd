@@ -1,7 +1,7 @@
 ---
 title: A subscribe with no view gets every turn
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-22
 revalidated: 2026-10-28
@@ -37,8 +37,8 @@ refs:
   - "[code://UPSTREAM.md](../../../../UPSTREAM.md) - Pass 7, \"Large chats\", holds the box this plan closes"
   - https://github.com/microsoft/vscode/blob/1.143.1/src/vs/platform/agentHost/node/protocolServerHandler.ts - VS Code's host reads no `view` at subscribe, and answers `fetchTurns` with an empty `chat/turnsLoaded`
   - https://github.com/microsoft/vscode/blob/1.143.1/src/vs/platform/agentHost/node/shared/sessionServerTools.ts - VS Code's `get_session_context` takes every turn of the state and cuts it with `transcriptLimit`
-  - https://github.com/softov/ahpc/blob/4741023/src/ahp/live.ts#L1960-L1990 - ahpc subscribes with no view, and sends `fetchTurns` with the cursor it holds or with none
-  - https://github.com/softov/ahpc/blob/4741023/src/ahp/live.ts#L2876-L2890 - ahpc asks for older turns once, only when the snapshot has no turns and has a cursor
+  - https://github.com/ahpio/ahpc/blob/4741023/src/ahp/live.ts#L1960-L1990 - ahpc subscribes with no view, and sends `fetchTurns` with the cursor it holds or with none
+  - https://github.com/ahpio/ahpc/blob/4741023/src/ahp/live.ts#L2876-L2890 - ahpc asks for older turns once, only when the snapshot has no turns and has a cursor
   - https://github.com/softov/ahpw/blob/e9d6320/src/resources/sessions/Page.tsx#L133-L296 - ahpw subscribes with no view, and shows "older" only while the state has a cursor
 ---
 
@@ -112,11 +112,11 @@ subscribe {channel: ahp-chat:/..., view?} -> sessionmethods.subscribe -> snapsho
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The cut is shown](task-01-the-cut-is-shown.md) | implemented | - |
-| [02 - A snapshot follows the subscribe's view](task-02-a-snapshot-follows-the-subscribes-view.md) | implemented | 01 |
-| [03 - Claude's chat state holds every turn](task-03-claudes-chat-state-holds-every-turn.md) | implemented | 02 |
-| [04 - The docs say every turn without a view](task-04-the-docs-say-every-turn-without-a-view.md) | implemented | 02, 03 |
-| [05 - A window shows every turn](task-05-a-window-shows-every-turn.md) | implemented | 03 |
+| [01 - The cut is shown](task-01-the-cut-is-shown.md) | done | - |
+| [02 - A snapshot follows the subscribe's view](task-02-a-snapshot-follows-the-subscribes-view.md) | done | 01 |
+| [03 - Claude's chat state holds every turn](task-03-claudes-chat-state-holds-every-turn.md) | done | 02 |
+| [04 - The docs say every turn without a view](task-04-the-docs-say-every-turn-without-a-view.md) | done | 02, 03 |
+| [05 - A window shows every turn](task-05-a-window-shows-every-turn.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -128,15 +128,13 @@ subscribe {channel: ahp-chat:/..., view?} -> sessionmethods.subscribe -> snapsho
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-22 from Softov's choice of the Pass 7 finding. The refs were checked against main `343ca825` on 2026-10-28, and the gap is still there. VS Code main `2398c3f7c7c` was checked on 2026-10-28: a subscribe still reads no view, and `fetchTurns` still answers no older turns. Softov answered the three open questions on 2026-10-22. The check by hand is written in [`pending/host-114-turn-cut-checks.md`](../../../pending/host-114-turn-cut-checks.md). Task 01 shows the cut: two `it.fails` cases read 50 turns of 120 and of 121. Its check by hand was not run yet. Task 02 makes the host follow the view: a snapshot with no view is whole, and `fetchTurns` with no cursor answers nothing. Task 03 gives every turn from Claude's chat state, so a live chat is cut by the host alone. Task 04 corrects the docs and ticks the Pass 7 box. Task 05 writes the section after the fix in the pending check.
-- **Next action:** Softov's review, then the check by hand in a window, which is the last item of task 05.
-- **Open questions:** none.
-- **Watch out for:** the number 113 is taken by another host plan, so this plan is 114. The paging cases in `host-catalogue.test.ts` must still cover the cursor, so they subscribe with a view after task 02.
+- **Done so far:** built, and Softov checked it by hand in a VS Code window on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
 - [x] A subscribe with no view to a chat of 120 turns gets 120 turns and no cursor. This is true for a live chat and for a chat that is not running.
 - [x] A subscribe with a view gets a window and a cursor, and `fetchTurns` walks back to the first turn.
 - [x] `pnpm -s build`, `pnpm -s typecheck`, `pnpm -s boundary` and `pnpm test` pass.
-- [ ] The check by hand in a VS Code 1.143 window shows the first message of a long session.
+- [x] The check by hand in a VS Code 1.143 window shows the first message of a long session.
 - [x] The Pass 7 box in `UPSTREAM.md` is ticked.

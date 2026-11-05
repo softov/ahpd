@@ -185,7 +185,12 @@ it('marks a failed model call resumable, on chat/error and on the turn', async (
   sdk.push(notice, result);
   await settle();
 
-  const part = { kind: 'error', error: { errorType: 'turnFailed', message: WORDS }, resumable: true };
+  /*
+   * Typed by the result's subtype, as VS Code's Claude mapper types a failed
+   * result.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L541-L544
+   */
+  const part = { kind: 'error', error: { errorType: 'success', message: WORDS }, resumable: true };
   expect(chat.filter((one) => one.type === 'chat/error').at(-1)?.part).toEqual(part);
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
   // A `success` the CLI says failed is a turn in error, so it can be resumed.
@@ -205,8 +210,53 @@ it('does not mark a turn refused before the CLI resumable', async () => {
 
   const part = chat.find((one) => one.type === 'chat/error')?.part as Bag;
   expect(String(bag(part.error).message)).toContain('the CLI went away');
+  expect(bag(part.error).errorType).toBe('sendFailed');
   expect(part.resumable).toBeUndefined();
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+/*
+ * A failure outside a result is typed by the stage it happened at, as VS
+ * Code's host types a send that failed: `sendFailed`, for a turn whose CLI was
+ * gone before it and for one whose CLI ended under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2575
+ */
+it('types a failure outside a result as a failed send', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'));
+  await settle();
+  // The CLI ends under the turn, and the CLI after it is gone before the next.
+  sdk.queries.at(-1)?.close();
+  await settle();
+  sdk.failing = new Error('the CLI went away');
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => [one.turnId, bag(bag(one.part).error).errorType]))
+    .toEqual([['t1', 'sendFailed'], ['t2', 'sendFailed']]);
+});
+
+/*
+ * A turn handed behind a turn that never reached the CLI is a send of its own
+ * and goes on, as the reference host hands each start to its agent and its
+ * Claude agent sends them one after another.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+ */
+it('ends the turn handed behind a refused turn too, and leaves neither waiting', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  sdk.failing = new Error('the CLI went away');
+  sdk.queries.at(-1)?.close();
+  await settle();
+  session.sendMessage('t1', 'one');
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => one.turnId)).toEqual(['t1', 't2']);
+  expect(sdk.said).toEqual([]);
 });
 
 /*
@@ -398,16 +448,103 @@ it('refuses a turn that cannot be resumed', async () => {
   // A turn that did not fail.
   expect(() => older.session.resumeTurn?.('t2')).toThrow();
 
-  // A turn that failed with nothing to run again on, whose part says so.
+});
+
+/*
+ * A CLI that went before the next turn, by an error or a stream that ended
+ * without a result: the turn it was answering fails, and the next send starts
+ * a CLI that resumes the conversation, as VS Code's pipeline fails its pending
+ * sends and rebinds at the next.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
+ */
+it('fails the turn a CLI died under in its own words, and starts one again for the next turn', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.failing = new Error('The CLI died');
+  sdk.push();
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => bag(bag(one.part).error).message)).toEqual(['The CLI died']);
+  sdk.failing = undefined;
+  const before = sdk.queries.length;
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(sdk.queries).toHaveLength(before + 1);
+  expect((session.chatState() as Bag).activeTurn).toMatchObject({ id: 't2' });
+});
+
+it('starts a CLI again for the turn after one that went, and runs the turn on it', async () => {
   sdk.reset();
   const gone = live();
   await settle();
   sdk.queries.at(-1)?.close();
   await settle();
+  const before = sdk.queries.length;
   gone.session.sendMessage('t1', 'one');
   await settle();
-  const turns = (gone.session.chatState() as Bag).turns as Bag[];
-  expect((bag(turns.at(-1)).responseParts as Bag[]).at(-1)?.resumable).toBeUndefined();
-  expect(() => gone.session.resumeTurn?.('t1')).toThrow();
+  expect(sdk.queries).toHaveLength(before + 1);
+  expect((gone.session.chatState() as Bag).activeTurn).toMatchObject({ id: 't1' });
+  sdk.push(step('a1'), worked);
+  await settle();
+  expect(bag(((gone.session.chatState() as Bag).turns as Bag[]).at(-1)).state).toBe('complete');
+});
+
+/*
+ * A result fails its turn as VS Code's Claude mapper reads one: a `success`
+ * the CLI says failed and an `error_during_execution`; a turn or budget limit
+ * the CLI stopped at completes the turn. Its duration is the time from the
+ * send on this host's clock, as VS Code's pipeline completes a turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L684-L693
+ */
+it('completes a turn the CLI stopped at a limit, measured on this host', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  const sent = Date.now();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'), { ...result, subtype: 'error_max_turns', is_error: true, errors: [], duration_ms: 600000 });
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
+  const ended = chat.find((one) => one.type === 'chat/turnComplete' && one.turnId === 't1');
+  expect(Number(ended?.duration)).toBeLessThanOrEqual(Date.now() - sent);
+  expect(bag((session.chatState().turns as Bag[]).at(-1)).state).toBe('complete');
+});
+
+it('fails a turn whose result is an error during execution, typed by it, in its errors', async () => {
+  sdk.reset();
+  const { chat, session } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.push(step('a1'), { ...result, subtype: 'error_during_execution', is_error: true, errors: ['API Error: 500', 'again'] });
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => bag(bag(one.part).error)))
+    .toEqual([{ errorType: 'error_during_execution', message: 'API Error: 500\nagain' }]);
+});
+
+/*
+ * A CLI running on its own, with no prompt pending, opens no turn a client did
+ * not start: its lead frames are dropped, as VS Code's Claude router maps a
+ * frame only to the prompt it answers, and a question it asks is refused, as
+ * VS Code's host rejects a permission without an active turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L82-L84
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+ */
+it('opens no turn for a lead frame no prompt is pending for, and refuses its question', async () => {
+  sdk.reset();
+  const { chat, session } = live();
+  await settle();
+  sdk.push(step('a1'), worked);
+  await settle();
+  expect(chat).toEqual([]);
+  expect((session.chatState() as Bag).activeTurn).toBeUndefined();
+  const canUseTool = sdk.queries.at(-1)?.options.canUseTool as (name: string, input: Bag, about: Bag) => Promise<Bag>;
+  expect(await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'toolu_alone', signal: new AbortController().signal }))
+    .toMatchObject({ behavior: 'deny' });
+  expect(chat).toEqual([]);
 });
 

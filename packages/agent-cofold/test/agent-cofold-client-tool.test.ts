@@ -221,9 +221,11 @@ it('offers a client tool, reports its call against that client and waits', async
   // Offered to the model under the name the host gave it.
   expect(model.requests[0]?.tools.map((one) => one.name)).toContain('probe__openFile');
 
-  // Reported with the client as the call's contributor.
+  // Reported with the client as the call's contributor, and named by the name
+  // the client announced, as VS Code's agents strip their client tool prefix.
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
-  expect(start?.action.toolName).toBe('probe__openFile');
+  expect(start?.action.toolName).toBe('openFile');
+  expect(start?.action.displayName).toBe('Open a file');
   expect(start?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
   const ready = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady');
   expect(ready?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });

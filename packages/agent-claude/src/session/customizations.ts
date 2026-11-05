@@ -66,7 +66,8 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    * `ChildCustomizationType` and a scope is where a person goes to add one.
    * The CLI reports *what* it loaded and never where it came from, so a leaf
    * names the file the disk read found under the same name, in the order the
-   * CLI prefers them: managed over personal over project. What has no file - a
+   * CLI prefers them: a skill managed over personal over project, an agent
+   * managed over project over personal. What has no file - a
    * skill or command the CLI ships, an agent of its own - goes in a read-only
    * `builtin` container with an internal uri, which says it exists without
    * claiming a file for it.
@@ -90,7 +91,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       return project === undefined ? undefined : { uri: uriOf(join(project, folder)), name: folder, writable: true };
     }
     if (scope === 'synced') return { uri: uriOf(join(disk.configDir, 'skills', 'synced')), name: 'synced', writable: false };
-    return disk.managedDir === undefined ? undefined : { uri: uriOf(join(disk.managedDir, '.claude', 'skills')), name: 'managed', writable: false };
+    return disk.managedDir === undefined ? undefined : { uri: uriOf(join(disk.managedDir, '.claude', folder)), name: 'managed', writable: false };
   };
   const directories = new Map<string, Bag>();
   /** The container for one scope and kind, made the first time it is asked for. */
@@ -112,7 +113,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   const writable: Placed[] = disk === undefined ? [] : projectDirOf(disk) !== undefined ? ['project', 'user'] : ['user'];
   const sent: [Placed, DiskKind][] = [
     ...writable.flatMap((scope) => (['agent', 'skill', 'prompt', 'rule'] as DiskKind[]).map((kind) => [scope, kind] as [Placed, DiskKind])),
-    ['managed', 'skill'], ['synced', 'skill'], ['builtin', 'skill'], ['builtin', 'prompt'], ['builtin', 'agent'],
+    ['managed', 'skill'], ['managed', 'agent'], ['synced', 'skill'], ['builtin', 'skill'], ['builtin', 'prompt'], ['builtin', 'agent'],
   ];
   for (const scope of writable) for (const kind of ['agent', 'skill', 'prompt', 'rule'] as DiskKind[]) directoryOf(scope, kind);
   /** The file the CLI read a name from, in the order it prefers one scope over another. */
@@ -306,7 +307,12 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     if (name === 'general-purpose') continue;
     const plugin = pluginOf(name);
     const own = plugin === undefined ? name : bare(plugin, name);
-    const file = plugin === undefined ? fileOf('agent', name, ['user', 'project']) : undefined;
+    /*
+     * Managed, then the project's, then the person's: the order the CLI ranks
+     * a subagent of one name in.
+     * https://code.claude.com/docs/en/sub-agents
+     */
+    const file = plugin === undefined ? fileOf('agent', name, ['managed', 'project', 'user']) : undefined;
     const inPlugin = plugin === undefined ? undefined : join(str(plugin.path) ?? '', 'agents', `${own}.md`);
     const at = file !== undefined ? uriOf(file.path)
       : inPlugin !== undefined && existsSync(inPlugin) ? inPlugin

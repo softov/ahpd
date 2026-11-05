@@ -1,14 +1,14 @@
 {
   "meta": {
     "title": "Agente ACP",
-    "description": "Conecta qualquer agente compatível com ACP, incluindo Copilot, Codex, Gemini e servidores ACP próprios."
+    "description": "Execute qualquer agente ACP, incluindo Copilot, Codex, Gemini e servidores ACP próprios."
   },
   "options": {
     "hostTools": {
-      "description": "Oferece as ferramentas do próprio host a cada sessão como um servidor MCP; ligado por padrão."
+      "description": "Oferece as ferramentas do host a cada sessão como servidor MCP. Ativado por padrão. Cada agente pode alterar."
     },
     "toolsChanged": {
-      "description": "Como o agente de cada sessão fica sabendo que as ferramentas que listou mudaram, acima da configuração de cada registro: notify envia notifications/tools/list_changed por um stream que o host mantém aberto, list não avisa e deixa para o próximo tools/list do agente. Os dois servem a lista atual; o padrão é notify."
+      "description": "Como um agente fica sabendo que sua lista de ferramentas mudou. 'notify' (padrão) envia notifications/tools/list_changed; 'list' não envia nada e espera o próximo tools/list do agente. Cada agente pode alterar."
     }
   },
   "session": {

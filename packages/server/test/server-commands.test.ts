@@ -269,18 +269,18 @@ describe('--plugin-option', () => {
 
   it('finds a scoped name and a path by asking the list, not by counting dots', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['@ahpd/agent-claude', './p/index.ts'] }));
-    expect(plugins({ pluginOptions: ['@ahpd/agent-claude.workerStop=session', './p/index.ts.mode=fast'] })).toEqual([
-      { source: '@ahpd/agent-claude', options: { workerStop: 'session' } },
+    expect(plugins({ pluginOptions: ['@ahpd/agent-claude.computerCli=host', './p/index.ts.mode=fast'] })).toEqual([
+      { source: '@ahpd/agent-claude', options: { computerCli: 'host' } },
       { source: './p/index.ts', options: { mode: 'fast' } },
     ]);
   });
 
   it('sets a key deep into the entry\'s options and leaves the others as they are', () => {
     writeFileSync(config, JSON.stringify({
-      plugins: [{ name: '@ahpd/agent-claude', options: { presets: { x: { model: 'opus' }, y: { model: 'sonnet' } }, workerStop: 'session' } }],
+      plugins: [{ name: '@ahpd/agent-claude', options: { presets: { x: { model: 'opus' }, y: { model: 'sonnet' } }, computerCli: 'host' } }],
     }));
     expect(plugins({ pluginOptions: ['@ahpd/agent-claude.presets.x.model=haiku'] })).toEqual([
-      { source: '@ahpd/agent-claude', options: { presets: { x: { model: 'haiku' }, y: { model: 'sonnet' } }, workerStop: 'session' } },
+      { source: '@ahpd/agent-claude', options: { presets: { x: { model: 'haiku' }, y: { model: 'sonnet' } }, computerCli: 'host' } },
     ]);
   });
 
@@ -890,6 +890,8 @@ describe('what a served command says it does', () => {
       ['automation.import', 'add', { kind: 'automation' }],
       ['automation.list', 'read', { kind: 'automation' }],
       ['daemon.config', 'read', null],
+      ['daemon.config.set', 'change', null],
+      ['daemon.config.unset', 'change', null],
       ['daemon.restart', 'change', null],
       ['daemon.status', 'read', null],
       ['daemon.update', 'change', null],

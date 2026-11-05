@@ -1,5 +1,5 @@
 import type { Bag, OnWire } from '@ahpd/sdk';
-import { bag, str } from '@ahpd/sdk';
+import { appendEscapedMarkdownInlineCode, bag, str, truncate } from '@ahpd/sdk';
 import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMarkdown } from '@microsoft/agent-host-protocol';
 
 /**
@@ -10,31 +10,6 @@ import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMark
  */
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-
-/**
- * What a tool call is *about*, in one line.
- *
- * The only thing separating twenty identical rows, so it is worth doing per
- * tool: `Bash` is its command, the file tools are their path, AskUserQuestion
- * its first question, WebFetch its url, WebSearch its query, and an MCP tool
- * its first string argument. Any other tool has no subject, and its row reads
- * the display name: a row reading `{"file_path":"/very/long/…","offset":0}` is
- * a row nobody reads.
- */
-export function summarize(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  if (name === 'Read' || name === 'Write' || name === 'Edit') return str(input.file_path);
-  if (name === 'Glob' || name === 'Grep') return str(input.pattern);
-  if (name === 'Task' || name === 'Agent') return str(input.description);
-  if (name === 'AskUserQuestion') {
-    const first: unknown = Array.isArray(input.questions) ? input.questions[0] : undefined;
-    return typeof first === 'object' && first !== null ? str((first as Bag).question) : undefined;
-  }
-  if (name === 'WebFetch') return str(input.url);
-  if (name === 'WebSearch') return str(input.query);
-  if (name.startsWith('mcp__')) return Object.values(input).find((value): value is string => typeof value === 'string');
-  return undefined;
-}
 
 /**
  * A call's `toolInput`: its whole input as JSON, which a client parses.
@@ -71,14 +46,16 @@ export function titleOf(description: string | undefined, agentType: string | und
 
 /**
  * The carousel an `AskUserQuestion` asks for, and the map its answers are read
- * back through.
+ * back through, as VS Code's Claude agent builds it.
  *
- * The questions keyed `q1`..`qN` in the order they were asked, each titled by
- * its `header` when it has one and an option list keyed by the label the SDK
- * wants the answer valued by. The request's line is the default one, since
- * AskUserQuestion has no header of its own above its questions. The map is from
- * each question's key to the question's own text, which is what an answer is
- * keyed by.
+ * Each question keyed by its `header`, or `q-<index>` for one with none, and
+ * titled by its header, with an option list keyed by the label the SDK wants
+ * the answer valued by and a typed answer only where the question allows one.
+ * The request is the call's id and its questions, marked with the AskUser
+ * purpose in its `_meta`. The map is from each question's key to the
+ * question's own text, which is what an answer is keyed by.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L89-L125
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L292-L295
  *
  * One builder for the question a person answers now and the one a transcript
  * draws after a restart, so the two are the same thing rather than two that
@@ -88,14 +65,13 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
   const asked = new Map<string, string>();
   const questions: OnWire<ChatInputQuestion>[] = list(input.questions).map((entry, index) => {
     const question = bag(entry);
-    const key = `q${index + 1}`;
-    asked.set(key, str(question.question) ?? '');
     const header = str(question.header);
+    const key = header || `q-${index}`;
+    asked.set(key, str(question.question) ?? '');
     const carousel = {
       id: key,
-      ...(header === undefined || header === '' ? {} : { title: header }),
+      ...(header === undefined ? {} : { title: header }),
       message: str(question.question) ?? '',
-      required: true,
       // The label is the id, because the label is what the SDK wants back:
       // answers are valued by the option's own label, not by an id.
       options: list(question.options).map((option) => {
@@ -111,13 +87,16 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
           ...(description === undefined ? {} : { description }),
         };
       }),
-      allowFreeformInput: true,
+      allowFreeformInput: question.allowFreeformInput === true,
     };
     return question.multiSelect === true
       ? { ...carousel, kind: 'multi-select' } satisfies OnWire<ChatInputQuestion>
       : { ...carousel, kind: 'single-select' } satisfies OnWire<ChatInputQuestion>;
   });
-  return { request: { id, message: 'The agent has a question', questions }, asked };
+  // `_meta` is no field of the request's type, and it rides the request as
+  // VS Code's own does: the protocol carries a request verbatim.
+  const request = { id, questions, _meta: { purpose: 'askUser' } };
+  return { request: request as OnWire<ChatInputRequest>, asked };
 }
 
 /**
@@ -152,19 +131,6 @@ const filled = (value: unknown): string | undefined => (typeof value === 'string
 
 const md = (markdown: string): StringOrMarkdown => ({ markdown });
 
-/** VS Code's `truncate`: the first `max` characters and `…`. */
-const truncate = (value: string, max: number): string => (value.length <= max ? value : `${value.slice(0, max)}…`);
-
-/**
- * VS Code's `appendEscapedMarkdownInlineCode`: inline code whose fence is one
- * backtick longer than any run in the text, padded when the text starts or
- * ends with a backtick.
- */
-const code = (text: string): string => {
-  const fence = '`'.repeat(Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length)) + 1);
-  return text.startsWith('`') || text.endsWith('`') ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
-};
-
 /** VS Code's `escapeMarkdownLinkLabel`. */
 const label = (text: string): string => text.replace(/[\\\]]/g, '\\$&');
 
@@ -197,9 +163,6 @@ const PATHS: Readonly<Record<string, string>> = {
   Read: 'file_path', NotebookRead: 'notebook_path', LS: 'path',
   Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path',
 };
-
-/** Tools whose `description` says what the call does, rather than being data it carries. */
-const DESCRIBED = new Set(['Bash', 'Task', 'Agent', 'Monitor']);
 
 /**
  * A text with one string replaced by another, or nothing when it is not there.
@@ -281,19 +244,17 @@ export function writeOf(name: string, input: Bag): { path: string; apply: (curre
 /**
  * The line a call's row draws while it runs, and on its confirmation card.
  *
- * The call's `description` for a tool whose description says what the call
- * does. Otherwise VS Code's line for the tools `getClaudeInvocationMessage`
- * maps, in its English and as markdown where it sends markdown. Otherwise the
- * subject from `summarize`, cut as VS Code's lines are, or the tool's name.
+ * VS Code's line for the tools `getClaudeInvocationMessage` maps, in its
+ * English and as markdown where it sends markdown, a `Task` or `Agent` call's
+ * own description, and the call's display name for any other tool.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L346-L455
  */
-export function lineOf(name: string, input: Bag): StringOrMarkdown {
-  const said = DESCRIBED.has(name) ? filled(input.description) : undefined;
-  if (said !== undefined) return said;
+export function lineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
   const path = PATHS[name] === undefined ? undefined : filled(input[PATHS[name]]);
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
-      return first ? md(`Running ${code(truncate(first, 80))}`) : 'Running shell command';
+      return first ? md(`Running ${appendEscapedMarkdownInlineCode(truncate(first, 80))}`) : 'Running shell command';
     }
     case 'BashOutput': return 'Reading shell output';
     case 'KillBash': return 'Kill shell command';
@@ -307,11 +268,11 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
     case 'TodoWrite': return 'Update todo list';
     case 'Grep': {
       const pattern = filled(input.pattern);
-      return pattern !== undefined ? md(`Search for ${code(truncate(pattern, 80))}`) : 'Search files';
+      return pattern !== undefined ? md(`Search for ${appendEscapedMarkdownInlineCode(truncate(pattern, 80))}`) : 'Search files';
     }
     case 'Glob': {
       const pattern = filled(input.pattern);
-      return pattern !== undefined ? md(`Find files matching ${code(truncate(pattern, 80))}`) : 'Find files';
+      return pattern !== undefined ? md(`Find files matching ${appendEscapedMarkdownInlineCode(truncate(pattern, 80))}`) : 'Find files';
     }
     case 'WebFetch': {
       const url = filled(input.url);
@@ -319,7 +280,7 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
     }
     case 'Skill': {
       const skill = filled(input.skill);
-      return skill !== undefined ? md(`Running skill ${code(truncate(skill, 80))}`) : 'Running skill';
+      return skill !== undefined ? md(`Running skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Running skill';
     }
     case 'TaskCreate': {
       const subject = filled(input.subject);
@@ -334,26 +295,25 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
       }
     case 'TaskList': return 'Read task list';
     case 'TaskGet': return 'Read task';
-    default: {
-      const subject = summarize(name, input)?.split('\n').find((line) => line.trim() !== '');
-      return subject === undefined ? name : truncate(subject, 80);
-    }
+    case 'Task':
+    case 'Agent': return filled(input.description) ?? displayName;
+    default: return displayName;
   }
 }
 
 /**
- * The line a call's row draws once it has ended, whether it succeeded or not:
- * a failure is the result's `success`, not its line.
- *
- * The same rule as {@link lineOf}, with VS Code's past tense for the tools
- * `getClaudePastTenseMessage` maps and the running line for the rest.
+ * The line a call's row draws once it has ended, as VS Code's
+ * `getClaudePastTenseMessage` words it: a failed call `"<display name>"
+ * failed`, and one that ran the past tense for the tools it maps and the
+ * running line for the rest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L536
  */
-export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
-  if (DESCRIBED.has(name) && filled(input.description) !== undefined) return lineOf(name, input);
+export function pastLineOf(name: string, input: Bag, displayName: string, success = true): StringOrMarkdown {
+  if (!success) return `"${displayName}" failed`;
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
-      return first ? md(`Ran ${code(truncate(first, 80))}`) : 'Ran shell command';
+      return first ? md(`Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}`) : 'Ran shell command';
     }
     case 'BashOutput': return 'Read shell output';
     case 'WebFetch': {
@@ -364,8 +324,8 @@ export function pastLineOf(name: string, input: Bag): StringOrMarkdown {
     case 'Agent': return 'Ran subagent';
     case 'Skill': {
       const skill = filled(input.skill);
-      return skill !== undefined ? md(`Ran skill ${code(truncate(skill, 80))}`) : 'Ran skill';
+      return skill !== undefined ? md(`Ran skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Ran skill';
     }
-    default: return lineOf(name, input);
+    default: return lineOf(name, input, displayName);
   }
 }

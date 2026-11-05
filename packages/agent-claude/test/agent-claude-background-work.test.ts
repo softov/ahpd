@@ -109,9 +109,10 @@ interface Opened {
  * A session on the fake feed, with a host seam that opens worker chats.
  *
  * `seam` off is a host that hands the session no way to open a worker's chat,
- * which is the case a background subagent cannot be listed in.
+ * which is the case a background subagent cannot be listed in. `turn` is the
+ * turn the frames a case feeds answer, running from the start.
  */
-async function open(seam = true): Promise<Opened> {
+async function open(seam = true, turn = true): Promise<Opened> {
   sdk.reset();
   const main: Bag[] = [];
   const workers = new Map<string, Bag[]>();
@@ -144,6 +145,10 @@ async function open(seam = true): Promise<Opened> {
     },
   });
   await settle();
+  if (turn) {
+    running.sendMessage('t1', 'go');
+    await settle();
+  }
   return { main, workers, handed, tasks, session: running };
 }
 
@@ -316,6 +321,55 @@ it('takes an entry back on a terminal notification alone', async () => {
   expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
 });
 
+/*
+ * The lead turn ends with two shells still running. The turn's parts go with
+ * it, so each row keeps the chat and the command found while its call was open:
+ * a stop of one shell, or a level that drops one, takes back only that row.
+ */
+it('takes back only the stopped shell after the turn that started both has ended', async () => {
+  const { tasks } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 600'), ...shellFrames('t-loop', 'while true; do date; sleep 5; done'));
+  sdk.push(level(
+    { task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 600' },
+    { task_id: 't-loop', task_type: 'local_bash', description: 'a loop' },
+  ));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+  expect(said(tasks, 'ahp-chat:/bg').map((one) => one.id)).toEqual(['shell:t-sleep', 'shell:t-loop']);
+
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'stopped',
+  });
+  await settle();
+  expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
+});
+
+it('takes back only the shell a level drops after the turn has ended, and keeps the other\'s command', async () => {
+  const { tasks } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 600'), ...shellFrames('t-loop', 'while true; do date; sleep 5; done'));
+  sdk.push(level(
+    { task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 600' },
+    { task_id: 't-loop', task_type: 'local_bash', description: 'a loop' },
+  ));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+  const before = tasks.set.length;
+
+  sdk.push(level({ task_id: 't-loop', task_type: 'local_bash', description: 'a loop' }));
+  await settle();
+  expect(tasks.remove).toEqual([{ chat: 'ahp-chat:/bg', id: 'shell:t-sleep' }]);
+  // Nothing about the loop changed, so nothing about it is said again.
+  expect(tasks.set).toHaveLength(before);
+  expect(said(tasks, 'ahp-chat:/bg').filter((one) => one.id === 'shell:t-loop').map((one) => (one.kind === 'shell' ? one.command : undefined)))
+    .toEqual(['while true; do date; sleep 5; done']);
+});
+
 it('lists a worker\'s own background shell on the worker\'s chat', async () => {
   const { tasks, handed } = await open();
 
@@ -380,6 +434,71 @@ it('says nothing more when the session is closed', async () => {
   await session.close();
   await settle();
   expect(tasks.set).toHaveLength(1);
+});
+
+/*
+ * The turn a background task's end wakes.
+ *
+ * A notification that arrives while no turn is open is the CLI's cue to start
+ * a turn of its own, and that turn answers the notification rather than the
+ * person: its message is the task's summary, drawn as one muted line. One that
+ * arrives inside a turn starts no turn, so it gives the next one nothing.
+ */
+it('opens the turn a finished task wakes with the task\'s summary as a notice', async () => {
+  const { main } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 100'));
+  sdk.push(level({ task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 100' }));
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'completed',
+    summary: 'sleep 100 finished',
+  });
+  // The turn the CLI starts once the notification has woken it.
+  sdk.push({
+    type: 'assistant',
+    message: { id: 'msg-wake', content: [{ type: 'text', text: 'The shell finished.' }] },
+  });
+  await settle();
+
+  // The client's turn is the host's to say, so the one start here is the notice's.
+  const started = main.filter((action) => action.type === 'chat/turnStarted');
+  expect(started).toHaveLength(1);
+  expect(started.at(-1)?.message).toEqual({ text: 'sleep 100 finished', origin: { kind: 'systemNotification' } });
+});
+
+it('does not give a task notification inside a turn to the next turn', async () => {
+  const { main } = await open();
+
+  sdk.push(...shellFrames('t-sleep', 'sleep 100'));
+  sdk.push(level({ task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 100' }));
+  // The notification arrives while the turn that started the task is open.
+  sdk.push({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 't-sleep',
+    tool_use_id: 'toolu-t-sleep',
+    status: 'completed',
+    summary: 'sleep 100 finished',
+  });
+  sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle();
+
+  sdk.push({
+    type: 'assistant',
+    message: { id: 'msg-next', content: [{ type: 'text', text: 'And then.' }] },
+  });
+  await settle();
+
+  // No notice waits, so the frame after the turn opens none: a lead frame no
+  // prompt is pending for is dropped.
+  expect(main.filter((action) => action.type === 'chat/turnStarted')).toEqual([]);
 });
 
 /*
@@ -453,7 +572,7 @@ const submitted = async (): Promise<unknown[]> => {
  * function, rather than a list captured earlier, what the hook answers from.
  */
 it('gives a turn the instructions the host asked for, and nothing once it ends', async () => {
-  const { session } = await open();
+  const { session } = await open(true, false);
   const words = ['<remote_session_origin>', 'report back', '</remote_session_origin>'];
   // Registered from the start and nothing to give: no turn has begun.
   expect(await submitted()).toEqual([{}]);

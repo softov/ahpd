@@ -1,14 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
-import { uriOf } from '@ahpd/sdk';
+import { bag, uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
-import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
+import { idOf, listed, modelFor, THINKING_KEY } from '../src/models.js';
 import { optionsOf } from '../src/plugin.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
@@ -62,6 +63,68 @@ it('reports the folder it works in as a URI a host reads back as that folder', (
   }
 });
 
+it('holds the chat\'s modified time where the reducer moves it, a turn\'s start and then its end', async () => {
+  const { session } = opened();
+  session.sendMessage('t1', 'Fix the build');
+  await settled();
+  // The running turn's start, or the ended turn's start plus its duration.
+  const running = (session.chatState() as Bag).activeTurn as Bag | undefined;
+  const last = session.allTurns().at(-1) as Bag | undefined;
+  const at = running !== undefined
+    ? String(running.startedAt)
+    : new Date(Date.parse(String(last?.startedAt)) + Number(last?.duration)).toISOString();
+  expect(session.modifiedAt()).toBe(at);
+
+  // A rename is no turn's start or end, so the time stays.
+  await new Promise((r) => { setTimeout(r, 5); });
+  session.setTitle?.('Named by a person');
+  expect(session.modifiedAt()).toBe(at);
+});
+
+it('holds a title a command suggests until the first message replaces it', async () => {
+  const { session, sent } = opened();
+  // The host's seed for a `!` command, taken while the session has no title.
+  session.seedTitle?.('ls -la');
+  expect(session.title()).toBe('ls -la');
+  session.sendMessage('t1', 'Fix the build');
+  await settled();
+  expect(session.title()).toBe('Fix the build');
+  expect(sent.filter((one) => one.action.type === 'session/titleChanged').map((one) => one.action.title))
+    .toEqual(['ls -la', 'Fix the build']);
+});
+
+it('works in a scratch folder of its own when the client gave it none', () => {
+  // The home the folder is made under is this case's own, so nothing is made
+  // in the person's.
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  // `os.homedir()` reads `HOME` on POSIX and `USERPROFILE` on Windows.
+  const was = process.env.HOME;
+  const wasProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const start: Start = {
+      uri: 'ahp-session:/scratched',
+      chatUri: 'ahp-chat:/scratched',
+      settings: {},
+      schema: () => ({}),
+      emit: () => {},
+      clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    };
+    const session = piSession({}, start, fakePi().open, async () => undefined);
+    const folder = join(home, '.copilot', 'chats', 'scratched');
+    expect(session.workingDirectories()).toEqual([uriOf(folder)]);
+    expect(existsSync(folder)).toBe(true);
+  }
+  finally {
+    if (was === undefined) delete process.env.HOME;
+    else process.env.HOME = was;
+    if (wasProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = wasProfile;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // Models ------------------------------------------------------------------
 
 it('spells a model id the way pi spells one, so two providers stay apart', () => {
@@ -84,19 +147,42 @@ it('resolves a qualified id, and a bare one only when it is unambiguous', () => 
 });
 
 it('offers the thinking form only for a model with more than one level', () => {
-  const many = offered({ provider: 'anthropic', id: 'claude-opus-5' }, ['off', 'high']);
-  expect((many.configSchema as Bag)).toBeDefined();
+  const many = listed({ provider: 'anthropic', id: 'claude-opus-5' }, ['off', 'high']);
+  expect(many.configSchema).toBeDefined();
   // A form with one answer is a control nobody can use.
-  expect(offered({ provider: 'openai', id: 'gpt-5' }, ['off']).configSchema).toBeUndefined();
+  expect(listed({ provider: 'openai', id: 'gpt-5' }, ['off']).configSchema).toBeUndefined();
 });
 
 it('says a model context window and output limit when pi knows them', () => {
-  const known = offered({ provider: 'anthropic', id: 'claude-opus-5', contextWindow: 200000, maxTokens: 64000 }, ['off']);
+  const known = listed({ provider: 'anthropic', id: 'claude-opus-5', contextWindow: 200000, maxTokens: 64000 }, ['off']);
   expect(known.maxContextWindow).toBe(200000);
   expect(known.maxOutputTokens).toBe(64000);
-  const bare = offered({ provider: 'openai', id: 'gpt-5' }, ['off']);
+  const bare = listed({ provider: 'openai', id: 'gpt-5' }, ['off']);
   expect(bare.maxContextWindow).toBeUndefined();
   expect(bare.maxOutputTokens).toBeUndefined();
+});
+
+/*
+ * Each model listed in the spec's model info fields from pi's own: the limits,
+ * whether it takes an image, and its thinking levels as its form, as VS Code's
+ * agents list each model, and nothing the spec's model info does not declare.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L120-L144
+ */
+it('lists a session\'s models with their limits, their vision and their thinking levels', async () => {
+  const { session } = opened();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const fields = new Set(['id', 'name', 'maxContextWindow', 'maxOutputTokens', 'maxPromptTokens', 'supportsVision', 'configSchema', 'policyState', '_meta']);
+  const models = session.models();
+  expect(models.length).toBeGreaterThan(0);
+  expect(models.flatMap((one) => Object.keys(one)).filter((key) => !fields.has(key))).toEqual([]);
+  // The fake's Opus has three levels and its limits; its GPT has one level.
+  const opus = models.find((one) => one.id === 'anthropic/claude-opus-5');
+  expect(opus).toMatchObject({ maxContextWindow: 200000, maxOutputTokens: 64000 });
+  expect(bag(bag(opus?.configSchema).properties)[THINKING_KEY]).toMatchObject({ enum: ['off', 'medium', 'high'] });
+  expect(models.find((one) => one.id === 'openai/gpt-5')?.configSchema).toBeUndefined();
+  expect(listed({ provider: 'anthropic', id: 'claude-opus-5', input: ['text', 'image'] }, ['off']).supportsVision).toBe(true);
+  expect(listed({ provider: 'openai', id: 'gpt-5', input: ['text'] }, ['off']).supportsVision).toBe(false);
 });
 
 it('offers each model the context window pi reports', async () => {
@@ -164,6 +250,21 @@ it('names a turn by its prompt\'s entry when the session closes while the turn r
   await settled();
   expect(recorded).toEqual([]);
   session.close();
+  expect(recorded).toEqual([['t1', 'entry-prompt']]);
+});
+
+it('names no prompt for a turn stopped before pi had it, after a turn that pi had', async () => {
+  // The prompt after where the turn before began is the turn before's.
+  const recorded: [string, string][] = [];
+  const { session, pi } = opened({ onTurnRecorded: (turnId, entryId) => { recorded.push([turnId, entryId]); } });
+  pi.setLeaf('entry-before');
+  pi.setPrompted('entry-prompt');
+  session.sendMessage('t1', 'hello');
+  await settled();
+  session.sendMessage('t2', 'again');
+  session.abort();
+  await settled();
+  expect(pi.asked.filter((one) => one.kind === 'prompt')).toHaveLength(1);
   expect(recorded).toEqual([['t1', 'entry-prompt']]);
 });
 
@@ -331,22 +432,27 @@ it('passes the chosen model and its thinking level through to pi', async () => {
   session.changeModel({ id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose'))
-    .toEqual({ kind: 'choose', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
+  expect(pi.asked.find((one) => one.kind === 'setModel'))
+    .toEqual({ kind: 'setModel', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
   expect(types('chat')).not.toContain('chat/error');
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
 });
 
-it('fails a turn that names a model pi does not have', async () => {
-  const { session, pi, last, types } = opened();
+it('runs a turn that names a model pi does not offer on the model pi is on, and logs it', async () => {
+  /*
+   * VS Code's host keeps a chat's model when its agent does not offer the one
+   * a turn names, logs that, and runs the turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
+   */
+  const lines: string[] = [];
+  const { session, pi, types } = opened({}, { log: (line) => { lines.push(line); } });
   session.changeModel({ id: 'openrouter/nobody' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(((last('chat/error')?.part as Bag).error as Bag).message)
-    .toBe('pi has no model openrouter/nobody');
-  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(false);
-  // The model is where it was, so the next turn runs on it rather than on the
-  // one this turn asked for.
+  expect(types('chat')).not.toContain('chat/error');
+  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
+  expect(lines.filter((line) => line.includes('ahp-chat:/s1') && line.includes('openrouter/nobody'))).toHaveLength(1);
+  // The model is where it was, so the next turn runs on it.
   session.sendMessage('t2', 'again');
   await settled();
   const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't2');
@@ -358,7 +464,7 @@ it('opens a session on a configured model pi does not have', async () => {
   const { session, pi, types } = opened({}, { model: 'openrouter/nobody' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openrouter/nobody' });
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toEqual({ kind: 'setModel', id: 'openrouter/nobody' });
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
   expect(types('chat')).not.toContain('chat/error');
 });
@@ -367,14 +473,14 @@ it('runs a new session on the model the options name', async () => {
   const { session, pi } = opened({}, { model: 'openai/gpt-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openai/gpt-5' });
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toEqual({ kind: 'setModel', id: 'openai/gpt-5' });
 });
 
 it('keeps a resumed session on the model its own file recorded', async () => {
   const { session, pi } = opened({ resume: 'pi-session-1' } as Partial<Start>, { model: 'openai/gpt-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'choose')).toBeUndefined();
+  expect(pi.asked.find((one) => one.kind === 'setModel')).toBeUndefined();
 });
 
 it('lets a turn choose over the configured model', async () => {
@@ -382,7 +488,7 @@ it('lets a turn choose over the configured model', async () => {
   session.changeModel({ id: 'anthropic/claude-opus-5' });
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.filter((one) => one.kind === 'choose').map((one) => one.id))
+  expect(pi.asked.filter((one) => one.kind === 'setModel').map((one) => one.id))
     .toEqual(['openai/gpt-5', 'anthropic/claude-opus-5']);
 });
 
@@ -412,19 +518,19 @@ it('leaves the model off a turn that has none', async () => {
 });
 
 /*
- * What the host has to say on a turn goes into that turn's prompt, ahead of
- * the words, as the reference agents put the instructions their host
- * contributes for a send.
+ * What the host has to say on a turn reaches that turn by pi's own custom
+ * message, as the reference agents deliver the instructions their host
+ * contributes for a send, and the prompt holds the person's words alone.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
  */
-it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said', async () => {
+it('hands the send\'s instructions to that turn by pi\'s custom message, and prompts the words alone', async () => {
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello', undefined, undefined, { instructions: () => ['Report back to the chat this came from.', ' '] });
   await settled();
   session.sendMessage('t2', 'again');
   await settled();
-  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text))
-    .toEqual(['Report back to the chat this came from.\n\nhello', 'again']);
+  expect(pi.asked.filter((one) => one.kind === 'prompt' || one.kind === 'customMessage').map((one) => [one.kind, one.text ?? one.content]))
+    .toEqual([['customMessage', 'Report back to the chat this came from.'], ['prompt', 'hello'], ['prompt', 'again']]);
 });
 
 it('steers the running turn with pi\'s own steer', async () => {
@@ -660,11 +766,11 @@ it('reports the level pi moved to as a value in force, which a client reduces', 
   expect(session.settings().thinkingLevel).toBe('high');
 });
 
-it('truncates by moving pi own leaf, which is what a rewind is', async () => {
+it('truncates by moving pi own leaf back', async () => {
   const { session, pi } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
+  expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-7');
 });
 
 it('answers where a watched turn ended, and nothing for one it never saw end', async () => {
@@ -707,11 +813,11 @@ it('names where a watched turn ended as the point a fork copies through', async 
  */
 it('runs the turn when pi refuses to move the leaf back, and logs the refusal', async () => {
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
-  pi.refuseRewind();
+  pi.refuseTruncate();
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
+  expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-7');
   expect(last('chat/error')).toBeUndefined();
   expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('hello');
   expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
@@ -871,7 +977,7 @@ it('offers pi models before a session exists, as a session offers them', async (
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello');
   await settled();
-  const agent = piAgent({}, [root], pi.backend.models);
+  const agent = piAgent({}, [root], async () => (await pi.backend.models()).map((model) => ({ model, levels: pi.backend.levels(model) })));
   const probed = await agent.probe?.();
   expect(probed).toEqual({ models: session.models(), customizations: [], commands: [] });
   expect(probed?.models.map((one) => one.id)).toEqual(['anthropic/claude-opus-5', 'openai/gpt-5']);
@@ -885,6 +991,52 @@ it('offers no models when pi runtime cannot be built, rather than failing the pr
 it('has no transcript for a session with no file and no record', async () => {
   const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
   expect(await agent.transcript?.('never-opened')).toBeUndefined();
+});
+
+it('reads back a turn that had not ended as interrupted, as pi file reads one back', async () => {
+  /*
+   * VS Code's reader ends a turn whose request is still active at the end of
+   * its events in error, with a resumable `executionInterrupted` part.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+   */
+  const interrupted = {
+    kind: 'error',
+    error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+    resumable: true,
+  };
+  const { session, pi } = opened();
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
+  const running = await agent.transcript?.('pi-session-1');
+  expect(running?.map((one) => one.state)).toEqual(['error']);
+  expect(running?.[0]?.responseParts.at(-1)).toEqual(interrupted);
+  // The live turn holds what it holds; the interruption is the record's reading.
+  expect(((session.chatState().activeTurn as Bag).responseParts as Bag[]).some((part) => part.kind === 'error')).toBe(false);
+  session.close();
+  const closed = await agent.transcript?.('pi-session-1');
+  expect(closed?.map((one) => one.state)).toEqual(['error']);
+  expect(closed?.[0]?.responseParts.at(-1)).toEqual(interrupted);
+});
+
+it('lists a session it watched as modified at its last change, as the chat is', async () => {
+  /*
+   * A listing dates a session by its last activity, as Codex's catalogue dates
+   * its threads, and the record wins over pi's file in the listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8204
+   */
+  const { session } = opened();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await new Promise((done) => { setTimeout(done, 5); });
+  session.sendMessage('t2', 'again');
+  await settled();
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
+  const row = (await agent.list?.())?.find((one) => one.id === 'pi-session-1');
+  expect(row?.modifiedAt).toBe(session.modifiedAt());
+  expect(Date.parse(String(row?.modifiedAt))).toBeGreaterThan(Date.parse(String(row?.createdAt)));
+  expect((await agent.find?.('pi-session-1'))?.modifiedAt).toBe(session.modifiedAt());
 });
 
 it('reads back the turns of a session it did watch', async () => {
@@ -1086,6 +1238,57 @@ it('ends a resumed run that answers as complete, with the turn once in turns', a
   expect(kinds).toEqual(['markdown', 'error', 'markdown']);
   // The prompt was named when the turn first ended, and is not named again.
   expect(pi.asked.filter((one) => one.kind === 'promptAfter')).toHaveLength(1);
+});
+
+/*
+ * A resumed run says its own time and usage, which the host merges over the
+ * run before's as VS Code's host says a resumed turn, and the turn holds both
+ * runs' so a chat opened after it reads what a client that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+ */
+it('says a resumed run\'s own time and usage, and holds the turn\'s across both runs', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const began = Date.parse('2026-11-04T12:00:00.000Z');
+    vi.setSystemTime(began);
+    const { session, pi, sent } = opened();
+    pi.hold();
+    session.sendMessage('t1', 'hello');
+    await settled();
+    vi.setSystemTime(began + 5000);
+    pi.raise({
+      type: 'message_end',
+      message: {
+        role: 'assistant', stopReason: 'error', errorMessage: '429 rate limited',
+        usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 120, cost: { total: 0.5 } },
+      },
+    } as never);
+    pi.raise({ type: 'agent_settled', aborted: false });
+    await settled();
+    // A while later, a client resumes it, and the run takes two seconds.
+    vi.setSystemTime(began + 60_000);
+    expect(() => session.resumeTurn?.('t1')).not.toThrow();
+    vi.setSystemTime(began + 62_000);
+    pi.raise({
+      type: 'message_end',
+      message: {
+        role: 'assistant', stopReason: 'stop', content: [],
+        usage: { input: 40, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 50, cost: { total: 0.25 } },
+      },
+    } as never);
+    await settled();
+
+    const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+    expect(said.filter((one) => one.type === 'chat/turnComplete').map((one) => one.duration)).toEqual([2000]);
+    expect(said.filter((one) => one.type === 'chat/usage').at(-1)?.usage)
+      .toMatchObject({ inputTokens: 40, outputTokens: 10, _meta: { 'ahpd.cost': { amount: 0.25 } } });
+    const turn = (session.chatState().turns as Bag[])[0]!;
+    expect([turn.state, turn.duration]).toEqual(['complete', 7000]);
+    expect(turn.usage).toMatchObject({ inputTokens: 40, outputTokens: 10, _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' } } });
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('ends a resumed run that fails again with a second error, which is resumable', async () => {

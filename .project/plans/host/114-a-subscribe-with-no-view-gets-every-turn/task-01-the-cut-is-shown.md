@@ -1,6 +1,6 @@
 ---
 title: The cut is shown
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

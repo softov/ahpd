@@ -13,7 +13,6 @@ requires:
 decisions:
 problems:
   - problems/a-claimed-chat-is-read-as-a-session.md
-  - problems/an-unreadable-session-file-is-overwritten.md
 refs:
   - "[code://packages/sdk/src/host/catalogue.ts#L380-L392](../../../../packages/sdk/src/host/catalogue.ts#L380-L392) - `listing` leaves out claimed ids, so a running session is not in a refresh"
   - "[code://packages/sdk/src/host/catalogue.ts#L640-L675](../../../../packages/sdk/src/host/catalogue.ts#L640-L675) - `rowsMoved`, whose removal loop announces every row a refresh did not list"
@@ -61,7 +60,7 @@ The review's probes reproduced tasks 01, 02 and 03; their cases are the first te
 | A non-string `channel` is refused `-32602` before any gate or handler | `(defaulted: refusing is the one answer that cannot skip a check)` | 03 |
 | A restart stops the host taking new turns before it checks the running ones | `(defaulted: a check that a turn can slip past is no check)` | 05 |
 | The successor's own code checks the recorded line before the old daemon goes down | `(defaulted: only the code that will run knows its flags)` | 06 |
-| The claimed-chat grant and the overwritten store file stay problems | not in the review's confirmed list; [a-claimed-chat-is-read-as-a-session](../../../problems/a-claimed-chat-is-read-as-a-session.md), [an-unreadable-session-file-is-overwritten](../../../problems/an-unreadable-session-file-is-overwritten.md) | - |
+| The claimed-chat grant and the overwritten store file stay problems | not in the review's confirmed list; [a-claimed-chat-is-read-as-a-session](../../../problems/a-claimed-chat-is-read-as-a-session.md), an-unreadable-session-file-is-overwritten, now [host/20261104-1505-an-unreadable-session-file-is-kept](../20261104-1505-an-unreadable-session-file-is-kept/plan.md) | - |
 
 ## Proposed architecture
 

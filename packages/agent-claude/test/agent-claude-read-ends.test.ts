@@ -117,7 +117,13 @@ it('answers each turn read back with its last entry, for a session that resumes 
   expect(session.endPoint?.('u3')).toBe('a3');
 });
 
-it('ends a turn that stopped after a tool result at that result, as a live turn ends at its last frame', async () => {
+/*
+ * A turn is cut at its last assistant message on the main chain, as VS Code's
+ * resolveForkAnchorUuid reads the transcript: a turn that stopped after a
+ * tool result is cut before that result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
+ */
+it('ends a turn that stopped after a tool result at its last assistant message', async () => {
   const session = await readThenStart('0a0a0a0a-2222-4222-8222-000000000002', {}, [
     prompt('u1', 'look around'),
     said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }]),
@@ -125,7 +131,7 @@ it('ends a turn that stopped after a tool result at that result, as a live turn 
     prompt('u3', 'never mind'),
     said('a3', 'm3', [{ type: 'text', text: 'All right.' }]),
   ]);
-  expect(session.endPoint?.('u1')).toBe('u2');
+  expect(session.endPoint?.('u1')).toBe('a1');
   expect(session.endPoint?.('u3')).toBe('a3');
   // A frame of tool results is part of a turn, never one of its own.
   expect(session.endPoint?.('u2')).toBeUndefined();

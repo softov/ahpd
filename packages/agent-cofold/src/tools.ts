@@ -11,7 +11,8 @@
 
 import { createTool } from '@cofold/agents';
 import type { Tool } from '@cofold/agents';
-import type { Bag, BoundTool } from '@ahpd/sdk';
+import { appendEscapedMarkdownInlineCode, truncate } from '@ahpd/sdk';
+import type { Bag, BoundTool, CommandTerminal } from '@ahpd/sdk';
 
 /**
  * cofold's own input-schema type, read off its factory.
@@ -103,6 +104,13 @@ export interface ClientToolCall {
  */
 export interface ClientToolRelay {
   call(call: ClientToolCall): Promise<string>;
+  /**
+   * The terminal a host tool opened for a call, as soon as it is showing.
+   *
+   * Absent where nothing here draws the call, and then the tool is told no
+   * `opened` at all rather than a callback that goes nowhere.
+   */
+  opened?(callId: string, terminal: CommandTerminal): void;
 }
 
 /**
@@ -139,7 +147,15 @@ export const cofoldTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Reco
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);
     }
-    return await bound.run(input);
+    /*
+     * The call's id is the one its row carries, and `opened` is how a tool
+     * that starts a terminal shows it on that row while it runs.
+     */
+    const opened = relay?.opened;
+    return await bound.run(input, {
+      toolCallId: ctx.callId,
+      ...(opened === undefined ? {} : { opened: (terminal) => { opened(ctx.callId, terminal); } }),
+    });
   },
 });
 
@@ -266,6 +282,19 @@ export const toolInputOf = (name: string, input: unknown, subject?: string): str
 export const describe = (name: string, subject?: string): string => subjectIn(subject) ?? name;
 
 /**
+ * What a finished call did, as VS Code's agents word a call's past tense: a
+ * call that failed as failed, cofold's shell command as the first line it ran,
+ * which its subject is, and any other call by the line it ran on. `name` is the
+ * tool's, `shown` the name its row draws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
+export const pastTenseOf = (name: string, shown: string, subject: string | undefined, success: boolean): string | { markdown: string } => {
+  if (!success) return `"${shown}" failed`;
+  const first = name === 'shell_exec' ? subjectIn(subject)?.split('\n')[0] : undefined;
+  return first === undefined ? describe(shown, subject) : { markdown: `Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}` };
+};
+
+/**
  * The response part a tool call holds in a snapshot.
  *
  * The client's reducer builds the same part from `chat/toolCallStart`, so
@@ -350,26 +379,32 @@ export const toolReadyAction = (
  * `success` is the failure flag, and the content is the one block a client
  * reads. A failed call keeps its content in `error.message` as well, because
  * that is where a client looks for the reason. `meta` is the call's whole
- * `_meta`, which the client's replaces: a call that ran has to carry its times
- * here as well as where it started.
+ * `_meta`, which the client's replaces: a call that ran carries how long it ran
+ * here, beside the kind it started with.
  */
 export const toolCompleteAction = (
   turnId: string,
   callId: string,
   name: string,
+  shown: string,
   content: string,
   isError: boolean,
   subject?: string,
   meta?: Bag,
-): Bag => ({
-  type: 'chat/toolCallComplete',
-  turnId,
-  toolCallId: callId,
-  result: {
-    success: !isError,
-    pastTenseMessage: describe(name, subject),
-    ...(content !== '' ? { content: [{ type: 'text', text: content }] } : {}),
-    ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
-  },
-  ...(meta !== undefined ? { _meta: meta } : {}),
-});
+  /** The terminals the call showed while it ran, which the completion keeps. */
+  terminals?: Bag[],
+): Bag => {
+  const blocks = [...terminals ?? [], ...(content === '' ? [] : [{ type: 'text', text: content }])];
+  return {
+    type: 'chat/toolCallComplete',
+    turnId,
+    toolCallId: callId,
+    result: {
+      success: !isError,
+      pastTenseMessage: pastTenseOf(name, shown, subject, !isError),
+      ...(blocks.length === 0 ? {} : { content: blocks }),
+      ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
+    },
+    ...(meta !== undefined ? { _meta: meta } : {}),
+  };
+};

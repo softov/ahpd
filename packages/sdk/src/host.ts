@@ -29,7 +29,7 @@ import { computerId, computersFor } from './machines/computers.js';
 import { nestedAgent } from './sessions/nested.js';
 import { createCallLinks } from './automations/calllinks.js';
 import { createSessionEvents } from './host/sessionevents.js';
-import { idFor, idOf, uriFor, Status } from './sessions/catalog.js';
+import { idFor, idOf, mergeLogicalTurnUsage, uriFor, Status } from './sessions/catalog.js';
 import { memorySessions } from './sessions/sessions.js';
 import { meter } from './usage/meter.js';
 import { debugLogs } from './sessions/debuglogs.js';
@@ -78,6 +78,7 @@ import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
 import { createAsking } from './host/asking.js';
 import { createTerminalMethods, createTerminals } from './host/terminals.js';
+import { createShells } from './host/shells.js';
 import { createOutputs } from './host/outputs.js';
 import { createLocalTurns } from './host/localturns.js';
 import { createAutomations } from './host/automations.js';
@@ -907,8 +908,21 @@ export function createHost(options: HostOptions): Host {
    * against the text is sent ahead of it.
    */
   const dispatch = (channel: string, given: Record<string, unknown>, origin?: Origin): void => {
-    const action = ctx.withWorkerUri(channel, given);
+    let action = ctx.withWorkerUri(channel, given);
     if (origin !== undefined) said.add(origin);
+    /*
+     * A resumed turn as one turn across its runs, as VS Code's host says it: a
+     * backend's usage for the run after the resume merged over what the run
+     * before used, and its end carrying the time the run before took as well.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+     */
+    const resumed = origin === undefined ? ctx.resumedTurns.get(`${channel}\n${String(action.turnId ?? '')}`) : undefined;
+    if (resumed !== undefined && action.type === 'chat/usage') {
+      action = { ...action, usage: mergeLogicalTurnUsage(resumed.usage, action.usage as Record<string, unknown> | undefined) ?? action.usage };
+    }
+    if (resumed !== undefined && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')) {
+      action = { ...action, duration: resumed.duration + (typeof action.duration === 'number' ? action.duration : 0) };
+    }
     /*
      * A backend's start of a turn the chat holds is not said: the host said
      * the client's start of it, and a second start would open the turn again
@@ -946,12 +960,30 @@ export function createHost(options: HostOptions): Host {
        * waiting on a person a stopped turn no longer has.
        */
       asks.cancelTurn(channel, String(action.turnId ?? ''));
+      /*
+       * A Plan call the host drew is closed by the turn ending, the way the
+       * ACP bridge closes its own: the protocol never closes this row, so
+       * nothing else would. Closed here, before the ending is said, whoever
+       * says it: the backend, or this host for a client's stop.
+       */
+      if (ending) ctx.completePlan(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
       // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
       if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
         ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
       }
+    }
+    /*
+     * A backend's removal of an entry the session no longer holds is not said
+     * either: this host took the entry down when the request it named
+     * resolved, and an entry goes once.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+     */
+    if (action.type === 'session/inputNeededRemoved' && origin === undefined) {
+      const held = states.get(channel);
+      const entries = held?.kind === 'session' && Array.isArray(held.state.inputNeeded) ? held.state.inputNeeded as Record<string, unknown>[] : [];
+      if (held?.kind === 'session' && !entries.some((entry) => entry.id === action.id)) return;
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1423,6 +1455,9 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createLifecycle(ctx));
   Object.assign(ctx, createTooling(ctx));
   Object.assign(ctx, createTerminals(ctx));
+  // Under its own name rather than spread flat, because `of` and `forgetSession`
+  // are words other areas could reach for.
+  ctx.shells = createShells(ctx);
   Object.assign(ctx, createOutputs(ctx));
   Object.assign(ctx, createLocalTurns(ctx));
   Object.assign(ctx, createAutomations(ctx));

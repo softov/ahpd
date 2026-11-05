@@ -812,7 +812,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.trusted === true && wanted.workingDirectory !== undefined) {
       kept.setTrustedFolder?.(idOf(uri), localPath(wanted.workingDirectory));
     }
-    openSession(
+    await openSession(
       uri,
       provider,
       config,
@@ -927,7 +927,11 @@ export function createAutomations(ctx: HostContext): Automations {
          * the run, and the one that made the session is remembered by the
          * session itself rather than by this map.
          */
-        origins.set(pin, { kind: 'automation', automation, run: String(bag(wanted.origin)['run'] ?? '') });
+        const startedBy = { kind: 'automation', automation, run: String(bag(wanted.origin)['run'] ?? '') } as const;
+        origins.set(pin, startedBy);
+        // Kept with the session's record too, so the row a restart lists names
+        // the run that last used it.
+        kept.setAutomationOrigin?.(idOf(pin), startedBy);
         fireRun(wanted);
         beginIn(pin, wanted);
       } finally {

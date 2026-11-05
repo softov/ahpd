@@ -135,7 +135,10 @@ const run = async (
     view.types('chat').filter((type) => type === 'chat/turnComplete' || type === 'chat/turnCancelled').length;
   for (const [index, text] of texts.entries()) {
     const wanted = ends() + 1;
-    session.sendMessage(`t${index + 1}`, text);
+    const turnId = `t${index + 1}`;
+    // The client's start, which the host says before it hands the turn over.
+    view.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } });
+    session.sendMessage(turnId, text);
     const limit = Date.now() + 4000;
     while (ends() < wanted) {
       if (Date.now() > limit) throw new Error('timed out waiting for the turn');

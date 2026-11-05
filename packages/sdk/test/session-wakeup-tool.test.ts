@@ -187,7 +187,7 @@ const world = () => {
 
 it('begins a turn with the prompt when the wake is due', async () => {
   const w = world();
-  const { open, wakeup, textsOf, stored } = await serving(w);
+  const { open, wakeup, textsOf, turnsOf, stored } = await serving(w);
   const one = await open('one');
 
   expect(await wakeup(one.chat, { delaySeconds: 600, prompt: 'check the build' })).toBe('Wakeup scheduled for 2026-10-10T12:10:00.000Z.');
@@ -200,6 +200,10 @@ it('begins a turn with the prompt when the wake is due', async () => {
   w.time.pass(2);
   await until(async () => (await textsOf(one.chat)).length === 2, 'the woken turn');
   expect(await textsOf(one.chat)).toEqual(['hello one', 'check the build']);
+  // The host started it: a system notification, not a message from another chat.
+  const message = (await turnsOf(one.chat))[1]?.message as Bag;
+  expect(message.origin).toEqual({ kind: 'systemNotification' });
+  expect((message._meta as Bag | undefined)?.['vscode.chat.delegation']).toBeUndefined();
   // Spent: the record holds it no more.
   expect(stored(one.id, one.chat)).toBeUndefined();
 });

@@ -1,6 +1,6 @@
 ---
 title: The store reads VS Code's marks
-status: implemented
+status: done
 depends: []
 layer: "@ahpd/sdk machines"
 refs:

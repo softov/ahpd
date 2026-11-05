@@ -153,3 +153,19 @@ it('hands the same listing to every record of one load and no other', async () =
   await Promise.all([...first, ...second].map((agent) => agent.list?.()));
   expect(sdk.listed).toBe(2);
 });
+
+/*
+ * A row is titled by its custom title, else the SDK's summary, as VS Code's
+ * Claude agent titles one, and a session with neither is listed untitled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L191-L198
+ */
+it('titles a row by its custom title, else its summary, else not at all', async () => {
+  sdk.sessions = [
+    { ...listed('named', 'The summary'), customTitle: 'A name' },
+    listed('summed', 'The summary'),
+    { sessionId: 'bare', firstPrompt: 'hello there', lastModified: 1_800_000_000_000, cwd: PATH },
+  ];
+  const { claude } = await import('../src/claude.js');
+  const rows = await claude({ paths: [PATH] }).list?.();
+  expect(rows?.map((one) => [one.id, one.title])).toEqual([['named', 'A name'], ['summed', 'The summary'], ['bare', '']]);
+});

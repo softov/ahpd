@@ -1,6 +1,6 @@
 ---
 title: An agent's shells run its commands
-status: todo
+status: done
 depends:
   - task-01-a-host-tool-knows-its-call.md
 layer: "@ahpd/sdk host"
@@ -55,3 +55,11 @@ It reads a marked command's output from its `command` part, and uses VS Code's s
 - `host-terminals.test.ts` and `host-retained-terminals.test.ts` pass unchanged.
 
 ## Resume
+
+Built on `build/agents/09cc9b8d`, after task 01.
+`types/shells.ts` carries the manager's shapes, `host/shellcommand.ts` the execution and `host/shells.ts` the sessions' shells, made in `createHost` beside `createTerminals` and forgotten in `lifecycle.ts`'s teardown.
+`heldShell` is the one open block: `commanded` and `heldTerminals` call it, and the shell manager opens through it with `nonInteractive`, `preventShellHistory` and the call's claim.
+A shell is claimed and kept under the chat, and `opened` hands the call its terminal; the backend puts it on the call itself.
+A session in a machine asks `computers.how` for the executable and opens the descriptor with `machine` set, in the host's own folder.
+A command that goes to the background or the alternate screen keeps its shell busy through `stillRunning` and `hold`.
+`test/shell-manager.test.ts` covers every case the Validation names, on the real store and a fake pseudoterminal and screen.

@@ -14,10 +14,12 @@ import type { ConnectionContext, HostContext } from './context.js';
 /**
  * Set or clear one of a session's own two bits, and say so.
  *
- * A session's `IsRead` and `IsArchived` are this host's rather than a
- * backend's: a harness asked would have no idea whether a person had read a
- * transcript. `session/isReadChanged` and `session/isArchivedChanged` reach
- * this, a client's on a session channel and this host's own.
+ * A session's `IsRead` and `IsArchived` are the host's that runs it rather
+ * than a harness's: a harness asked would have no idea whether a person had
+ * read a transcript. `session/isReadChanged` and `session/isArchivedChanged`
+ * reach this, a client's on a session channel, this host's own, and those of
+ * the host inside that runs a session in a machine, said under `origin` where
+ * they answer a client.
  *
  * A read bit moved here is the session's. The chats it moves with, and when,
  * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
@@ -214,6 +216,25 @@ export function chatAction(
     statusOf, subagents, summaryMoved, value, waitingFor, wake, hold,
   } = ctx;
 
+  /*
+   * A turn's start time and a message's origin the client left out are this
+   * host's: every reducer reads them, the protocol requires both, and the
+   * server's echo is the one that wins where the two differ.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L71-L91
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+   */
+  if (type === 'chat/turnStarted' && typeof action.startedAt !== 'string') action.startedAt = new Date().toISOString();
+  if ((type === 'chat/turnStarted' || type === 'chat/pendingMessageSet') && typeof action.message === 'object' && action.message !== null
+    && (action.message as Record<string, unknown>).origin === undefined) {
+    action.message = { origin: { kind: 'user' }, ...(action.message as Record<string, unknown>) };
+  }
+  // How an approval was given and why a call was turned down, which the
+  // protocol requires too: a client that answers a call it was asked about
+  // answered as the user, and a person who turned it down denied it.
+  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L250-L283
+  if (type === 'chat/toolCallConfirmed' && action.approved === true && typeof action.confirmed !== 'string') action.confirmed = 'user-action';
+  if (type === 'chat/toolCallConfirmed' && action.approved === false && typeof action.reason !== 'string') action.reason = 'denied';
+
   /** The message an action carries, which its text and its attachments ride on. */
   const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
     (typeof one.message === 'object' && one.message !== null ? one.message : {}) as Record<string, unknown>;
@@ -302,10 +323,15 @@ export function chatAction(
     const wasRead = (kept.chatFlags(idOf(flagSession), channel) & Status.IsRead) !== 0;
     const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action, origin);
     if (!moved) dispatch(channel, action, origin);
-    // A chat whose backend runs it on another host has its bits there too.
-    byChat.get(channel)?.chat.flag?.(bitOf === Status.IsRead ? 'read' : 'archived', on);
+    /*
+     * A chat whose backend runs it on another host has its bits there too, and
+     * its session's read bit follows it there: that host runs the session, and
+     * says the session's bit as it moves.
+     */
+    const relayed = byChat.get(channel)?.chat.flag;
+    relayed?.(bitOf === Status.IsRead ? 'read' : 'archived', on, 'chat');
     if (bitOf === Status.IsRead) {
-      sessionFollows(ctx, flagSession, channel, wasRead);
+      if (relayed === undefined) sessionFollows(ctx, flagSession, channel, wasRead);
       return;
     }
     /*
@@ -315,7 +341,7 @@ export function chatAction(
      * as it is.
      * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
      */
-    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
+    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true) && relayed === undefined) sessionFollows(ctx, flagSession, channel, false);
     return;
   }
   /**
@@ -741,7 +767,14 @@ export function chatAction(
    */
   const stopped = (turn: string): void => {
     const resumed = ctx.resumedTurns.get(`${channel}\n${turn}`);
-    dispatch(channel, resumed === undefined ? action : { ...action, duration: resumed.duration + (Date.now() - resumed.since) }, origin);
+    if (resumed !== undefined) {
+      dispatch(channel, { ...action, duration: resumed.duration + (Date.now() - resumed.since) }, origin);
+      return;
+    }
+    // A duration the client left out is the time the held turn ran: the
+    // protocol requires one, and every reducer reads it.
+    const ran = typeof action.duration === 'number' ? action.duration : Date.now() - Date.parse(String(activeHeld?.startedAt ?? ''));
+    dispatch(channel, { ...action, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
   };
   /** `running`'s backend told to stop what it runs; one that cannot is a line in the log. */
   const aborted = (running: NonNullable<typeof held>): void => {
@@ -785,6 +818,11 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
        */
       const since = Date.now();
+      // Whether the session ran nothing before this start, read before the
+      // start is said: said, it is a turn in progress itself.
+      const idle = ctx.answered(origin)
+        ? String(activeHeld?.id ?? '') === turnId
+        : (statusOf(session.uri) & Status.InProgress) === 0;
       if (!ctx.answered(origin)) dispatch(session.chatUri, action, origin);
       if ((kept.flags(idOf(session.uri)) & Status.IsArchived) !== 0) {
         unsent(session.chatUri, 'archived', 'This session is archived and read-only. Restore the session to continue the conversation.');
@@ -809,7 +847,7 @@ export function chatAction(
        * a turn waits its turn, and the sets are compared again at the next.
        */
       let live = session;
-      if (owner !== undefined && (statusOf(session.uri) & Status.InProgress) === 0 && pluginsMoved(session.uri, session.chatUri)) {
+      if (owner !== undefined && idle && pluginsMoved(session.uri, session.chatUri)) {
         restartChat(session.uri, session.chatUri, conn.tokensFor(chatAgent(owner, session.chatUri).provider), connection);
         // The chat that was running is closed and this is the one that took its
         // place, so the turn below goes to the agent listening now.
@@ -1544,7 +1582,11 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1817-L1876
        */
       dispatch(channel, action, origin);
-      const resumed = { duration: typeof last.duration === 'number' ? last.duration : 0, since: Date.now() };
+      const resumed = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        since: Date.now(),
+        ...(typeof last.usage === 'object' && last.usage !== null ? { usage: last.usage as Bag } : {}),
+      };
       ctx.resumedTurns.set(`${channel}\n${named}`, resumed);
       const rejected = (error: unknown): void => {
         if (!ctx.resumedTurns.has(`${channel}\n${named}`)) return;
@@ -1671,6 +1713,16 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
        */
       dispatch(session.chatUri, action, origin);
+      /*
+       * A queued message sent again under its id as steering, which is how a
+       * client turns a message that waits into a correction, as VS Code's
+       * "Send Immediately" does. The steering message takes its place, so the
+       * queued one is taken out, or it would run again as a turn of its own.
+       * https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2541-L2554
+       */
+      if (kind === 'steering' && (Array.isArray(chatHeld.queuedMessages) ? chatHeld.queuedMessages as Bag[] : []).some((one) => String(one.id ?? '') === id)) {
+        dispatch(session.chatUri, { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      }
       ctx.pendingSet(session.chatUri, id, connection, read.attachments);
       break;
     }
@@ -2049,7 +2101,9 @@ export function chatAction(
      */
     case 'chat/truncated': {
       const turnId = typeof action.turnId === 'string' ? action.turnId : undefined;
-      const all = session.allTurns();
+      // The backend's turns with this host's local turns put back where they
+      // ran: a `!` command's turn is the host's, and a cut may name it.
+      const all = ctx.withLocalTurns(session.uri, session.chatUri, session.allTurns() as Bag[]);
       /*
        * A cut before every turn the backend saw, which starts the chat over.
        *
@@ -2090,7 +2144,7 @@ export function chatAction(
           await session.close('stopping');
           const failed = own === undefined || own === '' ? undefined : await ctx.deletedChat(own, agent, ctx.dirOf(uri));
           ctx.described.delete(chatUri);
-          spawn(
+          await spawn(
             agent,
             uri,
             chatUri,
@@ -2197,19 +2251,47 @@ export function chatAction(
       // So the next thing the new session says about itself is reported
       // rather than compared against what the old one last said.
       ctx.described.delete(session.chatUri);
-      spawn(
-        chatAgent(owner, session.chatUri),
-        session.uri,
-        session.chatUri,
-        chatIdFor(session.uri, session.chatUri),
-        chatConfig(owner, session.chatUri),
-        { resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] },
+      /*
+       * The backend started again at the point, which a backend with a cut to
+       * make answers once it has made it. A cut it could not make is logged
+       * and the chat comes back on the conversation it had, as VS Code's host
+       * logs a truncation its provider failed and the provider keeps its
+       * history. Held in `restarting` the whole time, so an action sent behind
+       * it reaches the backend that comes back.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1983-L1988
+       */
+      const uri = session.uri;
+      const chatUri = session.chatUri;
+      const restartedAt = (resuming: { resume: string; rewindAt?: string; seed: Bag[] }): Promise<Session> => spawn(
+        chatAgent(owner, chatUri),
+        uri,
+        chatUri,
+        chatIdFor(uri, chatUri),
+        chatConfig(owner, chatUri),
+        resuming,
         owner.workingDirectory,
         undefined,
-        beside.get(session.chatUri) ?? owner.additional,
+        beside.get(chatUri) ?? owner.additional,
         connection,
       );
-      log(`truncated ${session.chatUri} to ${turnId}`);
+      const work = restartedAt({ resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] }).then(
+        () => { log(`truncated ${chatUri} to ${turnId}`); },
+        async (error: unknown) => {
+          log(`${chatUri} keeps the history after ${turnId}: ${error instanceof Error ? error.message : String(error)}`);
+          await restartedAt({ resume: started, seed: all as Bag[] });
+        },
+      );
+      restarting.set(uri, work.then(() => undefined, (error: unknown) => (byChat.has(chatUri)
+        ? undefined
+        : error instanceof Error ? error.message : String(error))));
+      const held = restarting.get(uri);
+      void work.then(
+        () => { if (restarting.get(uri) === held) restarting.delete(uri); },
+        (error: unknown) => {
+          if (restarting.get(uri) === held) restarting.delete(uri);
+          log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      );
       break;
     }
     /*
@@ -2309,6 +2391,15 @@ export function chatAction(
       // may say its result; the protocol has a server refuse anybody else.
       if (clientRunning(toolCallId) !== clientId) {
         no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
+      // A call completes once: a second result, sent before the first was
+      // taken, finds the call complete in the held state.
+      const held = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+        .map((part) => (part.kind === 'toolCall' ? part.toolCall as Bag | undefined : undefined))
+        .find((one) => one?.toolCallId === toolCallId);
+      if (held?.status !== 'running') {
+        no(`${toolCallId} is not running`);
         break;
       }
       // The blocks go through whole, because a client's tool can answer with

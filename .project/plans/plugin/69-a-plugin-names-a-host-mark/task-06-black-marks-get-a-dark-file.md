@@ -1,6 +1,6 @@
 ---
 title: Black marks get a dark file, and GitHub gets a mark
-status: implemented
+status: done
 depends: [task-03-a-piece-shows-its-mark.md]
 layer: "server, activepieces"
 refs:

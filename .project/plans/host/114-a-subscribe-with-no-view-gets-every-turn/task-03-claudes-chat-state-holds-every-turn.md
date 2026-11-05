@@ -1,6 +1,6 @@
 ---
 title: Claude's chat state holds every turn
-status: implemented
+status: done
 depends:
   - task-02-a-snapshot-follows-the-subscribes-view.md
 layer: agent-claude

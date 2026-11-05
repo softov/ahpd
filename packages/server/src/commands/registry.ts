@@ -26,7 +26,7 @@ import type { Registry, Runner } from '@cofold/commands';
 import { commandsFrom, httpTransport, loadManifest } from '@cofold/remote';
 import { API_PREFIX } from '../http.js';
 import { declareAutomation } from './automation.js';
-import { declareConfig } from './config.js';
+import { declareConfig, declareConfigWrite } from './config.js';
 import { declareConfigure } from './configure.js';
 import { declareDoctor } from './doctor.js';
 import { declareJoin } from './join.js';
@@ -69,6 +69,7 @@ export const cliRegistry = (): Registry<object> => {
   declareDoctor(registry);
   declareService(registry);
   declareConfig(registry);
+  declareConfigWrite(registry);
   declareConfigure(registry);
   declareUser(registry);
   declareToken(registry);

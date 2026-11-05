@@ -346,7 +346,7 @@ A backend that runs a subagent inside one of its tool calls asks the host for a 
 A worker's chat is read-only, but a client may still answer what the worker asked there and stop it.
 A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
 A backend without `stopWorker` gets `abort` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
-The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it abort the lead turn instead.
+The Claude backend has `stopWorker`, which stops a worker through the task its CLI named for it and stops nothing for a worker it has named no task for, as VS Code's Claude agent leaves the lead turn running.
 A stop once the worker has ended is refused, as on any chat with no turn running.
 
 ### The MCP servers a session is offered
@@ -2398,8 +2398,10 @@ A call that arrives already finished is started, readied and completed at once, 
 
 What the call carries is what a client draws beside it.
 Terminal content is the host's own terminal, the one the server opened through the host, and it draws with the same block a `!command` turn closes with.
-A diff is shown as the file edit it is, the after side being the file itself, and recorded in the turn's changeset beside the before side the diff carried - by the time the diff arrives the file holds only the new text, so that before side is the diff's own `oldText`.
-A diff with no `oldText` is a file the agent created, which the changeset says by leaving the before side out.
+A diff is shown as the file edit it is, both sides being the diff's own `oldText` and `newText`, held by the host's changeset source as the call's and counted for the lines each has that the other lacks, as VS Code's file edit tracker keeps a call's sides.
+It is recorded in the turn's changeset beside the before side the diff carried: by the time the diff arrives the file holds only the new text, so that before side is the diff's own `oldText`.
+A diff with no `oldText` is a file the agent created, which the block and the changeset both say by leaving the before side out.
+A host with no changeset source holds no sides, and the block names the file as it is.
 A diff of a path outside the session's own directories is shown and not recorded, because it is something the agent says it did somewhere this session was never given.
 Every file the agent writes through `fs/write_text_file` is captured the same way, once before the write and once after it, and the before is read before the write truncates the file.
 
@@ -2411,8 +2413,10 @@ never asked to stop for it - one already mid-prompt stays mid-prompt.
 
 A command that is not there fails the turn that asked for it in a sentence naming
 what was wrong, and leaves the daemon and every other session alone. A server that
-dies fails its turn the same way, with the last of what it wrote on stderr under
-the exit code; the next turn spawns it again and reopens the conversation it was
+dies fails its turn the same way, with the exit code; each line it writes on stderr
+goes to the daemon's log as it arrives, as VS Code's agents log a runtime's stderr.
+A failed turn's error is typed `sendFailed`, VS Code's name for a send that failed.
+The next turn spawns the server again and reopens the conversation it was
 holding, and a server that cannot reopen one says so rather than answering with an
 empty conversation. Closing a session tells the server to close it where it
 advertised it can be, and signals the whole process group that server leads, so

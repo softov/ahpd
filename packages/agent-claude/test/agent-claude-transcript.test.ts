@@ -161,41 +161,60 @@ it('reads a compact summary as no prompt', async () => {
 });
 
 /*
- * When a past turn and its calls ran, off the frames.
+ * A background task's end, which the CLI writes as a user frame of its own
+ * origin. Read back it is a notice turn: the task's summary is its message,
+ * and its origin says the system made it, as the live turn said.
+ */
+it('reads a task notification as a notice with the task\'s summary', async () => {
+  const turns = await read([
+    frame('user', 'u1', {
+      role: 'user',
+      content: '<task-notification>\n<task-id>b01fnggfk</task-id>\n<status>completed</status>\n<summary>Pause for 4 seconds</summary>\n</task-notification>',
+    }, { origin: { kind: 'task-notification', producer: 'session-task' } }),
+  ]);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.message).toEqual({ text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } });
+});
+
+it('reads a task notification without a summary as its own text', async () => {
+  const text = '<task-notification>\n<task-id>b01fnggfk</task-id>\n<status>completed</status>\n</task-notification>';
+  const turns = await read([
+    frame('user', 'u1', { role: 'user', content: text }, { origin: { kind: 'task-notification', producer: 'session-task' } }),
+  ]);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.message).toEqual({ text, origin: { kind: 'systemNotification' } });
+});
+
+/*
+ * How long a past turn and its calls ran, off the frames.
  *
  * The CLI writes a time on every frame and the protocol has nowhere to put a
- * call's own, so the frames are what the times come from: a call starts at its
- * `tool_use` and ends at its `tool_result`, and a turn lasts from the frame
- * that opened it to the last one that answered it.
+ * call's own, so the frames are what a duration is measured from: a call runs
+ * from its `tool_use` to its `tool_result`, which its `_meta` says under VS
+ * Code's key, and a turn lasts from the frame that opened it to the last one
+ * that answered it.
  */
 
 /** The same frame, at a time of its own. */
 const when = (at: string, one: Record<string, unknown>): Record<string, unknown> => ({ ...one, timestamp: at });
 
-it('gives a restored call the times of the frames that ran it', async () => {
+it('measures a restored call between the frames that ran it', async () => {
   const turns = await read([
     prompt('u1', 'look around'),
     when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }])),
     when('2020-01-01T00:00:09.500Z', results('u2', 'toolu_1', 'a b c')),
   ]);
   const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
-  expect(call._meta).toMatchObject({
-    toolKind: 'terminal',
-    'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
-    'ahpd.endedAt': '2020-01-01T00:00:09.500Z',
-    'ahpd.durationMs': 4500,
-  });
+  expect(call._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 4500 });
 });
 
-it('gives a restored call with no result only its start', async () => {
+it('says no duration for a restored call with no result', async () => {
   const turns = await read([
     prompt('u1', 'look around'),
     when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }])),
   ]);
   const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
-  expect(call._meta).toMatchObject({ 'ahpd.startedAt': '2020-01-01T00:00:05.000Z' });
-  expect(call._meta).not.toHaveProperty('ahpd.endedAt');
-  expect(call._meta).not.toHaveProperty('ahpd.durationMs');
+  expect(call._meta).toEqual({ toolKind: 'terminal' });
 });
 
 it('reads a call with no result back as one its turn ended around, and that turn as stopped', async () => {
@@ -234,12 +253,12 @@ it('gives a turn a single frame answered no time at all', async () => {
   expect(turns[0]?.duration).toBe(0);
 });
 
-it('never writes a bare timing key on a restored call', async () => {
+it('says a restored call\'s duration on VS Code\'s key alone', async () => {
   const turns = await read([
     prompt('u1', 'look around'),
     when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'TodoWrite', input: { todos: [] } }])),
     when('2020-01-01T00:00:09.500Z', results('u2', 'toolu_1', 'ok')),
   ]);
   const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
-  expect(Object.keys(call._meta as Bag)).toEqual(['ahpd.startedAt', 'ahpd.endedAt', 'ahpd.durationMs']);
+  expect(Object.keys(call._meta as Bag)).toEqual(['vscode.toolCallDurationMs']);
 });

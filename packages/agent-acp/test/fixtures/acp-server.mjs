@@ -89,7 +89,8 @@
  * - text containing `window` sends a `usage_update` that carries the context and
  *   no cost at all;
  * - text containing `wait` emits one chunk and then holds the prompt open
- *   until `session/cancel` arrives, answering `cancelled` only then;
+ *   until `session/cancel` arrives, answering `cancelled` only then; with
+ *   `plan`, it sends the two plans first;
  * - text containing `fail` streams the plain answer and then answers the
  *   prompt with a JSON-RPC error;
  * - text containing `die` streams the plain answer and then exits with code 3,
@@ -97,6 +98,8 @@
  * - text containing `stop=<reason>` answers the prompt with that stop reason
  *   rather than `end_turn`, so a turn that stopped early can be told apart from
  *   one that finished;
+ * - text containing `erroratend` does whatever else the text asks and then
+ *   answers the prompt with a JSON-RPC error, so a turn fails after its calls;
  * - text containing `blocks` reports the content blocks the prompt arrived in,
  *   as `blocks=text|image|resource` with each block's text or its URI - a
  *   resource block saying its URI and then its own text on the next line - so a
@@ -128,6 +131,13 @@
  * `--modes` adds a `mode` option to the config options, which is the newer
  * account of the same thing the legacy modes carry: a client sets the mode
  * through `session/set_config_option` rather than `session/set_mode`.
+ *
+ * `--refuse-mode` answers every `session/set_mode` with an error of its own,
+ * which is a server that names its modes and stays in the one it is in.
+ *
+ * `--model-thinks` moves the thinking option to `deep` whenever the model is
+ * set to `thorough`, which is a server whose options hang together: the
+ * answer to one value set names another that moved with it.
  *
  * Three flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
@@ -731,7 +741,7 @@ const promptScript = async (id, params) => {
     );
     return;
   }
-  if (text.includes('wait')) {
+  if (text.includes('wait') && !text.includes('plan')) {
     // Held open, and answered only by the cancel below: a test that sees this
     // turn end at all has proven the notification reached the server.
     pending = id;
@@ -769,6 +779,11 @@ const promptScript = async (id, params) => {
       { content: 'Write the answer', priority: 'medium', status: 'in_progress' },
     ]);
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'planned' } });
+    // A plan whose turn is held open after it, until the cancel.
+    if (text.includes('wait')) {
+      pending = id;
+      return;
+    }
   }
 
   if (text.includes('shift')) {
@@ -825,7 +840,9 @@ const promptScript = async (id, params) => {
       });
     }
     if (reports.length > 0 && requests.length > 0) {
-      await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` });
+      // Answered or refused, by a client that serves no files, it is the same
+      // round trip.
+      await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` }).catch(() => undefined);
     }
     for (const [, tool, args, meta] of requests) {
       /*
@@ -1545,6 +1562,10 @@ const promptScript = async (id, params) => {
     });
   }
 
+  if (text.includes('erroratend')) {
+    write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'the model gave up at the end' } });
+    return;
+  }
   respond(id, { stopReason: stopReasonOf(text), ...countedFor(text) });
 };
 
@@ -1753,6 +1774,10 @@ const onLine = (line) => {
       return;
 
     case 'session/set_mode':
+      if (process.argv.includes('--refuse-mode')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'The mode is locked' } });
+        return;
+      }
       mode = String(message.params?.modeId ?? mode);
       respond(message.id, {});
       notify({ sessionUpdate: 'current_mode_update', currentModeId: mode });
@@ -1764,6 +1789,7 @@ const onLine = (line) => {
       const asked = String(message.params?.configId ?? '');
       const value = message.params?.value;
       if (asked === 'model') model = String(value ?? model);
+      if (asked === 'model' && model === 'thorough' && process.argv.includes('--model-thinks')) thinking = 'deep';
       if (asked === 'mode') mode = String(value ?? mode);
       if (asked === 'thinking') thinking = String(value ?? thinking);
       if (asked === 'telemetry') telemetry = value === true;

@@ -1,7 +1,7 @@
 ---
 title: Agent kinds on their own channel
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-24
 revalidated: 2026-10-24
@@ -66,9 +66,9 @@ plugin registerAgentKind -> fold agentKinds -> kinds channel reads agentKinds() 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The agent kinds channel](task-01-the-agent-kinds-channel.md) | implemented | - |
-| [02 - A kind with no icons sends its plugin's icons](task-02-a-kind-has-its-plugin-icon.md) | implemented | 01 |
-| [03 - Agent kinds are engines](task-03-agent-kinds-are-engines.md) | implemented | 02 |
+| [01 - The agent kinds channel](task-01-the-agent-kinds-channel.md) | done | - |
+| [02 - A kind with no icons sends its plugin's icons](task-02-a-kind-has-its-plugin-icon.md) | done | 01 |
+| [03 - Agent kinds are engines](task-03-agent-kinds-are-engines.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -76,12 +76,9 @@ plugin registerAgentKind -> fold agentKinds -> kinds channel reads agentKinds() 
 
 ## Resume state
 
-- **Done so far:** task 01 is merged in #90. No kind row has an icon, because no agent plugin sets icons on its kind.
-- **Next action:** Softov checks tasks 02 and 03 with [pending/host-123-engines-checks.md](../../../pending/host-123-engines-checks.md). Both are merged in #91. ahpw plugins 08 task 05 follows.
-- **Open questions:** none.
-- **Watch out for:** a row never carries `open`. A function does not serialize.
-- **Watch out for:** in `--stdio` mode, the problem lines of the record channels, usage and policies go to stdout, which carries the protocol. This is older than this plan, and no task fixes it.
+- **Done so far:** built in #90 and #91, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
-- [ ] A subscribe to `x-ahpd-engines://` on a daemon with agent-claude and agent-cofold lists `claude` and `cofold`.
+- [x] A subscribe to `x-ahpd-engines://` on a daemon with agent-claude and agent-cofold lists `claude` and `cofold`.

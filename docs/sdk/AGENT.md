@@ -75,7 +75,7 @@ const host = createHost({ path, agents: [shout()] });
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
 | `schema()`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
-| `create(start)` | Start one. Returns a `Session` | required |
+| `create(start)` | Start one. Returns a `Session`, or a promise of one where a step comes first (a fork's copy or a truncation's cut of the conversation it resumes): the request that asked is answered when it settles, and a rejection is that request's failure | required |
 | `description` | One line about what this backend is | optional |
 | `probe()` | What you offer, asked once at startup: the models, the commands, and the account your harness bills to | optional |
 | `probeChanged(onChange)` | Call `onChange` when what `probe()` answers may have changed. The host probes again, and stops the calls when it closes or a fold removes you | optional |
@@ -215,9 +215,13 @@ A turn handed while another runs is a send of its own, which you run once the
 work in front of it is done, as VS Code's agents run each send after the one
 before it; `abort` drops every turn handed behind the one it stops. The turn's
 `options.instructions()` is what the host has to say on that turn, asked when
-the turn begins, and goes into that turn's prompt, as each of VS Code's agents
-puts the instructions its host contributes for a send
-([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)).
+the turn begins, and reaches that turn by the runtime's own channel for words
+beside a prompt where it has one, as each of VS Code's agents delivers the
+instructions its host contributes for a send
+([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)):
+cofold's system prompt, pi's custom message, which nobody is shown, and for an
+ACP server, whose prompt carries nothing beside its blocks, the prompt itself,
+ahead of the words.
 
 The chat's pending messages, queued and steering, are the host's, as VS Code's
 host holds them
@@ -283,12 +287,11 @@ methods:
 
 A confirmation may offer the agent's own choices as `options` on the call's `chat/toolCallReady` and on the entry's `toolCall`.
 `optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.
-Say it back as `selectedOptionId` on the `chat/toolCallConfirmed` the backend emits, so the call records which choice was made.
 
 The host checks a confirmation and an answer against the chat's state before it calls either: a call pending a confirmation, a request open in the running turn.
-`answer` returns false for a request the session is not waiting on.
-The host says the `chat/inputCompleted` back to every client of the chat, so the backend does not emit it.
-A `confirm` the backend has no question for returns false, and the host says the decision back itself.
+It says the client's `chat/toolCallConfirmed`, `chat/inputAnswerChanged` and `chat/inputCompleted` to every client of the chat as the client sent them, and then calls the backend, as VS Code's host applies a client's action and then hands it to its agent.
+The backend moves the call or the request it holds and answers its agent: the client's `selectedOptionId` is on the action every client holds, so the call records which choice was made.
+`answer` returns false for a request the session is not waiting on, and so does a `confirm` the backend has no question for.
 
 Hold them in a **map keyed by id**, never in one slot. A backend that can ask
 twice will: an agent firing two tools in parallel asks twice before either is
@@ -337,18 +340,20 @@ this repository a bug.
 [docs/sdk/AHP.md](AHP.md) has the same ground from the host's side, with what this
 host serves and what it does not.
 
-## The two examples
+## The examples
 
-Both are complete, both run, and `createHost` cannot tell either from `claude()`.
+All three are complete, all three run, and `createHost` cannot tell any of them from `claude()`.
 
 | | |
 | --- | --- |
 | [examples/echo](../../examples/echo) | The whole of `Agent` and `Session` with nothing behind it - no model, no subprocess, about two hundred lines. Its README is the contract in the order the host asks for it, and the three rules a session without tools has to keep |
 | [examples/notes](../../examples/notes) | The same with tools: one that runs without asking, one that waits to be allowed, and a question that is not about a tool. Its README is the rules for asking |
+| [examples/demo](../../examples/demo) | `notes` with something on every screen a client draws: models, customizations, automations, a turn that runs for a minute and one that fails. A client's screenshots are drawn from it |
 
 ```bash
 pnpm echo  -- --port 9200
 pnpm notes -- --port 9201
+pnpm demo  -- --port 9210
 ahpc --host ws://127.0.0.1:9201
 ```
 

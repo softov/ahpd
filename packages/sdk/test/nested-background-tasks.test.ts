@@ -17,6 +17,7 @@ import type { Agent, Start } from '../src/types/agent.js';
 import type { BackgroundTask, BackgroundTasks } from '../src/types/background.js';
 import type { NestedHost } from '../src/sessions/nested.js';
 import type { Handler, Peer, Wire } from '../src/types/rpc.js';
+import { startedNow } from './support/started.js';
 
 const PROVIDER = 'cofold';
 const PLUGINS = ['@ahpd/agent-cofold'];
@@ -137,7 +138,7 @@ const reporting = (counted: { stops: number; inner: Start | undefined }, base: A
   provider: PROVIDER,
   displayName: 'Cofold',
   create: (given) => {
-    const held = base.create(given);
+    const held = startedNow(base.create(given));
     counted.inner = given;
     return {
       ...held,

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
+import { bag } from '@ahpd/sdk';
 import type { Agent, Bag } from '@ahpd/sdk';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -213,8 +214,10 @@ it('keeps the answers of a question a restored worker asked', async () => {
   const worker = (await agent.subagents?.(SESSION))?.find((one) => one.toolCallId === 'toolu_third');
   const parts = (worker?.turns.flatMap((turn) => turn.responseParts as Bag[]) ?? []);
   const call = parts.map((part) => part.toolCall as Bag | undefined).find((one) => one?.toolCallId === 'toolu_pick');
-  expect(call?.structuredContent).toEqual({ questions: [picking], answers: { 'Which step first?': 'Two' } });
-  expect(parts.some((part) => part.kind === 'inputRequest' && part.response === 'accept')).toBe(true);
+  // On the request part, the call completed with its text alone.
+  expect(call).not.toHaveProperty('structuredContent');
+  const asked = parts.find((part) => part.kind === 'inputRequest' && part.response === 'accept');
+  expect(Object.keys(((asked?.request as Bag | undefined)?.answers ?? {}) as Bag)).not.toHaveLength(0);
 });
 
 it('lists a restored session\'s worker chats and serves each one read-only', async () => {
@@ -255,9 +258,12 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
     params: { channel: workerUri, action: { type: 'chat/turnStarted', turnId: 'no', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
-  const refused = notes.filter((one) => one.method === 'action'
-    && (one.params as Bag).channel === workerUri && typeof (one.params as Bag).rejectionReason === 'string');
-  expect(refused).toHaveLength(1);
+  // Said and ended read-only, as the reference host's admission ends a turn it will not run.
+  const ended = notes.filter((one) => one.method === 'action' && (one.params as Bag).channel === workerUri)
+    .map((one) => (one.params as Bag).action as Bag)
+    .filter((action) => action.type === 'chat/error' && action.turnId === 'no');
+  expect(ended).toHaveLength(1);
+  expect(bag(bag(ended[0]?.part).error).errorType).toBe('readOnly');
 
   // And the spawning call in the main transcript carries the link.
   const main = await client.handle({ method: 'subscribe', params: { channel: `ahp-chat://default/${Buffer.from(`ahp-session:/${SESSION}`, 'utf8').toString('base64url')}` } }) as { snapshot: { state: Bag } };

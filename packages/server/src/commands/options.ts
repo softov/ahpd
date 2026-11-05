@@ -190,6 +190,13 @@ export interface Options {
    */
   httpApi?: HttpSetting;
   /**
+   * Whether the model API is served, and where.
+   *
+   * Absent is off. `{}` is the listener of the HTTP API, or the daemon's own
+   * when the HTTP API is off; a `port` is a listener of its own.
+   */
+  modelApi?: HttpSetting;
+  /**
    * What `/mcp` serves to a person's MCP client.
    *
    * `none`, the default, answers 404 there. `all` serves the tools that need no
@@ -725,7 +732,16 @@ export const serverFields = {
       port: { type: 'integer', title: 'Port', description: "The port of the API's own listener. Absent serves the API on the daemon's port.", minimum: 0, maximum: 65535 },
       host: { type: 'string', title: 'Host', description: "The address the API's own listener binds. Needs a port.", pattern: '^\\S+$' },
     },
-    description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
+    description: "Serve the HTTP API under /api. true uses the daemon's port; a port gives it its own.",
+  },
+  modelApi: {
+    type: ['object', 'boolean'],
+    title: 'Model API',
+    properties: {
+      port: { type: 'integer', title: 'Port', description: "The port of the model API's own listener. Absent shares the HTTP API's.", minimum: 0, maximum: 65535 },
+      host: { type: 'string', title: 'Host', description: "The address the model API's own listener binds. Needs a port.", pattern: '^\\S+$' },
+    },
+    description: "Serve the model API under /v1. true uses the HTTP API's port; a port gives it its own.",
   },
   mcpTools: {
     type: 'string',
@@ -745,7 +761,7 @@ export const serverFields = {
   modelProxy: {
     ...proxySchema,
     title: 'Model proxy',
-    description: 'The model names this proxy serves: each is written <maker>/<name> and lists the entries that serve it, by connector id or adapter name. A provider is a connector, so its endpoint and key are the connectors store\'s, never this file\'s. sessionCalls is record (the default) or skip: whether a call made with a session\'s own token is policy-checked and recorded by the proxy. Set in the configuration file only.',
+    description: 'The model names the model API serves, each mapped to connectors.',
   },
   mcpServers: asJsonSchema(mcpServersField),
   plugins: {
@@ -774,7 +790,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
+const FILE_ONLY = ['httpApi', 'modelApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1037,15 +1053,15 @@ export function checkConfig(file: object, source: (key: string) => string): stri
 }
 
 /**
- * `httpApi` as a run takes it: `true` is the daemon's own listener, `false` and
- * absent are off. `host` binds the API's own listener and has none to bind
- * without a `port`, so it is refused on its own.
+ * `httpApi` or `modelApi` as a run takes it: `true` is a shared listener,
+ * `false` and absent are off. `host` binds a listener of its own and has none
+ * to bind without a `port`, so it is refused on its own.
  */
-const httpOf = (value: Config['httpApi'], source: string): HttpSetting | undefined => {
+const httpOf = (key: 'httpApi' | 'modelApi', value: Config['httpApi'], source: string): HttpSetting | undefined => {
   if (value === undefined || value === false) return undefined;
   if (value === true) return {};
   if (value.host !== undefined && value.port === undefined) {
-    return stop(`${source}: httpApi.host names the API's own listener, so it needs an httpApi.port to bind.`);
+    return stop(`${source}: ${key}.host names a listener of its own, so it needs a ${key}.port to bind.`);
   }
   return value;
 };
@@ -1232,7 +1248,8 @@ const noCwd = input['noCwd'] === true;
   const sessionResidencyLimit = given('sessionResidencyLimit');
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
-  const httpApi = httpOf(file.httpApi, source('httpApi'));
+  const httpApi = httpOf('httpApi', file.httpApi, source('httpApi'));
+  const modelApi = httpOf('modelApi', file.modelApi, source('modelApi'));
   const mcpTools = given('mcpTools') ?? 'none';
   const routes = routesOf(file.routes, source('routes'));
   const modelProxy = proxyConfiguration(given('modelProxy'));
@@ -1282,6 +1299,7 @@ const noCwd = input['noCwd'] === true;
     ...(serviceName === undefined ? {} : { serviceName }),
     ...(wire === undefined ? {} : { wire }),
     ...(httpApi === undefined ? {} : { httpApi }),
+    ...(modelApi === undefined ? {} : { modelApi }),
     mcpTools,
     ...(routes === undefined ? {} : { routes }),
     modelProxy,

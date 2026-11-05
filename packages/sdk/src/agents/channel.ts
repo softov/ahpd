@@ -231,6 +231,8 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   const open = new Map<string, Opened>();
   /** What the host knows of each agent's health, by id, in memory only. */
   const healths = new Map<string, AgentHealth>();
+  /** The ids whose health is the reason their record did not open. */
+  const openFailures = new Set<string>();
   /**
    * The ids the host serves, as of the last fold.
    *
@@ -451,9 +453,14 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         open.set(record.id, one);
         agents.push(one.agent);
         live.add(record.id);
+        if (openFailures.delete(record.id)) healths.delete(record.id);
       } catch (error) {
-        problem(`${record.id} could not be opened: ${reason(error)}`);
+        const message = reason(error);
+        problem(`${record.id} could not be opened: ${message}`);
         open.delete(record.id);
+        // The row says why, as a failed check does, so a client shows it.
+        healths.set(record.id, { result: 'failed', at: new Date().toISOString(), ...(message === '' ? {} : { message }) });
+        openFailures.add(record.id);
       }
     }
     for (const id of [...open.keys()]) if (!live.has(id)) open.delete(id);
@@ -814,6 +821,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       }
       open.delete(id);
       healths.delete(id);
+      openFailures.delete(id);
       try {
         await take(await sync());
       } catch (error) {
@@ -884,6 +892,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         health = { result: 'failed', at: new Date().toISOString(), ...(message === '' ? {} : { message }) };
       }
       healths.set(id, health);
+      openFailures.delete(id);
       await channel.refresh();
       return row(before);
     }),

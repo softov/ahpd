@@ -13,8 +13,7 @@ import type { Bag, BoundTool } from '@ahpd/sdk';
  *
  * The cases read both: what the SDK server lists for the tool - the zod the
  * conversion is made from - and the JSON Schema that zod writes back out of
- * it, which is what the model is offered and what the old code did not
- * produce.
+ * it, which is what the model is offered.
  */
 
 /** The one argument the server was built from, held for the cases. */
@@ -37,7 +36,7 @@ const toolOf = (inputSchema: Bag): BoundTool => ({
 
 /** The raw shape the SDK server was handed for a tool with this schema. */
 const shapeOf = (inputSchema: Bag): Record<string, z.ZodTypeAny> => {
-  contributed([toolOf(inputSchema)], () => Promise.reject(new Error('not run')));
+  contributed('client', [toolOf(inputSchema)], () => Promise.reject(new Error('not run')));
   const server = seen.given as { tools: { inputSchema: Record<string, z.ZodTypeAny> }[] } | undefined;
   const tool = server?.tools[0];
   if (tool === undefined) throw new Error('the server was handed no tool');
