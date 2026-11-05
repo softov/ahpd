@@ -220,11 +220,13 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
-   * The CLI a stop closed, or whose stream ended without a result, while the
-   * next send has not yet started one that resumes the conversation, as the
-   * reference marks its pipeline for a rebind. Its reader ends without failing
-   * the session. Nothing while the CLI answering is the one reading.
+   * The CLI a stop closed, or that died, never answered its handshake or
+   * ended its stream without a result, while the next send has not yet
+   * started one that resumes the conversation, as the reference marks its
+   * pipeline for a rebind. Its reader ends without failing the session.
+   * Nothing while the CLI answering is the one reading.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
    */
   rebind: unknown;
   /**
@@ -314,11 +316,9 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** The CLI's `init` frame, once it has answered with one. */
   handshake: Bag | undefined;
   /**
-   * Why this session's CLI is gone, once it is.
-   *
-   * Survives `begin`, unlike `failed`: the query is built once and a session
-   * whose process has exited cannot run another turn however many are asked
-   * for. Set when the run loop ends, for whatever reason, and never cleared.
+   * Why the CLI this session holds went, while it is held for the next send
+   * to start again: a turn preparing while it went fails with this. Cleared
+   * when a CLI is started.
    */
   gone: string | undefined;
   /** What this session has been told the CLI can do, by customization. */

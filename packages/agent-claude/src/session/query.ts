@@ -308,29 +308,24 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * Fail the turn now running, and this session with it, for the reason given.
+   * Put away a CLI that died, never answered its handshake or ended its stream
+   * without a result.
    *
-   * The road a CLI that died takes, and the road the bound below takes when one
-   * never answers: a turn in flight is recorded as one that failed, with the
-   * reason as its error part, and the session is marked gone for the turns that
-   * follow.
+   * The turn it was answering fails for the reason given, what it was handed
+   * goes with it, and the next send starts a CLI that resumes the
+   * conversation, as the reference pipeline fails every pending send and
+   * rebinds at the next; a turn handed behind it is that send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
    */
-  const died = (why: string): void => {
-    /*
-     * The CLI is gone, and it is not coming back on this session.
-     *
-     * Remembered separately from `failed`, which is about the last *turn*
-     * and is cleared by the next `begin`. This is about the session: the
-     * query is built once, at creation, so a CLI that dies before any turn
-     * exists leaves nothing for the branch below to report and a `begin`
-     * afterwards would start a turn nothing is left to answer. That is a
-     * session that says it is thinking for as long as anyone watches it.
-     */
+  const putAway = (handle: unknown, why: string): void => {
+    ctx.rebind = handle;
     ctx.gone = why;
-    // And it owes nothing: what it was handed went with it.
+    ctx.waiting.length = 0;
     ctx.owed.clear();
     ctx.answering = undefined;
+    ctx.steering = undefined;
     failTurn(why);
+    ctx.sendNext();
   };
 
   /**
@@ -354,8 +349,8 @@ export function createQuery(ctx: SessionContext): Query {
   const bounded = (handle: ReturnType<typeof query>): ReturnType<typeof query> => {
     const within = ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS;
     const timer = setTimeout(() => {
-      if (ctx.handle !== handle) return;
-      died(`Claude Code did not answer within ${within / 1000} seconds`);
+      if (ctx.handle !== handle || ctx.rebind === handle) return;
+      putAway(handle, `Claude Code did not answer within ${within / 1000} seconds`);
       /*
        * Closed rather than left running: a CLI that answers ten minutes later
        * would be a process nobody is reading, for a session that has already
@@ -1111,40 +1106,21 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a stop closed it for the
-      // next send to start again.
-      if (ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
-      /*
-       * A session already gone keeps the reason it went.
-       *
-       * The bound above closes a CLI that never answered, and what a close
-       * raises afterwards is the close rather than the reason - which would
-       * land here and replace the one sentence a person can act on with the
-       * SDK's own words for a socket that went away.
-       */
-      if (ctx.gone !== undefined) return;
+      // to another login is about to start it, or a stop, a death or the
+      // bound above closed it for the next send to start again, a close
+      // keeping the reason it was put away for.
+      if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
        * The failure in its own words, a CLI that never started included, as
        * VS Code's host ends a send that failed with the error's own message.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
        */
-      died(reason(error));
+      putAway(mine, reason(error));
+      return;
     }
-    /*
-     * A stream that ended without a result, which fails the turn it was
-     * answering and what that turn had handed it, as the reference pipeline
-     * fails every pending entry; the next send starts a CLI that resumes the
-     * conversation, and a turn handed behind it is that send.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
-     */
-    if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine || ctx.gone !== undefined) return;
-    ctx.rebind = mine;
-    ctx.waiting.length = 0;
-    ctx.owed.clear();
-    ctx.answering = undefined;
-    ctx.steering = undefined;
-    if (ctx.active !== undefined) failTurn('Claude SDK stream ended without a result message');
-    ctx.sendNext();
+    // A stream that ended without a result.
+    if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+    putAway(mine, 'Claude SDK stream ended without a result message');
   };
 
   /**

@@ -1049,19 +1049,19 @@ describe('running a failed turn again', () => {
 
   it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
     const { client, peer: p, chatUri } = await running();
-    // The CLI exits, so the next turn never reaches one and ends with nothing
-    // a client could run again.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
+    });
+    await settle();
+    // The CLI's stream ends under the turn, which fails it with nothing a
+    // client could run again.
     const cli = sessionQueries().at(-1);
     if (cli !== undefined) {
       // The same ending the fake's own `close()` gives: no more frames.
       cli.closed = true;
       cli.wake?.();
     }
-    await settle();
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
-    });
     await settle();
     const clis = sessionQueries().length;
 

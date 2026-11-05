@@ -428,17 +428,47 @@ it('refuses a turn that cannot be resumed', async () => {
   // A turn that did not fail.
   expect(() => older.session.resumeTurn?.('t2')).toThrow();
 
-  // A turn that failed with nothing to run again on, whose part says so.
+});
+
+/*
+ * A CLI that went before the next turn, by an error or a stream that ended
+ * without a result: the turn it was answering fails, and the next send starts
+ * a CLI that resumes the conversation, as VS Code's pipeline fails its pending
+ * sends and rebinds at the next.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
+ */
+it('fails the turn a CLI died under in its own words, and starts one again for the next turn', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.sendMessage('t1', 'one');
+  await settle();
+  sdk.failing = new Error('The CLI died');
+  sdk.push();
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => bag(bag(one.part).error).message)).toEqual(['The CLI died']);
+  sdk.failing = undefined;
+  const before = sdk.queries.length;
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(sdk.queries).toHaveLength(before + 1);
+  expect((session.chatState() as Bag).activeTurn).toMatchObject({ id: 't2' });
+});
+
+it('starts a CLI again for the turn after one that went, and runs the turn on it', async () => {
   sdk.reset();
   const gone = live();
   await settle();
   sdk.queries.at(-1)?.close();
   await settle();
+  const before = sdk.queries.length;
   gone.session.sendMessage('t1', 'one');
   await settle();
-  const turns = (gone.session.chatState() as Bag).turns as Bag[];
-  expect((bag(turns.at(-1)).responseParts as Bag[]).at(-1)?.resumable).toBeUndefined();
-  expect(() => gone.session.resumeTurn?.('t1')).toThrow();
+  expect(sdk.queries).toHaveLength(before + 1);
+  expect((gone.session.chatState() as Bag).activeTurn).toMatchObject({ id: 't1' });
+  sdk.push(step('a1'), worked);
+  await settle();
+  expect(bag(((gone.session.chatState() as Bag).turns as Bag[]).at(-1)).state).toBe('complete');
 });
 
 /*

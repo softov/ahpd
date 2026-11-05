@@ -226,12 +226,13 @@ export function createTurns(ctx: SessionContext): Turns {
     if (ctx.retooling !== undefined) await ctx.retooling;
     if (ctx.closed || stops !== stopped) return;
     /*
-     * A session whose CLI has exited answers at once, and says why.
+     * A CLI that went while this turn prepared fails the turn, and says why;
+     * the next send starts one again.
      *
      * The turn is recorded as one that failed rather than refused, because a
      * person typed it and it belongs in the transcript beside the reason.
      */
-    if (ctx.gone !== undefined) {
+    if (ctx.gone !== undefined && ctx.rebind === ctx.handle) {
       ctx.beginning = undefined;
       refuseTurn(turnId, text, ctx.gone, began, from, attachments);
       return;
