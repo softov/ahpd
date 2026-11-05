@@ -74,7 +74,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `profiles` | none | The named sets a person picks from when making a machine. See `profiles.<name>` below |
 | `bodyMounts` | `false` | Whether a person making a machine may name `mounts` or a `folder` of their own. With it on, `computer:write` is root on the host. See [Security](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#security) |
 | `imageMounts` | `true` | Whether a part may be mounted from its own image. `false` mounts every part from a volume filled once from it |
-| `images` | any image | The image patterns a machine may be made from, such as `node:*` or `ghcr.io/acme/**` |
+| `images` | any image | The images a machine may be made from, as containers-policy.json image scopes, such as `docker.io/library/node` or `ghcr.io/acme` |
 | `devcontainer` | the `devcontainer` CLI | The Dev Container CLI, as a launcher and as a machine maker. `false` switches every dev container route off. See `devcontainer` below |
 
 `ahpd vault set <scope>:<name>` keeps a value a need reads with `{ "$secret": "<scope>:<name>" }`, from standard input. A need may name `host:`, `team:<team>/` or `user:<id>/`. See [VAULT.md](https://github.com/softov/ahpd/blob/main/docs/server/VAULT.md) for the vault, and [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) for who a need is read for.

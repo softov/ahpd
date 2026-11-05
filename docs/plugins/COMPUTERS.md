@@ -887,20 +887,20 @@ On a host that has a users directory, the list is required: `ahpd --users` with 
 **Allowed images.** By default any image may be used. To limit them:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/computer", "options": { "images": ["node:*", "ghcr.io/acme/**"] } }] }
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "images": ["docker.io/library/node", "ghcr.io/acme"] } }] }
 ```
 
-The host's default image and every profile's image are always allowed. Patterns match whole name components, never string prefixes:
+The host's default image and every profile's image are always allowed. Each entry is a scope of the image policy the containers tools read, [containers-policy.json](https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md)'s `docker:` transport: an image is matched by its identity, its repository, each namespace above it, its registry, and each `*.` domain its registry is under, whole names and never string prefixes:
 
-| Pattern | Allows | Refuses |
+| Scope | Allows | Refuses |
 | --- | --- | --- |
-| `node:22` | that image | any other tag |
-| `node:*` | any tag of `node` | `nodejs/node`, `node-evil/x` |
-| `ghcr.io/acme/*:*` | any repository directly under `acme` | `ghcr.io/acme-evil/x` |
-| `ghcr.io/acme/**` | anything under `acme` | anything outside it |
-| `*` | anything | nothing |
+| `docker.io/library/node:22` | that image | any other tag |
+| `docker.io/library/node` | any tag or digest of `node` | `nodejs/node`, `node-evil/x` |
+| `ghcr.io/acme` | anything under `acme`, at any depth | `ghcr.io/acme-evil/x` |
+| `ghcr.io` | anything on that registry | anything elsewhere |
+| `*.example.com` | anything on a registry under `example.com`, whatever its port | `example.com` itself |
 
-`*` is one component and `**` any number of them. `*/acme/**` matches `acme` on any registry. A star inside a component, like `node:22-*`, is rejected when the plugin loads. A pattern with no tag allows every tag, and `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` are the same image. When every entry is a plain name, the list is published as an `enum` for a picker.
+An image is named in its fully expanded form, so `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` are the one image `docker.io/library/node:22`, and an image with no tag is its `latest`. A scope in another form, such as `node:22`, `docker.io/node` or `ghcr.io/acme/**`, is rejected when the plugin loads. When every entry names one image, the list is published as an `enum` for a picker.
 
 An image starting with `-` is always refused, because Docker would read it as a flag.
 

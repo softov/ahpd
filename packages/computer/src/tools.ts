@@ -91,7 +91,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
           return `${image} is a flag rather than an image. Name an image, such as ${options.image}.`;
         }
         const allowed = allowedImages(options);
-        if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+        if (allowed !== undefined && !allowedBy(allowed.scopes, image)) {
           return `This host does not run ${image}. It runs ${allowed.names.join(', ')}.`;
         }
         const made = await runtime.run({

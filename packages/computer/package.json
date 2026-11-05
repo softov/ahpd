@@ -224,7 +224,7 @@
         },
         "bodyMounts": { "type": "boolean", "description": "Whether a person making a machine may name mounts of their own." },
         "imageMounts": { "type": "boolean", "description": "Whether a part may be mounted from its own image. false mounts every part from a volume filled once from it." },
-        "images": { "type": "array", "items": { "type": "string" }, "description": "The image patterns a machine may be made from." },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "The images a machine may be made from, as containers-policy.json image scopes: docker.io/library/node:22 one image, docker.io/library/node a repository, ghcr.io/acme a namespace, ghcr.io a registry, *.example.com its subdomains." },
         "devcontainer": {
           "type": ["object", "boolean"],
           "properties": {

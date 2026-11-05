@@ -62,7 +62,7 @@
       "description": "Se uma part pode ser montada da sua própria imagem. false monta cada part de um volume preenchido uma vez a partir dela."
     },
     "images": {
-      "description": "Os padrões de imagem de que uma máquina pode ser criada."
+      "description": "As imagens de que uma máquina pode ser criada, como escopos de imagem do containers-policy.json: docker.io/library/node:22 uma imagem, docker.io/library/node um repositório, ghcr.io/acme um namespace, ghcr.io um registro, *.example.com seus subdomínios."
     },
     "devcontainer": {
       "description": "A CLI do Dev Container, como launcher e como criador de máquinas, e as pastas de que ela pode criar uma; false desliga todas as rotas de dev container."

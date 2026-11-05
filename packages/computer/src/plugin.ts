@@ -8,7 +8,7 @@ import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js'
 import type { CliOptions } from './devcontainer.js';
 import { COMPUTERS_SCHEME, computerCatalogue } from './catalogue.js';
 import { computerMethods, computerProvider } from './provider.js';
-import { patternOf } from './reference.js';
+import { scopeOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
 import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
@@ -540,16 +540,16 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const bodyMounts = options.bodyMounts === true;
   /*
-   * The images a machine may be made from.
+   * The images a machine may be made from, as image scopes.
    *
-   * Absent, any image is allowed, which is what every host did before this
-   * existed: naming a set is the operator opting in. A pattern the matcher
-   * will not read is fatal here rather than a rule that silently matches
-   * nothing - an operator who wrote one meant something by it.
+   * Absent, any image is allowed: naming a set is the operator opting in. A
+   * scope in a form the policy does not read is fatal here, since it would
+   * silently match nothing, and an operator who wrote one meant something by
+   * it.
    */
   const images = options.images as string[] | undefined;
   for (const one of images ?? []) {
-    try { patternOf(one); }
+    try { scopeOf(one); }
     catch (error) {
       throw new Error(`plugin ${name}: ${error instanceof Error ? error.message : String(error)}`);
     }

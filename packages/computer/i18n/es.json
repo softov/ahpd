@@ -62,7 +62,7 @@
       "description": "Si una part se puede montar desde su propia imagen. false monta cada part desde un volumen que se llena una vez a partir de ella."
     },
     "images": {
-      "description": "Los patrones de imagen con los que se puede crear una máquina."
+      "description": "Las imágenes con las que se puede crear una máquina, como ámbitos de imagen de containers-policy.json: docker.io/library/node:22 una imagen, docker.io/library/node un repositorio, ghcr.io/acme un espacio de nombres, ghcr.io un registro, *.example.com sus subdominios."
     },
     "devcontainer": {
       "description": "La CLI de Dev Container, como launcher y como creador de máquinas, y las carpetas desde las que puede crear una; false desactiva todas las rutas de dev container."

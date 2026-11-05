@@ -304,11 +304,11 @@ it('refuses an image that is a flag', async () => {
   // And the deployment's set, which this path also never saw: a tool builds a
   // machine straight from what it was asked for, with no manifest in between.
   const bound = computerTools(runtime, {
-    ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer', images: ['node:*'],
+    ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer', images: ['ghcr.io/acme'],
   });
   expect(String(await by(bound, 'request_disposable_computer').run({ name: 'three', image: 'ubuntu:24.04' }, at)))
     .toMatch(/does not run ubuntu:24.04/);
-  expect(String(await by(bound, 'request_disposable_computer').run({ name: 'four', image: 'node:20' }, at)))
+  expect(String(await by(bound, 'request_disposable_computer').run({ name: 'four', image: 'ghcr.io/acme/box:1' }, at)))
     .toContain('computer://four');
 });
 
@@ -326,14 +326,15 @@ it('makes a machine only from an image the deployment named', async () => {
     ...options,
     // Four machines are made below, and the shared options hold two.
     max: 4,
-    images: ['node:*', 'ghcr.io/acme/**'],
+    images: ['docker.io/library/node', 'ghcr.io/acme'],
     profiles: { plain: { image: 'alpine:3.20' } },
   };
   const provider = computerProvider(runtime, held);
   const refused = async (image: string): Promise<unknown> =>
     provider.write('computer://box', made({ image })).catch((error: unknown) => error);
 
-  // Any tag of a named repository, and any depth of a named namespace.
+  // Any tag of a named repository, and any depth of a named namespace: each
+  // entry a containers-policy.json image scope.
   await provider.write('computer://one', made({ image: 'node:18-alpine' }));
   await provider.write('computer://two', made({ image: 'ghcr.io/acme/team/box:1' }));
   expect(calls).toHaveLength(2);
@@ -341,7 +342,7 @@ it('makes a machine only from an image the deployment named', async () => {
   // The counterexample a string prefix would let through.
   expect(await refused('ghcr.io/acme-evil/backdoor:1')).toMatchObject({ code: -32602 });
   expect(String((await refused('ubuntu:24.04') as Error).message))
-    .toMatch(/does not run ubuntu:24.04; it runs node:\*, ghcr.io\/acme\/\*\*/);
+    .toMatch(/does not run ubuntu:24.04; it runs docker.io\/library\/node, ghcr.io\/acme/);
 
   // The host's own default and every profile's image are in the set without
   // the operator repeating them, because a profile names one to be made from.
@@ -349,11 +350,11 @@ it('makes a machine only from an image the deployment named', async () => {
   await provider.write('computer://four', made({ image: 'alpine:3.20' }));
   expect(calls).toHaveLength(4);
 
-  // A set of names is a set of choices; one with a wildcard in it is not, so
-  // the field stays a text box rather than offering `node:*` as an image.
-  const open = computerProvider(runtime, { ...held, images: ['node:22', 'alpine:3.20'] });
+  // A set of single images is a set of choices; a repository or a namespace
+  // is not, so the field stays a text box rather than offering one as an image.
+  const open = computerProvider(runtime, { ...held, images: ['docker.io/library/node:22', 'docker.io/library/alpine:3.20'] });
   const props = (open.describe().manifest as { properties: Record<string, { enum?: string[] }> }).properties;
-  expect(props.image?.enum).toEqual(['node:22', 'alpine:3.20', 'debian:bookworm-slim']);
+  expect(props.image?.enum).toEqual(['docker.io/library/node:22', 'docker.io/library/alpine:3.20', 'debian:bookworm-slim', 'alpine:3.20']);
   const loose = computerProvider(runtime, held);
   expect((loose.describe().manifest as { properties: Record<string, { enum?: string[] }> }).properties.image?.enum)
     .toBeUndefined();

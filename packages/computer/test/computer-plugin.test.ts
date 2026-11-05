@@ -878,18 +878,18 @@ it('answers the computer picker with the machines it has', async () => {
   expect(some.map((one) => one.value)).toEqual(['computer://other']);
 });
 
-it('will not load with an image pattern it cannot read', async () => {
+it('will not load with an image scope the policy does not read', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-pattern-'));
   const state = join(loose, 'docker.json');
   const { problems, loaded } = await load({
     command: process.execPath,
     args: [FIXTURE],
     env: { DOCKER_FAKE_STATE: state },
-    images: ['node:22-*'],
+    images: ['node:22'],
   });
   expect(loaded).toEqual([]);
   expect(problems.map((one) => String(one))).toContainEqual(
-    expect.stringMatching(/has a \* inside 22-\*/),
+    expect.stringMatching(/node:22 is not an image scope: name an image in its fully expanded form/),
   );
 });
 
