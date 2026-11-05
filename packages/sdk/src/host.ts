@@ -962,6 +962,17 @@ export function createHost(options: HostOptions): Host {
       }
     }
     /*
+     * A backend's removal of an entry the session no longer holds is not said
+     * either: this host took the entry down when the request it named
+     * resolved, and an entry goes once.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+     */
+    if (action.type === 'session/inputNeededRemoved' && origin === undefined) {
+      const held = states.get(channel);
+      const entries = held?.kind === 'session' && Array.isArray(held.state.inputNeeded) ? held.state.inputNeeded as Record<string, unknown>[] : [];
+      if (held?.kind === 'session' && !entries.some((entry) => entry.id === action.id)) return;
+    }
+    /*
      * A backend's result for a call the chat holds completed is not said
      * either: the call was completed by its client's own result, said when the
      * host took it, and a call completes once.
