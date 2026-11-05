@@ -234,7 +234,7 @@ describe('a piece becomes an adapter', () => {
     expect(properties['when']).toMatchObject({ type: 'string', format: 'date-time' });
     expect(properties['file']).toMatchObject({
       type: 'string',
-      description: 'An https: URL, a data: URI or the name of a session attachment.',
+      description: 'A URL, a base64 data: URI or the name of a session attachment.',
     });
     expect(properties).not.toHaveProperty('note');
   });
@@ -341,7 +341,7 @@ describe('a piece becomes an adapter', () => {
       file: {
         type: 'string',
         title: 'File',
-        description: 'The file to send. An https: URL, a data: URI or the name of a session attachment.',
+        description: 'The file to send. A URL, a base64 data: URI or the name of a session attachment.',
       },
     });
     expect(send?.input).not.toHaveProperty('required');

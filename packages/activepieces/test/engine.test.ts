@@ -224,7 +224,7 @@ describe('a call carries a file', () => {
     });
   });
 
-  it('decodes a data: URI that is not base64 as the engine\'s fetch decodes one, with no folder', async () => {
+  it('fetches a data: URI that is not base64, as the engine fetches any URL, with no folder', async () => {
     const answer = await ask(start(), run('read', { file: 'data:text/plain,hi' }));
 
     expect(answer).toMatchObject({ type: 'ran', result: { filename: 'unknown.txt', extension: 'txt', text: 'hi', size: 2 } });

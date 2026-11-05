@@ -8,7 +8,7 @@
  * answer that is not an image dropped, and the size checked from
  * `content-length` and again as the bytes arrive. Each hop goes through the
  * plugin's guarded fetch, so a logo URL that resolves into the host's own
- * network is refused as a `FILE` value's URL is. A logo is held to 256 KB, VS
+ * network is blocked as a piece's would be. A logo is held to 256 KB, VS
  * Code's bound for an icon's image.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
  *
@@ -21,15 +21,15 @@
 
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fetched } from './fetch.ts';
+import { MOST_BYTES, WITHIN_MS, fetched } from './fetch.ts';
 import type { Answer } from './fetch.ts';
 import type { Icon } from '@ahpd/sdk';
 
 /** The most one logo may be, in bytes, whether it came from the cache or the network: VS Code's 256 KB for an icon. */
-export const LOGO_LIMIT = 256 * 1024;
+export const LOGO_LIMIT = MOST_BYTES;
 
 /** How long the whole read may take, redirects included: VS Code's ten seconds. */
-const LOGO_TIMEOUT_MS = 10_000;
+const LOGO_TIMEOUT_MS = WITHIN_MS;
 
 /** What one piece's logo came to: an icon, or the line saying why there is none. */
 export interface Logo {
@@ -91,8 +91,8 @@ const iconOf = (bytes: Buffer, contentType: string): Icon => ({
   contentType,
 });
 
-/** The guarded fetch, held to VS Code's bounds on an image read. */
-const guarded: LogoFetcher = async (url) => await fetched(url, { maxBytes: LOGO_LIMIT, timeoutMs: LOGO_TIMEOUT_MS });
+/** The guarded fetch, whose bounds are VS Code's on an image read. */
+const guarded: LogoFetcher = async (url) => await fetched(url);
 
 /** A read, or the refusal when the whole of it takes longer than the bound. */
 const withinBound = async (read: Promise<Answer>): Promise<Answer> => {

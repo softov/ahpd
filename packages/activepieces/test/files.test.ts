@@ -3,17 +3,15 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Answer } from '../src/fetch.js';
 import { fileProcessor } from '../src/files.js';
-import type { ApFile, ApStreamingFile, FilesOptions } from '../src/files.js';
+import type { ApFile, ApStreamingFile } from '../src/files.js';
 
 /*
  * The file one FILE value names, as the engine's `fileProcessor` makes it.
  *
  * An attachment is read from a folder this file makes for each case; a URL is
- * answered by a read the case hands in, so nothing is looked up and no request
- * is made, and the cases on the guarded fetch name a URL it refuses before a
- * socket opens. A value that names no file is `null`, which the engine's
+ * answered by a `fetch` the case stands in for, so nothing is looked up and no
+ * request is made. A value that names no file is `null`, which the engine's
  * validator then refuses for a required prop.
  */
 
@@ -21,7 +19,7 @@ import type { ApFile, ApStreamingFile, FilesOptions } from '../src/files.js';
 const made: string[] = [];
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   for (const one of made.splice(0)) rmSync(one, { recursive: true, force: true });
 });
 
@@ -39,14 +37,14 @@ function withFiles(files: Record<string, string>): string {
 /** A FILE prop, streaming where a case says. */
 const FILE = { type: 'FILE', required: true };
 
-/** A read that answers every URL with one answer, and the URLs it was asked for. */
-const answering = (status: number, headers: Record<string, string>, body: string): { asked: string[]; options: FilesOptions } => {
+/** A `fetch` that answers every URL with one response, and the URLs it was asked for. */
+const answering = (status: number, headers: Record<string, string>, body: string) => {
   const asked: string[] = [];
-  const read = async (url: string): Promise<Answer> => {
+  vi.stubGlobal('fetch', async (url: string) => {
     asked.push(url);
-    return { status, headers, bytes: Buffer.from(body) };
-  };
-  return { asked, options: { fetch: read } };
+    return new Response(body, { status, headers });
+  });
+  return asked;
 };
 
 /** A processed value that is an `ApFile`, which a case reads. */
@@ -66,31 +64,21 @@ describe('a base64 data: URI', () => {
 
 describe('a URL', () => {
   it('is named by its Content-Disposition, else its path\'s last segment with a dot, else unknown.<ext>', async () => {
-    const pdf = answering(200, { 'content-disposition': 'attachment; filename="report.pdf"', 'content-type': 'application/pdf' }, 'pdf');
-    expect(whole(await fileProcessor(FILE, 'https://example.com/download?id=1', undefined, pdf.options)).filename).toBe('report.pdf');
+    answering(200, { 'content-disposition': 'attachment; filename="report.pdf"', 'content-type': 'application/pdf' }, 'pdf');
+    expect(whole(await fileProcessor(FILE, 'https://example.com/download?id=1', undefined)).filename).toBe('report.pdf');
 
-    const png = answering(200, { 'content-type': 'image/png' }, 'png');
-    const named = whole(await fileProcessor(FILE, 'https://example.com/files/photo.jpeg', undefined, png.options));
+    answering(200, { 'content-type': 'image/png' }, 'png');
+    const named = whole(await fileProcessor(FILE, 'https://example.com/files/photo.jpeg', undefined));
     expect([named.filename, named.extension]).toEqual(['photo.jpeg', 'jpeg']);
 
-    const csv = answering(200, { 'content-type': 'text/csv; charset=utf-8' }, 'a,b');
-    expect(whole(await fileProcessor(FILE, 'https://example.com/export', undefined, csv.options)).filename).toBe('unknown.csv');
+    answering(200, { 'content-type': 'text/csv; charset=utf-8' }, 'a,b');
+    expect(whole(await fileProcessor(FILE, 'https://example.com/export', undefined)).filename).toBe('unknown.csv');
   });
 
-  it('is no file when it answers no success', async () => {
-    const gone = answering(404, {}, 'not here');
-    expect(await fileProcessor(FILE, 'https://example.com/gone.txt', undefined, gone.options)).toBeNull();
-    expect(gone.asked).toEqual(['https://example.com/gone.txt']);
-  });
-
-  it('is read through the guarded fetch: an http: URL and an address in the host\'s own network are no file, refused before a socket opens', async () => {
-    const said = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await fileProcessor(FILE, 'http://127.0.0.1:1/a.txt', undefined)).toBeNull();
-    expect(await fileProcessor(FILE, 'https://127.0.0.1:1/a.txt', undefined)).toBeNull();
-    expect(said.mock.calls.map(([error]) => (error instanceof Error ? error.message : String(error)))).toEqual([
-      'only an https: URL is fetched, and http: is not',
-      '127.0.0.1 answers on an address that this plugin does not fetch',
-    ]);
+  it('is no file when it answers no success, and fetches http: as the engine does', async () => {
+    const asked = answering(404, {}, 'not here');
+    expect(await fileProcessor(FILE, 'http://example.com/gone.txt', undefined)).toBeNull();
+    expect(asked).toEqual(['http://example.com/gone.txt']);
   });
 });
 
@@ -125,11 +113,6 @@ describe('a prop the piece declares streaming', () => {
     const fromData = await fileProcessor(streaming, `data:text/plain;base64,${Buffer.from('hi').toString('base64')}`, undefined) as ApStreamingFile;
     expect([fromData.filename, fromData.size]).toEqual(['unknown.txt', 2]);
     expect(Buffer.concat(await fromData.body.toArray() as Buffer[]).toString()).toBe('hi');
-    // A URL's answer is read whole by the guarded fetch, so its size is known.
-    const read = answering(200, { 'content-type': 'text/plain' }, 'from-url');
-    const fromUrl = await fileProcessor(streaming, 'https://example.com/big.txt', undefined, read.options) as ApStreamingFile;
-    expect([fromUrl.filename, fromUrl.extension, fromUrl.size]).toEqual(['big.txt', 'txt', 8]);
-    expect(Buffer.concat(await fromUrl.body.toArray() as Buffer[]).toString()).toBe('from-url');
   });
 });
 

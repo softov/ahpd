@@ -14,26 +14,14 @@
  * which the validator then refuses for a required prop.
  * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/variables/processors/file.ts
  *
- * A URL is read through the guarded fetch: only `https:`, never an address in
- * the host's own network, up to the 32 MB the host's attachments use and
- * within 30 seconds, a refusal of its being no file. A `data:` URI the
- * engine's base64 parser does not take is decoded as `fetch` decodes one,
- * which reaches no network.
+ * The URL's fetch is the engine's own, under the guard that process runs with.
  */
 
 import { createReadStream } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 import { Readable } from 'node:stream';
-import { fetched } from './fetch.ts';
-import type { Answer } from './fetch.ts';
 import type { Prop } from './props.ts';
-
-/** What a caller may hand a file read, so a test reaches no network. */
-export interface FilesOptions {
-  /** How a URL is read; a `data:` URI decoded and any other URL read through the guarded fetch otherwise. */
-  fetch?: (url: string) => Promise<Answer>;
-}
 
 /** The part of an `ApFile` a piece reads. */
 export interface ApFile {
@@ -184,47 +172,40 @@ const getFileName = (path: string, disposition: string | null, mimeType: string 
   return undefined;
 };
 
-/**
- * One URL read: a `data:` URI decoded as `fetch` decodes one, which reaches no
- * network, and any other URL through the guarded fetch.
- */
-const readUrl = async (url: string): Promise<Answer> => {
-  if (new URL(url).protocol !== 'data:') return await fetched(url);
-  const response = await fetch(url);
-  return {
-    status: response.status,
-    headers: { 'content-type': response.headers.get('content-type') ?? undefined },
-    bytes: Buffer.from(await response.arrayBuffer()),
-  };
+/** One URL, fetched whole: the engine's `handleUrlFile`. */
+const handleUrlFile = async (value: string): Promise<ApFile | null> => {
+  const response = await fetch(value);
+  if (!response.ok) {
+    await response.body?.cancel();
+    return null;
+  }
+  const filename = getFileName(value, response.headers.get('content-disposition'), response.headers.get('content-type') ?? undefined) ?? 'unknown';
+  return apFile(filename, Buffer.from(await response.arrayBuffer()), extensionFromFilename(filename));
 };
 
-/** One URL, read whole: the engine's `handleUrlFile`. */
-const handleUrlFile = async (value: string, read: (url: string) => Promise<Answer>): Promise<ApFile | null> => {
-  const answer = await read(value);
-  if (answer.status < 200 || answer.status >= 300) return null;
-  const filename = getFileName(value, answer.headers['content-disposition'] ?? null, answer.headers['content-type']) ?? 'unknown';
-  return apFile(filename, answer.bytes, extensionFromFilename(filename));
-};
-
-/**
- * One URL, as a body to read: the engine's `handleStreamingFile`. The guarded
- * fetch reads an answer whole, so the body is its bytes and the size is their
- * length.
- */
-const handleStreamingFile = async (value: string, read: (url: string) => Promise<Answer>): Promise<ApStreamingFile | null> => {
+/** One URL, as a body to read: the engine's `handleStreamingFile`. */
+const handleStreamingFile = async (value: string): Promise<ApStreamingFile | null> => {
   const parsed = parseBase64File(value);
   if (parsed !== undefined) {
     return { filename: `unknown.${parsed.extension}`, extension: parsed.extension, size: parsed.buffer.length, body: Readable.from(parsed.buffer) };
   }
-  const answer = await read(value);
-  if (answer.status < 200 || answer.status >= 300) return null;
-  const filename = getFileName(value, answer.headers['content-disposition'] ?? null, answer.headers['content-type']) ?? 'unknown';
+  const response = await fetch(value);
+  if (!response.ok || response.body === null) {
+    await response.body?.cancel();
+    return null;
+  }
+  const filename = getFileName(value, response.headers.get('content-disposition'), response.headers.get('content-type') ?? undefined) ?? 'unknown';
   const extension = extensionFromFilename(filename);
+  const encoding = response.headers.get('content-encoding');
+  const length = Number(response.headers.get('content-length'));
+  // The size is the body's only when the body is not encoded: fetch decodes it
+  // and keeps the encoded length.
+  const sizeIsTrustworthy = (encoding === null || encoding.toLowerCase() === 'identity') && Number.isInteger(length) && length > 0;
   return {
     filename,
     ...(extension === undefined ? {} : { extension }),
-    size: answer.bytes.length,
-    body: Readable.from(answer.bytes),
+    ...(sizeIsTrustworthy ? { size: length } : {}),
+    body: Readable.fromWeb(response.body as unknown as Parameters<typeof Readable.fromWeb>[0]),
   };
 };
 
@@ -259,22 +240,16 @@ const attachmentOf = async (value: string, folder: string | undefined, streaming
  * `folder` is the session's attachments folder, or nothing where its store
  * keeps none.
  */
-export const fileProcessor = async (
-  prop: Prop,
-  value: unknown,
-  folder: string | undefined,
-  options: FilesOptions = {},
-): Promise<ApFile | ApStreamingFile | null> => {
+export const fileProcessor = async (prop: Prop, value: unknown, folder: string | undefined): Promise<ApFile | ApStreamingFile | null> => {
   if (typeof value !== 'string') return null;
   const streaming = prop.type === 'FILE' && prop.streaming === true;
-  const read = options.fetch ?? readUrl;
   try {
     // A value that is no URL names an attachment; a `data:` URI is a URL.
     if (!URL.canParse(value)) return await attachmentOf(value, folder, streaming);
-    if (streaming) return await handleStreamingFile(value, read);
+    if (streaming) return await handleStreamingFile(value);
     const parsed = parseBase64File(value);
     if (parsed !== undefined) return apFile(`unknown.${parsed.extension}`, parsed.buffer, parsed.extension);
-    return await handleUrlFile(value, read);
+    return await handleUrlFile(value);
   }
   catch (error) {
     console.error(error);
