@@ -1624,6 +1624,30 @@ export function createTooling(ctx: HostContext): Tooling {
    * `calling` is the turn a tool call is made from and nothing for a plugin:
    * a tool is counted where it runs, and a plugin has no turn to be charged.
    */
+  /**
+   * What a chat or session a session tool makes takes from the chat the tool
+   * runs in, as VS Code's `getCreationDefaults`: that chat's agent; its model,
+   * the running turn's, else its draft's, else its last turn's; and the
+   * settings its agent names as inherited from its config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2566-L2600
+   */
+  const creationDefaults = (calling: { uri: string; chatUri: string }): { agent?: Agent; model?: string; config?: Record<string, unknown> } => {
+    const held = sessions.get(calling.uri);
+    const agent = held?.backends.get(calling.chatUri)?.agent ?? held?.agent;
+    const state = (ctx.stateOf(calling.chatUri) ?? {}) as Bag;
+    const turns = Array.isArray(state.turns) ? state.turns as Bag[] : [];
+    const message = (bag(state.activeTurn)?.message ?? state.draft ?? turns.at(-1)?.message) as Bag | undefined;
+    const model = str(bag(message?.model)?.id);
+    // The calling chat's own config in force, which its backend answers.
+    const values = byChat.get(calling.chatUri)?.chat.settings() ?? {};
+    const config = agent?.inheritedChatConfig?.(values);
+    return {
+      ...(agent === undefined ? {} : { agent }),
+      ...(model === undefined ? {} : { model }),
+      ...(config === undefined ? {} : { config }),
+    };
+  };
+
   const openChat = async (
     at: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
   ): Promise<{ chat: string }> => {
@@ -1648,6 +1672,11 @@ export function createTooling(ctx: HostContext): Tooling {
     const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
     if (agent === undefined) throw new Error(noProvider(asked.provider));
     const config = chatConfigOf(agent, held, checkedConfig(agent, asked.config));
+    // Asked for no model, a tool's chat runs the calling chat's where the two
+    // run one agent, as VS Code's create-chat takes it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1375-L1378
+    const defaults = calling === undefined ? undefined : creationDefaults(calling);
+    const model = asked.model ?? (defaults?.agent === agent ? defaults.model : undefined);
     const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
     // What the plugins give a chat a tool opens, ahead of the tool's prompt.
     const preambles = options.chatPreambles ?? [];
@@ -1672,7 +1701,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      void ctx.startTurn(chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
+      void ctx.startTurn(chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
     }
     if (tree !== undefined) countUp(tree, 'chats');
     return { chat: chatUri };
@@ -1806,10 +1835,20 @@ export function createTooling(ctx: HostContext): Tooling {
           + ` This session was itself created ${depth} level(s) deep.`,
         );
       }
-      const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
+      /*
+       * What the calling chat hands it, as VS Code's create-session takes it:
+       * that chat's agent where the call names none, and where the new session
+       * runs that agent, its model where the call names none and the settings
+       * the agent says a new chat inherits.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1208-L1233
+       */
+      const defaults = creationDefaults({ uri, chatUri });
+      const provider = asked.provider ?? defaults.agent?.provider ?? ctx.first?.provider;
       if (provider === undefined) throw new Error(noProvider(provider));
       const agent = ctx.agents.get(provider);
       if (agent === undefined) throw new Error(noProvider(provider));
+      const inherits = defaults.agent === agent;
+      const model = asked.model ?? (inherits ? defaults.model : undefined);
       /*
        * Named for the client whose turn made it: `<provider>:/<uuid>` when an
        * older VS Code window sent the running turn, so that window sees the
@@ -1827,9 +1866,10 @@ export function createTooling(ctx: HostContext): Tooling {
        * the tool arguing with which session it asked for.
        */
       const config: Record<string, unknown> = {
+        ...(inherits ? defaults.config ?? {} : {}),
         ...(checkedConfig(agent, asked.config) ?? {}),
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
-        ...(asked.model !== undefined ? { model: asked.model } : {}),
+        ...(model !== undefined ? { model } : {}),
       };
       // The same steps `createSession` takes for a client, in the same order:
       // the tree before anything runs in it, the host's keys kept apart from
@@ -1859,7 +1899,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
+      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
       countUp(tree, 'sessions');
       return { session: made, chat: chatUriFor(made) };
     },

@@ -75,6 +75,7 @@ const host = createHost({ path, agents: [shout()] });
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
 | `schema()`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
+| `inheritedChatConfig(config)` | The settings a chat or session a session tool makes takes from the chat that made it, picked out of that chat's config, as VS Code's `getInheritedChatConfig` (Claude's: its permission mode and permissions) | optional |
 | `create(start)` | Start one. Returns a `Session` | required |
 | `description` | One line about what this backend is | optional |
 | `probe()` | What you offer, asked once at startup: the models, the commands, and the account your harness bills to | optional |

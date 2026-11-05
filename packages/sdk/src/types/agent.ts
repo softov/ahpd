@@ -704,6 +704,14 @@ export interface Agent {
   schema(): Bag;
   /** What each schema key sits at when nothing has been chosen. */
   defaults(): Record<string, unknown>;
+  /**
+   * The settings a chat or session a session tool makes takes from the chat
+   * that made it, picked out of that chat's config, or nothing to take: VS
+   * Code's `getInheritedChatConfig`, where each agent names its own (Claude's
+   * permission mode and permissions).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L2023-L2024
+   */
+  inheritedChatConfig?(config: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
 
   /**
    * Answers for a key of this backend's own schema, by key.

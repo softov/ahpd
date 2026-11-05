@@ -645,6 +645,49 @@ describe("VS Code's limits on spawning and messaging", () => {
     expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: chatUriFor(first.held) });
   });
 
+  /*
+   * A call that names no model runs on the calling chat's: its running
+   * turn's, else its draft's, else its last turn's, as VS Code's
+   * getCreationDefaults reads it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2566-L2600
+   */
+  it('runs a session it makes on the model the calling chat holds, when the call names none', async () => {
+    const client = await top();
+    const first = await started(client, 'first');
+    const chat = chatUriFor(first.held);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' }, model: { id: 'haiku' } } } },
+    });
+    await settle(4);
+    sdk.modelsSet.length = 0;
+    expect(said(await spawn(first.at, 'made'))).toMatch(/^New session created \(/);
+    expect(sdk.modelsSet).toContain('haiku');
+  });
+
+  /*
+   * A new session of the calling chat's agent takes the settings that agent
+   * names as inherited, as VS Code's create-session takes getCreationDefaults'
+   * config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1208-L1233
+   */
+  it('starts a session it makes with what the calling chat\'s agent says a new chat inherits', async () => {
+    const inheriting = {
+      ...claude({ paths: [root] }),
+      inheritedChatConfig: (config: Readonly<Record<string, unknown>>) =>
+        (config.permissionMode === undefined ? undefined : { permissionMode: config.permissionMode }),
+    };
+    const host = createHost({ path: root, agents: [inheriting], ...machine(), tools: hostTools(), sleepAfterMinutes: 0 });
+    const client = host.accept(peer());
+    await hello(client);
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/first', provider: 'claude', config: { permissionMode: 'plan' } } });
+    await settle(8);
+    const at = sessionQueries().length - 1;
+    expect(said(await spawn(at, 'made'))).toMatch(/^New session created \(/);
+    expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
+  });
+
   it("stops a chain of sessions at spawn depth 3, in the reference host's words", async () => {
     const client = await top();
     const first = await started(client, 'first');
@@ -1172,7 +1215,13 @@ describe('a tool a person calls with no session', () => {
     })).rejects.toThrow('Invalid create_session input: model "claude-model" is not one this host offers for other.');
   });
 
-  it('gives a new session its settings, and refuses what its agent does not take', async () => {
+  /*
+   * VS Code's create-session takes no settings from the call: a new session's
+   * settings are its agent's own, and what it inherits from the chat that
+   * made it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L370-L378
+   */
+  it('takes no settings from the call for a new session', async () => {
     const starts: Start[] = [];
     const { host, users } = hosting([], undefined, pair(starts));
     await settle(8);
@@ -1182,15 +1231,7 @@ describe('a tool a person calls with no session', () => {
       workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'plan' },
     });
     expect(starts).toHaveLength(1);
-    expect(starts[0]?.settings).toMatchObject({ permissionMode: 'plan' });
-    await expect(run(host, member, 'create_session', {
-      relationship: 'independent', prompt: 'say hi', title: 'Refused',
-      workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'nonsense' },
-    })).rejects.toThrow('permissionMode "nonsense" is not a value other takes');
-    await expect(run(host, member, 'create_session', {
-      relationship: 'independent', prompt: 'say hi', title: 'Refused',
-      workspace: uriOf(root), worktree: false, config: 'loud',
-    })).rejects.toThrow('Invalid create_session input: config must be an object.');
+    expect(starts[0]?.settings).not.toMatchObject({ permissionMode: 'plan' });
   });
 
   it('opens a chat of the agent it names in the session it is called from', async () => {
