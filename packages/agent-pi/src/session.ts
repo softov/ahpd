@@ -27,7 +27,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
+  Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';

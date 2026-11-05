@@ -195,7 +195,7 @@ export function demo(options: DemoOptions): Agent {
         ...(own !== undefined ? { activeTurn: own } : {}),
         ...(activity !== undefined ? { activity } : {}),
       }),
-      begin: (turnId, text) => {
+      sendMessage: (turnId, text, from, attachments, options) => {
         const word = text.trim().toLowerCase();
         // Only on a session with nothing running: a `slow` said behind
         // another turn is the `notes` session's to queue, and it says help.
@@ -206,13 +206,10 @@ export function demo(options: DemoOptions): Agent {
           return;
         }
         failed = false;
-        inner.begin(turnId, text);
+        return inner.sendMessage(turnId, text, from, attachments, options);
       },
-      cancel: (turnId) => {
-        if (own === undefined) {
-          inner.cancel(turnId);
-          return;
-        }
+      abort: () => {
+        if (own === undefined) return inner.abort();
         const turn = own;
         stop();
         own = undefined;
@@ -220,7 +217,7 @@ export function demo(options: DemoOptions): Agent {
         turn.duration = Date.now() - Date.parse(String(turn.startedAt));
         keep(turn);
         doing(undefined);
-        start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id), duration: turn.duration });
+        start.emit('chat', { type: 'chat/turnCancelled', turnId: String(turn.id), duration: turn.duration });
       },
       close: () => {
         stop();

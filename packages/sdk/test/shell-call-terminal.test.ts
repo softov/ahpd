@@ -110,7 +110,7 @@ function shelling(script: Script): Agent {
           modifiedAt: new Date().toISOString(), turns,
           ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        sendMessage: (turnId, text) => {
           const startedAt = new Date().toISOString();
           const turn: Bag = { id: turnId, startedAt, message: { text, origin: { kind: 'user' } }, responseParts: [] };
           active = turn;
@@ -167,11 +167,10 @@ function shelling(script: Script): Agent {
             start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
           })();
         },
-        cancel: () => {},
-        queue: () => {},
-        unqueue: () => {},
+        changeModel: () => {},
+        changeAgent: () => {},
+        abort: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         setCustomizationEnabled: async () => false,

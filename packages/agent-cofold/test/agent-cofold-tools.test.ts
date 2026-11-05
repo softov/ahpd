@@ -444,7 +444,7 @@ it('names the tool it runs, and goes back to Thinking when it completes', async 
     workspace: dir,
     store: dir,
   });
-  session.begin('t1', 'read it');
+  session.sendMessage('t1', 'read it');
   await when(() => ended(v));
 
   const said = v.of('chat', 'chat/activityChanged').map((one) => one.activity);

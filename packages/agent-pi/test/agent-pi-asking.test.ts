@@ -57,7 +57,7 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
 it('leaves the activity as it was while a confirmation waits', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(session.activity()).toBe('Thinking');
 
