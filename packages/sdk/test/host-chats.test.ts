@@ -371,7 +371,7 @@ describe('a chat made out of another', () => {
       params: {
         channel: uri, chat: 'ahp-chat:/side',
         source: { kind: 'sideChat', chat: chatUri, turnId: 't1' },
-        initialMessage: { text: 'and tomorrow?' },
+        initialMessage: { text: 'and tomorrow?', origin: { kind: 'user' } },
       },
     });
     await settle();
@@ -584,6 +584,61 @@ describe('more than one chat in a session', () => {
       snapshot: { state: { chats: { resource: string }[] } };
     };
     expect(opened.snapshot.state.chats.map((c) => c.resource)).not.toContain(second);
+  });
+
+  /*
+   * A chat's first message is its first turn, begun once the chat is made:
+   * the request is answered with the chat there, and a turn this host will not
+   * run ends in an error on the chat, which keeps the prompt, as VS Code's host
+   * accepts an initial message. One that is not the user's is refused before
+   * anything is made.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7350-L7352
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7670-L7698
+   */
+  it('answers with the chat made, and ends a first message it will not run on the chat, as VS Code\'s host', async () => {
+    const { host, client, uri } = await running();
+    host.refuseTurns('This host is stopping');
+    expect(await client.handle({
+      method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+    })).toBeNull();
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: second } }) as {
+      snapshot: { state: { turns: { message: { text: string }; state: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hello', 'error']]);
+  });
+
+  it('refuses a first message that is not the user\'s before any chat is made, as VS Code\'s host', async () => {
+    const { client, uri } = await running();
+    await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello' } } }))
+      .rejects.toMatchObject({ code: -32602, message: 'An initial chat message must have user origin.' });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(opened.snapshot.state.chats.map((c) => c.resource)).not.toContain(second);
+  });
+
+  it('hands the backend a first message\'s model, as VS Code\'s host sends a turn with the model it names', async () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const models: unknown[] = [];
+    const agent: Agent = {
+      ...base,
+      create: (start: Start): Session => {
+        const session = base.create(start) as Session;
+        return { ...session, changeModel: (model) => { models.push(model); return session.changeModel(model); } };
+      },
+    };
+    const host = createHost({ path: '/home/softov', agents: [agent] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    await client.handle({
+      method: 'createChat',
+      params: { channel: 'ahp-session:/one', chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' }, model: { id: 'echo/fast' } } },
+    });
+    await settle();
+    expect(models).toContainEqual({ id: 'echo/fast' });
+    await host.close();
   });
 
   it('opens one, and lists both on the session', async () => {

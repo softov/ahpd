@@ -7,6 +7,7 @@ import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, to
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
+import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
 import type { Origin } from './state.js';
@@ -188,6 +189,39 @@ export function startsRead(ctx: HostContext, session: string, chat: string): voi
 export const commandTurnKey = (chat: string, turn: string): string => `${chat}\u0000${turn}`;
 
 /**
+ * A message whose attachments are files before anything reads them.
+ *
+ * The bytes a client pasted are written under the session's own folder and
+ * the message names them, so what is applied, stored and echoed is the path.
+ * A store that keeps no files has no folder to write into, and every message
+ * is then the one that arrived.
+ *
+ * A session running in a machine is handed the files it was told about, at
+ * the paths the message names, so a path is a file on both sides. The copy
+ * comes after the writing and before the action is applied, which is where
+ * the machine's session is handed the same paths this one read. A copy that
+ * fails is said in a line and the message goes on: the bytes are here
+ * whether or not the machine took its copy of them.
+ */
+export const settledMessage = async (
+  ctx: HostContext,
+  connection: Connection,
+  message: Record<string, unknown>,
+  uri: string,
+): Promise<Record<string, unknown>> => {
+  const settled = await snapshot({
+    message,
+    id: idOf(uri),
+    store: ctx.kept,
+    connection,
+    onProblem: (line) => ctx.log(`${uri}: ${line}`),
+  });
+  const dir = ctx.kept.attachmentsDir?.(idOf(uri));
+  if (dir !== undefined) await ctx.putIn(uri, filesOf(settled, dir));
+  return settled;
+};
+
+/**
  * A session's and a chat's actions.
  *
  * The part of a dispatch that needs the session the action is about: a
@@ -218,33 +252,6 @@ export function chatAction(
   /** The message an action carries, which its text and its attachments ride on. */
   const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
     (typeof one.message === 'object' && one.message !== null ? one.message : {}) as Record<string, unknown>;
-  /**
-   * A message whose attachments are files before anything reads them.
-   *
-   * The bytes a client pasted are written under the session's own folder and
-   * the message names them, so what is applied, stored and echoed is the path.
-   * A store that keeps no files has no folder to write into, and every message
-   * is then the one that arrived.
-   *
-   * A session running in a machine is handed the files it was told about, at
-   * the paths the message names, so a path is a file on both sides. The copy
-   * comes after the writing and before the action is applied, which is where
-   * the machine's session is handed the same paths this one read. A copy that
-   * fails is said in a line and the message goes on: the bytes are here
-   * whether or not the machine took its copy of them.
-   */
-  const settledMessage = async (message: Record<string, unknown>, uri: string): Promise<Record<string, unknown>> => {
-    const settled = await snapshot({
-      message,
-      id: idOf(uri),
-      store: kept,
-      connection,
-      onProblem: (line) => log(`${uri}: ${line}`),
-    });
-    const dir = kept.attachmentsDir?.(idOf(uri));
-    if (dir !== undefined) await putIn(uri, filesOf(settled, dir));
-    return settled;
-  };
 
   /*
    * The two bits a chat carries of its own.
@@ -472,7 +479,7 @@ export function chatAction(
     const uri = sessionFor(channel);
     const message = messageOf(action);
     if (needsWriting(message, kept, idOf(uri))) {
-      return settledMessage(message, uri).then((settled) => conn.applyNow({ ...params, action: { ...action, message: settled } }, origin));
+      return settledMessage(ctx, connection, message, uri).then((settled) => conn.applyNow({ ...params, action: { ...action, message: settled } }, origin));
     }
   }
   /*

@@ -10,7 +10,8 @@ import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
-import { readAggregate, sessionFlag, startsRead } from './chatactions.js';
+import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
+import { needsWriting } from './attachments.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
@@ -56,11 +57,11 @@ export interface SessionMethods {
 export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
   const { connection } = conn;
   const {
-    about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat,
+    about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beginTurn, beside, byChat,
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
+    isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
     movable, movableMoved, openSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
@@ -346,6 +347,54 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     if (lower.startsWith(CHAT_PREFIX)) return raw.slice(CHAT_PREFIX.length);
     if (CHAT_PREFIX.startsWith(lower)) return '';
     return undefined;
+  };
+
+  /**
+   * A chat's first message, begun as the chat's first turn.
+   *
+   * Its attachments written, its start said as this host's, and the turn
+   * begun as a client's is: one this host will not run, or whose preparation
+   * fails, ends in an error on the chat, which keeps the prompt, as VS Code's
+   * host accepts an initial message once the chat is made. Answered once the
+   * start is said, whatever the turn comes to.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7670-L7698
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L70-L73
+   */
+  const acceptInitialMessage = async (uri: string, chat: Session, provider: string, message: Bag): Promise<void> => {
+    const turnId = crypto.randomUUID();
+    const since = Date.now();
+    const start = (said: Bag): void => {
+      dispatch(chat.chatUri, { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message: said });
+    };
+    const ended = (errorType: string) => (why: string): void => {
+      dispatch(chat.chatUri, {
+        type: 'chat/error',
+        turnId,
+        duration: Math.max(0, Date.now() - since),
+        part: { kind: 'error', error: { errorType, message: why } },
+      });
+    };
+    let settled: Bag;
+    try {
+      settled = needsWriting(message, kept, idOf(uri)) ? await settledMessage(ctx, connection, message, uri) : message;
+    }
+    catch (error) {
+      start(message);
+      ended('attachmentPreparationFailed')(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    start(settled);
+    const attached = messageAttachments(settled, connection);
+    if (attached.refusal !== undefined) {
+      ended('sendFailed')(attached.refusal);
+      return;
+    }
+    void beginTurn(
+      () => beginOrRun(chat, provider, turnId, String(settled.text ?? ''), modelIn(settled.model), messageFrom(settled), connection,
+        attached.attachments, () => undefined, () => ctx.cancelledTurns.get(chat.chatUri)?.has(turnId) === true),
+      ended('rejected'),
+      ended('sendFailed'),
+    );
   };
 
   const methods: SessionMethods = {
@@ -1155,6 +1204,16 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (params.provider !== undefined)
         throw new RpcError(INVALID_PARAMS, 'This host does not support chats with their own agent.');
+      /*
+       * A first message is a person's, or nothing is made, as the reference
+       * host refuses one before it creates the chat.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7350-L7352
+       */
+      const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
+        ? params.initialMessage
+        : undefined) as Record<string, unknown> | undefined;
+      if (first_ !== undefined && bag(first_.origin).kind !== 'user')
+        throw new RpcError(INVALID_PARAMS, 'An initial chat message must have user origin.');
       if (byChat.has(chatUri))
         throw new RpcError(-32003, `${chatUri} already exists`);
       claimable(chatUri, 'chat');
@@ -1326,16 +1385,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // And the row, which lists the session's chats: a client that is only
       // listing sessions reads the new chat from there.
       summaryMoved(uri);
-      const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
-        ? params.initialMessage
-        : undefined) as Record<string, unknown> | undefined;
-      if (first_ !== undefined) {
-        // No action to refuse here: a first message that cannot run as a
-        // command fails the call, which the client shows as the chat not
-        // opening with it.
-        const refused = await beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), connection);
-        if (refused !== undefined) throw new Error(refused);
-      }
+      if (first_ !== undefined) await acceptInitialMessage(uri, chat, held.agent.provider, first_);
       return null;
     },
     /**

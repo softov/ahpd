@@ -444,13 +444,13 @@ describe('completing a hash sign', () => {
     };
     await client.handle({
       method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review', initialMessage: { text: 'Review the diff' } },
+      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review', initialMessage: { text: 'Review the diff', origin: { kind: 'user' } } },
     });
     await settle();
     await new Promise((r) => { setTimeout(r, 5); });
     await client.handle({
       method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/plan', initialMessage: { text: 'Plan the work' } },
+      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/plan', initialMessage: { text: 'Plan the work', origin: { kind: 'user' } } },
     });
     await settle();
     return { client, handed: opened.snapshot.state.defaultChat };
