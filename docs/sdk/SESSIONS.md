@@ -123,7 +123,7 @@ There is no `ahpd session` and no `ahpd chat`: a session is driven over the prot
 | `resolveSessionConfig` | The schema and defaults a session would have, before one exists |
 | `sessionConfigCompletions` | The values behind a key whose list is too long to send, which here is `branch`, `scope` and a plugin's own |
 | `createChat` | A second conversation in the session |
-| `disposeChat` | End one chat, refused when it is the last |
+| `disposeChat` | End one chat; the session's default chat is kept |
 | `fetchTurns` | Older turns, arriving as `chat/turnsLoaded` on the channel so every watcher gets the page |
 | `subscribe` | The snapshot, and everything that happened while it was taken |
 

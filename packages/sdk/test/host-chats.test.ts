@@ -668,34 +668,35 @@ describe('more than one chat in a session', () => {
     expect((listed.items[0]?.status ?? 0) & ~Status.IsRead).toBe(24);
   });
 
-  it('will not dispose the only one, and says what to do instead', async () => {
-    const { client, chatUri } = await running();
-    await expect(client.handle({ method: 'disposeChat', params: { channel: chatUri } }))
-      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('dispose the session') });
-  });
-
-  it('closes one, and moves the default when it was the default', async () => {
+  /*
+   * VS Code answers null for a chat it finds no owner for, and its state
+   * refuses to remove a session's default chat, so the default never changes
+   * this way.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2380-L2389
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1871-L1880
+   */
+  it('answers null for the default chat and for a chat it does not hold, removing nothing, as VS Code\'s', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    await client.handle({ method: 'disposeChat', params: { channel: chatUri } });
+    expect(await client.handle({ method: 'disposeChat', params: { channel: chatUri } })).toBeNull();
+    expect(await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/nobody' } })).toBeNull();
+    expect(actions(p, uri).some((e) => e.action.type === 'session/chatRemoved' || e.action.type === 'session/defaultChatChanged')).toBe(false);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string; chats: { resource: string }[] } };
+    };
+    expect(session.snapshot.state.defaultChat).toBe(chatUri);
+    expect(session.snapshot.state.chats.map((one) => one.resource)).toEqual([chatUri, second]);
+  });
 
-    expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.defaultChat)
-      .toBe(second);
-    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(chatUri);
-    /*
-     * And the URI stays the chat's that was closed.
-     *
-     * The derived default chat URI is its session's only while the session's
-     * record says it is the default, as the reference host gives one an owner:
-     * once the default has moved, that URI names nothing, and the session's
-     * `defaultChat` says which chat a client gets.
-     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
-     */
-    await expect(client.handle({ method: 'subscribe', params: { channel: chatUri } })).rejects.toMatchObject({ code: -32001 });
+  it('closes a chat that is not the default', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    expect(await client.handle({ method: 'disposeChat', params: { channel: second } })).toBeNull();
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(second);
     const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     };
-    expect(session.snapshot.state.defaultChat).toBe(second);
+    expect(session.snapshot.state.defaultChat).toBe(chatUri);
   });
 
   it('refuses to fork one from a turn, which it cannot do', async () => {
@@ -1076,47 +1077,6 @@ describe('more than one chat in a session', () => {
     }
   });
 
-  it('starts again as the chat that took over when the first one was closed', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
-    try {
-      const dir = join(root, 'sessions');
-      const starts: Start[] = [];
-      const agent = backend(starts);
-      const first = await hostAt(dir, agent);
-      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
-      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
-      await settle();
-      await send(first.client, LIVE, 't1', 'first');
-      await send(first.client, PEER, 't2', 'second');
-      const chatUri = (await opened(first.client, LIVE)).state.defaultChat as string;
-      await first.client.handle({ method: 'disposeChat', params: { channel: chatUri } });
-      await settle();
-      await new Promise((tick) => { setTimeout(tick, 5); });
-
-      const second = await hostAt(dir, agent);
-      /*
-       * The chat that took over, and not the one that was closed.
-       *
-       * Closing the session's first chat moves the default to the chat that is
-       * left, and the store is what says so. A resume that started the closed
-       * conversation instead would read turns nobody is looking at and leave
-       * the chat the turn is sent to with no process behind it.
-       */
-      const before = starts.length;
-      await send(second.client, PEER, 't3', 'third');
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
-      expect(said(await opened(second.client, PEER))).toEqual(['second', 'third']);
-
-      // And the session lists that chat alone: a closed one is not one it has.
-      const session = await opened(second.client, 'ahp-session:/live');
-      expect(session.state.defaultChat).toBe(PEER);
-      expect(session.state.chats?.map((one) => one.resource)).toEqual([PEER]);
-    }
-    finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it('resumes a chat under the name its backend answered with, not the one it asked for', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
@@ -1318,28 +1278,6 @@ describe('more than one chat in a session', () => {
       await settle();
       expect((await opened(client, PEER)).state.movable).toBe(true);
       expect(moves(p, PEER)).toEqual([false, true]);
-    }
-    finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('takes the move away from a chat that becomes the default', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
-    try {
-      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
-      const first = (await opened(client, LIVE)).state.defaultChat as string;
-      expect((await opened(client, PEER)).state.movable).toBe(true);
-
-      await client.handle({ method: 'disposeChat', params: { channel: first } });
-      await settle();
-
-      // `default` is a role and not a chat, so the chat that took it over is
-      // now the one the session hands out - and it stops being movable without
-      // anybody having to speak to it again.
-      expect((await opened(client, LIVE)).state.defaultChat).toBe(PEER);
-      expect((await opened(client, PEER)).state.movable).toBe(false);
-      expect(moves(p, PEER)).toEqual([false]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });

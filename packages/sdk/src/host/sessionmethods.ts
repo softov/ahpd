@@ -1441,17 +1441,21 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${to}`);
       return await movedTo(chatUri, found, held, to, anchor);
     },
+    /*
+     * A chat this host runs taken out of its session, answered `null`, as the
+     * reference host answers it. A chat with no owner here, and a session's
+     * default chat, are answered the same with nothing removed: the reference
+     * host finds no owner for the first and its state refuses to remove the
+     * second, so a session's default chat never changes this way.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2380-L2389
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1871-L1880
+     */
     disposeChat: async (params) => {
       const chatUri = String(params.channel ?? '');
       const found = byChat.get(chatUri);
-      if (!found)
-        throw new RpcError(-32001, `No chat at ${chatUri}`);
+      if (!found) return null;
       const held = sessions.get(found.uri);
-      if (held && held.chats.size === 1) {
-        // The last one is the session. Removing it would leave a session
-        // with nothing to talk to, which `disposeSession` says properly.
-        throw new RpcError(INVALID_PARAMS, `${chatUri} is the only chat in ${found.uri}; dispose the session instead`);
-      }
+      if (held?.defaultChat === chatUri) return null;
       // A client removing a chat is a removal, and one of the two roads that
       // dispose: the chat is not started again, so nothing of it is kept.
       forgetSendersIn(found.chat.chatState());
@@ -1492,26 +1496,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (ctx.closedChats === 'delete' && held !== undefined && own !== undefined && own !== '') {
         await ctx.deletedChat(own, chatAgent(held, chatUri), ctx.dirOf(found.uri));
       }
-      if (held && held.defaultChat === chatUri) {
-        held.defaultChat = [...held.chats.keys()][0] as string;
-        // The one that takes over is the one a client naming no chat gets, and
-        // one of them must be the chat a session is resumed as.
-        keepChat(found.uri, held.defaultChat, undefined, true);
-        dispatch(found.uri, { type: 'session/defaultChatChanged', defaultChat: held.defaultChat });
-        /*
-         * And it is no longer movable, for the reason the chat that was the
-         * default was not: `default` is a role rather than a chat, and the
-         * protocol says the chat holding it MUST NOT move. Said here rather
-         * than left to the next turn, because a chat nobody speaks to again
-         * would go on offering a move that would take the session's own chat
-         * away from it.
-         */
-        movableMoved(held.defaultChat);
-      }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
-      // Last, and once: the row's chat list and its default chat both just
-      // moved, and one notification carries both rather than one per change.
+      // Last, and once: the row's chat list just moved.
       summaryMoved(found.uri);
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.

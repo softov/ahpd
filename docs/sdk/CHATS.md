@@ -18,7 +18,7 @@ Terms, one line each:
 
 A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, the shape VS Code's host builds and an older VS Code window computes from the session, and `defaultChat`, every entry in `chats` and `ChatState.resource` name it by that one URI. The URI is the session's chat while the session records no other default chat, or records that one, as VS Code's host gives a derived default chat an owner only while the session's record agrees ([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
 
-`default` is a role: it means whichever chat a client gets when it names none. Disposing the chat that holds it moves the role to another chat of the session, under that chat's own URI, and tells everyone with `session/defaultChatChanged`; the disposed chat's URI names nothing. A second chat is named by whoever created it, and `ahp-chat:/<id>` is a chat of that URI and of no session `<id>`. A chat keeps its URI wherever it moves.
+`default` is a role: it means whichever chat a client gets when it names none. The chat that holds it stays for the session's life: `disposeChat` on it answers `null` and removes nothing, as VS Code's host keeps a session's default chat. A second chat is named by whoever created it, and `ahp-chat:/<id>` is a chat of that URI and of no session `<id>`. A chat keeps its URI wherever it moves.
 
 Closing a chat ends it here and moves `default` if it held it. What the backend keeps of that chat's conversation is the daemon's `closedChats` key: `hidden`, the default, leaves the conversation and the id it was written under, so it is never listed as a session again, and `delete` removes it.
 
@@ -108,7 +108,7 @@ There is no `ahpd chat`. A chat is driven over the protocol, on its own channel.
 | --- | --- |
 | `subscribe` | The chat's `ChatState`, and every action after it |
 | `createChat` | A second conversation in a session, or one forked or copied from an existing turn |
-| `disposeChat` | End one chat. The last one is refused: that is `disposeSession` |
+| `disposeChat` | End one chat. The session's default chat, and a chat this host does not hold, answer `null` with nothing removed: ending the session is `disposeSession` |
 | `fetchTurns` | Older turns, which exist only after a subscribe that named a `view` and got a `turnsNextCursor`. The answer is empty and the page arrives as `chat/turnsLoaded` on the channel, so every watcher gets it |
 | `completions` | What a `/` offers in this session, what an `@` path names, and which other chats of it a `#` offers - a `#` on its way to `#chat:` offering the chats and the files both, and every other `#` a file alone |
 

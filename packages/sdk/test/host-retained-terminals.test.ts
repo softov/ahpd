@@ -576,24 +576,23 @@ describe('a host started again on the same store', () => {
     await after.host.close();
   });
 
-  it('answers nothing for a first chat a client closed, though the session\'s transcript still names it', async () => {
+  it('answers nothing for a peer chat a client closed, though its transcript still names the call', async () => {
     const dir = join(temp(), 'sessions');
     const first = knobs();
     const before = await hostAt(first, fileSessions({ dir }));
     await before.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
-    const own = String((await stateOf(before.client, LIVE)).defaultChat);
     await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await settle();
-    const address = String(startOf(first, own).terminalOutputs?.uri('toolu_first'));
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
+    const address = String(startOf(first, PEER).terminalOutputs?.uri('toolu_peer'));
+    await before.client.handle({ method: 'disposeChat', params: { channel: PEER } });
     await before.host.close();
 
-    // Closed and not deleted, so the backend still holds the conversation the
-    // session is, and that conversation still holds the call and its preview.
+    // Closed and not deleted, so the backend still holds the peer's
+    // conversation, and that conversation still holds the call and its preview.
     const second = knobs();
     second.listed = [row('live')];
-    second.transcript = (id, given) => (id === 'live'
-      ? [naming('t1', 'toolu_first', String(given?.uri('toolu_first')), { preview: 'the first\'s' })]
+    second.transcript = (id, given) => (id === PEER.slice('ahp-chat:/'.length)
+      ? [naming('t1', 'toolu_peer', String(given?.uri('toolu_peer')), { preview: 'the peer\'s' })]
       : []);
     const after = await hostAt(second, fileSessions({ dir }));
     await expect(stateOf(after.client, address)).rejects.toThrow(/No agent for session/);
@@ -608,8 +607,6 @@ describe('a host started again on the same store', () => {
     const own = String((await stateOf(before.client, LIVE)).defaultChat);
     for (const chat of [PEER, TAIL]) await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat } });
     await settle();
-    // The first chat closed, so the session comes back as a peer of it.
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
     await before.host.close();
 
     const second = knobs();
@@ -624,9 +621,9 @@ describe('a host started again on the same store', () => {
       method: 'dispatchAction',
       params: { channel: TAIL, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'wake up' } } },
     });
-    for (let i = 0; i < 200 && second.starts.length < 2; i += 1) await settle(1);
-    // Woken as the peer that took the default, with the other peer beside it.
-    expect(second.starts.map((one) => one.chatUri)).toEqual([PEER, TAIL]);
+    for (let i = 0; i < 200 && second.starts.length < 3; i += 1) await settle(1);
+    // Woken as its first chat, with the peers beside it.
+    expect(second.starts.map((one) => one.chatUri)).toEqual([own, PEER, TAIL]);
 
     // The session's own conversation is its first chat's; each peer's is its own.
     const byId = new Map([['live', own], [PEER.slice('ahp-chat:/'.length), PEER], ['tail', TAIL]]);
