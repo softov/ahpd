@@ -246,7 +246,7 @@ Three things worth knowing:
 
 A window tells this host which folders it trusts in the root config, under `workspaceTrust`. The key is the one VS Code pushes from its own workspace-trust setting. It is read as an editor reads it: nothing pushed means no folder is trusted.
 
-The value has two fields. `enabled: false` means the window has workspace trust switched off, so every folder it opens is trusted. Otherwise `trustedUris` lists the folders it trusts, and a folder is trusted when it is one of them or sits under one.
+The value has two fields. `enabled: false` means the window has workspace trust switched off, so every folder it opens is trusted. Otherwise `trustedUris` lists the folders it trusts, and a folder is trusted when it is one of them or sits under one. A path's case is ignored on Windows and macOS, and an entry naming an authority, `file://localhost/...` among them, names no folder here, as VS Code compares the two.
 
 Pushing the key needs `trust:push`, which the `trust:write` group covers and the built-in `member` role holds. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](../plugins/PLUGINS.md).
 

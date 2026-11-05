@@ -34,11 +34,12 @@ import type { Bag } from '../types/common.js';
 const bare = (path: string): string => (path === parse(path).root ? path : path.replace(/[\\/]+$/, ''));
 
 /**
- * A settled path as two folders are compared: Windows reads `C:\Users\Me` and
- * `c:\users\me` as one folder, and a comparison by text would trust neither
- * spelling for the other.
+ * A settled path as two folders are compared: Windows and macOS read
+ * `C:\Users\Me` and `c:\users\me`, or `/Users/Me` and `/users/me`, as one
+ * folder, as the reference host ignores a path's case on both.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L14-L33
  */
-const compared = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
+const compared = (path: string): string => (process.platform === 'win32' || process.platform === 'darwin' ? path.toLowerCase() : path);
 
 /**
  * A path as the folder it names: absolute, and read the way the filesystem
@@ -81,15 +82,13 @@ const folderOf = (entry: string): string | undefined => {
   if (entry === '') return undefined;
   if (entry.startsWith('file://')) {
     /*
-     * The authority, which is everything before the first slash: an empty one
-     * and `localhost` are this machine, and any other is another machine's
-     * folder. A window vouching for a folder on another machine is not
-     * vouching for anything here, which is what an unreadable entry means.
+     * The authority, which is everything before the first slash, compared as
+     * part of the URI as the reference host compares it: a folder here is a
+     * URI with none, so an entry naming one vouches for nothing here.
      */
     const rest = entry.slice('file://'.length);
     const slash = rest.indexOf('/');
-    const authority = (slash === -1 ? rest : rest.slice(0, slash)).toLowerCase();
-    if (authority !== '' && authority !== 'localhost') return undefined;
+    if ((slash === -1 ? rest : rest.slice(0, slash)) !== '') return undefined;
   }
   return settled(localPath(entry));
 };

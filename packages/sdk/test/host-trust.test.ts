@@ -508,21 +508,27 @@ describe('the folders a window vouched for, read as the folders they name', () =
     expect(trusted(`${inside}x`, vouching([inside]))).toBe(false);
   });
 
-  // Windows reads a folder's name without regard to case, so a window's URI
-  // in another case still names the folder.
-  it.runIf(process.platform === 'win32')('trusts a folder vouched for in another case, on Windows', () => {
+  // Windows and macOS read a folder's name without regard to case, so a
+  // window's URI in another case still names the folder there, as VS Code
+  // ignores a path's case on both.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L14-L33
+  it.runIf(process.platform === 'win32' || process.platform === 'darwin')('trusts a folder vouched for in another case, on Windows and macOS', () => {
     expect(trusted(inside, { enabled: true, trustedUris: [uriOf(inside.toUpperCase())] })).toBe(true);
   });
 
-  it('trusts nothing for an entry that names no folder on this machine', () => {
+  /*
+   * VS Code compares a trusted URI's authority as part of the URI, so an entry
+   * naming any authority, `localhost` among them, is not a folder here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L14-L33
+   */
+  it('trusts nothing for an entry that names no folder on this machine, or names an authority', () => {
     expect(trusted(inside, { enabled: true, trustedUris: [''] })).toBe(false);
     expect(trusted(inside, { enabled: true, trustedUris: ['file://'] })).toBe(false);
     // Built from the URI rather than the path, so a Windows path's drive is
     // where a URI puts it.
     const named = (host: string): string => uriOf(inside).replace('file://', `file://${host}`);
     expect(trusted(inside, { enabled: true, trustedUris: [named('elsewhere')] })).toBe(false);
-    // The same folder said with this machine's own name is this machine's.
-    expect(trusted(inside, { enabled: true, trustedUris: [named('localhost')] })).toBe(true);
+    expect(trusted(inside, { enabled: true, trustedUris: [named('localhost')] })).toBe(false);
     // And one bad entry beside a good one does not take the good one with it.
     expect(trusted(inside, { enabled: true, trustedUris: ['file://elsewhere/a', uriOf(inside)] })).toBe(true);
   });
