@@ -1780,12 +1780,16 @@ export function createSpawn(ctx: HostContext): Spawn {
       /*
        * A chat that opened with no conversation - its record read nothing, as
        * one inside a machine reads before its host there answers - takes the
-       * one its backend holds once it starts, as `chat/turnsLoaded`: the
-       * action the reference host refreshes a chat's persisted history with.
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+       * one its backend holds once it starts, as `chat/truncated` and then
+       * `chat/turnsLoaded`: the two actions the reference host refreshes a
+       * chat's persisted history with.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
        */
       const turns = ctx.chatSeed(uri, chatUri).turns;
-      if (Array.isArray(turns) && turns.length > 0) dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
+      if (Array.isArray(turns) && turns.length > 0) {
+        dispatch(chatUri, { type: 'chat/truncated' });
+        dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
+      }
     }
     ctx.chatMoved(chatUri);
     /*

@@ -948,6 +948,38 @@ describe('a session read from its transcript', () => {
     expect(turn?.usage).toEqual({ inputTokens: 12, outputTokens: 3, cacheReadTokens: 900, model: 'claude-opus-5' });
   });
 
+  /*
+   * A chat opened while its record read nothing takes the conversation its
+   * backend holds once the session starts, as the reference host refreshes a
+   * chat's persisted history: chat/truncated, then chat/turnsLoaded.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+   */
+  it('takes the history its backend holds as chat/truncated then chat/turnsLoaded, when the chat opened with none', async () => {
+    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
+    wrote('late', '/home/softov');
+    const p = peer();
+    const client = serving('/home/softov').accept(p);
+    await client.handle(hello(['0.9.0']));
+    const chat = chatUriFor('ahp-session:/late');
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+      snapshot: { state: { turns: unknown[] } };
+    };
+    expect(opened.snapshot.state.turns).toEqual([]);
+
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'said late' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'replied late' }] } },
+    );
+    // An action that wakes the session and starts no turn.
+    client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'none' } } });
+    await settle(20);
+    const said = actions(p, chat).map((e) => e.action);
+    const at = said.findIndex((one) => one.type === 'chat/turnsLoaded');
+    expect(at).toBeGreaterThan(0);
+    expect(said[at - 1]?.type).toBe('chat/truncated');
+    expect((said[at]?.turns as { message: { text: string } }[]).map((turn) => turn.message.text)).toEqual(['said late']);
+  });
+
   it('is configurable before it is resumed', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
