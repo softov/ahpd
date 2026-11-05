@@ -793,7 +793,7 @@ export function botProvider(options: BotOptions): BotProvider {
       const known = store.get(slug);
       const existing = known === undefined ? undefined : fromAgents(options.yaml, known);
       if (existing !== undefined && !mayWrite(existing, owner, reader)) throw notYours(existing);
-      if (existing === undefined && store.gone(slug)) {
+      if (existing === undefined && store.tombstoned(slug)) {
         throw new RpcError(-32010, `${slug} was a bot here once; choose another name`);
       }
       if (existing !== undefined && content.createOnly === true) {
