@@ -732,6 +732,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
       ...(start.onEditProposed ? { onEditProposed: start.onEditProposed } : {}),
       ...(start.onEditSettled ? { onEditSettled: start.onEditSettled } : {}),
+      ...(start.onEditCompleted ? { onEditCompleted: start.onEditCompleted } : {}),
       ...(start.onTurnRecorded ? { onTurnRecorded: start.onTurnRecorded } : {}),
       // A harness's own task list, carried through as the host raised it for.
       ...(start.planUpdate ? { planUpdate: start.planUpdate } : {}),

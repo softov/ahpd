@@ -4,7 +4,7 @@ import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
-import { lineOf, pastLineOf, titleOf, toolInputOf } from '../input.js';
+import { lineOf, pastLineOf, titleOf, toolInputOf, writeOf } from '../input.js';
 import { getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
@@ -117,7 +117,7 @@ export function createStream(ctx: SessionContext): Stream {
   const rounds = new Map<string, { answered: boolean; stopped?: string }>();
 
   /** Which file each running edit tool is changing, and in which turn, by its call id. */
-  const editing = new Map<string, { path: string; turn: string }>();
+  const editing = new Map<string, { path: string; turn: string; name: string; input: Bag }>();
 
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   const pastLines = new Map<string, StringOrMarkdown>();
@@ -474,7 +474,7 @@ export function createStream(ctx: SessionContext): Stream {
          */
         const changing = edits(name, bag(block.input));
         if (changing !== undefined) {
-          editing.set(id, { path: changing, turn: str(turn.id) ?? '' });
+          editing.set(id, { path: changing, turn: str(turn.id) ?? '', name, input: bag(block.input) });
           ctx.options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
         }
         if (open === undefined) {
@@ -645,9 +645,32 @@ export function createStream(ctx: SessionContext): Stream {
        */
       const saved = id === undefined ? undefined : ctx.savedTerminals.get(id);
       if (id !== undefined) ctx.savedTerminals.delete(id);
+      /*
+       * The file an edit tool changed, its two sides held by the host for a
+       * client to draw the call's diff from, after the text, as VS Code's
+       * Claude observer attaches the edit to the completion. The sides are the
+       * SDK's own report of the edit: the file as it was, and the edit applied
+       * to it, or the whole of a write; a report that lacks the file as it was,
+       * which the SDK leaves out of a file too large to diff, has none.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L385-L388
+       */
+      const editOf = (): Bag | undefined => {
+        const held = editing.get(id);
+        const reported = bag(structured);
+        if (!ok || held === undefined) return undefined;
+        const created = held.name === 'Write' && str(reported.type) === 'create';
+        const before = str(reported.originalFile);
+        if (before === undefined && !created) return undefined;
+        const after = writeOf(held.name, held.input)?.apply(before);
+        if (after === undefined) return undefined;
+        const edit = ctx.options.onEditCompleted?.(id, held.path, before, after);
+        return edit === undefined ? undefined : { type: 'fileEdit', ...edit };
+      };
+      const fileEdit = editOf();
       const shown = [
         ...(workerContent !== undefined ? [workerContent] : []),
         ...(text !== undefined ? [{ type: 'text', text }] : []),
+        ...(fileEdit !== undefined ? [fileEdit] : []),
         ...(saved !== undefined ? [saved] : []),
       ] as OnWire<ToolResultContent>[];
       const result = {

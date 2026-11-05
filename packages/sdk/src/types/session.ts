@@ -319,6 +319,14 @@ export interface SessionOptions {
    */
   onEditSettled?(toolCallId: string): void;
   /**
+   * An edit a call made, with the text on either side of it.
+   *
+   * `Start.onEditCompleted` handed down: the host holds both sides under URIs
+   * of the call's own and answers the file edit a client draws the call's diff
+   * from. Absent, or answering nothing, is a host that holds no sides.
+   */
+  onEditCompleted?(toolCallId: string, path: string, before: string | undefined, after: string): FileEdit | undefined;
+  /**
    * A turn this session has written under an id of its own.
    *
    * `Start.onTurnRecorded` handed down: a backend that names a turn its own way
