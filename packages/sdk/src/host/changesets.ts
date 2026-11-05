@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { ChangesetFile } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
@@ -55,8 +56,11 @@ export interface Changesets {
   /** The invocation in flight for each identical request, which another one shares, by its key. */
   inFlightOperations: Map<string, Promise<unknown>>;
   lastError: Map<string, string>;
-  /** What every client watching a changeset was last told it holds, by channel, an error status with its error. */
-  shown: Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string } }>;
+  /**
+   * What every client watching a changeset was last told it holds, by channel:
+   * its files, its status, an error status with its error, and its operations.
+   */
+  shown: Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string }; operations?: Bag[] }>;
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
@@ -475,14 +479,17 @@ export function createChangesets(ctx: HostContext): Changesets {
   };
 
   /**
-   * Say again what a session's changesets can be told to do.
+   * Say again what a session's changesets can be told to do, where it moved.
    *
-   * Sent on turn boundaries, because that is when the answer changes without
-   * anything in a changeset's *content* moving: a turn starting disables every
-   * operation on every changeset the session has, and nothing else would say
-   * so. Only channels somebody is watching - a changeset nobody subscribed to
+   * Asked whenever the session's running state flips, because that is when
+   * the answer changes without anything in a changeset's *content* moving: a
+   * turn starting disables every operation on every changeset the session has,
+   * and its end however it ended enables them again. Said only where the list
+   * differs from the one the channel holds, as the reference host dispatches
+   * it. Only channels somebody is watching - a changeset nobody subscribed to
    * has no buttons on screen to correct. A session whose backend serves its
    * changesets has them said by that backend.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L367-L375
    */
   const operationsMoved = (uri: string): void => {
     if (relaysChangesets(uri)) return;
@@ -492,6 +499,9 @@ export function createChangesets(ctx: HostContext): Changesets {
         if (!changesetOf(channel, uri) || done.has(channel)) continue;
         done.add(channel);
         const operations = operationsOf(channel);
+        const was = shown.get(channel);
+        if (isDeepStrictEqual(was?.operations ?? [], operations)) continue;
+        if (was !== undefined) shown.set(channel, { ...was, operations });
         // `undefined` is how the protocol clears the list, and an operation
         // list that went from three to none is exactly that.
         dispatch(channel, {
@@ -509,7 +519,7 @@ export function createChangesets(ctx: HostContext): Changesets {
    * of them: a snapshot is taken at a `serverSeq` and every action after it
    * goes to everyone, so what one subscriber has is what all of them have.
    */
-  const shown = new Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string } }>();
+  const shown = new Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string }; operations?: Bag[] }>();
 
   /** Two file lists, same order-independent contents. */
   const sameFiles = (a: ChangesetFile[], b: ChangesetFile[]): boolean => {
@@ -541,7 +551,7 @@ export function createChangesets(ctx: HostContext): Changesets {
         ...(operations.length > 0 ? { operations } : {}),
       });
     };
-    shown.set(channel, { files, status });
+    shown.set(channel, { files, status, operations });
     // Nothing to diff against: this client's first word about the channel is
     // the whole of it, which is what a snapshot would have been.
     if (!was) { whole(); return; }
@@ -601,7 +611,7 @@ export function createChangesets(ctx: HostContext): Changesets {
           dispatch(channel, { type: 'changeset/statusChanged', status: 'recomputing' });
           // The files stay as they are, which is what the protocol asks of a
           // recomputation and what keeps them on screen while it runs.
-          shown.set(channel, { files: was.files, status: 'recomputing' });
+          shown.set(channel, { files: was.files, status: 'recomputing', ...(was.operations === undefined ? {} : { operations: was.operations }) });
         }
         let settled = false;
         try {
@@ -636,7 +646,7 @@ export function createChangesets(ctx: HostContext): Changesets {
             if (now?.status !== 'error' || now.error?.errorType !== 'computeFailed' || now.error.message !== message) {
               const failed = { errorType: 'computeFailed', message };
               dispatch(channel, { type: 'changeset/statusChanged', status: 'error', error: failed });
-              shown.set(channel, { files: now?.files ?? [], status: 'error', error: failed });
+              shown.set(channel, { files: now?.files ?? [], status: 'error', error: failed, ...(now?.operations === undefined ? {} : { operations: now.operations }) });
             }
           }
           settled = true;

@@ -3,6 +3,7 @@ import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
+import type { Agent } from '../src/types/agent.js';
 import type { ChangesetOperation, ChangesetOperationContext, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -83,8 +84,8 @@ it('spells a changeset template from the session\'s one URI', async () => {
 });
 
 /** A connected client with one session, watching the session and its changeset. */
-async function watching(source: ChangesetSource, pace = 0) {
-  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace })], changes: source });
+async function watching(source: ChangesetSource, pace = 0, agent: Agent = echo({ path: DIR, pace })) {
+  const host = createHost({ path: DIR, agents: [agent], changes: source });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -406,6 +407,45 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   // on.
   expect(busy.code).toBe(-32004);
   expect(busy.message).toContain(uri);
+  await host.close();
+});
+
+/*
+ * The verbs are asked again whenever the session's running state flips,
+ * however its turn ended, and said only where the list moved, as the reference
+ * host dispatches them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L367-L375
+ */
+it('gives the verbs back after a turn that ended in an error, and says each list once', async () => {
+  const { source } = scripted();
+  const base = echo({ path: DIR, pace: 0 });
+  const failing: Agent = {
+    ...base,
+    create: (start) => {
+      const session = base.create(start);
+      return {
+        ...session,
+        sendMessage: (turnId) => {
+          start.emit('chat', { type: 'chat/error', turnId, duration: 0, part: { kind: 'error', error: { errorType: 'turnFailed', message: 'no' } } });
+          return undefined;
+        },
+      };
+    },
+  };
+  const { host, client, peer: p, chatUri, changeset } = await watching(source, 0, failing);
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => {
+    expect(actions(p, chatUri).some((one) => one.type === 'chat/error')).toBe(true);
+  }, { timeout: 3000 });
+  await settle();
+  const lists = actions(p, changeset)
+    .filter((one) => one.type === 'changeset/operationsChanged')
+    .map((one) => (one.operations as { status: string }[]).map((op) => op.status));
+  expect(lists).toEqual([['disabled', 'disabled', 'disabled'], ['idle', 'idle', 'idle']]);
   await host.close();
 });
 

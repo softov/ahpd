@@ -344,7 +344,7 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 | `changeset/fileRemoved` | host | ✅ | The same choice, for a file that left the set. |
 | `changeset/filesReviewChanged` | client | ✅ | A client marking files reviewed. The one changeset action a client originates. Applied as the protocol's reducer applies it, to the files the changeset holds; a changeset that keeps no review, the working tree's among them, is refused. A turn that changes a file again takes the tick off its row in the session's changeset, the branch's and the turn's own. |
 | `changeset/contentChanged` | host | ✅ | Chosen when the whole set is the smaller thing to send. It reduces to the same state as the per-file pair, which is what makes choosing between them safe. |
-| `changeset/operationsChanged` | host | ✅ | The verbs the source advertises, with this host's own answer to whether each may be pressed now. |
+| `changeset/operationsChanged` | host | ✅ | The verbs the source advertises, with this host's own answer to whether each may be pressed now. Asked again whenever the session's running state flips, a turn that ended in `chat/error` included, and said only where the list differs from the one the channel holds, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L367-L375) dispatches it. |
 | `changeset/operationStatusChanged` | host | ✅ | While one runs, and when it finishes or fails. |
 | `changeset/cleared` | host | ✅ | When everything went. A changeset whose files did not move says nothing about them at all - re-sending a set a client already holds tells it nothing. |
 

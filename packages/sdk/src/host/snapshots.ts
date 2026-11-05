@@ -466,7 +466,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * only ever applied from the second change onwards, which is not what
        * "the diff is smaller" means.
        */
-      shown.set(channel, { files: state.files, status: state.status });
+      shown.set(channel, { files: state.files, status: state.status, operations });
       return value({
         resource: channel,
         state: { ...state, ...(operations.length > 0 ? { operations } : {}) },

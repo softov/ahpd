@@ -1496,11 +1496,12 @@ export function createSpawn(ctx: HostContext): Spawn {
               });
           }
         }
-        // A turn starting or ending is the whole of what disables and re-enables
-        // a changeset's operations, and it moves nothing inside the changeset
-        // itself - so it has to be said here or it is never said.
+        // A turn starting or ending, however it ended, is the whole of what
+        // disables and re-enables a changeset's operations, and it moves
+        // nothing inside the changeset itself - so it has to be asked here or
+        // it is never said.
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
-          || action.type === 'chat/turnCancelled') operationsMoved(uri);
+          || action.type === 'chat/turnCancelled' || action.type === 'chat/error') operationsMoved(uri);
         /*
          * And whether this chat may be moved, which a turn is the whole of.
          *
