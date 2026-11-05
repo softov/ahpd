@@ -117,7 +117,8 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 
 - **`hostTasks` and `enableTasks`, claude only.** Claude ships its own task tools: `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet`. `hostTasks` takes them away when the host offers the tasks plugin's `task_add`. pi ships no task tools, and cofold's tool groups have none. An acp agent's tools are its own, and the host cannot take one away. See [`code://packages/agent-claude/src/options.ts#L92-L126`](../../packages/agent-claude/src/options.ts#L92-L126).
 - **`tools` and `strictTools`, cofold only.** ahpd configures cofold in code, so its tool groups are ahpd settings: `files`, `shell`, `memory` and `web`. `strictTools: false` drops a tool key cofold does not know, in place of a refusal. The other agents keep their tools in their own settings files.
-- **No `env` or `cwd` on cofold.** cofold runs in the daemon's own process, so no child process takes variables or a folder. A session works in its own folder, or in the daemon's folder when it names none. See [`code://packages/agent-cofold/src/session.ts#L102`](../../packages/agent-cofold/src/session.ts#L102). Its key and endpoint are `apiKey` and `baseUrl`.
+- **No `env` or `cwd` on cofold.** cofold runs in the daemon's own process, so no child process takes variables or a folder. A session works in its own folder, or in the daemon's folder when it names none. See [`code://packages/agent-cofold/src/session.ts#L102`](../../packages/agent-cofold/src/session.ts#L102).
+- **cofold's variables.** cofold reads `COFOLD_CONFIG`, `COFOLD_BASE_URL`, `COFOLD_API_KEY` and `COFOLD_MODEL` from the daemon's environment. See [`code://packages/agent-cofold/src/config.ts#L57-L116`](../../packages/agent-cofold/src/config.ts#L57-L116). In a machine, ahpd sets them as machine needs. A record has `baseUrl`, `apiKey` and `model` for three of them, and nothing for `COFOLD_CONFIG`, so every cofold record reads one config file.
 - **No `thinking` on cofold.** The effort is a session setting only, as *Why each blue circle* says.
 
 ## The folder settings
@@ -148,3 +149,4 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - Whether claude's `paths` stays, or claude takes the host's paths as pi does.
 - Whether `hostTools` becomes one switch for every agent, at the daemon, the plugin or the record.
 - Whether a cofold record gives its shell commands variables of their own. The record has no such field today.
+- Whether a cofold record names its own config file, in place of the daemon's `COFOLD_CONFIG`.
