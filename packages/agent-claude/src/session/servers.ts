@@ -25,8 +25,12 @@ export interface Servers {
   refreshMcp: () => Promise<void>;
   /** Say what the CLI's servers are, in chat. */
   describe: () => Promise<void>;
-  /** Ask the CLI for its agents, commands and skills again, and say the list. */
-  reread: () => Promise<void>;
+  /**
+   * Ask the CLI for its agents, commands, skills and plugins again, and say the
+   * list: VS Code's pipeline's `reloadPlugins`, the SDK's own reload.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L91-L94
+   */
+  reloadPlugins: () => Promise<void>;
   /** Stop the watch of the Claude folders, which `describe` starts. */
   unwatch: () => void;
   methods: {
@@ -334,28 +338,28 @@ export function createServers(ctx: SessionContext): Servers {
     return true;
   };
 
-  /** Whether a read again is running, and whether a change came during it. */
-  let rereading = false;
+  /** Whether a reload is running, and whether a change came during it. */
+  let reloading = false;
   let again = false;
 
   /**
    * Ask the CLI again for what a file on disk can change: its agents and
    * commands, its skills and its plugins.
    *
-   * `initializationResult()` is the answer of the first connect and never
-   * changes, so the two reloads are what the CLI reads from disk again. Their
+   * `initializationResult()` is the answer of the first connect and stays as
+   * it was, so the two reloads are what the CLI reads from disk again. Their
    * answers replace what `describe` kept, and the list is laid out again. A
    * reload that fails keeps the lists that were there, and says nothing.
    *
-   * One at a time: a change during a read is one more read after it, because
-   * the read that runs may have read the folder before that change.
+   * One at a time: a change during a reload is one more reload after it,
+   * because the one that runs may have read the folder before that change.
    */
-  const reread = async (): Promise<void> => {
-    if (rereading) {
+  const reloadPlugins = async (): Promise<void> => {
+    if (reloading) {
       again = true;
       return;
     }
-    rereading = true;
+    reloading =true;
     try {
       do {
         again = false;
@@ -372,7 +376,7 @@ export function createServers(ctx: SessionContext): Servers {
       } while (again && !ctx.disposed);
     }
     finally {
-      rereading = false;
+      reloading =false;
     }
   };
 
@@ -438,7 +442,7 @@ export function createServers(ctx: SessionContext): Servers {
       unwatch = watchFolders({
         configDir: configDirOf(ctx.options.env),
         ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
-      }, () => { void reread(); });
+      }, () => { void reloadPlugins(); });
     }
     ctx.options.onHandshake?.();
   };
@@ -603,7 +607,7 @@ export function createServers(ctx: SessionContext): Servers {
     mcpServers,
     refreshMcp,
     describe,
-    reread,
+    reloadPlugins,
     unwatch: () => {
       unwatch?.();
       unwatch = undefined;
