@@ -1011,6 +1011,15 @@ export function createHost(options: HostOptions): Host {
       ctx.syncToolAuthenticationNeeded(channel, action);
       ctx.chatMoved(channel);
     }
+    /*
+     * A turn that ends in an error it cannot be resumed from is kept for its
+     * chat, and a read after a restart puts it back where the backend's
+     * transcript holds no copy of it, as VS Code's host keeps one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L61
+     */
+    if (ending && action.type === 'chat/error' && bag(action.part).resumable !== true && !ctx.subagents.has(channel)) {
+      ctx.keepFailedTurn(sessionFor(channel), channel, (states.get(channel)?.state.turns ?? []) as Bag[], String(action.turnId ?? ''));
+    }
     // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
     if (ending) ctx.turnEnded(channel, action);
     else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);

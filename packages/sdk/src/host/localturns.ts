@@ -49,6 +49,15 @@ export interface LocalTurns {
    */
   keepLocalTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
   /**
+   * Keep a turn that ended in an error it cannot be resumed from, as the chat
+   * holds it in `turns`, anchored as a command's turn is: a read puts it back
+   * where the backend's transcript holds no copy of it, and drops it where it
+   * holds one, as the reference host keeps a turn that failed before its
+   * provider recorded it. A command's turn kept already stays as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L84
+   */
+  keepFailedTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
+  /**
    * One chat's transcript, read with the outputs it is handed, with each turn
    * it holds no beginning for read back inside the turn before it, and with its
    * local turns put back, or the local turns alone for a chat whose backend
@@ -98,6 +107,11 @@ interface Kept {
   anchor?: string;
   seq: number;
   turn: Bag;
+  /**
+   * A turn that ended in an error it cannot be resumed from, which its
+   * backend's transcript may hold after all: read back only where it does not.
+   */
+  failed?: true;
 }
 
 /** The folder under a session's own where its chats' local turns are. */
@@ -112,13 +126,13 @@ const hashOf = (name: string): string => createHash('sha256').update(name, 'utf8
  * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L171-L200
  */
 const keptOf = (value: Bag): Kept | undefined => {
-  const { version, turnId, anchor, seq, turn } = value;
+  const { version, turnId, anchor, seq, turn, failed } = value;
   if (version !== 1 || typeof turnId !== 'string' || typeof seq !== 'number') return undefined;
   if (anchor !== undefined && typeof anchor !== 'string') return undefined;
   if (!isRecord(turn) || turn.id !== turnId || typeof turn.state !== 'string' || !Array.isArray(turn.responseParts)) return undefined;
   const message = bag(turn.message);
   if (typeof message.text !== 'string' || typeof bag(message.origin).kind !== 'string') return undefined;
-  return { turnId, ...(anchor === undefined ? {} : { anchor }), seq, turn };
+  return { turnId, ...(anchor === undefined ? {} : { anchor }), seq, turn, ...(failed === true ? { failed: true as const } : {}) };
 };
 
 /** One file of a chat's record: a transcript id, and the turn that began, or was written again, under it. */
@@ -283,10 +297,11 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     record(session, chat, { transcriptId, turnId });
   };
 
-  const keepLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+  const keep = (session: string, chat: string, turns: readonly Bag[], turnId: string, failed: boolean): void => {
     const at = turns.findIndex((turn) => str(turn.id) === turnId);
     const file = fileOf(session, chat, turnId);
     if (at < 0 || file === undefined) return;
+    if (failed && isLocal(session, chat, turnId)) return;
     /*
      * The turn it followed: the nearest earlier one that is no local turn of
      * its own, by the id the transcript holds it under.
@@ -309,11 +324,18 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
         ...(anchor === undefined ? {} : { anchor }),
         seq,
         turn: turns[at],
+        ...(failed ? { failed: true } : {}),
       }, { dirMode: 0o700 });
     }
     catch (error) {
       ctx.log(`could not keep the turn ${turnId} of ${chat}: ${reason(error)}`);
     }
+  };
+  const keepLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+    keep(session, chat, turns, turnId, false);
+  };
+  const keepFailedTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+    keep(session, chat, turns, turnId, true);
   };
 
   /*
@@ -328,10 +350,27 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * around it by `seq`, and none goes in a second time.
    */
   const withLocalTurns = <T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[] => {
-    const kept = keptIn(session, chat);
+    const all = keptIn(session, chat);
+    if (all.length === 0) return [...turns];
+    const held = new Set(turns.map((turn) => str(bag(turn).id)));
+    /*
+     * A failed turn the transcript holds after all, under its own id or one
+     * the chat recorded for it, is the transcript's: its kept copy goes, as
+     * the reference host deletes a failed turn its provider has a copy of.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L68-L84
+     */
+    const copied = new Set(recordedIn(session, chat).filter((one) => held.has(one.transcriptId)).map((one) => one.turnId));
+    const kept = all.filter((one) => {
+      if (one.failed !== true || (!held.has(one.turnId) && !copied.has(one.turnId))) return true;
+      const file = fileOf(session, chat, one.turnId);
+      if (file !== undefined) {
+        try { rmSync(file, { force: true }); }
+        catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
+      }
+      return false;
+    });
     if (kept.length === 0) return [...turns];
     const seqOf = new Map(kept.map((one) => [one.turnId, one.seq]));
-    const held = new Set(turns.map((turn) => str(bag(turn).id)));
     // The local turns to put in, by anchor, each anchor's in `seq` order.
     const waiting = new Map<string | undefined, Kept[]>();
     for (const one of kept.filter((each) => !held.has(each.turnId)).sort((a, b) => a.seq - b.seq)) {
@@ -504,7 +543,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
   };
 
   return {
-    turnRecordedAs, keepLocalTurn, transcriptOf, withLocalTurns, concreteTurnOf,
+    turnRecordedAs, keepLocalTurn, keepFailedTurn, transcriptOf, withLocalTurns, concreteTurnOf,
     forgetLocalTurns, copyLocalTurns, forgetChatLocalTurns, moveChatLocalTurns, keptTurnsOf,
   };
 }

@@ -92,6 +92,8 @@ interface Knobs {
   listed?: Listed[];
   /** The conversations the backend deleted, for a backend that can delete. */
   deleted?: string[];
+  /** The turns whose send the backend fails, before it records anything of them. */
+  fails?: string[];
 }
 
 const knobs = (): Knobs => ({ starts: [] });
@@ -124,6 +126,10 @@ const backend = (k: Knobs): Agent => {
         allTurns: all,
         endPoint: (turnId) => (all().some((turn) => turn.id === turnId) ? `end:${turnId}` : undefined),
         forkPoint: (turnId) => (all().some((turn) => turn.id === turnId) ? `end:${turnId}` : undefined),
+        sendMessage: (turnId, ...rest) => {
+          if (k.fails?.includes(turnId) === true) throw new Error('the backend is gone');
+          return session.sendMessage(turnId, ...rest);
+        },
       };
     },
   };
@@ -257,9 +263,9 @@ describe('a command\'s turn', () => {
 
 describe('a host started again on the same store', () => {
   /** A first host that ran some turns, closed; and a second on the same store. */
-  const restarted = async (script: (client: Client, p: ReturnType<typeof peer>, chat: string) => Promise<void>, transcript: Bag[]) => {
+  const restarted = async (script: (client: Client, p: ReturnType<typeof peer>, chat: string) => Promise<void>, transcript: Bag[], fails: string[] = []) => {
     const dir = join(temp(), 'sessions');
-    const first = knobs();
+    const first: Knobs = { ...knobs(), fails };
     const before = await opened(first, fileSessions({ dir }));
     await script(before.client, before.p, before.chat);
     await before.host.close();
@@ -285,6 +291,31 @@ describe('a host started again on the same store', () => {
     }, [said('t1', 'hello there'), said('t4', 'and then')]);
     expect(await turnsOf(client, chat)).toEqual(['t0', 't1', 't2', 't3', 't4']);
     await host.close();
+  });
+
+  /*
+   * A turn that ended in an error it cannot be resumed from is kept for its
+   * chat and read back after the turn before it where the backend's transcript
+   * has no copy, and dropped where it has one, as VS Code's host keeps a turn
+   * that failed before its provider recorded it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L84
+   */
+  it('reads a turn that failed before its backend recorded it back, and once where the transcript holds it, as VS Code\'s host', async () => {
+    const script = async (c: Client, p: ReturnType<typeof peer>, ch: string): Promise<void> => {
+      say(c, ch, 't1', 'hello there');
+      await ended(p, ch, 't1');
+      say(c, ch, 't2', 'this one fails');
+      await ended(p, ch, 't2');
+    };
+    const lost = await restarted(script, [said('t1', 'hello there')], ['t2']);
+    const back = (await stateOf(lost.client, lost.chat)).turns as Bag[];
+    expect(back.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete'], ['t2', 'error']]);
+    await lost.host.close();
+
+    const copied = await restarted(script, [said('t1', 'hello there'), said('t2', 'this one fails')], ['t2']);
+    const once = (await stateOf(copied.client, copied.chat)).turns as Bag[];
+    expect(once.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete'], ['t2', 'complete']]);
+    await copied.host.close();
   });
 
   it('reads a turn the chat never began back inside the turn before it, and a chat with no record as it is', async () => {
