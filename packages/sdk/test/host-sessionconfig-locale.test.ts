@@ -92,7 +92,7 @@ describe('the new session form in a locale', () => {
     expect(properties.permissionMode?.title).toBe('Aprovações');
     expect(properties.permissionMode?.enumLabels).toContain('Planejar');
     // A string the catalog does not hold comes in English.
-    expect(properties.permissionMode?.description).toBe('How the agent handles tool approvals.');
+    expect(properties.permissionMode?.description).toBe('How Claude handles tool approvals.');
     expect(properties.permissionMode?.enumLabels).toContain('Ask Before Edits');
     const english = await form({ locale: 'pt' });
     expect(english.permissionMode?.title).toBe('Approvals');

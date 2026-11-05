@@ -131,7 +131,13 @@ describe('what it says it is doing', () => {
     await host.close();
   });
 
-  it('names the tool, and stops naming it when the turn ends', async () => {
+  /*
+   * A Claude turn running a tool says no activity: a chat's activity is a wait
+   * before its turn can run, as VS Code's host keeps it, and the call is in the
+   * turn's own parts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+   */
+  it('says no activity for a tool a turn runs, whose call is in the turn', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -143,31 +149,19 @@ describe('what it says it is doing', () => {
       message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls -la' } }] },
     });
 
-    // On the session channel, because that is where a catalogue row and a
-    // detail pane read it - the protocol has a session mirror its chat's.
-    const said = actions(p, uri)
-      .filter((e) => e.action.type === 'session/activityChanged')
-      .map((e) => e.action.activity);
-    expect(said).toContain('Bash ls -la');
-
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'toolu_1')).toBe(true);
+    const named = (channel: string) => actions(p, channel)
+      .filter((e) => (e.action.type === 'session/activityChanged' || e.action.type === 'chat/activityChanged') && e.action.activity !== undefined);
+    expect(named(uri)).toEqual([]);
+    expect(named(chatUri)).toEqual([]);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { activity?: string }[];
     };
-    expect(listed.items[0]?.activity).toBe('Bash ls -la');
+    expect(listed.items[0]?.activity).toBeUndefined();
 
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
-    // Cleared, not left saying the last thing it did.
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged').at(-1)?.action.activity)
-      .toBeUndefined();
-    // And cleared on the catalogue row, which takes a `null` for it: a
-    // partial is spread over the row the client holds, so a key left off is
-    // a field that did not move, and the reference client's row went on
-    // saying `Bash ls -la` until something else about the session changed.
-    const moved = p.notes
-      .filter((n) => n.method === 'root/sessionSummaryChanged')
-      .map((n) => (n.params as { changes: Record<string, unknown> }).changes);
-    expect(moved.some((one) => one.activity === 'Bash ls -la')).toBe(true);
-    expect(moved.at(-1)).toHaveProperty('activity', null);
+    expect(named(uri)).toEqual([]);
+    expect(named(chatUri)).toEqual([]);
   });
 
   it('says the title once it has one', async () => {
@@ -1322,7 +1316,7 @@ describe('a chat another backend serves', () => {
     await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
     await settle(8);
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.ahp?.tools.find((one) => one.name === 'make_chat');
+    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat');
     if (tool === undefined) throw new Error('no make_chat');
     const made = await tool.handler({ provider: 'other', prompt: 'say hi' });
     if (made.isError === true) throw new Error(made.content[0]?.text ?? 'make_chat failed');

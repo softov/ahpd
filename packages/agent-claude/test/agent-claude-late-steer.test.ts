@@ -58,7 +58,13 @@ const sdk = vi.hoisted(() => {
     started: [] as Bag[],
     /** What the SDK's transcript reader returns. */
     messages: [] as Record<string, unknown>[],
-    reset() { state.held = []; state.wake = undefined; state.handed = []; state.started = []; state.messages = []; },
+    /** The uuids the session asked the CLI to cancel, and whether the CLI still held them. */
+    cancelled: [] as string[],
+    holds: true,
+    reset() {
+      state.held = []; state.wake = undefined; state.handed = []; state.started = []; state.messages = [];
+      state.cancelled = []; state.holds = true;
+    },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
       state.wake?.();
@@ -85,6 +91,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
         }
       },
       interrupt: async () => {},
+      // The SDK's request for the CLI's `cancel_async_message`, answering whether it still held the message.
+      cancelAsyncMessage: async (uuid: string) => { sdk.cancelled.push(uuid); return sdk.holds; },
       setPermissionMode: async () => {},
       setModel: async () => {},
       applyFlagSettings: async () => {},
@@ -322,6 +330,58 @@ it('answers a steering message the CLI runs after the turn\'s last answer inside
   expect(((turns[0] as Bag).usage as Bag)?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.00179864, currency: 'USD' } });
 });
 
+/*
+ * A steering message goes to the CLI at priority `now`, into the work it is
+ * doing, as VS Code's Claude agent injects one; a turn's prompt goes at the
+ * CLI's own default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1271-L1282
+ */
+it('hands the CLI a steering message at priority now, and a turn prompt at its default', async () => {
+  await liveLate(LATE);
+  expect(sdk.handed.map((one) => [one.uuid, one.priority])).toEqual([[FIRST, undefined], [LATE, 'now']]);
+});
+
+/*
+ * A steering message a client takes back while the CLI holds it is withdrawn
+ * through the CLI's `cancel_async_message`, as VS Code's Copilot withdraws one
+ * its SDK holds, and the turn ends at the answer to its own prompt; one the CLI
+ * no longer held runs, and the turn waits for its answer, as Copilot keeps one
+ * already delivered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6884-L6905
+ */
+const withdrawn = async (holds: boolean) => {
+  const live = await opened();
+  sdk.holds = holds;
+  const [first, rest] = late();
+  const [answered, after] = splitAfter(rest, (frame) => frame.type === 'result');
+  live.session.sendMessage(FIRST, ALPHA_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  expect(live.session.sendSteeringMessage?.({ id: LATE, text: BETA_TEXT })).toBe(true);
+  await settle();
+  live.session.withdrawSteeringMessage?.(LATE);
+  await settle();
+  sdk.push(...answered);
+  await settle();
+  return { ...live, after };
+};
+
+it('withdraws a steering message the CLI holds through its cancel, and ends the turn at its own answer', async () => {
+  const { chat } = await withdrawn(true);
+  expect(sdk.cancelled).toEqual([LATE]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([FIRST]);
+});
+
+it('keeps a steering message the CLI no longer held, and ends the turn at its answer', async () => {
+  const { chat, after } = await withdrawn(false);
+  expect(sdk.cancelled).toEqual([LATE]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete')).toEqual([]);
+  sdk.push(...after);
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([FIRST]);
+});
+
 it('gives a steering message whose id is not a UUID a uuid of its own, and answers it in the turn', async () => {
   const { chat, before, steered } = await liveLate('s1');
 
@@ -473,16 +533,17 @@ it('opens no turn for a steering message the CLI holds when its turn fails', asy
 });
 
 /*
- * A turn the CLI stopped at its turn limit is no failure, as the reference
- * reads `error_max_turns`: the steering message the CLI then answers stays in
- * the turn it went into, which completes at the last result.
- * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
- * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
+ * A turn the CLI stopped at its turn limit is no failure, as VS Code's Claude
+ * mapper reads a result that is neither a failed success nor an error during
+ * execution, so the turn stays open for the steering message the CLI holds and
+ * ends with its answer.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
  */
-it('keeps a steering message the CLI answers after the turn limit in the turn it went into', async () => {
+it('opens no turn for a steering message the CLI holds when its turn stops at a limit', async () => {
   const { session, chat, before } = await opened();
+  // The probe sent the steering message as the tool's result arrived, which is the turn's last round.
   const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
-  const [limited, answered] = splitAfter(rest, (frame) => frame.type === 'result');
+  const [failed, answered] = splitAfter(rest, (frame) => frame.type === 'result');
   session.sendMessage(LIMITED, SLEEP_DONE_TEXT);
   await settle();
   sdk.push(...first);
@@ -490,18 +551,18 @@ it('keeps a steering message the CLI answers after the turn limit in the turn it
   expect(session.sendSteeringMessage?.({ id: 's-limit', text: BETA_TEXT })).toBe(true);
   await settle();
   const steered = lastSent();
-  sdk.push(...renamed(limited, AFTER_LIMIT, steered));
+  sdk.push(...renamed(failed, AFTER_LIMIT, steered));
   await settle();
-  // The limit ended nothing: the CLI still owes the steering message's answer.
-  expect(chat.some((one) => one.type === 'chat/turnComplete' || one.type === 'chat/error')).toBe(false);
   sdk.push(...renamed(answered, AFTER_LIMIT, steered));
   await settle();
 
   expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
   expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([LIMITED]);
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([LIMITED]);
   expect(history(replayed(before, chat).turns as Bag[])).toEqual([
     [LIMITED, 'complete', SLEEP_DONE_TEXT, 'user', [`steer: ${BETA_TEXT}`, 'BETA']],
   ]);
+  // The CLI owes nothing once it has answered the message, so a turn sent now goes out.
   expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);
   await settle();
   expect(sdk.handed.map((one) => one.uuid)).toEqual([LIMITED, steered, GAMMA]);

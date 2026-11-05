@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, Session } from '@ahpd/sdk';
 import type { AcpConnection } from '../types.js';
@@ -7,28 +8,30 @@ import type { SessionContext } from './context.js';
 /** The server's modes, its config options and its models, and what is drawn from them. */
 export interface Config {
   learnModes(state: SessionModeState | null | undefined): void;
-  learnOffers(list: SessionConfigOption[] | null | undefined): void;
+  learnConfigOptions(list: SessionConfigOption[] | null | undefined): void;
   learnModels(answer: unknown): void;
   configChanged(key: string, value: unknown): void;
-  offersChanged(list: SessionConfigOption[]): void;
+  configOptionsChanged(list: SessionConfigOption[]): void;
+  syncConfig(held: Record<string, unknown>): void;
   schemaOf(): Bag;
-  chooseModel(held: { connection: AcpConnection; sessionId: string }, chosen: Chosen | undefined): Promise<void>;
-  sendAskedMode(held: { connection: AcpConnection; sessionId: string }, asked: unknown): Promise<void>;
+  changeModel(held: { connection: AcpConnection; sessionId: string }, chosen: Chosen | undefined): Promise<void>;
+  sendAsked(held: { connection: AcpConnection; sessionId: string }, asked: Record<string, unknown>): Promise<void>;
   models: Session['models'];
   setConfig: NonNullable<Session['setConfig']>;
 }
 
 export function createConfig(ctx: SessionContext): Config {
-  const { emit, provider, settings, start } = ctx;
+  const { emit, provider, values, start } = ctx;
 
   /**
-   * The session config options the server named, once it has.
+   * The session config options the server named, once it has: ACP's
+   * `configOptions`.
    *
    * This is where a model choice lives in ACP: the option whose category is
    * `model`, with the values the server serves. The bridge does not invent one,
    * so a session that has not opened answers no models.
    */
-  let offers: SessionConfigOption[] = [];
+  let configOptions: SessionConfigOption[] = [];
   /**
    * The models a server from before config options named, where it named none.
    *
@@ -39,26 +42,28 @@ export function createConfig(ctx: SessionContext): Config {
    */
   let listedModels: { id: string; name: string }[] | undefined;
 
-  /** Remember the modes the server named, and where it currently sits. */
+  /**
+   * Remember the modes the server named, and where it currently sits.
+   *
+   * The ids the server offers are this session's `availableApprovalModes`,
+   * as VS Code's Copilot agent reports the approval modes its session may
+   * take, said with the rest of what the open learned.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L171
+   */
   const learnModes = (state: SessionModeState | null | undefined): void => {
     if (state === null || state === undefined) return;
     ctx.modes = { ...state };
-    settings.permissionMode = state.currentModeId;
-    /*
-     * The server's list is the agent's from here, so the next new session box
-     * of this agent offers it rather than the preset's, and a server that has
-     * moved its modes is what a client draws next.
-     */
-    ctx.heardModes?.(state.availableModes.map((one) => ({ id: one.id, name: one.name })));
+    values.permissionMode = state.currentModeId;
+    values.availableApprovalModes = state.availableModes.map((one) => one.id);
   };
 
   /** The option a model choice is set through, when the server named one. */
   const modelOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
-    offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'model');
+    configOptions.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'model');
 
   /** The option a mode choice is set through, where the server names one. */
   const modeOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
-    offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
+    configOptions.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
 
   /**
    * The key an option's value is kept under.
@@ -83,20 +88,22 @@ export function createConfig(ctx: SessionContext): Config {
    * something this bridge cannot put in front of a person.
    */
   const controlOptions = (): SessionConfigOption[] =>
-    offers.filter((one) => (one.type === 'select' || one.type === 'boolean')
+    configOptions.filter((one) => (one.type === 'select' || one.type === 'boolean')
       && keyOf(one) !== 'model' && keyOf(one) !== 'permissionMode');
 
   /**
    * Remember the session config options the server named, and where each stands.
    *
-   * A value learned this way is written down and not said out: the client that
-   * asked for the session reads it out of `config.values` rather than being
-   * told what it asked about.
+   * What moved is said by the caller: an open through `syncConfig` once it is
+   * over, a value set and a turn's model through `configOptionsChanged`.
    */
-  const learnOffers = (list: SessionConfigOption[] | null | undefined): void => {
+  const learnConfigOptions = (list: SessionConfigOption[] | null | undefined): void => {
     if (list === null || list === undefined) return;
-    offers = [...list];
-    for (const option of offers) settings[keyOf(option)] = option.currentValue;
+    configOptions = [...list];
+    for (const option of configOptions) values[keyOf(option)] = option.currentValue;
+    // A `mode` option's values are the modes the session may take.
+    const mode = modeOption();
+    if (mode !== undefined) values.availableApprovalModes = choicesOf(mode).map((one) => one.value);
   };
 
   /**
@@ -117,7 +124,7 @@ export function createConfig(ctx: SessionContext): Config {
       .filter((one): one is { modelId: string; name: string } => typeof bag(one).modelId === 'string')
       .map((one) => ({ id: one.modelId, name: typeof one.name === 'string' ? one.name : one.modelId }));
     const current = bag(named).currentModelId;
-    if (typeof current === 'string') settings.model = current;
+    if (typeof current === 'string') values.model = current;
   };
 
   /**
@@ -125,24 +132,55 @@ export function createConfig(ctx: SessionContext): Config {
    *
    * Said only when it is not the value already in force: a server may repeat an
    * update it has already made, and a client told the same thing twice has to
-   * work out whether anything moved. This is the only place `session/configChanged`
-   * goes out, so that what a client hears and what `settings()` answers cannot drift.
+   * work out whether anything moved. The value is written as it is said, so
+   * what a client hears and what `settings()` answers are one value. While
+   * the session opens it is written alone, and said with the rest of what the
+   * open learned once the open is over.
    */
   const configChanged = (key: string, value: unknown): void => {
-    if (settings[key] === value) return;
-    settings[key] = value;
-    emit('session', { type: 'session/configChanged', config: { [key]: value } });
+    if (isDeepStrictEqual(values[key], value)) return;
+    values[key] = value;
+    if (!ctx.loading) emit('session', { type: 'session/configChanged', config: { [key]: value } });
   };
 
   /**
    * What an update's options say, said to every client.
    *
    * Said against the values in force before the update was learned, so an
-   * option the server repeated is not said again - the whole list arrives on
-   * every update, and only what moved is news.
+   * option the server repeated is not said again: the whole list arrives on
+   * every update, and on the answer to every value set, and only what moved is
+   * news.
    */
-  const offersChanged = (list: SessionConfigOption[]): void => {
+  const configOptionsChanged = (list: SessionConfigOption[]): void => {
     for (const option of list) configChanged(keyOf(option), option.currentValue);
+    const mode = list.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
+    if (mode !== undefined) configChanged('availableApprovalModes', choicesOf(mode).map((one) => one.value));
+  };
+
+  /**
+   * The keys a client's value is on its way to the server for.
+   *
+   * The host said each one before handing it here, so the value a client holds
+   * for it is settled by the set itself, whatever an open running beside it
+   * learned. One entry per set, so two sets of one key are both waited out.
+   */
+  const setting: string[] = [];
+
+  /**
+   * What an open learned, said in one action where it differs from `held`.
+   *
+   * An open learns where the server sits, its mode, its options and its model,
+   * and sends the values the session holds. Once it is over, each value that
+   * differs from the config every client held as it began is said, as VS
+   * Code's Copilot agent says the mode its runtime moved to, so a client draws
+   * the values the server runs with, and a value the open put back where it
+   * was is not news. A key a client is setting is the set's to settle.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11447-L11478
+   */
+  const syncConfig = (held: Record<string, unknown>): void => {
+    const moved = Object.fromEntries(Object.entries(values)
+      .filter(([key, value]) => !isDeepStrictEqual(held[key], value) && !setting.includes(key)));
+    if (Object.keys(moved).length > 0) emit('session', { type: 'session/configChanged', config: moved });
   };
 
   /** A select's values, flattening any groups into the flat list a picker draws. */
@@ -227,27 +265,30 @@ export function createConfig(ctx: SessionContext): Config {
    * failure here fails the turn rather than prompting with the wrong model: an
    * answer from a model nobody selected is worse than an error saying so.
    */
-  const chooseModel = async (
+  const changeModel = async (
     held: { connection: AcpConnection; sessionId: string },
     chosen: Chosen | undefined,
   ): Promise<void> => {
     if (chosen === undefined) return;
     const option = modelOption();
     /*
+     * A model the server does not offer is one the turn runs without: the
+     * session keeps the model in force, and the choice is logged, as VS Code's
+     * host keeps a chat's model when its agent does not offer the turn's.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2231
+     */
+    if (offeredFor('model')?.includes(chosen.id) !== true) {
+      ctx.options.log?.(`${provider}: the session keeps its model: the server does not offer ${chosen.id}`);
+      return;
+    }
+    /*
      * A server from before config options has no option to set, and takes the
-     * model by the call it knew instead. The list it named is the only place
-     * a choice can be checked against, so an id it did not offer is the same
-     * failure as a server that offered none.
+     * model by the call it knew instead.
      */
     if (option === undefined) {
-      const listed = listedModels ?? [];
-      const served = listed.find((one) => one.id === chosen.id);
-      if (served === undefined) {
-        throw new Error(`${provider}: this ACP server names no model option, so "${chosen.id}" cannot be chosen`);
-      }
-      if (settings.model === served.id) return;
-      await held.connection.setModel({ sessionId: held.sessionId, modelId: served.id });
-      settings.model = served.id;
+      if (values.model === chosen.id) return;
+      await held.connection.setModel({ sessionId: held.sessionId, modelId: chosen.id });
+      configChanged('model', chosen.id);
       return;
     }
     if (option.currentValue === chosen.id) return;
@@ -256,7 +297,8 @@ export function createConfig(ctx: SessionContext): Config {
       configId: option.id,
       value: chosen.id,
     });
-    learnOffers(answer.configOptions);
+    configOptionsChanged(answer.configOptions);
+    learnConfigOptions(answer.configOptions);
   };
 
   /**
@@ -275,178 +317,181 @@ export function createConfig(ctx: SessionContext): Config {
   };
 
   /**
-   * Take a config value, in the server's own terms.
+   * The kind of value a key takes, before any server has said more, or a
+   * refusal naming the key.
    *
    * Two keys are this backend's: `permissionMode` is the server's mode, and
-   * `model` is its model option. `model` is set here even though it is not a
-   * schema property, because a model belongs to the turn rather than to the
-   * conversation and a client may still send one. Every other option the
-   * server offered is a control of its own under `acp.<id>`, and a key
-   * naming no option at all is refused by name, because only this backend
-   * knows what the server serves.
+   * `model` is its model, set here even though it is not a schema property,
+   * because a model belongs to the turn and a client may still send one. Every
+   * other option the server offers is a control of its own under `acp.<id>`,
+   * a choice or a switch, and a key naming none of these is refused by name,
+   * because only this backend knows what the server serves.
    */
-  const setConfig: NonNullable<Session['setConfig']> = async (key, value): Promise<true | string> => {
-    /*
-     * The value asked for, held before the request goes out, so the server's
-     * own update echoing it back is not announced as a change; put back if the
-     * request fails.
-     */
-    let sent: { key: string; before: unknown } | undefined;
-    const unsent = (): void => {
-      if (sent !== undefined) settings[sent.key] = sent.before;
-    };
-    if (key === 'permissionMode') {
-      if (typeof value !== 'string') return `${provider}: permissionMode takes a string`;
-      try {
-        const held = await ctx.open();
-        // The `mode` option is the server's own account of this, so it is
-        // asked through the same call as any other option; the legacy modes
-        // are what is left when it names none.
-        const option = modeOption();
-        sent = { key, before: settings[key] };
-        settings[key] = value;
-        if (option === undefined) {
-          await held.connection.setSessionMode({ sessionId: held.sessionId, modeId: value });
-          if (ctx.modes !== undefined) ctx.modes = { ...ctx.modes, currentModeId: value };
-        }
-        else {
-          learnOffers((await held.connection.setSessionConfigOption({
-            sessionId: held.sessionId,
-            configId: option.id,
-            value,
-          })).configOptions);
-        }
-        ctx.touch();
-        return true;
-      }
-      catch (why: unknown) {
-        unsent();
-        return `${provider}: permissionMode was not set: ${messageOf(why)}`;
-      }
-    }
-    if (key === 'model') {
-      if (typeof value !== 'string') return `${provider}: model takes a string`;
-      try {
-        // Opened before the option is looked for: the server names its model
-        // option on `session/new`, so a session that has not opened has not
-        // been told what a model may be set to.
-        const held = await ctx.open();
-        const option = modelOption();
-        if (option === undefined) {
-          // A server from before config options takes it by the older call,
-          // as a turn naming one does.
-          if (!(listedModels ?? []).some((one) => one.id === value)) {
-            return `${provider}: this ACP server names no model option, so model cannot be set`;
-          }
-          sent = { key, before: settings[key] };
-          settings[key] = value;
-          await held.connection.setModel({ sessionId: held.sessionId, modelId: value });
-          ctx.touch();
-          return true;
-        }
-        sent = { key, before: settings[key] };
-        settings[key] = value;
-        const answer = await held.connection.setSessionConfigOption({
-          sessionId: held.sessionId,
-          configId: option.id,
-          value,
-        });
-        learnOffers(answer.configOptions);
-        ctx.touch();
-        return true;
-      }
-      catch (why: unknown) {
-        unsent();
-        return `${provider}: model was not set: ${messageOf(why)}`;
-      }
+  const refusalOf = (key: string, value: unknown): string | undefined => {
+    if (key === 'permissionMode' || key === 'model') {
+      return typeof value === 'string' ? undefined : `${provider}: ${key} takes a string`;
     }
     if (key.startsWith('acp.')) {
-      const id = key.slice('acp.'.length);
-      try {
-        // Opened before the option is looked for, as with the model: the
-        // server names its options on `session/new`, so a session that has
-        // not opened has not been told what may be set. Inside the guard,
-        // because an open that failed is this key failing too.
-        const held = await ctx.open();
-        const option = controlOptions().find((one) => one.id === id);
-        if (option === undefined) return `${provider}: this ACP server names no "${id}" option`;
-        if (option.type === 'boolean' && typeof value !== 'boolean') return `${provider}: ${key} takes true or false`;
-        if (option.type === 'select' && typeof value !== 'string') return `${provider}: ${key} takes a string`;
-        if (typeof value !== 'string' && typeof value !== 'boolean') return `${provider}: ${key} takes a string or true or false`;
-        // Built for the option's own kind, which the guards above have said:
-        // a boolean goes as a boolean and a select as one of its values.
-        sent = { key, before: settings[key] };
-        settings[key] = value;
-        const answer = option.type === 'boolean'
-          ? await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, type: 'boolean', value: value === true })
-          : await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, value: String(value) });
-        learnOffers(answer.configOptions);
-        ctx.touch();
-        return true;
-      }
-      catch (why: unknown) {
-        unsent();
-        return `${provider}: ${key} was not set: ${messageOf(why)}`;
-      }
+      return typeof value === 'string' || typeof value === 'boolean' ? undefined : `${provider}: ${key} takes a string or true or false`;
     }
     return `${provider}: ${key} is not a config key this backend serves`;
   };
 
   /**
-   * Send the mode the session asked for, where the server offers it.
+   * Put one config value to an open server, in the server's own terms.
    *
-   * `settings.permissionMode` is read before the open learns the server's own
-   * state, because `learnModes` and `learnOffers` write the server's current
-   * mode over it; the value reaches here as the one the session asked for. It
-   * is sent only where the server names it and sits elsewhere, through the
-   * same order `setConfig` uses: the `mode` option where the server named one,
-   * the legacy modes otherwise.
+   * `permissionMode` goes through the `mode` option where the server names
+   * one, the server's own account of it, and through the legacy modes where it
+   * names none; `model` through the model option, or by the older call a
+   * server from before config options takes; an `acp.<id>` value through the
+   * option of that id, as the option's own kind.
    *
    * The value is put in force before the request goes out, so the server's own
-   * update echoing it back is not news, and put back with the server's mode if
-   * the request fails: a session running in another mode is better than no
-   * session, so the failure is a line in the log rather than a failed open.
+   * update echoing it back is not news, and put back if the request fails. The
+   * answer is said as an update's options are, so an option the server moved
+   * with it reaches every client once.
+   *
+   * `true` when the server took it, and otherwise the reason in the backend's
+   * words.
    */
-  const sendAskedMode = async (
+  const applyConfig = async (
     held: { connection: AcpConnection; sessionId: string },
-    asked: unknown,
-  ): Promise<void> => {
-    if (typeof asked !== 'string' || asked === settings.permissionMode) return;
-    const option = modeOption();
-    const offered = option === undefined
-      ? ctx.modes?.availableModes.map((one) => one.id) ?? []
-      : choicesOf(option).map((one) => one.value);
-    if (!offered.includes(asked)) return;
-    const before = settings.permissionMode;
-    settings.permissionMode = asked;
+    key: string,
+    value: unknown,
+  ): Promise<true | string> => {
+    const refused = refusalOf(key, value);
+    if (refused !== undefined) return refused;
+    const option = key === 'permissionMode' ? modeOption()
+      : key === 'model' ? modelOption()
+        : controlOptions().find((one) => `acp.${one.id}` === key);
+    if (key.startsWith('acp.') && option === undefined) return `${provider}: this ACP server names no "${key.slice('acp.'.length)}" option`;
+    if (option?.type === 'boolean' && typeof value !== 'boolean') return `${provider}: ${key} takes true or false`;
+    if (option?.type === 'select' && typeof value !== 'string') return `${provider}: ${key} takes a string`;
+    if (key === 'model' && option === undefined && !(listedModels ?? []).some((one) => one.id === value)) {
+      return `${provider}: this ACP server names no model option, so model cannot be set`;
+    }
+    const before = values[key];
+    values[key] = value;
     try {
-      if (option === undefined) {
-        await held.connection.setSessionMode({ sessionId: held.sessionId, modeId: asked });
-        if (ctx.modes !== undefined) ctx.modes = { ...ctx.modes, currentModeId: asked };
+      if (option !== undefined) {
+        // Built for the option's own kind, which the guards above have said:
+        // a switch goes as a boolean and a choice as one of its values.
+        const answer = option.type === 'boolean'
+          ? await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, type: 'boolean', value: value === true })
+          : await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, value: String(value) });
+        configOptionsChanged(answer.configOptions);
+        learnConfigOptions(answer.configOptions);
+      }
+      else if (key === 'model') {
+        await held.connection.setModel({ sessionId: held.sessionId, modelId: String(value) });
       }
       else {
-        learnOffers((await held.connection.setSessionConfigOption({
-          sessionId: held.sessionId,
-          configId: option.id,
-          value: asked,
-        })).configOptions);
+        await held.connection.setSessionMode({ sessionId: held.sessionId, modeId: String(value) });
+        if (ctx.modes !== undefined) ctx.modes = { ...ctx.modes, currentModeId: String(value) };
       }
+      return true;
     }
     catch (why: unknown) {
-      settings.permissionMode = before;
-      ctx.options.log?.(`${provider}: the session asked for permissionMode "${asked}" and the server did not take it: ${messageOf(why)}`);
+      values[key] = before;
+      return `${provider}: ${key} was not set: ${messageOf(why)}`;
+    }
+  };
+
+  /**
+   * Take a config value a client set, in the server's own terms.
+   *
+   * A session whose server is not open keeps the value, which the open sends
+   * once the server has said what it offers, as VS Code's Claude agent keeps
+   * a model chosen before its runtime launches: a value is no reason to start
+   * a server. An open server is sent it at once, and one still opening once it
+   * has opened, with the key left to this set by whatever the open says.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1160-L1177
+   */
+  const setConfig: NonNullable<Session['setConfig']> = async (key, value): Promise<true | string> => {
+    if (ctx.opening === undefined) {
+      const refused = refusalOf(key, value);
+      if (refused !== undefined) return refused;
+      values[key] = value;
+      return true;
+    }
+    setting.push(key);
+    try {
+      return await applyConfig(await ctx.open(), key, value);
+    }
+    catch (why: unknown) {
+      // An open that failed is this key failing too.
+      return `${provider}: ${key} was not set: ${messageOf(why)}`;
+    }
+    finally {
+      setting.splice(setting.indexOf(key), 1);
+    }
+  };
+
+  /**
+   * The values the server takes for a key, or nothing for a key that is not
+   * the server's.
+   *
+   * Its modes for `permissionMode` and its models for `model`, from the option
+   * it named for each or from the older lists where it named none; under
+   * `acp.<id>` the values of the option of that id, a switch taking true or
+   * false, and none at all for an id the server never named.
+   */
+  const offeredFor = (key: string): unknown[] | undefined => {
+    if (key === 'permissionMode') {
+      const option = modeOption();
+      return option === undefined ? ctx.modes?.availableModes.map((one) => one.id) ?? [] : choicesOf(option).map((one) => one.value);
+    }
+    if (key === 'model') {
+      const option = modelOption();
+      return option === undefined ? (listedModels ?? []).map((one) => one.id) : choicesOf(option).map((one) => one.value);
+    }
+    if (!key.startsWith('acp.')) return undefined;
+    const option = controlOptions().find((one) => `acp.${one.id}` === key);
+    if (option === undefined) return [];
+    return option.type === 'select' ? choicesOf(option).map((one) => one.value) : [true, false];
+  };
+
+  /**
+   * Send the values the session holds, where the server offers them.
+   *
+   * `asked` is the config every client held as the open began: the values the
+   * session was started with and every one a client set while no server was
+   * open. The open reads it before it learns the server's own state, which
+   * `learnModes`, `learnConfigOptions` and `learnModels` write over `values`.
+   * Each value is sent where the server offers it and sits elsewhere, through the
+   * call `setConfig` makes for its key, as VS Code's Claude agent starts its
+   * runtime on the model the session chose before it launched.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1160-L1177
+   *
+   * A value the server does not offer, and one it refuses, leave the server's
+   * own in force, which the open then says to every client: a session running
+   * with another value is better than no session, so each is a line in the log
+   * and the open goes on.
+   */
+  const sendAsked = async (
+    held: { connection: AcpConnection; sessionId: string },
+    asked: Record<string, unknown>,
+  ): Promise<void> => {
+    for (const [key, value] of Object.entries(asked)) {
+      const offered = offeredFor(key);
+      if (offered === undefined || value === values[key]) continue;
+      const taken = offered.includes(value)
+        ? await applyConfig(held, key, value)
+        : `${provider}: the server does not offer ${key} ${JSON.stringify(value)}`;
+      if (taken !== true) ctx.options.log?.(`${taken}, so the session runs with the server's own`);
     }
   };
 
   return {
     learnModes,
-    learnOffers,
+    learnConfigOptions,
     learnModels,
     configChanged,
-    offersChanged,
+    configOptionsChanged,
+    syncConfig,
     schemaOf,
-    chooseModel,
-    sendAskedMode,
+    changeModel,
+    sendAsked,
     models,
     setConfig,
   };

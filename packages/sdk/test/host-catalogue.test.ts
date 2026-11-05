@@ -905,7 +905,9 @@ describe('a session read from its transcript', () => {
      */
     expect(call?.status).toBe('completed');
     expect(call?.success).toBe(false);
-    expect(call?.error).toMatchObject({ message: 'boom' });
+    // Only a refused call carries an `error`, as VS Code's Claude mapper
+    // completes one; a call that ran and failed says so in `success`.
+    expect(call?.error).toBeUndefined();
     // The sentence the row draws, and the answer to whether anybody is being
     // asked. Both required, and a transcript full of calls without them is a
     // transcript of rows with nothing on them.
@@ -1250,7 +1252,7 @@ describe('a summary that did not change', () => {
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
   });
 
-  it('sends again for a title that moved, and for an activity that moved', async () => {
+  it('sends again for a title that moved, and for a turn that started', async () => {
     const { client, peer: p, chatUri } = await running();
     await settle();
     const opened = rowsMoved(p, 'ahp-session:/live').length;
@@ -1272,7 +1274,7 @@ describe('a summary that did not change', () => {
     await settle();
     const busy = rowsMoved(p, 'ahp-session:/live');
     expect(busy.length).toBeGreaterThan(said);
-    expect(busy.at(-1)?.activity).toEqual(expect.any(String));
+    expect(Number(busy.at(-1)?.status ?? 0) & Status.InProgress).toBe(Status.InProgress);
   });
 
   /**

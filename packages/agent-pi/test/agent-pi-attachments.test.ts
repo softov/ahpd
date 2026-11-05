@@ -100,6 +100,30 @@ const image = (type = 'image/png'): Bag => ({
   mimeType: type,
 });
 
+it("keeps the turn's message in pi's file just before pi writes its prompt, and no steering message's", async () => {
+  /*
+   * pi's prompt joins the words and what was attached, so the message as the
+   * turn had it is kept beside it for a reader, as VS Code's readers restore a
+   * message's text, attachments and model from the runtime's record.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L852-L890
+   */
+  const { session, pi } = opened();
+  pi.hold();
+  session.changeModel({ id: 'openai/gpt-5' });
+  const attachment = existing(picked, 'picked.txt', 'text/plain');
+  session.sendMessage('t1', 'read this', undefined, [attachment]);
+  await until(() => prompts(pi).length === 1);
+  // pi says the turn's prompt before it writes it, and a steering message later.
+  pi.raise({ type: 'message_end', message: { role: 'user', content: String(prompts(pi)[0]?.text), timestamp: 0 } } as never);
+  pi.raise({ type: 'message_end', message: { role: 'user', content: 'and this', timestamp: 0 } } as never);
+  expect(pi.asked.filter((one) => one.kind === 'appendEntry')).toEqual([{
+    kind: 'appendEntry',
+    customType: 'ahpd.message',
+    data: { message: { text: 'read this', origin: { kind: 'user' }, attachments: [attachment], model: { id: 'openai/gpt-5' } } },
+  }]);
+  pi.raise({ type: 'agent_settled', aborted: false });
+});
+
 it('prompts a message with no attachments with the plain text it always was', async () => {
   const { session, pi } = opened();
   session.sendMessage('t1', 'what is this');

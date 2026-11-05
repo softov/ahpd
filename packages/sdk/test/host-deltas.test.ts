@@ -52,7 +52,7 @@ async function opened(over: Partial<HostOptions> = {}) {
   const held = await running(over);
   held.client.handle({
     method: 'dispatchAction',
-    params: { channel: held.uri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: held.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await emit(

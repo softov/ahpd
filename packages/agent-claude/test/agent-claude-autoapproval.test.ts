@@ -26,27 +26,35 @@ const sdk = vi.hoisted(() => ({
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.frames,
-  query: ({ options }: { options: Record<string, unknown> }) => ({
-    async *[Symbol.asyncIterator]() {
-      sdk.options = options;
-      sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
-      for (const frame of sdk.frames) yield frame;
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    let close = (): void => {};
+    const closed = new Promise<void>((resolve) => { close = resolve; });
+    return {
+      async *[Symbol.asyncIterator]() {
+        sdk.options = options;
+        sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+        // The frames answer the turn's prompt, as a CLI's do, and the CLI stays
+        // open until it is closed.
+        await prompt[Symbol.asyncIterator]().next();
+        for (const frame of sdk.frames) yield frame;
+        await closed;
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close,
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
@@ -86,6 +94,9 @@ async function sessionWith(check?: Check, settings: Bag = {}, shellEnv?: Record<
     ...(shellEnv === undefined ? {} : { shellEnv }),
     ...(replay.subagent === undefined ? {} : { subagent: replay.subagent }),
   });
+  await settle();
+  // A turn running, as the CLI asks about a call and speaks only inside one.
+  session.sendMessage('t1', 'go');
   await settle();
   return { session, canUseTool: sdk.canUseTool!, options: sdk.options!, sent };
 }
@@ -170,19 +181,22 @@ it('runs a command the owner\'s rules allow, without asking', async () => {
   expect(sent.filter((one) => one.type === 'chat/toolCallReady')).toEqual([]);
 });
 
+/** A client's shell init script in force, which is what puts a line in front of a command. */
+const SCRIPTED = { shellInitScripts: [{ shell: 'bash', script: 'export SAY=b\n' }] };
+
 it('matches the line the model wrote, not the one the shell prefix made', async () => {
   const { asked, check } = approving(['make test']);
-  const { canUseTool, options } = await sessionWith(check, {}, { SAY: 'b' });
+  const { canUseTool, options } = await sessionWith(check, SCRIPTED);
 
   /*
-   * What the CLI does first: the hook puts the operator's environment in
-   * front of the command, and the rewritten input is what `canUseTool` is
-   * handed. The rules are the owner's about the command, and the command is
-   * the one the model wrote.
+   * What the CLI does first: the hook puts the client's script in front of
+   * the command, and the rewritten input is what `canUseTool` is handed. The
+   * rules are the owner's about the command, and the command is the one the
+   * model wrote.
    */
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_env', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
-  expect(rewritten.command).toBe("export SAY='b'\nmake test");
+  expect(String(rewritten.command)).toMatch(/ahpd-shell-init-[^']*\.sh.*\nmake test$/u);
 
   expect(await canUseTool('Bash', rewritten, { toolUseID: 'toolu_env' }))
     .toEqual({ behavior: 'allow', updatedInput: rewritten });
@@ -200,7 +214,7 @@ it('matches the line the model wrote, not the one the shell prefix made', async 
  */
 it('asks about a command as the model wrote it, and runs it with the shell prefix', async () => {
   const { check } = approving([]);
-  const { session, canUseTool, options, sent } = await sessionWith(check, {}, { SAY: 'b' });
+  const { session, canUseTool, options, sent } = await sessionWith(check, SCRIPTED);
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_shown', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
   const asking = canUseTool('Bash', rewritten, { toolUseID: 'toolu_shown' });
@@ -208,7 +222,7 @@ it('asks about a command as the model wrote it, and runs it with the shell prefi
   const ready = readyOf(sent, 'toolu_shown');
   const entry = sent.find((one) => one.type === 'session/inputNeededSet');
   expect(JSON.stringify([ready, entry])).toContain('make test');
-  expect(JSON.stringify([ready, entry])).not.toContain('export');
+  expect(JSON.stringify([ready, entry])).not.toContain('ahpd-shell-init');
   session.confirm('toolu_shown', true);
   expect(await asking).toEqual({ behavior: 'allow', updatedInput: rewritten });
 });
@@ -275,9 +289,10 @@ it('still refuses a command the deny list names', async () => {
   const { canUseTool } = await sessionWith(check, { permissions: { allow: [], deny: ['Bash'] } });
 
   // The rules are the window's answer about a command; a deny list is a
-  // person's answer about the tool, and it wins.
+  // person's answer about the tool, and it wins, refused in VS Code's words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
   expect(await canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_denied_list' }))
-    .toEqual({ behavior: 'deny', message: 'Bash is denied for this session' });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
 });
 
 it('still answers a call the SDK has already cancelled', async () => {
@@ -286,9 +301,11 @@ it('still answers a call the SDK has already cancelled', async () => {
   const signal = AbortSignal.abort();
 
   // An aborted call is not one to approve, so no question is put and no line
-  // is read. The rule is still asked whether this tool is one it names.
+  // is read, and it is refused in VS Code's words. The rule is still asked
+  // whether this tool is one it names.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
   expect(await canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_aborted', signal }))
-    .toEqual({ behavior: 'deny', message: 'Cancelled' });
+    .toEqual({ behavior: 'deny', message: 'SDK aborted the tool request' });
   expect(asked).toEqual([{ kind: 'tool', line: 'Bash', shell: undefined, tool: undefined }]);
 });
 
@@ -348,9 +365,9 @@ it('answers canUseTool with the person\'s refusal as well', async () => {
   session.confirm('toolu_read', false);
   const answer = await waiting;
   expect(decisionOf(answer)).toBe('deny');
-  expect(reasonOf(answer)).toBe('The person declined this action');
+  expect(reasonOf(answer)).toBe('User declined');
   expect(await canUseTool('Read', { file_path: '/tmp/one' }, { toolUseID: 'toolu_read' }))
-    .toEqual({ behavior: 'deny', message: 'The person declined this action' });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
 });
 
 it('does not let an allow list answer for a matched tool', async () => {
@@ -366,7 +383,7 @@ it('does not let an allow list answer for a matched tool', async () => {
 
 it('runs a matched Bash command with the input sourceFirst wrote', async () => {
   const { check } = naming(['Bash']);
-  const { session, canUseTool, options } = await sessionWith(check, {}, { SAY: 'b' });
+  const { session, canUseTool, options } = await sessionWith(check, SCRIPTED);
 
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_bash', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);

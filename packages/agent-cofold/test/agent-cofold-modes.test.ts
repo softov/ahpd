@@ -8,6 +8,7 @@ import type { ModelAdapter, ModelProvider } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Session, Start } from '@ahpd/sdk';
 import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
 import type { Held } from '../src/agent.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * The two controls a window draws beyond the text fields.
@@ -89,7 +90,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
   });
   const agent = cofoldAgent({ adapter: model, memory: true });
   const view = channels();
-  const session: Session = agent.create({
+  const session: Session = startedNow(agent.create({
     uri: 'ahp-session:/modes',
     chatUri: 'ahp-chat:/modes',
     settings: { ...agent.defaults(), ...(mode === undefined ? {} : { permissionMode: mode }) },
@@ -97,7 +98,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
     schema: () => agent.schema(),
     emit: view.emit,
     tools: [writing(ran)],
-  } as unknown as Start);
+  } as unknown as Start));
   session.sendMessage('t1', 'write it');
   await until(() => ended(view) || asked(view));
   // A paused run is stopped rather than left waiting on a person who is not there.

@@ -19,9 +19,6 @@
     "computerConfigDir": {
       "description": "Carpeta de configuración de la CLI de Claude dentro de una computadora. Por defecto, '/ahpd/<id>', o '/ahpd/claude' para el agente integrado. Usa false para mantener la configuración propia de la imagen."
     },
-    "workerStop": {
-      "description": "Alcance de un stop pedido desde el chat de un subagente. 'worker' (por defecto) detiene solo ese subagente; 'session' detiene toda la sesión."
-    },
     "handshakeTimeoutMs": {
       "description": "Tiempo máximo, en milisegundos, para esperar el handshake de la CLI de Claude antes de considerar que el inicio falló. Por defecto, 120000 (2 minutos). Auméntalo en computadoras más lentas."
     }
@@ -37,17 +34,6 @@
         "auto": "Modo automático",
         "bypassPermissions": "Omitir permisos",
         "dontAsk": "No preguntar"
-      }
-    },
-    "effortLevel": {
-      "title": "Esfuerzo",
-      "description": "Cuánto piensa antes de responder.",
-      "enum": {
-        "low": "Bajo",
-        "medium": "Medio",
-        "high": "Alto",
-        "xhigh": "Muy alto",
-        "max": "Máximo"
       }
     },
     "shellInitScripts": {

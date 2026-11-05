@@ -4,11 +4,13 @@ import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
-import { toolMetaOf } from '../kinds.js';
+import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 import { HOST_SHELL_TOOL } from '../options.js';
 interface PendingInput {
   id: string;
   entry: Bag;
+  /** The tool a confirmation is for, by the CLI's own name for it. */
+  toolName?: string;
   /** `AskUserQuestion` needs its own payload echoed back verbatim. */
   questions?: unknown[];
   /** Question id to the question text the SDK keys answers by. */
@@ -27,34 +29,35 @@ interface PendingInput {
   options?: Bag[];
   /** The SDK's `suggestions` for this call, returned as `updatedPermissions` when "always" is picked. */
   suggestions?: unknown[];
-  /**
-   * The name the CLI called a tool confirmation's tool by. The call's row names
-   * a client's tool as its client announced it, and the session answers the
-   * CLI, and finds the tool to run, by the CLI's own name.
-   */
-  cliName?: string;
   settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
 }
 
 /**
- * What a person refusing a call says, to the model and to anything waiting.
+ * What a call refused says, to the model and to anything waiting, in VS Code's
+ * words: a person's decline, a deny list's, and a question the SDK abandoned
+ * while it was put, which VS Code's bridge answers as a decline.
  *
  * One sentence in one place, because the refusal reaches the model as the tool
  * result of a declined call and as the answer to a handler that was waiting for
  * a call nobody will run - and the two are the same refusal.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L108
  */
-const DECLINED = 'The person declined this action';
+const DECLINED = CLAUDE_USER_DECLINED_MESSAGE;
 
 /**
- * What the model is told about a call the SDK itself cancelled.
- *
- * The SDK aborts a `canUseTool` call through its own signal when the turn it
- * belongs to is interrupted or the CLI goes away, and nothing on this side was
- * listening: the confirmation stayed on every client's screen until the turn
- * happened to end. This is the answer that closes it, and it says what
- * happened rather than who did it - nobody declined anything.
+ * What the model is told about a call the SDK had already abandoned when it
+ * asked, in VS Code's words: its own signal aborted, the turn interrupted or
+ * the CLI gone, so no question is put.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
  */
-const CANCELLED = 'Cancelled';
+const ABORTED = 'SDK aborted the tool request';
+
+/** What the model is told about a call it asked about while no turn was running. */
+const NO_TURN = 'No turn is running to ask in';
+
+/** What the model is told about a question nobody answered, in VS Code's words. */
+const QUESTION_CANCELLED = CLAUDE_QUESTION_CANCELLED_MESSAGE;
 
 /** Where a kept permission lands, as a person reads it. */
 const KEPT_IN: Record<string, string> = {
@@ -107,10 +110,6 @@ interface Question {
   signal?: AbortSignal;
   /** What the SDK suggested be kept, which the question offers as "always". */
   suggestions: unknown[];
-  /** The confirmation's title, when the SDK gave one. */
-  title?: string;
-  /** What the call is called on the card, when the SDK gave a name. */
-  displayName?: string;
 }
 
 /**
@@ -166,10 +165,8 @@ export function keptLabel(suggestions: unknown[]): string {
 export interface Asking {
   /** Everything the agent is waiting on, by request id. */
   pending: Map<string, PendingInput>;
-  /** The input an answered question ran with, by its call id. */
-  answeredInputs: Map<string, Bag>;
   /** The SDK’s own gate between a tool call and the host that runs it. */
-  canUseTool: (toolName: string, raw: Bag, asked?: Bag) => Promise<unknown>;
+  canUseTool: (toolName: string, input: Bag, options?: Bag) => Promise<unknown>;
   /**
    * The `PreToolUse` hook that asks for a tool the operator's rule names.
    *
@@ -274,7 +271,28 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    */
   const askPerson = async (asked: Question): Promise<Held> => {
     const { toolName, raw, callId: id, agentId, signal, suggestions } = asked;
-    if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
+    if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
+    /*
+     * The conversation the tool is running in.
+     *
+     * A permission ask from inside a subagent belongs on that subagent's
+     * chat, against the call it is for, where it reads as a question about
+     * the subagent's own work. The caller hands the subagent's id as
+     * `agentId`; a call whose frames already arrived is joined by its own id,
+     * which also places a call from a harness that says nothing about the
+     * subagent.
+     */
+    const scope = ctx.scopeOfCall(id)
+      ?? (agentId !== undefined ? ctx.byAgent.get(agentId) : undefined)
+      ?? ctx.mainScope;
+    if (agentId !== undefined && scope.chat !== undefined) ctx.byAgent.set(agentId, scope);
+    /*
+     * A question with no turn to put it in, from a CLI running on its own, is
+     * refused, as VS Code's host rejects a permission without an active turn.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+     */
+    const turn = ctx.openTurn(scope);
+    if (turn === undefined) return { behavior: 'deny', message: NO_TURN };
     /*
      * The edit the tool would make, drawn on the card before it is approved.
      *
@@ -313,31 +331,19 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * The entry comes off the chat as an answer takes it off, because the
        * question and its answer are one thing: a client left drawing a
        * confirmation the SDK has abandoned is offering a decision that changes
-       * nothing.
+       * nothing. The call is answered as VS Code's bridge answers a parked
+       * request its signal aborted: a confirmation declined, a question
+       * cancelled.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L113
        */
       const cancelled = (): void => {
         const held = pending.get(id);
         if (held === undefined) return;
         pending.delete(id);
         ctx.inputNeededRemoved(id);
-        held.settle({ behavior: 'deny', message: CANCELLED });
+        held.settle({ behavior: 'deny', message: held.questions === undefined ? DECLINED : QUESTION_CANCELLED });
       };
       signal?.addEventListener('abort', cancelled);
-      /*
-       * The conversation the tool is running in.
-       *
-       * A permission ask from inside a subagent belongs on that subagent's
-       * chat, against the call it is for - not on the lead chat, where it
-       * would read as a question about the parent's own work. The caller hands
-       * the subagent's id as `agentId`; a call whose frames already arrived is
-       * joined by its own id, which is the fallback that also works for a
-       * harness that says nothing about the subagent.
-       */
-      const scope = ctx.scopeOfCall(id)
-        ?? (agentId !== undefined ? ctx.byAgent.get(agentId) : undefined)
-        ?? ctx.mainScope;
-      if (agentId !== undefined && scope.chat !== undefined) ctx.byAgent.set(agentId, scope);
-      const turn = ctx.openTurn(scope);
       /*
        * A spawning call, recorded from the input the caller was handed.
        *
@@ -362,7 +368,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle: done });
         ctx.emitOn(scope, { type: 'chat/inputRequested', request });
         ctx.inputNeededSet(entry);
-        ctx.touch();
         return;
       }
 
@@ -376,11 +381,14 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // The card shows the call as the model wrote it; the CLI runs `raw`.
       const written = asked.shown ?? raw;
       const input = toolInputOf(toolName, written);
-      const displayName = asked.displayName ?? toolName;
-      // The card reads the row's line; the CLI's own sentence is its title.
-      const invocationMessage = lineOf(toolName, written);
-      ctx.pastLines.set(id, pastLineOf(toolName, written));
-      const confirmationTitle = asked.title ?? `Run ${displayName}?`;
+      // Named and titled from Claude's tables, as VS Code's Claude agent puts
+      // its confirmation, a client's tool by the name its client announced.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
+      const shownName = ctx.clientToolOf(toolName)?.name ?? toolName;
+      const displayName = ctx.displayNameOf(toolName);
+      const invocationMessage = lineOf(toolName, written, displayName);
+      ctx.pastLines.set(id, pastLineOf(toolName, written, displayName));
+      const confirmationTitle = getClaudeConfirmationTitle(toolName);
 
       // The call the assistant message opened, if it arrived first. Which of
       // the two comes first is the CLI's business; either order is one call.
@@ -390,7 +398,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const contributor = ctx.contributorOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
-        toolName,
+        toolName: shownName,
         displayName,
         ...(contributor ? { contributor } : {}),
         ...(input !== undefined ? { toolInput: input } : {}),
@@ -430,7 +438,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         scope.parts.set(id, part);
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {
-          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
+          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: shownName, displayName,
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
@@ -452,7 +460,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       pending.set(id, {
         id,
         entry,
-        cliName: toolName,
+        toolName,
         asked: new Map(),
         answers: new Map(),
         ...(options !== undefined ? { options, suggestions } : {}),
@@ -461,12 +469,11 @@ export function createAsking(ctx: SessionContext): Asking {  /**
           : result),
       });
       ctx.inputNeededSet(entry);
-      ctx.touch();
     });
   };
 
-  const canUseTool = async (toolName: string, raw: Bag, asked?: Bag): Promise<unknown> => {
-    const about = bag(asked);
+  const canUseTool = async (toolName: string, input: Bag, options?: Bag): Promise<unknown> => {
+    const about = bag(options);
     /*
      * The agent's own id for this call.
      *
@@ -491,7 +498,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const ruled = ruledBy.get(id);
     if (ruled !== undefined) {
       ruledBy.delete(id);
-      return ruled === 'allow' ? { behavior: 'allow', updatedInput: raw } : { behavior: 'deny', message: DECLINED };
+      return ruled === 'allow' ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: DECLINED };
     }
     /*
      * The operator's rule, read for every call before anything else.
@@ -514,8 +521,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * for a decision made before the turn began.
        */
       const already = settled(toolName);
-      if (already === 'allow') return { behavior: 'allow', updatedInput: raw };
-      if (already === 'deny') return { behavior: 'deny', message: `${toolName} is denied for this session` };
+      if (already === 'allow') return { behavior: 'allow', updatedInput: input };
+      if (already === 'deny') return { behavior: 'deny', message: DECLINED };
       /*
        * A host tool that says nobody is asked about it.
        *
@@ -525,8 +532,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * so both the bound tools and the call are read under that name. Nothing
        * is announced for a call nobody was asked about, as with an allow list.
        */
-      const offered = ctx.offering.find((one) => one.owner === undefined && `mcp__ahp__${one.definition.name}` === toolName);
-      if (offered?.confirm === false) return { behavior: 'allow', updatedInput: raw };
+      if (ctx.hostToolOf(toolName)?.confirm === false) return { behavior: 'allow', updatedInput: input };
     }
     /*
      * The SDK's own abort for this call, which is the one thing that says the
@@ -538,10 +544,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * on the chat and stay there until the turn ended.
      */
     const signal = about.signal as AbortSignal | undefined;
-    if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
+    if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
-    const title = str(about.title);
-    const displayName = str(about.displayName);
     /*
      * The command the model wrote, which `sourceFirst` kept under this call's
      * id when it put the operator's environment in front of it: what a rule
@@ -552,7 +556,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      */
     const written = ctx.unprefixed.get(id);
     ctx.unprefixed.delete(id);
-    const shown = toolName === 'Bash' && written !== undefined ? { ...raw, command: written } : undefined;
+    const shown = toolName === 'Bash' && written !== undefined ? { ...input, command: written } : undefined;
     /*
      * A matched call, put where a harness that asks anyway would reach it.
      *
@@ -564,14 +568,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (matched) {
       return await askPerson({
         toolName,
-        raw,
+        raw: input,
         ...(shown !== undefined ? { shown } : {}),
         callId: id,
         suggestions: [],
         ...(agentId !== undefined ? { agentId } : {}),
         ...(signal !== undefined ? { signal } : {}),
-        ...(title !== undefined ? { title } : {}),
-        ...(displayName !== undefined ? { displayName } : {}),
       });
     }
     /*
@@ -589,21 +591,19 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * (`copilotAgentSession.ts#L7535-L7553` at VS Code `122ec4fe4431`).
      */
     if (toolName === 'Bash' || toolName === HOST_SHELL_TOOL) {
-      const command = written ?? str(raw.command);
+      const command = written ?? str(input.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
-        return { behavior: 'allow', updatedInput: raw };
+        return { behavior: 'allow', updatedInput: input };
       }
     }
     return await askPerson({
       toolName,
-      raw,
+      raw: input,
       ...(shown !== undefined ? { shown } : {}),
       callId: id,
       suggestions: list(about.suggestions),
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),
-      ...(title !== undefined ? { title } : {}),
-      ...(displayName !== undefined ? { displayName } : {}),
     });
   };
 
@@ -664,15 +664,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     };
   };
 
-  /**
-   * The input an answered question ran with, by its call id.
-   *
-   * The protocol's complete action carries no `toolInput` of its own, so the
-   * answers the tool was given travel in its `result.structuredContent` - the
-   * protocol's own structured result - where a client draws them from the call
-   * instead of parsing the result's sentence.
-   */
-  const answeredInputs = new Map<string, Bag>();
   const methods: Asking['methods'] = {
     confirm: (toolCallId, approved, optionId) => {
       // Found by id rather than assumed to be the only one. This used to
@@ -684,77 +675,64 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       if (!held) return false;
       const settle = held.settle;
       pending.delete(held.id);
-      ctx.inputNeededRemoved(held.id);
-      // The call's own conversation, so an approval given in a worker's chat
-      // is said back there rather than on the lead chat.
+      // The entry follows the chat's state: the host took it down when it said
+      // the confirmation that moved the call.
+      // The call's own conversation, a worker's chat or the lead's, whose held
+      // call moves with the confirmation the host said there.
       const scope = ctx.scopeOfCall(toolCallId) ?? ctx.mainScope;
       // The choice picked, when it is one this call offered and of the
       // answer's kind; anything else is a plain approve or deny.
       const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = scope.parts.get(toolCallId);
-      let times: Bag | undefined;
       if (part) {
         const call = bag(part.toolCall);
         call.status = approved ? 'running' : 'cancelled';
-        // And how it was approved, which is required on the call and was only
-        // ever said in the action.
+        // And how it was approved, which is required on the call.
         if (approved) call.confirmed = 'user-action';
         delete call.options;
         if (picked !== undefined) call.selectedOption = picked;
         /*
          * A call starts running now, and not at the ready that came before the
          * question: the wait for a person is not work. A call refused never
-         * runs, so it loses the start it was given and says none.
+         * runs, so it loses the start it was given.
          */
-        times = approved ? ctx.stampStart(call) : ctx.untimed(call);
+        if (approved) ctx.stampStart(call);
+        else ctx.untimed(call);
       }
-      if (scope === ctx.mainScope) ctx.doing(approved ? ctx.busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       /*
        * A call of a client's, which is the client's to run now and only now.
        *
-       * Before the action that says the call is running, because the entry is
-       * what the client goes on and the chat is what tells everybody else: a
-       * client that reads the session runs the tool the person just allowed.
-       * A refused call runs nowhere, and whoever waits for it is told so.
+       * The host has said the client's confirmation, so the entry the client
+       * goes on follows the call into `running`, as VS Code's host raises it
+       * from the chat's state: a client that reads the session runs the tool
+       * the person just allowed. A refused call runs nowhere, and whoever
+       * waits for it is told so.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
        */
       const call = bag(held.entry.toolCall);
-      const name = held.cliName ?? str(call.toolName) ?? '';
+      // The CLI's own name, which is the one a client's tool is offered under;
+      // the call's row names the tool as its client announced it.
+      const name = held.toolName ?? '';
       if (approved) {
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
-      else ctx.refuseCall(name, toolCallId, DECLINED);
-      // Said back, like every other action a client originates. Nothing in a
-      // client applies its own dispatch, so a row approved here stayed
-      // `pending-confirmation` on every screen watching it - including the
-      // one that had just answered it.
-      ctx.emitOn(scope, {
-        type: 'chat/toolCallConfirmed',
-        turnId: scope.turn?.id,
-        toolCallId,
-        approved,
-        ...(approved ? { confirmed: 'user-action' } : {}),
-        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-        // The whole bag, because an action's `_meta` replaces the call's.
-        ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
-      });
-      // The answer is given and said back, so the preview goes with it: what
-      // the tool would leave is on no disk, and the file itself is the copy
-      // every client can read once it has run.
+      else ctx.refuseCall(toolCallId, DECLINED);
+      // The answer is given, so the preview goes with it: what the tool would
+      // leave is on no disk, and the file itself is the copy every client can
+      // read once it has run.
       settleEdits(toolCallId);
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
         : { behavior: 'deny', message: DECLINED });
-      ctx.touch();
       return true;
     },
 
     /**
-     * One question of a request, part-way answered.
+     * One question of a request, part-way answered, which the host has said as
+     * the client sent it.
      *
-     * The same thing `setDraft` is for a message: held here so that two people
-     * looking at one elicitation see the form being filled in rather than each
-     * filling in their own. Kept on the request itself, because a client that
-     * arrives while the question is open reads
+     * The same thing `setDraft` is for a message: held on the request itself,
+     * because a client that arrives while the question is open reads
      * `session.inputNeeded` and would otherwise see an empty form somebody has
      * already answered.
      *
@@ -773,9 +751,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const request = bag(held.entry.request);
       if (held.answers.size > 0) request.answers = Object.fromEntries(held.answers);
       else delete request.answers;
-      // Not `touch()`: typing is not a change to the conversation, and a
-      // catalogue that reordered itself on every keystroke would be unusable.
-      // Nothing is said: the host said the client's answer when it took it.
       return true;
     },
 
@@ -793,11 +768,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const held = pending.get(requestId);
       if (!held) return false;
       pending.delete(requestId);
-      ctx.inputNeededRemoved(requestId);
+      // The entry follows the chat's state: the host took it down when it said
+      // the completion that answered the request.
 
+      // In VS Code's words, which its Claude agent denies a question with.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L14
       if (!accepted) {
-        held.settle({ behavior: 'deny', message: 'The person declined to answer' });
-        ctx.touch();
+        held.settle({ behavior: 'deny', message: QUESTION_CANCELLED });
         return true;
       }
       const said: Record<string, unknown> = {};
@@ -840,17 +817,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
           : [...(Array.isArray(chosen) ? chosen : typeof chosen === 'string' && chosen !== '' ? [chosen] : []), ...beside].join(', ');
       }
       /*
-       * The input the tool ran with: its questions as sent plus what was
-       * answered, which is what the SDK records and what a client draws the
-       * answered question from once the call is complete.
+       * The input the tool runs with: its questions as sent plus what was
+       * answered, which is what the SDK records.
        */
-      const updated = { questions: held.questions ?? [], answers: said };
-      answeredInputs.set(held.id, updated);
-      held.settle({ behavior: 'allow', updatedInput: updated });
-      ctx.touch();
+      held.settle({ behavior: 'allow', updatedInput: { questions: held.questions ?? [], answers: said } });
       return true;
     },
   };
 
-  return { pending, answeredInputs, canUseTool, ruleFirst, settleEdits, methods };
+  return { pending, canUseTool, ruleFirst, settleEdits, methods };
 }

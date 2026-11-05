@@ -1,50 +1,22 @@
-import { resume, textOf } from '@cofold/agents';
+import { resume } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { bag, statusOf, str } from '@ahpd/sdk';
+import { bag, endedParts, mergeLogicalTurnUsage, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
 import type { SessionContext } from './context.js';
 
 /** What reading and reopening a run offers the other areas. */
 export interface Runs {
-  cut: () => Promise<void>;
-  doing: (said: string | undefined) => void;
   status: () => number;
   apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
-  read: (live: RunHandle, mapping: TurnMapping, turnId: string) => void;
-  reopen: () => Promise<void>;
+  read: (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough?: number) => void;
+  findPaused: () => Promise<void>;
+  resumePaused: (turnId: string, mapping: TurnMapping) => Promise<boolean>;
+  dropPaused: () => Promise<void>;
 }
 
 export const createRuns = (ctx: SessionContext): Runs => {
-  const { start, provider, store, sessionId, turns, pending, points } = ctx;
-
-  /**
-   * The cut this session was asked for, made before it runs a turn.
-   *
-   * AHP gives a fork and a rewind the same job - the conversation the host
-   * named, ending at the point it named - and the difference is only where the
-   * result lives: a fork copies it into this session's new id and leaves the
-   * source whole, a rewind drops what followed the point in place. Both are
-   * one store call, and both are refused when the store cannot make the cut,
-   * because a fork that quietly continued would append to the conversation it
-   * was told to preserve and a rewind that did nothing would keep the turns it
-   * was told to drop.
-   */
-  const cut = async (): Promise<void> => {
-    if (start.forkAt !== undefined && start.rewindAt !== undefined) {
-      throw new Error(`${provider}: a session cannot fork and rewind at once`);
-    }
-    if (start.forkAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a fork needs the conversation it copies`);
-      await store.sessions.fork({ fromSessionId: start.resume, throughMessageId: start.forkAt, sessionId });
-      return;
-    }
-    if (start.rewindAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a rewind needs the conversation it cuts`);
-      await store.sessions.truncate({ sessionId, throughMessageId: start.rewindAt });
-    }
-  };
+  const { start, store, sessionId, turns, pending, points } = ctx;
 
   /**
    * Move the running turn into the history, once the stream has ended.
@@ -63,12 +35,24 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // A turn a later one took the place of is in no history, as the reducer
     // keeps none of it, and its failure is not the chat's.
     const gone = ctx.replaced.delete(String(turn.id));
-    if (ending === 'error' && !gone) ctx.failed = why === undefined || why === '' ? 'The turn failed' : why;
+    if (ending === 'error' && !gone) ctx.error = why === undefined || why === '' ? 'The turn failed' : why;
     if (ending === 'error' && part !== undefined && Array.isArray(turn.responseParts)) {
       turn.responseParts.push(part);
     }
+    // Held as the reducer holds it once the ending is reduced, so a chat first
+    // opened after this turn draws what one that watched it end does.
+    turn.responseParts = endedParts(Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []);
     turn.state = ending;
-    turn.duration = Date.now() - Date.parse(String(turn.startedAt));
+    /*
+     * A resumed turn's time is the time its run before took and this run's,
+     * as the host says its end: the ending this run's mapping says carries
+     * this run's time alone, and the host adds the rest.
+     */
+    const resumedFrom = ctx.resumedFrom;
+    ctx.resumedFrom = undefined;
+    turn.duration = resumedFrom === undefined
+      ? Date.now() - Date.parse(String(turn.startedAt))
+      : resumedFrom.duration + (Date.now() - resumedFrom.at);
     if (!gone) turns.push(turn);
     ctx.active = undefined;
     ctx.handle = undefined;
@@ -77,18 +61,21 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // here would keep the session reporting `InputNeeded` over nothing.
     pending.clear();
     ctx.cancelRequested = false;
-    ctx.touch();
+    // A turn's end moves the stamp to its start plus its duration, as the
+    // reducer's does; a turn a later one took the place of ends in no state.
+    if (!gone) ctx.setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + Number(turn.duration)).toISOString());
     return true;
   };
 
   /**
-   * Keep where this turn ended, for the two cut methods.
+   * Keep where this turn ended, for `forkPoint` and `endPoint`.
    *
    * Read from the run record rather than from the events, because the last
    * thing a run wrote is a message no event names - a tool result, a steer, the
-   * marker a cancel leaves - and a cut at a guessed point would drop a turn's
-   * log for a point it did not really have. The store advances the run's
-   * `lastMessageId` with every message it appends, so the record is exact.
+   * marker a cancel leaves - and a fork or a truncation at a guessed point
+   * would drop a turn's log for a point it did not really have. The store
+   * advances the run's `lastMessageId` with every message it appends, so the
+   * record is exact.
    */
   const rememberPoints = async (turnId: string, runId: string): Promise<void> => {
     const record = await store.runs.get({ sessionId, runId });
@@ -103,7 +90,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * first time rather than by a second path written for the replay.
    */
   const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent): Promise<void> => {
-    if (event.type === 'run.finished') ctx.activity.say(undefined);
     /*
      * A call that will never have a result still owes its `after`.
      *
@@ -144,6 +130,16 @@ export const createRuns = (ctx: SessionContext): Runs => {
             : undefined;
       const why = ending === 'error' ? str(bag(bag(action.part).error).message) : undefined;
       const part = ending === 'error' ? bag(action.part) : undefined;
+      /*
+       * The turn holds the usage it says, as the protocol's reducer holds each
+       * `chat/usage` on the active turn, so a chat opened after it holds what
+       * a client that watched it was told: a resumed turn's, this run's merged
+       * over the run before's, as the host says it.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L772-L779
+       */
+      if (type === 'chat/usage' && ctx.active !== undefined && String(ctx.active.id) === str(action.turnId)) {
+        ctx.active.usage = mergeLogicalTurnUsage(ctx.resumedFrom?.usage, bag(action.usage)) ?? action.usage;
+      }
       const ended = ending !== undefined && settleTurn(ending, why, part);
       /*
        * A pause lives on the session channel and a turn on the chat channel;
@@ -161,7 +157,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
       if (ended) ctx.sendNext();
     }
     hold();
-    if (mapped.doing !== undefined) ctx.activity.say(mapped.doing);
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
   };
 
@@ -173,7 +168,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * turn open and the handle keeps reading, so the answer, the resolution and
    * everything after them arrive the same way the events before them did.
    */
-  const read = (live: RunHandle, mapping: TurnMapping, turnId: string): void => {
+  const read = (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough = 0): void => {
     void (async () => {
       for await (const event of live.events) {
         /*
@@ -184,10 +179,11 @@ export const createRuns = (ctx: SessionContext): Runs => {
          * that, so no entry is raised, no row is moved to
          * `pending-confirmation` and no request is held; the run's own
          * `tool.started` then readies the call `not-needed`, as it does for one
-         * nobody was asked about. Only the live stream is checked: a replay
-         * rebuilds what was asked then, whatever the rules say now.
+         * nobody was asked about. Only the live stream is checked: what a
+         * resumed handle replays, through `replayedThrough`, rebuilds what was
+         * asked then, whatever the rules say now.
          */
-        if (event.type === 'approval.requested'
+        if (event.type === 'approval.requested' && event.seq > replayedThrough
           && await ctx.autoApprove(event.requestId, event.name, event.input)) continue;
         await apply(mapping, turnId, event);
       }
@@ -195,114 +191,75 @@ export const createRuns = (ctx: SessionContext): Runs => {
   };
 
   /**
-   * Rejoin the run a restart left paused.
-   *
-   * A paused cofold run still holds the session's writer claim, so a new run
-   * under this id would be refused `writer_busy`, and no answer could reach it
-   * either: `resume()` is the only call that installs a command channel. The
-   * run's own events are replayed through the same mapping a live turn uses,
-   * so the request reaches the client by the path that put it there rather
-   * than a second path written here.
+   * The run a restart left paused, found as the session opens and left as it
+   * is: its turn reads back interrupted and resumable, and a client's resume
+   * of that turn is what continues it.
    *
    * A conversation whose newest run already finished, or that the store has
-   * never seen, is left alone: the next turn appends a new run under the same
+   * never seen, has none: the next turn appends a new run under the same
    * cofold session, which is what continuing a finished conversation means.
    */
-  const reopen = async (): Promise<void> => {
-    if (ctx.closed) return;
-    const record = await store.sessions.get({ sessionId });
-    if (record === undefined || ctx.closed) return;
+  const findPaused = async (): Promise<void> => {
+    if (ctx.disposed) return;
     const runs = await store.runs.list({ sessionId });
     const newest = runs[0];
     if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
+    ctx.paused = { turnId: newest.inputMessageId ?? newest.runId, runId: newest.runId, requestId: newest.pendingRequestId };
+  };
 
-    const agent = ctx.agentOf(ctx.settings);
-    const messages = await store.sessions.listMessages({ sessionId });
-    const input = messages.find((one) => one.id === newest.inputMessageId);
-    const turnId = input?.id ?? newest.runId;
-    const began = input === undefined ? Date.now() : Date.parse(input.createdAt);
-    const startedAt = new Date(Number.isFinite(began) ? began : Date.now()).toISOString();
-    /*
-     * The seed gives way to the replay.
-     *
-     * The host seeds `transcript(id)` into `start.seed`, and that transcript
-     * already carries this run's open turn as a finished one, because AHP's
-     * turn states have no `awaiting`. The replay below rebuilds the very same
-     * turn as the live `active` one, with the parts the next deltas append to,
-     * so keeping the seeded copy would show the open turn twice in every
-     * subscription snapshot - once in `turns` and once as `activeTurn`. The
-     * seed is the side that gives way, because only this session knows the run
-     * is about to be replayed; the transcript still carries the turn for the
-     * catalogue row a client browses without continuing it.
-     *
-     * Said as `chat/truncated` back to the turn before it, the action that
-     * drops a chat's turns after a named one, so every client's chat and the
-     * host's give way with it. The open run is the newest, so its turn is the
-     * last one the seed holds.
-     */
-    const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
-    if (seeded >= 0) {
-      turns.splice(seeded, 1);
-      const before = turns[seeded - 1];
-      start.emit('chat', before === undefined ? { type: 'chat/truncated' } : { type: 'chat/truncated', turnId: String(before.id) });
-    }
-    /*
-     * The same opening as a live turn, with no part: the replayed events open
-     * each part as they did when the turn first ran.
-     */
-    ctx.active = {
-      id: turnId,
-      startedAt,
-      message: { text: input === undefined ? '' : textOf(input) },
-      responseParts: [],
-    };
-    // The host said the start of each turn handed meanwhile, and this start
-    // takes its place as the chat's active turn.
-    for (const one of ctx.waiting) one.displaced = true;
-    start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: ctx.active.message });
-    const mapping = mapTurn({
-      turnId,
-      chatUri: start.chatUri,
-      parts: ctx.active.responseParts as Bag[],
-      startedAt: Number.isFinite(began) ? began : Date.now(),
-      displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
-      ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
-      cancelled: () => false,
-      // No `asksEveryTime`: a replay rebuilds what was asked then, and the
-      // rules of now do not shape a past question.
-    });
-    ctx.activeMapping = mapping;
-
-    /*
-     * What the run already wrote, in the order cofold persisted it, before the
-     * live handle is read: the paused call and the request it waits on are
-     * rebuilt by the events that carry them.
-     */
-    const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
-    const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
-    for (const event of events) await apply(mapping, turnId, event);
-
-    // Everything up to `lastSeq` has just been replayed, so the live stream
-    // carries only what happens next rather than the conversation again.
-    const live = resume({ agent, sessionId, runId: newest.runId, afterSeq: lastSeq });
-    if (ctx.closed) {
+  /**
+   * Continue the paused run on a client's resume of its turn, as VS Code's
+   * provider runs `resumeTurn`.
+   *
+   * cofold's own `resume()` is the only call that installs a command channel
+   * for a paused run, which still holds the session's writer claim. It replays
+   * the run's stored events from the one that raised its pending question, so
+   * that question reaches every client again by the path that raised it, and
+   * the run carries on once somebody answers; what the run said before it
+   * paused is the reopened turn's already. Answers whether the turn was the
+   * paused run's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1313-L1314
+   */
+  const resumePaused = async (turnId: string, mapping: TurnMapping): Promise<boolean> => {
+    const paused = ctx.paused;
+    if (paused === undefined || paused.turnId !== turnId) return false;
+    ctx.paused = undefined;
+    const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
+    const asked = events.findLast((event) => (event.type === 'approval.requested' || event.type === 'input.requested')
+      && event.requestId === paused.requestId);
+    const afterSeq = asked === undefined ? (events.at(-1)?.seq ?? 0) : asked.seq - 1;
+    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq });
+    if (ctx.disposed) {
       live.cancel({ reason: 'the session closed' });
-      return;
+      return true;
     }
     ctx.handle = live;
-    read(live, mapping, turnId);
-    ctx.touch();
+    read(live, mapping, turnId, events.at(-1)?.seq ?? 0);
+    return true;
+  };
+
+  /**
+   * Let the paused run go, its writer claim with it, before a new turn runs:
+   * a client that sent a message in place of resuming the interrupted turn
+   * has left that turn where it ended.
+   */
+  const dropPaused = async (): Promise<void> => {
+    const paused = ctx.paused;
+    if (paused === undefined) return;
+    ctx.paused = undefined;
+    const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
+    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq: events.at(-1)?.seq ?? 0 });
+    live.cancel({ reason: 'a new message took its place' });
+    await live.outcome.catch(() => undefined);
   };
 
   return {
-    cut, apply, read, reopen,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: ctx.activity.say,
+    apply, read, findPaused, resumePaused, dropPaused,
     /** A request nobody has answered yet is the session waiting on somebody. */
     status: (): number => statusOf({
       waiting: pending.size > 0,
       active: ctx.active !== undefined,
-      failed: ctx.failed !== undefined,
+      failed: ctx.error !== undefined,
     }),
   };
 };

@@ -12,8 +12,8 @@
  * catalogue is `catalog.ts`.
  */
 
-import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
-import { catalogueOf, deletes, findListed, forgetSession, loadedSession, stateFile } from './catalog.js';
+import type { Agent, Bag, Listed, MachineNeed, Offered, Session } from '@ahpd/sdk';
+import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
@@ -55,55 +55,51 @@ const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineN
  * with two commands are two backends, which is how one package serves Copilot
  * and Codex at once.
  */
-export function acpAgent(options: AcpOptions): Agent {
+export function acpAgent(options: AcpOptions): Agent<Session> {
   const provider = options.provider ?? 'acp';
   const displayName = options.displayName ?? 'ACP';
 
-  /**
-   * The modes this agent lists, which a session replaces with its server's.
-   *
-   * The preset's list is what a client draws before any session of this agent
-   * has opened, and a session that hears its server's modes hands them here.
-   * Kept in memory rather than written down: the preset is the answer after a
-   * restart, and the server repeats its own list on every `session/new`.
-   */
-  let lastModes: { id: string; name: string }[] | undefined = options.modes === undefined
-    ? undefined
-    : options.modes.map((one) => ({ ...one }));
+  /** The modes the preset names for this agent, which are the agent's own. */
+  const presetModes = (options.modes ?? []).map((one) => ({ ...one }));
 
   /**
    * What a session may be told.
    *
-   * One property, and no `model`: a model belongs to the turn, and ACP carries
-   * the choice as a session config option the server names on `session/new`.
-   * The choices reach a client through `probe` and `Session.models`, and the
-   * choice itself arrives on `begin`, so advertising a model here would be a
-   * second answer to a question the server already owns.
+   * No `model`: a model belongs to the turn, and ACP carries the choice as a
+   * session config option the server names on `session/new`. The choices
+   * reach a client through `probe` and `Session.models`, and the choice itself
+   * arrives on `sendMessage`, so advertising a model here would be a second
+   * answer to a question the server already owns.
    *
-   * The approvals control carries the modes this agent knows, as its `enum` and
-   * their names as its labels. Nothing is known at first unless the preset named
-   * the agent's modes, so a harness nobody has found the modes for keeps a text
-   * box; a session that hears its server's modes fills the list in.
+   * The approvals control carries the modes the preset names, as its `enum`
+   * and their names as its labels, so a harness nobody has found the modes for
+   * keeps a text box. The modes each session's server offers are that
+   * session's own, reported as its read-only `availableApprovalModes`, as VS
+   * Code's Copilot agent reports the approval modes its session may take.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L162
    */
-  const schema = (): Bag => {
-    const held = lastModes ?? [];
-    return {
-      type: 'object',
-      properties: {
-        permissionMode: {
-          scope: 'session',
-          type: 'string',
-          title: 'Approvals',
-          description: 'How the agent handles tool approvals.',
-          sessionMutable: true,
-          ...(held.length === 0 ? {} : {
-            enum: held.map((one) => one.id),
-            enumLabels: held.map((one) => one.name),
-          }),
-        },
+  const schema = (): Bag => ({
+    type: 'object',
+    properties: {
+      permissionMode: {
+        scope: 'session',
+        type: 'string',
+        title: 'Approvals',
+        description: 'How the agent handles tool approvals.',
+        sessionMutable: true,
+        ...(presetModes.length === 0 ? {} : {
+          enum: presetModes.map((one) => one.id),
+          enumLabels: presetModes.map((one) => one.name),
+        }),
       },
-    };
-  };
+      availableApprovalModes: {
+        type: 'array',
+        title: 'Available Permissions',
+        readOnly: true,
+        items: { type: 'string', title: 'Permission Mode' },
+      },
+    },
+  });
 
   /**
    * What a session starts at.
@@ -111,7 +107,7 @@ export function acpAgent(options: AcpOptions): Agent {
    * Only what was configured: a default invented for a model is a session that
    * picks a model nobody named. The model is not a schema property, but it is
    * still what a session that names none should run on, so it is defaulted
-   * here and reaches the turn through `begin`.
+   * here and reaches the turn through `sendMessage`.
    */
   const defaults = (): Record<string, unknown> => ({
     ...(options.model !== undefined ? { model: options.model } : {}),
@@ -123,16 +119,16 @@ export function acpAgent(options: AcpOptions): Agent {
     ...(options.variant === true ? { variant: true } : {}),
     ...(options.description !== undefined ? { description: options.description } : {}),
     /*
-     * A fork is declared here and decided per session.
+     * A fork, offered for an agent whose server advertised `session/fork`.
      *
-     * `chats.fork` is a field of the agent, set before any server is spawned,
-     * and a fork is only ever offered for a server that advertised
-     * `session.fork` - which is a session's own handshake and nothing this
-     * agent can know. So the capability is declared and each session's
-     * `forkPoint` answers `undefined` until its server has said it can, which
-     * is what the host reads to decide whether a turn has a fork at all.
+     * The handshake is where a server says so, a listing's or a session's, so
+     * the capability is read off the last one: none until a server has spoken,
+     * as VS Code's agents advertise fork only where they can fork their chats.
+     * Each session's `forkPoint` then says which of its turns a fork is cut at.
      */
-    chats: { fork: true },
+    get chats() {
+      return forks(options) ? { fork: true } : {};
+    },
     schema,
     defaults,
 
@@ -214,7 +210,7 @@ export function acpAgent(options: AcpOptions): Agent {
       if (told.length > 0) {
         options.log?.(`${provider}: ${String(told.length)} instruction(s) for the model open the first prompt, because an ACP server keeps its own system prompt`);
       }
-      return acpSession(options, start, (heard) => { lastModes = heard; });
+      return acpSession(options, start);
     },
   };
 }

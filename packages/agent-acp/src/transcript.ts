@@ -20,9 +20,10 @@
  * answers `undefined` for it rather than inventing a conversation.
  */
 
+import { endedParts } from '@ahpd/sdk';
 import type { Agent, Bag } from '@ahpd/sdk';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { closePlan, mapUpdate } from './mapping.js';
+import { mapUpdate } from './mapping.js';
 import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
 
 /**
@@ -55,36 +56,11 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       parts: [],
       calls: new Map(),
       opening: [],
-      ...(watched.hostPlan === true ? { hostPlan: true } : {}),
     };
     for (const { update, at } of watched.updates) mapUpdate(replay, update, at);
-    // The plan is closed by the turn ending rather than by an update of its own,
-    // so the replay ends it the way the live turn did.
-    closePlan(replay);
-    /*
-     * A call still open when its turn ended is cancelled as skipped, which is
-     * how the protocol's reducer holds it once the turn's ending is reduced.
-     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L172-L210
-     */
-    replay.parts = (replay.parts as Bag[]).map((part) => {
-      const call = part.kind === 'toolCall' ? part.toolCall as Bag : undefined;
-      if (call === undefined || call.status === 'completed' || call.status === 'cancelled') return part;
-      return {
-        kind: 'toolCall',
-        toolCall: {
-          status: 'cancelled',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          displayName: call.displayName,
-          invocationMessage: call.invocationMessage ?? call.displayName,
-          ...(call.toolInput === undefined || call.status === 'streaming' ? {} : { toolInput: call.toolInput }),
-          reason: 'skipped',
-          ...(call.contributor === undefined ? {} : { contributor: call.contributor }),
-          ...(call.intention === undefined ? {} : { intention: call.intention }),
-          ...(call._meta === undefined ? {} : { _meta: call._meta }),
-        },
-      };
-    });
+    // A call still open when its turn ended is held as the protocol's reducer
+    // holds it once the turn's ending is reduced, as the live session holds it.
+    replay.parts = endedParts(replay.parts);
     /*
      * A turn cut off ends with VS Code's error for one, after its parts. ahpd
      * resumes no ACP turn, so the part is not resumable, which the protocol
@@ -141,7 +117,7 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
  * no turn ids and no times for a replay, so the id is this process's and the
  * time is when the replay was heard.
  */
-export function replayedTurns(updates: SessionUpdate[], at: string, hostPlan = false): WatchedTurn[] {
+export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn[] {
   const turns: WatchedTurn[] = [];
   let open: WatchedTurn | undefined;
   /** Whether anything the agent said has gone into the turn being built. */
@@ -155,7 +131,6 @@ export function replayedTurns(updates: SessionUpdate[], at: string, hostPlan = f
         message: { text: '' },
         state: 'complete',
         updates: [],
-        ...(hostPlan ? { hostPlan: true } : {}),
       };
       turns.push(open);
       answered = false;

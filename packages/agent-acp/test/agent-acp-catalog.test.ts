@@ -8,9 +8,10 @@ import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { acpAgent, watchSession } from '../src/index.js';
+import { acpAgent, watchedRows, watchSession } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { MACHINE_KEYS } from '../src/plugin.js';
 import { toolsReachable } from '../src/session/opening.js';
@@ -113,7 +114,7 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
 /** One session of a backend, watched and remembered for cleanup. */
 function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
   const watch = watcher();
-  const session = agent.create(opening(id, { ...over, emit: watch.emit }));
+  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
   started.push(session);
   return { session, watch };
 }
@@ -178,7 +179,7 @@ it('offers no models before a session, because ACP has no pre-session catalogue'
 it('carries an approvals control on the session, with no enum before a server is asked', () => {
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
-  expect(Object.keys(properties)).toEqual(['permissionMode']);
+  expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
   expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
@@ -233,6 +234,22 @@ it('sets the model a turn chose on the server before prompting', async () => {
     { id: 'fast', name: 'Fast' },
     { id: 'thorough', name: 'Thorough' },
   ]);
+});
+
+it('runs a turn naming a model the server does not offer on the model in force', async () => {
+  for (const flags of [[], ['--legacy']]) {
+    const { agent, log } = backend(flags);
+    const { session, watch } = start(agent, `unoffered${flags.join('')}`);
+    const before = watch.endings().length;
+    session.changeModel({ id: 'no-such-model' });
+    session.sendMessage('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    // The session keeps its model and the turn runs, as VS Code's host keeps a
+    // chat's model when its agent does not offer the turn's.
+    expect(watch.endings()).toEqual(['chat/turnComplete']);
+    expect(requests(log).some((one) => one.method === 'session/set_config_option' || one.method === 'session/set_model')).toBe(false);
+  }
 });
 
 it('reads the legacy models list, and sets a chosen model the old way', async () => {
@@ -493,9 +510,12 @@ it('announces a mode the agent moved itself, once', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'announced');
   await runTurn(session, watch, 't1', 'hi');
-  // The mode and the model the session opened with are the ones in force, so
-  // nothing is said until the server moves them.
-  expect(changed(watch)).toEqual([]);
+  // What the server opened with is said once, in one action, because the
+  // session held none of it; after that nothing is said until the server
+  // moves something.
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
 
   await runTurn(session, watch, 't2', 'shift');
   // Said again at the same turn, which is the point: the second `shift` moves
@@ -503,7 +523,7 @@ it('announces a mode the agent moved itself, once', async () => {
   // whether anything changed.
   await runTurn(session, watch, 't3', 'shift');
 
-  expect(changed(watch)).toEqual([{ permissionMode: 'code' }, { model: 'thorough' }]);
+  expect(changed(watch).slice(1)).toEqual([{ permissionMode: 'code' }, { model: 'thorough' }]);
   expect(configOf(session).values).toMatchObject({ permissionMode: 'code' });
   expect(session.settings().model).toBe('thorough');
 });
@@ -515,10 +535,13 @@ it('says nothing for a mode the client set itself', async () => {
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
   // The update that follows the request carries back what the client already
-  // knows, so the announcement is the one thing a client is not sent twice.
+  // knows, so the announcement is the one thing a client is not sent twice:
+  // what is said is the open's, once.
   await runTurn(session, watch, 't2', 'hi');
 
-  expect(changed(watch)).toEqual([]);
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
   expect(session.settings().permissionMode).toBe('code');
 });
 
@@ -568,10 +591,55 @@ it('leaves a session in the server mode when the one it asked for is not offered
   await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the modes, and one it did not name is a request it would
-  // refuse - so the session opens in the mode the server is in.
+  // refuse, so the session opens in the mode the server is in, and every
+  // client that held the asked one is told so.
   expect(requests(log).some((one) => one.method === 'session/set_mode')).toBe(false);
   expect(session.settings().permissionMode).toBe('ask');
   expect(configOf(session).values.permissionMode).toBe('ask');
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
+});
+
+it('says the mode the server stays in when it refuses the one the session asked for', async () => {
+  const { agent, log } = backend(['--refuse-mode']);
+  const { session, watch } = start(agent, 'asked-refused', {
+    settings: { permissionMode: 'code', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The mode was asked for and refused, so the session runs in the server's,
+  // and a client holding the asked one is told the one in force.
+  expect(requests(log).find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
+  expect(session.settings().permissionMode).toBe('ask');
+  expect(changed(watch)).toEqual([{ permissionMode: 'ask' }]);
+});
+
+it('says an option the server moved with a value a client set', async () => {
+  const { agent } = backend(['--model-thinks']);
+  const { session, watch } = start(agent, 'moved-with', {
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  expect(await session.setConfig?.('model', 'thorough')).toBe(true);
+  // The model is the client's own, which the host said; the thinking the
+  // server moved with it is news, said once.
+  await runTurn(session, watch, 't2', 'hi');
+  expect(changed(watch)).toEqual([{ 'acp.thinking': 'deep' }]);
+  expect(session.settings()['acp.thinking']).toBe('deep');
+});
+
+it('says the model a turn chose and an option the server moved with it', async () => {
+  const { agent } = backend(['--model-thinks']);
+  const { session, watch } = start(agent, 'chosen-with', {
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
+  });
+  await runTurn(session, watch, 't1', 'hi');
+
+  session.changeModel({ id: 'thorough' });
+  await runTurn(session, watch, 't2', 'hi');
+  expect(changed(watch)).toEqual([{ model: 'thorough' }, { 'acp.thinking': 'deep' }]);
 });
 
 it('sends the mode again when the server is opened after a death', async () => {
@@ -590,17 +658,55 @@ it('sends the mode again when the server is opened after a death', async () => {
   expect(configOf(session).values.permissionMode).toBe('code');
 });
 
-it('reports a command the server advertises as a customization', async () => {
+it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'stamped');
+  await runTurn(session, watch, 't1', 'hi');
+  const ended = session.allTurns().at(-1) as Bag;
+  const at = new Date(Date.parse(String(ended.startedAt)) + Number(ended.duration)).toISOString();
+  expect(session.modifiedAt()).toBe(at);
+
+  // A rename and a value set are no turn's start or end, so the time stays.
+  await new Promise((r) => { setTimeout(r, 5); });
+  session.setTitle?.('Named by a person');
+  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
+  expect(session.modifiedAt()).toBe(at);
+});
+
+it('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'outlived');
+  await runTurn(session, watch, 't1', 'client cstatus=pending ctitle=Lookup');
+
+  // The server ended the turn with its call never started: the chat a client
+  // opens now holds that call as one that watched the turn end holds it,
+  // cancelled as skipped, with no input for a call still being written.
+  const held = (session.allTurns()[0]?.responseParts as Bag[]).find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined;
+  expect(held).toMatchObject({ toolCallId: 'call-client-1', status: 'cancelled', reason: 'skipped' });
+  expect(held?.toolInput).toBeUndefined();
+});
+
+it('reports a command the server advertises as a built-in skill', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'commands');
   await runTurn(session, watch, 't1', 'hi');
 
-  // A child of the one directory that holds the server's commands, which is
-  // where the protocol holds a prompt.
-  const commands = session.customizations().find((one) => one.id === 'directory:commands');
-  expect(commands).toMatchObject({ type: 'directory', contents: 'prompt', enabled: true, writable: false });
-  const plan = (commands?.children as Bag[] | undefined)?.find((one) => one.name === 'plan');
-  expect(plan).toMatchObject({ type: 'prompt', id: 'command:plan', enabled: true, description: 'Draft a plan' });
+  // A skill in the one read-only built-in container, as VS Code's Claude
+  // agent publishes its runtime's commands, with the input hint as the
+  // argument hint a composer draws.
+  const builtin = session.customizations().find((one) => one.id === 'agent-builtin:/skills');
+  expect(builtin).toMatchObject({
+    type: 'directory', uri: 'agent-builtin:/skills', name: 'builtin', contents: 'skill',
+    enabled: true, writable: false, load: { kind: 'loaded' },
+  });
+  expect(builtin?.children).toEqual([{
+    type: 'skill',
+    id: 'agent-builtin:/skill/plan',
+    uri: 'agent-builtin:/skill/plan',
+    name: 'plan',
+    description: 'Draft a plan',
+    _meta: { 'ahpd.argumentHint': 'What to plan' },
+  }]);
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);
 });
@@ -641,10 +747,18 @@ it('lists the sessions the server lists, mapping the fields the contract wants',
     modifiedAt: '2026-01-01T00:00:00.000Z',
     workingDirectories: [uriOf('/tmp/one')],
   });
-  // A row with no title falls back to its id, and one with no timestamp to now.
-  expect(rows?.[1]?.title).toBe('listed-2');
+  // A row with no title is listed untitled, for a client to draw as one, and
+  // one with no timestamp falls back to now.
+  expect(rows?.[1]?.title).toBe('');
   expect(rows?.[1]?.workingDirectories).toEqual([uriOf('/tmp/two'), uriOf('/tmp/two-b')]);
   expect(Number.isNaN(Date.parse(String(rows?.[1]?.createdAt)))).toBe(false);
+});
+
+it('holds a session read back by a load untitled, as an untitled row is listed', async () => {
+  const { agent } = backend(['--replay'], 'acp-loaded-title');
+  await agent.transcript?.('acp-session-unwatched');
+  // A load names no title, and the session's id is no title of its own.
+  expect(watchedRows('acp-loaded-title').find((one) => one.id === 'acp-session-unwatched')?.title).toBe('');
 });
 
 it('lists every page of a catalogue the server did not fit into one answer', async () => {
@@ -902,20 +1016,20 @@ it('reads back an interleaved turn with its parts in the order they streamed', a
   expect(parts.map((part) => part.id)).toEqual(live.map((part) => part.id));
 });
 
-it('reads back no part for a message that was only whitespace, with the ids the live turn held', async () => {
+it('reads back a part for a message that was only whitespace, with the ids the live turn held', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'blank');
   await runTurn(session, watch, 't1', 'blank it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
   const parts = turns?.[0]?.responseParts as Bag[];
-  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
-  expect(parts.map((part) => part.content)).toEqual(['first thought', undefined, 'second thought', ' \nthe answer']);
+  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'markdown', 'toolCall', 'reasoning', 'markdown']);
+  expect(parts.map((part) => part.content)).toEqual(['first thought', ' ', undefined, 'second thought', ' \nthe answer']);
   // A prose part's own id, and a call's on the call: a tool call part has none.
   const idOf = (part: Bag): unknown => (part.kind === 'toolCall' ? (part.toolCall as Bag).toolCallId : part.id);
   const live = session.allTurns()[0]?.responseParts as Bag[];
   expect(parts.map(idOf)).toEqual(live.map(idOf));
-  expect(parts.map(idOf)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+  expect(parts.map(idOf)).toEqual(['t1:0', 't1:1', 'call-2', 't1:3', 't1:4']);
 });
 
 it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
@@ -995,16 +1109,37 @@ it('sets the mode through the option the server named, not the legacy call', asy
     .toMatchObject({ configId: 'mode', value: 'code' });
 });
 
-it('sets an option on a session that has not run a turn', async () => {
+it('keeps a value set on a session that has not run a turn, and sends it when the server opens', async () => {
   const { agent, log } = backend();
-  const { session } = start(agent, 'unopened');
+  const { session, watch } = start(agent, 'unopened');
 
-  // Nothing has asked the server yet, so the option this key names is not known
-  // either: the session is opened before the key is looked up, which is what
-  // makes setting one on a fresh session work rather than refuse it by name.
+  // A value is no reason to start a server: it is kept, and nothing has been
+  // asked of a server yet.
   expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
+  expect(requests(log)).toEqual([]);
+  expect(session.settings()['acp.thinking']).toBe('deep');
+
+  // The turn opens the server, which is sent the kept value once it has named
+  // the option, and the session runs with it.
+  await runTurn(session, watch, 't1', 'hi');
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'thinking', value: 'deep' });
+  expect(configOf(session).values['acp.thinking']).toBe('deep');
+});
+
+it('runs with the server value when a kept one is not offered, and says so', async () => {
+  const { agent, log } = backend();
+  const { session, watch } = start(agent, 'unopened-unoffered', {
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false },
+  });
+
+  expect(await session.setConfig?.('acp.thinking', 'shallow')).toBe(true);
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The server serves the values, and one it does not name is a request it
+  // would refuse: nothing is sent, and the value in force is said.
+  expect(requests(log).some((one) => one.method === 'session/set_config_option')).toBe(false);
+  expect(changed(watch)).toEqual([{ 'acp.thinking': 'off' }]);
 });
 
 it('sets the model through the older call on a server with no options', async () => {
@@ -1130,18 +1265,6 @@ it('holds a load\'s replay out of the turn that asked for it', async () => {
   const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
   expect(held.map((part) => part.content)).toEqual(['hello there']);
   expect(JSON.stringify(watch.actions)).not.toContain('we chose the fast one');
-});
-
-it('holds a load\'s replay out of the turn after it, whoever asked for the load', async () => {
-  const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed-from-config');
-  // No turn has run, so the config is what opens the server and loads.
-  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
-  expect(session.allTurns()).toEqual([]);
-
-  await runTurn(session, watch, 't1', 'hi');
-  const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
-  expect(held.map((part) => part.content)).toEqual(['hello there']);
 });
 
 it('reads a loaded session back with its replayed turns ahead of the new one', async () => {
@@ -1336,17 +1459,22 @@ it('fails the turn after a death when the server can neither load nor resume a s
   expect(requests(log).filter((one) => one.method === 'session/new')).toHaveLength(1);
 });
 
-it('declares that it can fork, and offers no fork point on a server that cannot', async () => {
+it('offers no fork for an agent whose server cannot make one, and a fork once it says it can', async () => {
+  // Nothing before a server has spoken, and nothing after one that never
+  // advertised `session/fork`, as VS Code's agents advertise fork only where
+  // they can fork their chats.
   const { agent } = backend();
+  expect(agent.chats?.fork).toBeUndefined();
   const { session, watch } = start(agent, 'no-fork');
   await runTurn(session, watch, 't1', 'hi');
-
-  // The capability is a field of the agent, so it is declared before any server
-  // has spoken. What is per session is the fork point, and a server that never
-  // advertised `session.fork` has none to give.
-  expect(agent.chats?.fork).toBe(true);
-  expect(session.forkPoint).toBeDefined();
+  expect(agent.chats?.fork).toBeUndefined();
   expect(session.forkPoint?.('t1')).toBeUndefined();
+
+  // A server that advertises it is an agent a client may fork in.
+  const { agent: forking } = backend(['--fork']);
+  const { session: other, watch: seen } = start(forking, 'can-fork');
+  await runTurn(other, seen, 't1', 'hi');
+  expect(forking.chats?.fork).toBe(true);
 });
 
 it('offers a fork of the last turn only, and copies the conversation into a new session', async () => {
@@ -1497,20 +1625,12 @@ const toolCallUpdate = (toolCallId: string, status: string): SessionUpdate =>
 /** The `_meta` an action about a call carries. */
 const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
 
-/** Whether an action carries a call's start, its end and how long it took. */
-const timed = (action: Bag | undefined): boolean => {
-  const meta = metaOf(action);
-  return typeof meta['ahpd.startedAt'] === 'string'
-    && typeof meta['ahpd.endedAt'] === 'string'
-    && typeof meta['ahpd.durationMs'] === 'number';
-};
-
 /** Every chat action one tool call was sent, in the order it was sent. */
 const forCall = (watch: Watcher, toolCallId: string): Bag[] => watch.actions
   .map((one) => one.action)
   .filter((action) => action.toolCallId === toolCallId);
 
-it('says when a call started and ended, and reads back with the same numbers', async () => {
+it('says how long a call ran at its completion, and reads back with the same number', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'times');
   await runTurn(session, watch, 't1', 'fetch it later');
@@ -1518,39 +1638,31 @@ it('says when a call started and ended, and reads back with the same numbers', a
   const sent = forCall(watch, 'call-later');
   const ready = sent.find((one) => one.type === 'chat/toolCallReady');
   const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
-  // Announced `pending` and started by a later update, so what the ready
-  // carries is when the call began and no end yet.
-  expect(typeof metaOf(ready)['ahpd.startedAt']).toBe('string');
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-  expect(timed(complete)).toBe(true);
-  const times = metaOf(complete);
-  const from = Date.parse(times['ahpd.startedAt'] as string);
-  const until_ = Date.parse(times['ahpd.endedAt'] as string);
-  expect(until_).toBeGreaterThanOrEqual(from);
-  expect(times['ahpd.durationMs']).toBe(until_ - from);
+  // The duration is said at the completion, on the key VS Code's client reads,
+  // and nothing about the call's times before it.
+  expect(sent.filter((one) => one !== complete).every((one) => metaOf(one)['vscode.toolCallDurationMs'] === undefined)).toBe(true);
+  expect(Object.keys(metaOf(ready)).filter((key) => key.startsWith('ahpd.'))).toEqual([]);
+  expect(metaOf(complete)['vscode.toolCallDurationMs']).toEqual(expect.any(Number));
 
   // The same call, read back out of what this process kept.
   const turns = await agent.transcript?.(String(session.agentId()));
   const parts = turns?.[0]?.responseParts as Bag[];
   const held = parts.map((one) => one.toolCall as Bag | undefined).find((call) => call?.toolCallId === 'call-later');
-  expect(held?._meta).toEqual(times);
+  expect(held?._meta).toEqual(metaOf(complete));
 });
 
-it('starts a call at the first update about it, and ends it at the one that finished it', () => {
+it('measures a call from the first update about it to the one that finished it', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   mapUpdate(turn, toolCall('c1', 'pending'), 1_000);
   mapUpdate(turn, toolCallUpdate('c1', 'in_progress'), 2_000);
   mapUpdate(turn, toolCallUpdate('c1', 'completed'), 5_000);
 
-  const held = metaOf(turn.parts[0]?.toolCall as Bag);
   // The later update is what the agent began the call on, but the first word
   // about it is what the call started at.
-  expect(held['ahpd.startedAt']).toBe(new Date(1_000).toISOString());
-  expect(held['ahpd.endedAt']).toBe(new Date(5_000).toISOString());
-  expect(held['ahpd.durationMs']).toBe(4_000);
+  expect(metaOf(turn.parts[0]?.toolCall as Bag)).toEqual({ 'vscode.toolCallDurationMs': 4_000 });
 });
 
-it('stamps a call whose row a permission question opened at its first update', () => {
+it('measures a call whose row a permission question opened from its first update', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   // The row a `session/request_permission` opened, left the way the session
   // leaves it for the mapping to find: a call nobody has heard anything about.
@@ -1563,23 +1675,36 @@ it('stamps a call whose row a permission question opened at its first update', (
     status: 'in_progress',
     content: [{ type: 'content', content: { type: 'text', text: 'working' } }],
   } as unknown as SessionUpdate, 3_000);
-  const held = metaOf(turn.parts[0]?.toolCall as Bag);
-  expect(held['ahpd.startedAt']).toBe(new Date(3_000).toISOString());
-  // The row is already open, so no start action goes out and the first action
-  // sent for the call is what carries the times.
+  // The row is already open, so no start action goes out, and a running call
+  // says nothing of its times.
   expect(sent.map((one) => one.type)).toEqual(['chat/toolCallContentChanged']);
-  expect(metaOf(sent[0])['ahpd.startedAt']).toBe(held['ahpd.startedAt']);
+  expect(sent[0]?._meta).toBeUndefined();
+  const done = mapUpdate(turn, toolCallUpdate('c1', 'completed'), 3_500);
+  expect(metaOf(done.find((one) => one.type === 'chat/toolCallComplete'))).toEqual({ 'vscode.toolCallDurationMs': 500 });
 });
 
-it('times a call that arrives already finished as one moment', () => {
+it('measures a call that arrives already finished as one moment', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   const sent = mapUpdate(turn, toolCall('c1', 'completed'), 7_000);
   const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
   const held = metaOf(turn.parts[0]?.toolCall as Bag);
-  expect(held['ahpd.startedAt']).toBe(new Date(7_000).toISOString());
-  expect(held['ahpd.endedAt']).toBe(held['ahpd.startedAt']);
-  expect(held['ahpd.durationMs']).toBe(0);
+  expect(held).toEqual({ 'vscode.toolCallDurationMs': 0 });
   expect(metaOf(complete)).toEqual(held);
+});
+
+it('says a call\'s kind from the kind ACP reports for it, for a client to draw it by', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const kindOf = (id: string, kind: string): unknown => {
+    const sent = mapUpdate(turn, { sessionUpdate: 'tool_call', toolCallId: id, title: id, kind, status: 'pending' } as unknown as SessionUpdate, 1_000);
+    return (sent.find((one) => one.type === 'chat/toolCallStart')?._meta as Bag | undefined)?.toolKind;
+  };
+  // A command is a terminal, a search a search and a read a read, as VS Code's
+  // agents stamp the kind of their harness's tools; anything else is generic.
+  expect([['c1', 'execute'], ['c2', 'search'], ['c3', 'read'], ['c4', 'edit'], ['c5', 'other']].map(([id, kind]) => kindOf(String(id), String(kind))))
+    .toEqual(['terminal', 'search', 'read', undefined, undefined]);
+  // And the kind stays on every action about the call after its start.
+  const done = mapUpdate(turn, toolCallUpdate('c1', 'completed'), 2_000);
+  expect(metaOf(done.find((one) => one.type === 'chat/toolCallComplete'))).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': 1_000 });
 });
 
 it('stamps nothing for an update a session load replayed', () => {

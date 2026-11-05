@@ -35,6 +35,18 @@ describe('the files of each scope', () => {
     ]);
   });
 
+  /*
+   * The managed subagents, which the CLI reads from the managed directory's
+   * `.claude/agents` and ranks over a project's and a person's.
+   * https://code.claude.com/docs/en/sub-agents
+   */
+  it('reads the managed agents from the managed directory', () => {
+    const root = tree({ 'managed/.claude/agents/auditor.md': named('auditor') });
+    expect(filesOf({ configDir: join(root, 'config'), managedDir: join(root, 'managed') })).toEqual([
+      { kind: 'agent', name: 'auditor', scope: 'managed', path: join(root, 'managed', '.claude', 'agents', 'auditor.md') },
+    ]);
+  });
+
   it('reads the personal skills, commands, agents and rules from the config directory', () => {
     const root = tree({
       'skills/writing/SKILL.md': named('writing'),

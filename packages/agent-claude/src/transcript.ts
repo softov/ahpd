@@ -1,13 +1,13 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
-import { bag, callTimes, startOf, steerPart, str, withCallTimes } from '@ahpd/sdk';
+import { bag, steerPart, str, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
-import { toolMetaOf } from './kinds.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
 /**
@@ -286,6 +286,8 @@ const INTERRUPTED = '[Request interrupted by user';
 function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
+  /** When each call started, by id, as its own `tool_use` frame says: what its duration is measured from. */
+  const startedAt = new Map<string, string>();
   /** The calls a result was written for, by id. */
   const resulted = new Set<string>();
   /*
@@ -307,10 +309,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
    */
   const lastAt = new Map<WireTurn<Turn>, number>();
   /*
-   * Where a turn ended, in the CLI's own names: the last of its prompt, its
-   * tool results and its answers, which is the rule a live session applies to
-   * the `user` and `assistant` frames its CLI sends. A CLI echo and a compact
-   * summary are not the turn's, so neither moves it.
+   * Where a fork or a rewind of a turn cuts, in the CLI's own names: its last
+   * assistant message, as VS Code's resolveForkAnchorUuid reads it, and as a
+   * live session records it from the frames its CLI sends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
    */
   const ended = (turn: WireTurn<Turn> | undefined, frame: Bag): void => {
     const entry = str(frame.uuid);
@@ -353,30 +355,29 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
          */
         const ok = block.is_error !== true;
         call.status = 'completed';
-        // The past tense the call was built with stands: a failure is `success`.
         call.success = ok;
         const text = resultText(block.content);
+        // A failed call's line and its `error`, as the live call words them.
+        if (!ok) call.pastTenseMessage = pastLineOf(str(call.toolName) ?? '', {}, str(call.displayName) ?? str(call.toolName) ?? 'the tool', false);
+        const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
         // `Bag` and so outside the literal the call was built as.
         if (text !== undefined)
           call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
-        if (!ok) call.error = { message: text ?? 'The tool failed' };
+        if (denial !== undefined && text !== undefined) call.error = { message: text, code: denial };
         /*
          * What an answered question ran with, for a result that says so.
          *
          * The CLI records the `updatedInput` it was handed as the
          * `toolUseResult` of the entry that holds the result, so a question
-         * anybody answered carries its input and the answers keyed by each
-         * question's own text. The live call of the same question carries them
-         * the same way, and a result whose entry has no `toolUseResult` was
-         * never answered, so it keeps its input as sent.
+         * anybody answered carries the answers keyed by each question's own
+         * text, and a result whose entry has no `toolUseResult` was never
+         * answered.
          */
         const ran = inputs.get(callId);
         const answers = bag(bag(frame.toolUseResult).answers);
         if (ran !== undefined && Object.keys(answers).length > 0) {
-          // The same object the live call carries: what the SDK was handed back.
-          call.structuredContent = { questions: Array.isArray(ran.questions) ? ran.questions : [], answers };
           /*
            * The question as it was answered, after the call it was asked in.
            *
@@ -399,16 +400,15 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
             open.responseParts = [...(open.responseParts as Bag[]), part];
           }
         }
-        // When it ended, on the frame that carries its result.
-        call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
+        // How long it ran, to the frame that carries its result, on its `_meta`
+        // as VS Code's restored history carries it.
+        const meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), toolCallDurationMs(startedAt.get(callId), at));
+        if (meta !== undefined) call._meta = meta;
       }
       // A frame of tool results is part of the turn the prompt opened, so the
       // turn ends when the last of them was written.
       if (open !== undefined) lastAt.set(open, Date.parse(at));
-      if (!said) {
-        ended(open, frame);
-        continue;
-      }
+      if (!said) continue;
       // Written by the CLI rather than said by anybody: it neither shows as a
       // prompt nor ends the exchange it sits in.
       if (frame.isCompactSummary === true || isCliEcho(message.content)) continue;
@@ -459,7 +459,6 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       };
       built.push(opened);
       lastAt.set(opened, Date.parse(at));
-      ended(opened, frame);
       continue;
     }
 
@@ -499,7 +498,11 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const name = str(block.name) ?? 'tool';
         const given = bag(block.input);
         const input = toolInputOf(name, given);
-        const meta = withCallTimes(toolMetaOf(name), callTimes(at));
+        const meta = toolMetaOf(name);
+        // From Claude's display table, as VS Code's replay names a call.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393
+        const displayName = getClaudeToolDisplayName(name);
+        startedAt.set(id, at);
         /*
          * Checked against the state it claims to be in, at the moment it is
          * built.
@@ -513,14 +516,13 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const call: Bag = {
           toolCallId: id,
           toolName: name,
-          displayName: name,
+          displayName,
           // Completed as its result says, once one is read; a call no result
           // was written for is read back cancelled at the end.
           status: 'completed',
           ...(input !== undefined ? { toolInput: input } : {}),
           // The kind a live call carries, so a transcript read back off
-          // disk draws its shell commands as shell commands, and when the call
-          // started, which its own `tool_use` frame says.
+          // disk draws its shell commands as shell commands.
           ...(meta ? { _meta: meta } : {}),
           /*
            * Required on a completed call, all four of them.
@@ -531,10 +533,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
            * question waiting on somebody. `success` and `pastTenseMessage`
            * stand until the call's result says otherwise.
            */
-          invocationMessage: lineOf(name, given),
+          invocationMessage: lineOf(name, given, displayName),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: pastLineOf(name, given),
+          pastTenseMessage: pastLineOf(name, given, displayName),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
         inputs.set(id, given);

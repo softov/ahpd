@@ -49,8 +49,11 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
   expect((last('session/inputNeededSet')?.request as Bag).kind).toBe('toolConfirmation');
   session.confirm('c1', true);
   expect(await waiting).toBeUndefined();
-  expect(last('chat/toolCallConfirmed')?.approved).toBe(true);
-  expect(last('chat/toolCallConfirmed')?.confirmed).toBe('user-action');
+  // The confirmation is the client's, which the host says as it was sent; the
+  // call this session holds moves with it.
+  expect(last('chat/toolCallConfirmed')).toBeUndefined();
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'running', confirmed: 'user-action' });
   expect(session.status()).toBe(Status.InProgress);
 });
 
@@ -122,35 +125,66 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   // reducer does (channels-chat/reducer.ts L172-L211 at v1.0.0).
   expect(sent.filter((one) => one.action.type === 'chat/toolCallConfirmed'
     && one.action.approved === false)).toHaveLength(0);
-  expect(sent.filter((one) => one.action.type === 'session/inputNeededRemoved')).toHaveLength(2);
+  // The entries follow the chat's state: the host took the first down with
+  // the confirmation it said and the second with the stop, so this session
+  // takes none down itself.
+  expect(sent.filter((one) => one.action.type === 'session/inputNeededRemoved')).toHaveLength(0);
   expect(session.status()).not.toBe(Status.InputNeeded);
   const turns = session.chatState().turns as Bag[];
   const parts = turns[turns.length - 1]?.responseParts as Bag[];
   expect(callIn(parts, 'c2')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
 });
 
+/*
+ * A running shell call holds the output it has printed, as the reducer holds
+ * the content each change says, so a subscription opened mid-call reads what a
+ * client that watched it was told.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
+ */
+it('holds a running shell call\'s output so far, as the content it said', async () => {
+  const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  pi.raise({ type: 'bash_execution_update', id: 'c1', delta: 'one\n' } as never);
+  pi.raise({ type: 'bash_execution_update', id: 'c1', delta: 'two\n' } as never);
+  const output = [{ type: 'text', text: 'one\ntwo\n' }];
+  expect(last('chat/toolCallContentChanged')?.content).toEqual(output);
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'running', content: output });
+});
+
+/*
+ * A call runs titled by what it runs on, and once it is done says what it did
+ * as VS Code's agents word a call's past tense: a shell command as the first
+ * line it ran, a call that failed as failed, and any other call by its line.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
 it.each([
-  ['bash', { command: 'ls -la' }, 'ls -la'],
-  ['powershell', { command: 'Get-ChildItem' }, 'Get-ChildItem'],
-  ['read', { path: 'a.ts' }, 'a.ts'],
-  ['edit', { path: 'a.ts', edits: [] }, 'a.ts'],
-  ['write', { path: 'b.ts', content: '' }, 'b.ts'],
-  ['grep', { pattern: 'TODO' }, 'TODO'],
-  ['find', { pattern: '*.ts' }, '*.ts'],
-  ['ls', { path: 'src' }, 'src'],
-  ['ls', {}, '.'],
-  ['mystery', { anything: 1 }, 'mystery'],
-])('draws a live %s call by what it runs on, while it runs and once it is done', async (name, input, said) => {
+  ['bash', { command: 'ls -la\npwd' }, 'ls -la\npwd', false, { markdown: 'Ran `ls -la`' }],
+  ['powershell', { command: 'Get-ChildItem' }, 'Get-ChildItem', false, { markdown: 'Ran `Get-ChildItem`' }],
+  ['bash', { command: 'false' }, 'false', true, '"bash" failed'],
+  ['read', { path: 'a.ts' }, 'a.ts', false, 'a.ts'],
+  ['read', { path: 'gone.ts' }, 'gone.ts', true, '"read" failed'],
+  ['edit', { path: 'a.ts', edits: [] }, 'a.ts', false, 'a.ts'],
+  ['write', { path: 'b.ts', content: '' }, 'b.ts', false, 'b.ts'],
+  ['grep', { pattern: 'TODO' }, 'TODO', false, 'TODO'],
+  ['find', { pattern: '*.ts' }, '*.ts', false, '*.ts'],
+  ['ls', { path: 'src' }, 'src', false, 'src'],
+  ['ls', {}, '.', false, '.'],
+  ['mystery', { anything: 1 }, 'mystery', false, 'mystery'],
+])('draws a live %s call by what it runs on while it runs, and by what it did once it is done', async (name, input, said, isError, done) => {
   const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', name, input);
   expect(last('chat/toolCallReady')?.invocationMessage).toBe(said);
-  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError: false });
-  expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(said);
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError });
+  expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toEqual(done);
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: said, pastTenseMessage: said });
+  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: said, pastTenseMessage: done });
 });
 
 it('draws an asked call by what it runs on, and keeps the tool in its question', async () => {
@@ -258,6 +292,9 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   await settled();
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
+  // A client folds the client's refusal, which the host says as it was sent,
+  // and then what this session says of the call.
+  const answered = sent.length;
   session.confirm('c1', false);
   await waiting;
   // pi reports the blocked call as a failed execution.
@@ -265,7 +302,9 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   await settled();
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
   expect(callIn(parts, 'c1')?.status).toBe('cancelled');
-  expect(callStatuses(sent).get('c1')).toBe('cancelled');
+  expect(sent.some((one) => one.action.type === 'chat/toolCallConfirmed')).toBe(false);
+  const refusal = { channel: 'chat', action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: false, reason: 'denied' } };
+  expect(callStatuses([...sent.slice(0, answered), refusal, ...sent.slice(answered)]).get('c1')).toBe('cancelled');
 });
 
 it('still asks under projectTrust deny, because the inline extension is not the project\'s own', async () => {
@@ -400,6 +439,28 @@ it('names the mode in a refusal rather than asking anybody', async () => {
   expect(answer.block).toBe(true);
   expect(String(answer.reason)).toContain('plan');
   expect(session.status()).toBe(Status.InProgress);
+});
+
+/*
+ * A call the mode refuses is not readied to run, and a client is never asked
+ * to run it: pi blocks it and it closes failed, as VS Code's host answers a
+ * call its permissions deny without readying it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1726-L1734
+ */
+it('closes a refused call failed, never readied to run and never handed to its client', async () => {
+  const bound: BoundTool = { definition: { name: 'editor__write', title: 'write' }, owner: 'editor', effects: { writes: true } };
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'plan' }, tools: [bound] } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const answer = await driveCall(pi, 'c1', 'editor__write', { path: 'a.txt' });
+  expect(answer?.block).toBe(true);
+  // Nothing says the call runs, and no client was asked to run it.
+  expect(sent.filter((one) => one.action.type === 'chat/toolCallReady')).toEqual([]);
+  expect(sent.filter((one) => one.action.type === 'session/inputNeededSet')).toEqual([]);
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'editor__write', result: String(answer?.reason), isError: true });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(callIn(parts, 'c1')).toMatchObject({ status: 'completed', success: false });
 });
 
 it('advertises the six permission modes, defaulting to default', () => {

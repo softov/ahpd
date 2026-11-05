@@ -190,7 +190,7 @@ it('moves every preset to a host record of the same id, and takes them out of th
     id: 'claude',
     engine: 'claude',
     owner: 'host',
-    name: 'Claude Code',
+    name: 'Claude',
     config: { models: [{ id: 'opus', name: 'Opus' }] },
   });
   expect(all.get('claude-deepseek-build')).toMatchObject({
@@ -341,7 +341,7 @@ it('writes the record a fresh install has no file for', async () => {
 
   expect(moved.written).toEqual(['claude']);
   expect(await held()).toMatchObject(new Map([['claude', {
-    id: 'claude', engine: 'claude', owner: 'host', name: 'Claude Code', config: {},
+    id: 'claude', engine: 'claude', owner: 'host', name: 'Claude', config: {},
   }]]));
   expect(existsSync(configFile)).toBe(false);
   expect(said).toEqual(['Moved 1 preset to agent records owned by the host: claude.']);

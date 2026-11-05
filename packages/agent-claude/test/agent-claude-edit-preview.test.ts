@@ -32,28 +32,36 @@ const sdk = vi.hoisted(() => ({
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.frames,
-  query: ({ options }: { options: Record<string, unknown> }) => ({
-    async *[Symbol.asyncIterator]() {
-      sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
-      for (const frame of sdk.frames) yield frame;
-      await sdk.hold;
-      while (sdk.pushed.length > 0) yield sdk.pushed.shift() as Record<string, unknown>;
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    let close = (): void => {};
+    const closed = new Promise<void>((resolve) => { close = resolve; });
+    return {
+      async *[Symbol.asyncIterator]() {
+        sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+        // The frames answer the turn's prompt, as a CLI's do, and the CLI stays
+        // open until it is closed.
+        await prompt[Symbol.asyncIterator]().next();
+        for (const frame of sdk.frames) yield frame;
+        await sdk.hold;
+        while (sdk.pushed.length > 0) yield sdk.pushed.shift() as Record<string, unknown>;
+        await closed;
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close,
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
@@ -108,6 +116,9 @@ async function previewing(
       onEditSettled: (toolCallId) => { settled.push(toolCallId); source.settle?.(SESSION, toolCallId); },
     }),
   });
+  await settle();
+  // A turn running, as the CLI asks about a call only inside one.
+  session.sendMessage('t1', 'go');
   await settle();
   void sdk.canUseTool?.(call.name, call.input, { toolUseID: call.id, title: `Run ${call.name}?` });
   await settle();
@@ -289,7 +300,47 @@ it('sends the confirmation as it was, on a host with no changeset source', async
   expect(ready).toBeDefined();
   expect(ready).not.toHaveProperty('edits');
   expect(held.get('toolu_edit')).not.toHaveProperty('edits');
-  // Everything else about the card is what it always was.
-  expect(ready?.confirmationTitle).toBe('Run Edit?');
+  // The rest of the card, which a host with no changeset source still sends.
+  expect(ready?.confirmationTitle).toBe('Edit file?');
   expect(held.get('toolu_edit')?.status).toBe('pending-confirmation');
+});
+
+/*
+ * An edit's completion holds the edit's two sides for a client to draw the
+ * call's diff from, after its text, as VS Code's Claude observer attaches the
+ * edit: the file as the SDK reported it was, and the edit applied to it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L385-L388
+ */
+it('completes an edit with its file edit after its text, its sides as the SDK reported them', async () => {
+  const dir = scratch();
+  const file = holding(dir, 'a.md', 'one\nTWO\n');
+  const input = { file_path: file, old_string: 'two', new_string: 'TWO' };
+  sdk.frames = [
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_edit', name: 'Edit', input }] } },
+    {
+      type: 'user', parent_tool_use_id: null, uuid: 'u1',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_edit', content: 'The file was updated.' }] },
+      tool_use_result: { filePath: file, oldString: 'two', newString: 'TWO', originalFile: 'one\ntwo\n', structuredPatch: [] },
+    },
+  ];
+  sdk.pushed = [];
+  const source = gitChanges();
+  const sent: Bag[] = [];
+  const session = createSession({
+    uri: SESSION,
+    chatUri: CHAT,
+    cwd: dir,
+    emit: (_channel, action) => { sent.push(action as Bag); },
+    onEditCompleted: (toolCallId, path, before, after) => source.complete?.(SESSION, toolCallId, path, before, after),
+  });
+  await settle();
+  session.sendMessage('t1', 'go');
+  await settle();
+  const done = sent.find((one) => one.type === 'chat/toolCallComplete' && one.toolCallId === 'toolu_edit');
+  const content = ((done?.result as Bag | undefined)?.content ?? []) as Bag[];
+  expect(content.map((one) => one.type)).toEqual(['text', 'fileEdit']);
+  const edit = content[1] as Bag;
+  expect(await readable(source, ((edit.before as Bag).content as Bag).uri)).toBe('one\ntwo\n');
+  expect(await readable(source, ((edit.after as Bag).content as Bag).uri)).toBe('one\nTWO\n');
+  await session.close();
 });

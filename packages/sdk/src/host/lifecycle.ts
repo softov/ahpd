@@ -188,7 +188,7 @@ export interface Lifecycle {
     title?: string,
     by?: { owner?: Owner; principal?: Principal; sender?: Connection },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
-  ): void;
+  ): Promise<void>;
 }
 
 /**
@@ -832,7 +832,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
       // The last thing before the new backend: the old one's process is gone.
       await Promise.all(stopping);
-      spawn(
+      await spawn(
         chatAgent(held, held.defaultChat),
         uri,
         held.defaultChat,
@@ -861,7 +861,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       for (const [chatUri, chat] of held.chats) {
         if (chatUri === held.defaultChat) continue;
         const own = chat.agentId();
-        spawn(
+        await spawn(
           chatAgent(held, chatUri),
           uri,
           chatUri,
@@ -1020,7 +1020,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     chat.close('stopping');
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
-    spawn(
+    // A resume makes nothing first, so the chat that takes this one's place
+    // is held by the time the start returns, as the caller reads it.
+    void spawn(
       chatAgent(held, chatUri),
       uri,
       chatUri,
@@ -1031,8 +1033,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       credentials,
       beside.get(chatUri) ?? held.additional,
       sender,
+    ).then(
+      () => { log(`restarted ${chatUri}`); },
+      (error: unknown) => { log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`); },
     );
-    log(`restarted ${chatUri}`);
   };
 
   /**
@@ -1862,7 +1866,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * automation carries a name rather than a connection, so it passes the first
    * and leaves the second to the directory.
    */
-  const openSession = (
+  const openSession = async (
     uri: string,
     provider: string,
     config: Record<string, unknown>,
@@ -1873,7 +1877,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     title?: string,
     by?: { owner?: Owner; principal?: Principal; sender?: Connection },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
-  ): void => {
+  ): Promise<void> => {
     named(uri, 'session');
     if (sessions.has(uri))
       throw new RpcError(-32003, `${uri} already exists`);
@@ -1979,7 +1983,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * than by each caller, so a session a tool, an automation or a client
        * starts keeps the keys the same way.
        */
-      const lead = spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
+      const lead = await spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
       if (title !== undefined) keepTitle(uri, chatUriFor(uri), title);

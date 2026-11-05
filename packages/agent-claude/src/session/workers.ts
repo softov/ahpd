@@ -33,8 +33,9 @@ export interface Spawning {
   /** Whether the call's own result has been emitted. */
   completed?: boolean;
   /**
-   * Whether the call did not ask for the background: its input said
-   * `run_in_background: false` or said nothing. Its result ends the worker.
+   * Whether the worker runs in the foreground, the spawning call blocking on
+   * it: the SDK's own report of its task, `task_started`'s `is_backgrounded`
+   * and `task_updated`'s patch, until which it is. Its result ends the worker.
    */
   foreground: boolean;
 }
@@ -111,10 +112,6 @@ export interface Workers {
    * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
    */
   scopeFor: (parent: string) => Scope;
-  /**
-   * Open a held worker chat and deliver what it was holding.
-   */
-  releaseHeld: (parent: string, info?: Spawning) => void;
   /** Record what a spawning call said, and open its worker's chat if one waits. */
   recordSpawn: (id: string, given: Bag, scope: Scope, turnId?: string) => void;
   /** The scope a tool call was opened in, whichever conversation that is. */
@@ -129,7 +126,7 @@ export interface Workers {
   /**
    * End a worker's turn, once, whichever signal got here first.
    */
-  endWorker: (callId: string, state: 'complete' | 'error' | 'cancelled', why?: string) => void;
+  endWorker: (callId: string, state: 'complete' | 'cancelled') => void;
   /**
    * The `subagent` content for a worker, as the spawning call's result shows it.
    */
@@ -220,17 +217,6 @@ export function createWorkers(ctx: SessionContext): Workers {
   const dropped: SubagentChat = { uri: '', turnId: '', emit: () => {}, end: () => {} };
 
   /**
-   * How long a worker whose spawn has not been recorded keeps its frames before
-   * they are let through anyway.
-   *
-   * A live capture puts the spawning call's `tool_use` 8-18 ms before its
-   * worker's first frame, so this bounds a gap that is normally nothing at all.
-   * It is here so a worker the harness never says anything more about still has
-   * a chat to read, not because a well-behaved run waits for it.
-   */
-  const SPAWN_GRACE = 5000;
-
-  /**
    * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
    *
    * The host mints the chat, announces it, opens its turn with the prompt and
@@ -252,15 +238,14 @@ export function createWorkers(ctx: SessionContext): Workers {
     }
     const info = spawning.get(parent);
     /*
-     * Nothing has said what this worker is for.
+     * No spawn recorded for this worker yet.
      *
-     * Its title and the prompt its chat opens with are both in the spawning
-     * call's input, and a worker can speak before that call arrives - which is
-     * what it does, every time, a few milliseconds ahead. So the scope holds
-     * rather than opens, and `recordSpawn` opens it from the record when that
-     * lands. Until then every frame is held whole rather than applied here: a
-     * turn built before the host minted the chat is the wrong turn, with the
-     * wrong id and no prompt in it.
+     * Its chat is announced with what the spawn holds once one is recorded,
+     * and until then every frame is held whole rather than applied here, as
+     * VS Code's host holds a subagent's signals for a chat not yet announced:
+     * a turn built before the host minted the chat is the wrong turn, with the
+     * wrong id. A worker no spawn is ever recorded for is never announced.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L60-L66
      */
     if (info === undefined) {
       const held: Scope = {
@@ -273,8 +258,6 @@ export function createWorkers(ctx: SessionContext): Workers {
         waiting: [],
       };
       scopes.set(parent, held);
-      held.release = setTimeout(() => { releaseHeld(parent); }, SPAWN_GRACE);
-      held.release.unref?.();
       return held;
     }
     const scope = openWorker(parent, info, ctx.options.subagent);
@@ -317,25 +300,41 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /**
-   * Open a held worker chat and deliver what it was holding.
+   * Record what a spawning call said, and open its worker's chat if one waits.
    *
-   * With the record, when there is one: named by the task, opened on the
-   * prompt. Without one, from the call's own result or after `SPAWN_GRACE`,
-   * which is the last thing there is to wait for - a worker whose call has
-   * ended has a chat whether the harness said what it was for or not, and a
-   * worker the harness is simply slow about gets one five seconds from now.
+   * The call's input is the only place the harness says what a worker is for:
+   * its kind, its one-line task and the prompt it runs on. The spawn is
+   * recorded at the call's block start, before its input exists, and the input
+   * fills it in as it is handed over - in the canonical assistant message, and
+   * in whole through the permission callback, which the SDK runs as soon as
+   * that input is complete - each field taken the first time it is said, as
+   * VS Code's registry records a spawn. A worker's chat is announced with what
+   * the record holds when it opens.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentRegistry.ts#L144-L160
    */
-  const releaseHeld = (parent: string, info?: Spawning): void => {
+  const recordSpawn = (id: string, given: Bag, scope: Scope, turnId?: string): void => {
+    const was = spawning.get(id);
+    const kind = was?.subagentType ?? str(given.subagent_type);
+    const about = was?.description ?? str(given.description);
+    const prompt = was?.prompt ?? str(given.prompt);
+    const made = was?.turn ?? (scope === mainScope ? turnId : spawning.get(scope.parent)?.turn);
+    spawning.set(id, {
+      ...was,
+      ...(kind !== undefined ? { subagentType: kind } : {}),
+      ...(about !== undefined ? { description: about } : {}),
+      ...(prompt !== undefined ? { prompt } : {}),
+      parent: was?.parent ?? scope.parent,
+      foreground: was?.foreground ?? true,
+      ...(made !== undefined ? { turn: made } : {}),
+    });
+    // A worker that spoke before its spawn was recorded: its chat opens now,
+    // and what it held is delivered to it.
     const open = ctx.options.subagent;
-    const held = scopes.get(parent);
+    const held = scopes.get(id);
     if (open === undefined || held?.waiting === undefined) return;
     const frames = held.waiting;
     held.waiting = undefined;
-    if (held.release !== undefined) {
-      clearTimeout(held.release);
-      held.release = undefined;
-    }
-    const opened = openWorker(parent, info ?? spawning.get(parent), open);
+    const opened = openWorker(id, spawning.get(id), open);
     /*
      * The scope keeps its own identity - `byAgent` holds scopes by reference,
      * and a frame that arrives during the replay below has to find this one -
@@ -345,35 +344,6 @@ export function createWorkers(ctx: SessionContext): Workers {
     held.chat = opened.chat;
     held.turn = opened.turn;
     for (const frame of frames) frame();
-  };
-
-  /**
-   * Record what a spawning call said, and open its worker's chat if one waits.
-   *
-   * The call's input is the only place the harness says what a worker is for:
-   * its kind, its one-line task and the prompt it runs on. It is handed over
-   * twice - in the canonical assistant message, and in whole through the
-   * permission callback, which the SDK runs as soon as that input is complete -
-   * and the callback can be first, for a call approved while it was still
-   * streaming, which is the case where the canonical message then skips the
-   * call altogether. A record that already names a chat is kept: that chat was
-   * opened from it, and a second record is the same information said twice.
-   */
-  const recordSpawn = (id: string, given: Bag, scope: Scope, turnId?: string): void => {
-    if (spawning.get(id)?.chat !== undefined) return;
-    const kind = str(given.subagent_type);
-    const about = str(given.description);
-    const prompt = str(given.prompt);
-    const made = scope === mainScope ? turnId : spawning.get(scope.parent)?.turn;
-    spawning.set(id, {
-      ...(kind !== undefined ? { subagentType: kind } : {}),
-      ...(about !== undefined ? { description: about } : {}),
-      ...(prompt !== undefined ? { prompt } : {}),
-      parent: scope.parent,
-      foreground: given.run_in_background !== true,
-      ...(made !== undefined ? { turn: made } : {}),
-    });
-    releaseHeld(id, spawning.get(id));
   };
 
   /** The scope a tool call was opened in, whichever conversation that is. */
@@ -422,7 +392,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     const stop = async (): Promise<boolean> => {
       if (!live.has(id)) return false;
       try {
-        await ctx.handle.stopTask(id);
+        await ctx.query.stopTask(id);
         return true;
       }
       catch {
@@ -451,7 +421,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       poll: pollTaskOutput({
         taskId,
         terminal,
-        read: (id) => (ctx.handle as unknown as TaskOutputReader).getTaskOutput(id),
+        read: (id) => (ctx.query as unknown as TaskOutputReader).getTaskOutput(id),
       }),
     });
     return terminal.uri;
@@ -692,7 +662,7 @@ export function createWorkers(ctx: SessionContext): Workers {
    * Anything the worker was still asking is declined rather than left on a
    * promise nothing will settle.
    */
-  const endWorker = (callId: string, state: 'complete' | 'error' | 'cancelled', why?: string): void => {
+  const endWorker = (callId: string, state: 'complete' | 'cancelled'): void => {
     if (ended.has(callId)) return;
     const scope = scopes.get(callId);
     if (scope?.chat === undefined) return;
@@ -704,7 +674,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       ctx.inputNeededRemoved(one.id);
     }
     settleOpen(scope.turn);
-    scope.chat.end(state, why);
+    scope.chat.end(state);
     scopes.delete(callId);
     ctx.rounds.delete(callId);
     background.delete(callId);
@@ -738,17 +708,14 @@ export function createWorkers(ctx: SessionContext): Workers {
    *
    * By the task id its `task_started` named, through the SDK's own
    * per-task stop, which answers with a `stopped` notification that ends
-   * the worker's chat. Configured with `workerStop: 'session'`, or for a
-   * worker the harness has not named a task for yet, it stops the lead
-   * turn instead, which is the only stop there is then.
+   * the worker's chat. A worker the harness has not named a task for has
+   * nothing to stop it by, and nothing else is stopped: VS Code's Claude
+   * agent, asked to stop a subagent's chat, leaves the lead turn running.
    */
   const stopWorker = (toolCallId: string): void => {
     const task = tasks.get(toolCallId);
-    if (ctx.options.workerStop === 'session' || task === undefined) {
-      void ctx.self.abort();
-      return;
-    }
-    void ctx.handle.stopTask(task).catch(() => {});
+    if (task === undefined) return;
+    void ctx.query.stopTask(task).catch(() => {});
   };
 
   /** End every output terminal this session made, and the polls behind them. */
@@ -764,7 +731,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     parts, calling, mainScope, scopes, spawning, background, tasks, byAgent, ended,
     pendingSummary: undefined as string | undefined,
     taskInfo, live, told,
-    scopeFor, releaseHeld, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
+    scopeFor, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
     workerBlock, noteTask, noteLive, dropTask, closeOutputs, working: () => live.size > 0,
     methods: { stopWorker },
   };

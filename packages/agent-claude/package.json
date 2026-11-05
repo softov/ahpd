@@ -131,11 +131,6 @@
           ],
           "description": "Claude CLI configuration directory inside a computer. Defaults to '/ahpd/<id>' or '/ahpd/claude' for the built-in agent. Set to false to keep the computer image's own configuration."
         },
-        "workerStop": {
-          "type": "string",
-          "enum": ["worker", "session"],
-          "description": "Scope of stop requests made from a subagent's chat. 'worker' (default) stops only that subagent; 'session' stops the entire session."
-        },
         "handshakeTimeoutMs": {
           "type": "integer",
           "minimum": 1,

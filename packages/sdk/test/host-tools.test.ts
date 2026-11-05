@@ -115,9 +115,9 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    // Under a name of this host's, beside whatever the settings files declared.
-    expect(Object.keys(servers)).toContain('ahp');
-    const listing = servers.ahp?.tools.find((one) => one.name === 'list_sessions');
+    // On the host's in-process server, beside whatever the settings files declared.
+    expect(Object.keys(servers)).toContain('host');
+    const listing = servers.host?.tools.find((one) => one.name === 'list_sessions');
     expect(listing?.description).toContain('List sessions');
 
     // And calling one answers about this host, which is the whole reason a
@@ -142,7 +142,7 @@ describe('tools the host contributes', () => {
     type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
     const toolsOf = (index = -1): Record<string, Tool> => {
       const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-      return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+      return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
     };
     // A refusal is a tool result too: the backend hands the model the message
     // as text, marked as an error, which is how a model learns what it got wrong.
@@ -314,7 +314,7 @@ describe('tools the host contributes', () => {
       // the hint that says so is the host's own: the backend turns it into the
       // eager flag a harness reads, and the published definition never carries it.
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
-      expect(servers.ahp?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
+      expect(servers.host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
       // Every other tool is offered, the artifact one included: the strategy
       // shapes rename_chat alone.
       expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
@@ -489,7 +489,7 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_resource')
+    const said = await servers.host?.tools.find((one) => one.name === 'ahp_resource')
       ?.handler({ uri: 'virtual://plugin/notes.md' });
     // Decoded, because a tool result is text and the model reads it.
     expect(said?.content[0]?.text).toBe('done');
@@ -507,7 +507,7 @@ describe('tools the host contributes', () => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
-    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    const said = await servers.host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
     expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
   });
 
@@ -536,7 +536,7 @@ describe('tools the host contributes', () => {
         const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
         }> | undefined;
-        const tool = servers?.ahp?.tools.find((one) => one.name === 'who');
+        const tool = servers?.host?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
       return { client, person };
@@ -1238,19 +1238,25 @@ describe('tools a client contributes', () => {
     return held;
   }
 
-  /** The tools the session is offering the model right now. */
+  /** The clients' tools the session is offering the model right now. */
   const offered = () => (sessionQueries().at(-1)?.options.mcpServers as Record<string, {
     tools: {
       name: string; description: string;
       handler: (input: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
     }[];
-  }> | undefined)?.ahp?.tools ?? [];
+  }> | undefined)?.client?.tools ?? [];
 
   it('offers what a client announced to the model, under a name of its own', async () => {
-    await providing();
-    // Re-declared on the running session rather than only at creation: a
-    // client announces what it provides when it opens the session, which is
-    // after the agent has started.
+    const { client, chatUri } = await providing();
+    // Given to the running CLI at the next send: a client announces what it
+    // provides when it opens the session, which is after the agent has
+    // started.
+    expect(sdk.mcpDeclared).toHaveLength(0);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
+    });
+    await settle();
     expect(sdk.mcpDeclared).toHaveLength(1);
     // Named for the client as well as the tool. Two clients in one session may
     // both provide `openFile`, and the model is offered one list.
@@ -1272,24 +1278,25 @@ describe('tools a client contributes', () => {
         id: 'm1',
         content: [{
           type: 'tool_use', id: 'call-1',
-          name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' },
+          name: 'mcp__client__probe__openFile', input: { path: '/a.txt' },
         }],
       },
     });
 
     /*
-     * A client contributor, not this host's MCP server.
+     * A client contributor, not an MCP server's.
      *
-     * The tools a client provides ride this host's own in-process server, so
-     * by name they all look like `mcp__ahp__*` - and reporting one as this
-     * host's contribution would tell every client that the call is nobody's
+     * The tools a client provides ride this host's in-process `client` server,
+     * so by name they look like an MCP server's - and reporting one as a
+     * server's contribution would tell every client that the call is nobody's
      * to answer, including the one whose call it is.
      */
     const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
     expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
 
     // The model's call reaches the client as a promise that does not settle
-    // until the client says what happened.
+    // until the client says what happened, the CLI naming the call it runs.
+    sdk.toolUseIds.push('call-1');
     const call = offered().find((tool) => tool.name === 'probe__openFile');
     let done = false;
     const answering = call?.handler({ path: '/a.txt' }).then((answer) => { done = true; return answer; });
@@ -1331,7 +1338,7 @@ describe('tools a client contributes', () => {
         event: {
           type: 'content_block_start',
           index: 0,
-          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: {} },
+          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: {} },
         },
       },
     );
@@ -1351,9 +1358,10 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/gone' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/gone' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/gone' });
     await settle();
     client.handle({
@@ -1393,9 +1401,10 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1444,9 +1453,10 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1489,9 +1499,10 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1503,8 +1514,14 @@ describe('tools a client contributes', () => {
     expect(answer?.isError).toBe(true);
     expect(answer?.content[0]?.text).toContain('no longer here');
 
-    // And the tool goes with the client: one whose provider has left is one
-    // every call to would fail.
+    // And the tool goes with the client from the next send on: one whose
+    // provider has left is one every call to would fail.
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
     expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
   });
 
@@ -1523,7 +1540,10 @@ describe('tools a client contributes', () => {
       snapshot: { state: SessionState };
     }).snapshot.state;
 
-  /** One turn whose model calls the client's `openFile`. */
+  /**
+   * One turn whose model calls the client's `openFile`, and the id the CLI
+   * hands the handler that runs the call.
+   */
   const calling = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
     client.handle({
       method: 'dispatchAction',
@@ -1535,9 +1555,10 @@ describe('tools a client contributes', () => {
       uuid: 'reply-1',
       message: {
         id: 'm1',
-        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
   };
 
   /** The client saying what its tool did, as `chat/toolCallComplete`. */
@@ -1558,7 +1579,7 @@ describe('tools a client contributes', () => {
 
   /** The model making a call of a client's tool, by the id the CLI knows it by. */
   const used = (id: string, input: Bag = { path: '/a.txt' }) => ({
-    type: 'tool_use', id, name: 'mcp__ahp__probe__openFile', input,
+    type: 'tool_use', id, name: 'mcp__client__probe__openFile', input,
   });
 
   it('raises the call on the session, and takes the entry down with the answer', async () => {
@@ -1714,10 +1735,8 @@ describe('tools a client contributes', () => {
     await settle();
     /*
      * The two calls carry the same arguments, and the CLI ran the second one
-     * first - which is the order it hands its handlers out in, and the one
-     * thing a match by name and input cannot know: the first handler to run
-     * would take the other's call. The id the CLI names each call by in
-     * `_meta` is what tells these two apart.
+     * first, which is the order it hands its handlers out in. The id the CLI
+     * names each call by in `_meta` is what tells these two apart.
      */
     sdk.toolUseIds.push('call-2', 'call-1');
     await emit({
@@ -1765,30 +1784,32 @@ describe('tools a client contributes', () => {
     expect(first?.content[0]?.text).toBe('the first');
   });
 
-  it('still finds its call by name and input when no id is handed over', async () => {
-    // A CLI that puts nothing in `_meta`, which is what the fallback is for and
-    // is why it stays until a live run shows the key always arrives.
+  /*
+   * A handler the CLI hands no call id has no call to wait on, a client's
+   * answer being keyed by the call's id: it answers that it could not run, in
+   * VS Code's words, and the client's answer to the call settles nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L41-L56
+   */
+  it('answers a handler handed no call id that it could not run', async () => {
     sdk.sendsToolUseId = false;
-    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'by name' }] });
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
 
     const answer = await answering;
-    expect(answer?.isError).toBeUndefined();
-    expect(answer?.content[0]?.text).toBe('by name');
-    // Said out loud, because whether the fallback is still needed is a question
-    // about what a live CLI sends and nothing a test can answer.
-    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
-    warned.mockRestore();
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content).toEqual([{
+      type: 'text',
+      text: 'Client tool "probe__openFile" could not run: SDK omitted tool_use_id (expected at extra._meta["claudecode/toolUseId"]).',
+    }]);
   });
 
   it('hands the model the client\'s image as an image, and its words as words', async () => {
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
-    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
     answers(client, chatUri, {
       success: true,
@@ -1827,7 +1848,7 @@ describe('tools a client contributes', () => {
     await settle();
   };
 
-  /** The person's answer, dispatched to the session the way a client dispatches it. */
+  /** The person's answer, dispatched to the session the way a client dispatches it, naming the call's turn. */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -1835,7 +1856,7 @@ describe('tools a client contributes', () => {
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-1', approved } },
     });
   };
 
@@ -1855,7 +1876,7 @@ describe('tools a client contributes', () => {
      * assistant frame is read. Nothing has reported the call, so the approval
      * is the only thing that can raise the entry.
      */
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     expect(await askedToRun(client, uri)).toEqual([]);
     // The question opens the call, and its start names the client that runs it.
@@ -1894,7 +1915,7 @@ describe('tools a client contributes', () => {
     const { client, peer: p, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
     let decided: unknown;
-    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
+    void sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
       ?.then((one) => { decided = one; });
     await settle();
     /*
@@ -1932,7 +1953,7 @@ describe('tools a client contributes', () => {
     sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     // The question takes it back: while a person decides, no client is being
     // asked to run the tool.
@@ -1956,7 +1977,7 @@ describe('tools a client contributes', () => {
     sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    void sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
     decided(client, chatUri, false);
@@ -1968,23 +1989,22 @@ describe('tools a client contributes', () => {
      */
     const answer = await answering;
     expect(answer?.isError).toBe(true);
-    expect(answer?.content[0]?.text).toBe('The person declined this action');
+    expect(answer?.content[0]?.text).toBe('User declined');
     // And nothing asked a client to run it, before or after.
     expect(await askedToRun(client, uri)).toEqual([]);
   });
 
   it('settles a handler still waiting when the turn is stopped', async () => {
-    // A CLI that names no call, so the handler waits on the tool's name and
-    // input - the other half of the join, which a stopped turn has to end too.
-    sdk.sendsToolUseId = false;
-    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The handler waits on the call's id for a frame that has not opened it,
+    // which is a wait a stopped turn has to end too.
     const { client, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
+    sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
     // A call a person is being asked about, and never answered: the turn is
     // stopped while both waits stand.
-    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    const gate = sdk.canUseTool?.('mcp__client__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
     client.handle({
@@ -2000,8 +2020,6 @@ describe('tools a client contributes', () => {
     expect(answer?.isError).toBe(true);
     expect(answer?.content[0]?.text).toBe('The turn was stopped');
     expect(await askedToRun(client, uri)).toEqual([]);
-    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
-    warned.mockRestore();
   });
 });
 

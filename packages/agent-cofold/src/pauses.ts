@@ -16,7 +16,7 @@ const DECLINED = 'The person declined this action';
  * already a string or a list is taken as it is, so a caller that hands over
  * cofold's own shape is not unwrapped into nothing.
  */
-const answersOf = (answers: Bag): Record<string, string | string[]> => {
+const answersOf = (given: Bag): Record<string, string | string[]> => {
   /** One value as cofold reads it, or nothing for a shape it would refuse. */
   const valueOf = (value: unknown): string | string[] | undefined => {
     const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
@@ -29,19 +29,20 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
     if (Array.isArray(raw)) return strings(raw);
     return undefined;
   };
-  const said: Record<string, string | string[]> = {};
-  for (const [id, value] of Object.entries(answers)) {
+  const answers: Record<string, string | string[]> = {};
+  for (const [id, value] of Object.entries(given)) {
     const one = valueOf(value);
     // A skipped or shapeless answer is left out rather than sent empty, which
     // cofold's own validation would refuse the whole form for.
-    if (one !== undefined) said[id] = one;
+    if (one !== undefined) answers[id] = one;
   }
-  return said;
+  return answers;
 };
 
 /** What a stopped turn offers the other areas. */
 export interface Pauses {
-  stop: (reason: string) => void;
+  /** Stop the running turn's run, settling what it waits on, as VS Code's agent aborts a turn. */
+  abort: (reason: string) => void;
   /**
    * Answer an approval the owner's rules already allow, and say whether it did.
    *
@@ -98,16 +99,15 @@ export const createPauses = (
    * "The turn was stopped" - and ends the run cancelled, whether the run was
    * working or waiting on a person: one handle serves both.
    */
-  const stopNow = (reason: string): void => {
-    for (const held of [...pending.values()]) {
-      const removal = ctx.activeMapping?.settle(held.requestId);
-      if (removal !== undefined) start.emit('session', removal);
-    }
+  const abortNow = (reason: string): void => {
+    // The entries follow the chat's state: the turn's end takes down every
+    // entry of the chat that no longer stands.
+    for (const held of [...pending.values()]) ctx.activeMapping?.settle(held.requestId);
     pending.clear();
     ctx.handle?.cancel({ reason });
   };
 
-  const stop = (reason: string): void => {
+  const abort = (reason: string): void => {
     /*
      * A client-run call is settled here too, even though a stopped turn's
      * abort means the model will not read the result: the entry must not
@@ -123,12 +123,12 @@ export const createPauses = (
      * nothing. It waits for the same opening every turn waits for and then
      * stops whatever handle that left behind.
      */
-    const waiting = ctx.opening;
-    if (waiting !== undefined) {
-      void waiting.then(() => stopNow(reason), () => stopNow(reason));
+    const opening = ctx.opening;
+    if (opening !== undefined) {
+      void opening.then(() => abortNow(reason), () => abortNow(reason));
       return;
     }
-    stopNow(reason);
+    abortNow(reason);
   };
 
   /**
@@ -169,7 +169,7 @@ export const createPauses = (
   };
 
   return {
-    stop,
+    abort,
     autoApprove,
     methods: {
       /**
@@ -177,23 +177,23 @@ export const createPauses = (
        *
        * Found by the call's own id rather than assumed to be the only request:
        * with two open, comparing against whichever was held last is a person
-       * pressing Approve and nothing at all happening. The entry leaves by the
-       * same id it arrived with, the decision is said back because nothing in a
-       * client applies its own dispatch, and the answer goes into the run. An
-       * approval that picked `allow-session` is sent with `alwaysApprove`, which
-       * cofold keeps for this session and tool - unless the operator's rule
-       * names the tool, because a matched call asks every time.
+       * pressing Approve and nothing at all happening. The host has said the
+       * client's confirmation; the entry leaves by the same id it arrived with,
+       * and the answer goes into the run. An approval that picked
+       * `allow-session` is sent with `alwaysApprove`, which cofold keeps for
+       * this session and tool - unless the operator's rule names the tool,
+       * because a matched call asks every time.
        */
       confirm: (toolCallId, approved, optionId) => {
         const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
         if (held === undefined) return false;
         const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
         /*
-         * The tool's name as the entry was built with it. A question rebuilt by
-         * a replay may still carry the session choice, so the rule is read here
-         * rather than assumed from the options.
+         * The tool's name as the request was built with it. A question rebuilt
+         * by a replay may still carry the session choice, so the rule is read
+         * here rather than assumed from the options.
          */
-        const called = bag(held.entry.toolCall).toolName;
+        const called = bag(held.request.toolCall).toolName;
         const matched = typeof called === 'string' && start.getAutoApproval?.('tool', ruleName(ctx.offered, called)) === 'ask';
         /*
          * A decline ends the call without a result, so the file it announced as
@@ -203,8 +203,9 @@ export const createPauses = (
          */
         if (!approved && held.callId !== undefined) ctx.settleEdit(held.callId);
         pending.delete(held.requestId);
-        const removal = ctx.activeMapping?.settle(held.requestId);
-        if (removal !== undefined) start.emit('session', removal);
+        // The entry follows the chat's state: the host took it down when it
+        // said the confirmation that moved the call.
+        ctx.activeMapping?.settle(held.requestId);
 
         /*
          * The row in this session's own snapshot moves with the decision.
@@ -222,23 +223,9 @@ export const createPauses = (
           if (picked !== undefined) call.selectedOption = picked;
           part.toolCall = call;
         }
-        /*
-         * A refusal is `denied`, the protocol's word for a person who turned a
-         * call down; the sentence is the model's, and goes to cofold.
-         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
-         */
-        start.emit('chat', {
-          type: 'chat/toolCallConfirmed',
-          turnId: ctx.active?.id,
-          toolCallId,
-          approved,
-          ...(approved ? { confirmed: 'user-action' } : { reason: 'denied' }),
-          ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-        });
         route(approved
           ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
           : { type: 'deny', requestId: held.requestId, reason: DECLINED });
-        ctx.touch();
         return true;
       },
 
@@ -254,12 +241,12 @@ export const createPauses = (
         const held = pending.get(requestId);
         if (held === undefined || held.kind !== 'input') return false;
         pending.delete(requestId);
-        const removal = ctx.activeMapping?.settle(requestId);
-        if (removal !== undefined) start.emit('session', removal);
+        // The entry follows the chat's state: the host took it down when it
+        // said the completion that answered the request.
+        ctx.activeMapping?.settle(requestId);
         route(accepted
           ? { type: 'answer', requestId, answers: answersOf(answers) }
           : { type: 'deny', requestId, reason: DECLINED });
-        ctx.touch();
         return true;
       },
     },

@@ -1,18 +1,19 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { callTimes, startOf, statusOf, withCallTimes } from '@ahpd/sdk';
+import { mergeLogicalTurnUsage, statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
 import { bag } from './common.js';
 import type { Scope, SessionContext } from './context.js';
-import { summarize } from '../input.js';
 
 /** What this area offers the rest of the session. */
 export interface Parts {
-  /** Record that something happened just now. */
-  touch: () => void;
-  /** Say what the session is doing, if that has changed. */
-  doing: (said: string | undefined) => void;
-  /** One line for a tool that is running. */
-  busyWith: (name: string, input: Bag) => string;
+  /**
+   * Set the chat's `modifiedAt`, where the protocol's reducer sets it and
+   * nowhere else: to a turn's start as it starts, and to its start plus its
+   * duration as it ends.
+   */
+  setModifiedAt: (at: string) => void;
+  /** Set the chat's `modifiedAt` to where an ended turn leaves it, its start plus its duration. */
+  endedAt: (turn: Bag) => void;
   /** Rename the session, and say so. */
   retitle: (said: string) => void;
   /** The SDK's token counts, in the protocol's spelling. */
@@ -35,29 +36,31 @@ export interface Parts {
   inputNeededSet: (entry: Bag) => void;
   /** Say the session is no longer waiting on one request. */
   inputNeededRemoved: (id: string) => void;
-  /** The turn a conversation is on, opened if it has none, with the id and the message given. */
-  openTurn: (scope?: Scope) => Bag;
+  /** The turn a frame of a conversation belongs to: the lead's running turn, or a worker's, opened if it has none. */
+  openTurn: (scope?: Scope) => Bag | undefined;
   /** Announce a prose part. */
   addPart: (scope: Scope, part: Bag) => void;
   /** Hold a tool call for the snapshot, without announcing it. */
   holdPart: (turn: Bag, part: Bag) => void;
-  /** A call's bag with its start stamped. */
+  /** Hold when a call started running, and hand back its bag. */
   stampStart: (call: Bag, at?: number) => Bag;
-  /** A call's bag with its end stamped. */
+  /** Put how long a call ran on its bag, and hand the bag back. */
   stampEnd: (call: Bag, at?: number) => Bag;
-  /** A call's bag with the times taken off. */
+  /** Forget a call's start, for a call that never ran, and hand back its bag. */
   untimed: (call: Bag) => Bag;
   /** Record a failure as a part of a turn, and hand the part back. `resumable` says a client may ask for the turn again. */
-  addFailure: (turn: Bag, why: string, resumable?: boolean) => Bag;
+  addFailure: (turn: Bag, errorType: string, why: string, resumable?: boolean) => Bag;
 }
 
 export function createParts(ctx: SessionContext): Parts {
-  const touch = (): void => { ctx.modified = new Date().toISOString(); };
-
-  /** One line for a tool that is running. The name alone says too little. */
-  const busyWith = (name: string, input: Bag): string => {
-    const what = summarize(name, input);
-    return (what ? `${name} ${what}` : name).replace(/\s+/g, ' ').slice(0, 80);
+  /*
+   * The chat's `modifiedAt`, held as the protocol's reducer moves it, so a
+   * client that subscribes reads what one that followed the actions holds.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+   */
+  const setModifiedAt = (at: string): void => { ctx.modified = at; };
+  const endedAt = (turn: Bag): void => {
+    setModifiedAt(new Date(Date.parse(String(turn.startedAt)) + Number(turn.duration ?? 0)).toISOString());
   };
 
   /** Retitle, and say so: a client that opened the session holds the old one. */
@@ -133,13 +136,15 @@ export function createParts(ctx: SessionContext): Parts {
    * delegated is that turn's own cost. The protocol *replaces* the active
    * turn's usage on each `chat/usage`, so this is a total that grows rather
    * than a delta a client would have to add up itself - and the turn is held
-   * to it, so a client reading the snapshot mid-turn reads the same number.
+   * to it, so a client reading the snapshot mid-turn reads the same number. A
+   * resumed turn says this run's total, which the host merges over the run
+   * before's, and is held to the two merged.
    */
   const sayUsage = (): void => {
     const turn = ctx.active;
     const used = sum();
     if (turn === undefined || used === undefined) return;
-    turn.usage = used;
+    turn.usage = mergeLogicalTurnUsage(ctx.resumedFrom?.usage, used);
     ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
   };
 
@@ -224,7 +229,18 @@ export function createParts(ctx: SessionContext): Parts {
 
   // ------------------------------------------------------------- translation
 
-  const openTurn = (scope: Scope = ctx.mainScope): Bag => {
+  /**
+   * The turn a frame belongs to.
+   *
+   * A lead frame no prompt is pending for has none, and is dropped, as VS
+   * Code's Claude router maps a frame only to the prompt it answers: a CLI that
+   * runs on its own opens no turn a client did not start. The one exception is
+   * the turn a background task's end wakes, which opens as that task's notice;
+   * VS Code shows nothing there. A worker's chat whose turn ended opens one of
+   * the agent's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L82-L84
+   */
+  const openTurn = (scope: Scope = ctx.mainScope): Bag | undefined => {
     if (scope.turn) return scope.turn;
     /*
      * The summary a background task's end left for the turn it wakes.
@@ -238,11 +254,8 @@ export function createParts(ctx: SessionContext): Parts {
      */
     const notice = scope === ctx.mainScope ? ctx.pendingSummary : undefined;
     if (scope === ctx.mainScope) ctx.pendingSummary = undefined;
-    // A turn the client did not begin: the agent spoke first, which happens on
-    // a resumed session. Better an id of our own than a turn with none.
+    if (scope === ctx.mainScope && notice === undefined) return undefined;
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
-    // Leaving the key off put a turn on the wire that did not satisfy its own
-    // type, which nothing here would have noticed.
     const opened = {
       id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
@@ -255,13 +268,6 @@ export function createParts(ctx: SessionContext): Parts {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     scope.turn = opened;
-    // Only the session's own turn moves the session's clock and clears its
-    // last failure; a worker's turn is not what the session is doing.
-    if (scope === ctx.mainScope) {
-      ctx.startedAt = Date.now();
-      ctx.failed = undefined;
-      newTurn();
-    }
     ctx.emitOn(scope, {
       type: 'chat/turnStarted',
       turnId: opened.id,
@@ -291,28 +297,27 @@ export function createParts(ctx: SessionContext): Parts {
   };
 
   /**
-   * A call's bag with its start stamped, when it began running.
+   * When each call began running, on this plugin's clock, by the call.
    *
-   * The plugin's own clock, and stamped onto the call rather than onto the
-   * action announcing it: an action carrying a `_meta` replaces the call's
-   * whole bag, so a call that is asked about after this one is stamped again
-   * at its approval and every later action has to carry the times again.
+   * What the duration said at the call's completion is measured from, on its
+   * `_meta` as VS Code's host says it. A call asked about is started again at
+   * its approval, so the wait for a person is not counted.
    */
+  const started = new WeakMap<Bag, number>();
+
   const stampStart = (call: Bag, at = Date.now()): Bag => {
-    call._meta = withCallTimes(bag(call._meta), callTimes(at));
+    started.set(call, at);
     return bag(call._meta);
   };
 
-  /** A call's bag with its end stamped, measured from the start it holds. */
   const stampEnd = (call: Bag, at = Date.now()): Bag => {
-    call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
+    call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), toolCallDurationMs(started.get(call), at));
+    started.delete(call);
     return bag(call._meta);
   };
 
-  /** A call's bag with the times taken off, for a call that never ran. */
   const untimed = (call: Bag): Bag => {
-    const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(call._meta);
-    call._meta = Object.keys(rest).length > 0 ? rest : undefined;
+    started.delete(call);
     return bag(call._meta);
   };
 
@@ -337,24 +342,27 @@ export function createParts(ctx: SessionContext): Parts {
    * `chat/error` *carries* this part and appends it itself, so a
    * `chat/responsePart` for the same thing is the failure printed twice. The
    * part is `{ kind, error }` and nothing else: `ErrorResponsePart` has no id.
+   *
+   * `errorType` is what VS Code names the failure by: a failed result's
+   * subtype, as its Claude mapper sets it, and the stage a failure before the
+   * result happened at, as its host does for a send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L541-L544
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2575
    */
-  const failurePart = (why: string, resumable = false): Bag => ({
-    kind: 'error',
-    error: { errorType: 'turnFailed', message: why },
-    ...(resumable ? { resumable: true } : {}),
-  });
-  const addFailure = (turn: Bag, why: string, resumable = false): Bag => {
-    const part = failurePart(why, resumable);
+  const addFailure = (turn: Bag, errorType: string, why: string, resumable = false): Bag => {
+    const part: Bag = {
+      kind: 'error',
+      error: { errorType, message: why },
+      ...(resumable ? { resumable: true } : {}),
+    };
     (turn.responseParts as Bag[]).push(part);
     return part;
   };
 
   return {
-    touch, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
+    setModifiedAt, endedAt, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
     newConversation, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
     stampStart, stampEnd, untimed, addFailure,
-    // What it is doing, on both channels, the way a session mirrors its chat.
-    doing: ctx.activity.say,
     /*
      * `pending` is a question a client or a person is being asked, and a turn is
      * `active` from the moment it begins.

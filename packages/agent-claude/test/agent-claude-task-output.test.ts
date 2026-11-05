@@ -226,6 +226,9 @@ it('gives a shell a terminal on its first set, and finishes it when the task end
     },
   });
   await settle();
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
+  await settle();
 
   sdk.push(
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 100', run_in_background: true } }] } },

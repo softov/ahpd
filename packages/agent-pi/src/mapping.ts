@@ -10,8 +10,6 @@
  * - A part exists before anything streams into it. Each thinking or text
  *   block pi writes is its own part, opened here when the block starts and
  *   announced exactly once, so a turn's parts are in the order pi wrote them.
- *   A text block opens at its first delta holding more than whitespace, so a
- *   block that is only whitespace opens nothing.
  * - The snapshot is built from the turn's own parts, so every action that adds
  *   text also appends it to the part. A client that re-subscribes mid-turn is
  *   served the state, not a replay of what the last one was sent.
@@ -24,7 +22,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
-import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { appendEscapedMarkdownInlineCode, bag, toolCallDurationMs, truncate, withToolCallDuration } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
 /** The prose part this turn already holds under its id. */
@@ -40,34 +38,37 @@ const partOf = (turn: PiTurn, id: string): Bag | undefined =>
 export const callPartOf = (turn: { parts: Bag[] }, id: string): Bag | undefined =>
   turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === id);
 
-/** A tool call's row, which is where the times are kept between the events. */
+/** A tool call's row, which is what its start is held by between the events. */
 const rowOf = (turn: PiTurn, id: string): Bag | undefined => bag(callPartOf(turn, id)?.toolCall);
 
 /**
- * A call's bag with its start stamped, which is when pi began running it.
+ * When pi began running each call, by its row, on this plugin's clock.
  *
- * Written on the row rather than onto the action that announced it, because
- * the model's stream opens a call before pi runs it and the action that
- * carries the times then is the one the hook sends. Answers the bag, for the
- * action that goes out with it.
+ * What the duration said at the call's completion is measured from, on its
+ * `_meta` as VS Code's host says it. A call asked about is started again when
+ * a person allows it, so the wait is not counted.
  */
-const stampStart = (row: Bag | undefined, at: number): Bag | undefined => {
+const started = new WeakMap<Bag, number>();
+
+/** Hold when pi began running a call, and answer its bag for the action that goes out with it. */
+export const stampStart = (row: Bag | undefined, at: number): Bag | undefined => {
   if (row === undefined) return undefined;
-  row._meta = withCallTimes(bag(row._meta), callTimes(at));
-  return bag(row._meta);
+  started.set(row, at);
+  return row._meta === undefined ? undefined : bag(row._meta);
 };
 
-/** A call's bag with its end stamped, measured from the start it holds. */
+/** Put how long a call ran on its row, measured from the start held for it. */
 const stampEnd = (row: Bag | undefined, at: number): void => {
   if (row === undefined) return;
-  row._meta = withCallTimes(bag(row._meta), callTimes(startOf(row._meta) ?? at, at));
+  const meta = withToolCallDuration(row._meta === undefined ? undefined : bag(row._meta), toolCallDurationMs(started.get(row), at));
+  if (meta !== undefined) row._meta = meta;
+  started.delete(row);
 };
 
-/** A call's bag with the times taken off, for a call that never ran. */
-export const untime = (row: Bag): Bag => {
-  const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(row._meta);
-  row._meta = Object.keys(rest).length > 0 ? rest : undefined;
-  return bag(row._meta);
+/** Forget a call's start, for a call that never ran, and answer its bag. */
+export const untime = (row: Bag): Bag | undefined => {
+  started.delete(row);
+  return row._meta === undefined ? undefined : bag(row._meta);
 };
 
 /** Everything a tool result says, as the one string a client shows. */
@@ -98,23 +99,43 @@ function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   return turn.calls.get(toolCallId) ?? openCall(turn, toolCallId, toolName);
 }
 
-/** A new row for a call, in the snapshot. */
+/**
+ * A new row for a call, in the snapshot.
+ *
+ * A client's tool is named by the name the client announced, off the
+ * `<clientId>__<name>` pi was offered, as VS Code's agents strip their client
+ * tool server's prefix, so the row names a tool the client has.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+ */
 function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
-  const call: PiCall = { toolCallId, toolName, displayName: toolName };
-  turn.calls.set(toolCallId, call);
   const owner = turn.ownerOf?.(toolName);
+  const shown = owner !== undefined && toolName.startsWith(`${owner}__`) ? toolName.slice(owner.length + 2) : toolName;
+  const call: PiCall = { toolCallId, toolName, displayName: shown };
+  turn.calls.set(toolCallId, call);
+  const toolKind = owner === undefined ? KINDS[toolName] : undefined;
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {
       toolCallId,
-      toolName,
-      displayName: toolName,
+      toolName: shown,
+      displayName: shown,
       status: 'streaming',
       ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
+      ...(toolKind === undefined ? {} : { _meta: { toolKind } }),
     },
   });
   return call;
 }
+
+/**
+ * The kind a client routes a call of one of pi's tools by, as VS Code's agents
+ * stamp `_meta.toolKind` from their harness's own tools: pi's shell is a
+ * terminal, its read a read, and grep, find and ls search. A tool this table
+ * has not heard of carries no kind.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L662
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L652
+ */
+const KINDS: Readonly<Record<string, string>> = { bash: 'terminal', read: 'read', grep: 'search', find: 'search', ls: 'search' };
 
 /**
  * A call's row, opened and announced once, whichever event names it first.
@@ -127,7 +148,9 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
 function startCall(turn: PiTurn, toolCallId: string, toolName: string, at?: number): Bag[] {
   if (turn.calls.has(toolCallId)) return [];
   const call = openCall(turn, toolCallId, toolName);
-  const meta = at === undefined ? undefined : stampStart(rowOf(turn, toolCallId), at);
+  const row = rowOf(turn, toolCallId);
+  if (at !== undefined) stampStart(row, at);
+  const meta = row?._meta === undefined ? undefined : bag(row._meta);
   /*
    * A client-owned tool is that client's to run, so the call is reported
    * against it and not as the host's own. The host's own tools and pi's
@@ -138,7 +161,7 @@ function startCall(turn: PiTurn, toolCallId: string, toolName: string, at?: numb
     type: 'chat/toolCallStart',
     turnId: turn.turnId,
     toolCallId: call.toolCallId,
-    toolName: call.toolName,
+    toolName: call.displayName,
     displayName: call.displayName,
     ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
     ...(meta === undefined ? {} : { _meta: meta }),
@@ -291,6 +314,21 @@ export function describe(name: string, input: Bag): string {
 }
 
 /**
+ * What a finished call did, as VS Code's agents word a call's past tense: a
+ * call that failed as failed, a shell command as the first line it ran, and
+ * any other call by the line it ran on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L541
+ */
+export function pastTenseOf(call: PiCall, success: boolean): string | { markdown: string } {
+  if (!success) return `"${call.displayName}" failed`;
+  const command = call.toolName === 'bash' || call.toolName === 'powershell' ? call.input?.command : undefined;
+  const first = typeof command === 'string' && command !== '' ? command.split('\n')[0] : undefined;
+  return first === undefined
+    ? call.invocationMessage ?? call.displayName
+    : { markdown: `Ran ${appendEscapedMarkdownInlineCode(truncate(first, 80))}` };
+}
+
+/**
  * A call's row, moved as the `tool_call` hook moves it before the tool runs.
  *
  * `extra` is what the hook decided: `confirmed: 'not-needed'` for a call that
@@ -331,30 +369,18 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
      *
      * pi streams all three as blocks of one assistant message, discriminated
      * by the inner event rather than by the outer one, so this is where they
-     * are told apart. Each block is opened where it starts, a text block at
-     * its first words, which is what keeps a turn's parts in the order pi
-     * wrote them.
+     * are told apart. Each block is opened where it starts, whatever it goes
+     * on to hold, as VS Code's Claude mapper opens a part at each content
+     * block's start; that keeps a turn's parts in the order pi wrote them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
      */
     case 'message_update': {
       const inner = event.assistantMessageEvent;
       if (inner.type === 'thinking_start') return blockOf(turn, inner.contentIndex, 'reasoning').opened;
+      if (inner.type === 'text_start') return blockOf(turn, inner.contentIndex, 'markdown').opened;
       if (inner.type === 'text_delta' || inner.type === 'thinking_delta') {
         const text = inner.type === 'text_delta';
-        let delta = inner.delta;
-        /*
-         * A text block's whitespace is held until it writes something else,
-         * and then leads the part it opens; a block that is only whitespace,
-         * as some models write before a call, opens nothing.
-         */
-        const key = keyOf(turn, inner.contentIndex);
-        if (text && !turn.blocks.has(key)) {
-          delta = `${turn.waiting.get(key) ?? ''}${delta}`;
-          if (delta.trim() === '') {
-            turn.waiting.set(key, delta);
-            return [];
-          }
-          turn.waiting.delete(key);
-        }
+        const delta = inner.delta;
         const { id, opened } = blockOf(turn, inner.contentIndex, text ? 'markdown' : 'reasoning');
         if (delta === '') return opened;
         append(turn, id, delta);
@@ -398,10 +424,12 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const when = at ?? Date.now();
       const opened = startCall(turn, event.toolCallId, event.toolName, when);
       const call = turn.calls.get(event.toolCallId);
-      if (call !== undefined) call.said = describe(event.toolName, bag(event.args));
-      // A row the model's stream opened was announced there, so the start has
-      // no action of its own here: it rides on the held row, and the hook's
-      // ready carries it when the hook moves that row.
+      if (call !== undefined) {
+        call.input = bag(event.args);
+        call.invocationMessage = describe(event.toolName, call.input);
+      }
+      // A row the model's stream opened was announced there, so the start is
+      // held for the row and has no action of its own here.
       if (opened.length === 0) stampStart(rowOf(turn, event.toolCallId), when);
       return opened;
     }
@@ -426,7 +454,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-      const said = call.said ?? call.displayName;
+      const invocationMessage = call.invocationMessage ?? call.displayName;
       /*
        * A call still `streaming` was never readied: pi failed it before its
        * `tool_call` hook, for a tool it does not have, arguments that do not
@@ -437,7 +465,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const unreadied = held.status === 'streaming';
       const owner = turn.ownerOf?.(call.toolName);
       const readied: Bag = {
-        invocationMessage: said,
+        invocationMessage,
         confirmed: 'not-needed',
         ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
       };
@@ -451,7 +479,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const terminals = (Array.isArray(held.content) ? held.content : []).filter((one) => bag(one).type === 'terminal');
       const result: Bag = {
         success,
-        pastTenseMessage: said,
+        pastTenseMessage: pastTenseOf(call, success),
         ...(text === '' && terminals.length === 0 ? {} : {
           content: [...terminals, ...(text === '' ? [] : [{ type: 'text', text }])],
         }),
@@ -493,17 +521,25 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /**
      * A shell command's output, arriving on its own event rather than on the
      * tool's. pi raises this for the bash tool while it runs, and the id is
-     * the tool call's, so it lands on the row that call already opened.
+     * the tool call's, so it lands on the row that call already opened. Each
+     * chunk is added to the output the call holds and the whole of it is said,
+     * since a content change replaces what a call shows, as VS Code's Codex
+     * mapping says a command's output.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L971-L986
      */
     case 'bash_execution_update': {
       if (event.id === undefined || event.delta === '') return [];
       const call = turn.calls.get(event.id);
       if (call === undefined) return [];
+      call.output = (call.output ?? '') + event.delta;
+      const content = [{ type: 'text', text: call.output }];
+      const row = rowOf(turn, call.toolCallId);
+      if (row?.status === 'running') row.content = content;
       return [{
         type: 'chat/toolCallContentChanged',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
-        content: [{ type: 'text', text: event.delta }],
+        content,
       }];
     }
 

@@ -77,7 +77,7 @@ const hosted = async (on: boolean, store: TerminalStore | null = shellTerminals(
   /** One call of a host tool, as the CLI makes it: by its handler, naming the call. */
   const call = async (name: string, input: Record<string, unknown> = {}, id = `call-${String(++calls)}`): Promise<Answer> => {
     const servers = options().mcpServers as Record<string, { tools: { name: string; handler: Handler }[] }>;
-    const found = servers.ahp?.tools.find((one) => one.name === name);
+    const found = servers.host?.tools.find((one) => one.name === name);
     if (found === undefined) throw new Error(`no tool ${name}`);
     return await found.handler(input, { _meta: { 'claudecode/toolUseId': id } });
   };
@@ -122,7 +122,7 @@ describe('the agent terminal tool', () => {
       'bash', 'read_bash', 'write_bash', 'bash_shutdown', 'list_bash', 'powershell',
     ]);
     expect(on.options().disallowedTools).toEqual(['Bash']);
-    expect(on.options().toolAliases).toEqual({ Bash: 'mcp__ahp__bash' });
+    expect(on.options().toolAliases).toEqual({ Bash: 'mcp__host__bash' });
   });
 
   it('is not offered by a host with no shells, whatever the switch says', async () => {

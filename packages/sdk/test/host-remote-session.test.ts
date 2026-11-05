@@ -258,7 +258,7 @@ describe('a session a window sent here', () => {
   });
 });
 
-/** What the session's backend was started with, which is where a host's instruction lands. */
+/** The system prompt the session's backend was started with: the preset alone, with no host instruction appended. */
 const started = () => (sessionQueries()[0]?.options.systemPrompt) as
   { type: string; preset: string; append: string; snapshot: boolean } | undefined;
 
@@ -314,7 +314,7 @@ describe('telling each turn of a session another window sent here to report back
     // Nothing where a client that can report has not arrived: the text names a
     // tool, so a session where the model has not got it is one where the agent
     // would be told to call something it cannot.
-    expect(started()).toBeUndefined();
+    expect(started()).toEqual({ type: 'preset', preset: 'claude_code' });
     await says(client, chat, 'first');
     await settle();
     // Running, so what is read below is the turn's own: the CLI has the words
@@ -348,7 +348,7 @@ describe('telling each turn of a session another window sent here to report back
     // Nothing at start even here, where a client able to report was in the
     // session from its first moment: the words belong to a turn, not to a
     // session, so the backend is started without them either way.
-    expect(started()).toBeUndefined();
+    expect(started()).toEqual({ type: 'preset', preset: 'claude_code' });
     await says(client, chat, 'first');
     expect(await told()).toEqual([REPORT_BACK]);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 3 });

@@ -319,6 +319,14 @@ export interface SessionOptions {
    */
   onEditSettled?(toolCallId: string): void;
   /**
+   * An edit a call made, with the text on either side of it.
+   *
+   * `Start.onEditCompleted` handed down: the host holds both sides under URIs
+   * of the call's own and answers the file edit a client draws the call's diff
+   * from. Absent, or answering nothing, is a host that holds no sides.
+   */
+  onEditCompleted?(toolCallId: string, path: string, before: string | undefined, after: string): FileEdit | undefined;
+  /**
    * A turn this session has written under an id of its own.
    *
    * `Start.onTurnRecorded` handed down: a backend that names a turn its own way
@@ -421,10 +429,20 @@ export interface Session {
   /**
    * Models this session can run a turn on. Empty until the agent has answered.
    *
-   * The two limits are the ones the backend published, and are absent for a
-   * model nothing is known about rather than zero.
+   * Each in the spec's `SessionModelInfo` fields, the provider left for the
+   * host to add: the limits are the ones the backend published, absent for a
+   * model nothing is known about rather than zero, and `configSchema` is what
+   * the model can be told to do differently.
    */
-  models(): { id: string; name: string; maxContextWindow?: number; maxOutputTokens?: number }[];
+  models(): {
+    id: string;
+    name: string;
+    maxContextWindow?: number;
+    maxOutputTokens?: number;
+    maxPromptTokens?: number;
+    supportsVision?: boolean;
+    configSchema?: Record<string, unknown>;
+  }[];
   /**
    * The id the agent gave this session, if it has said one yet.
    *
@@ -512,6 +530,17 @@ export interface Session {
    * keeps whatever title it derives.
    */
   setTitle?(title: string): void;
+  /**
+   * A title a local command suggests, held provisionally.
+   *
+   * Taken while the session has no title of its own, or still holds an earlier
+   * provisional one, and said as the session's title; the first real message's
+   * title replaces it, as VS Code's title controller seeds the title a `!`
+   * command suggests. Optional; a backend without it keeps the title it
+   * derives.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L231-L248
+   */
+  seedTitle?(title: string): void;
   /** ISO 8601 timestamp of the last change. */
   modifiedAt(): string;
   /**

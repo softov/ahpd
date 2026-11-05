@@ -22,32 +22,40 @@ const sdk = vi.hoisted(() => ({
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.frames,
-  query: ({ options }: { options: Record<string, unknown> }) => ({
-    async *[Symbol.asyncIterator]() {
-      sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
-      for (const frame of sdk.frames) yield frame;
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    let close = (): void => {};
+    const closed = new Promise<void>((resolve) => { close = resolve; });
+    return {
+      async *[Symbol.asyncIterator]() {
+        sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+        // The frames answer the turn's prompt, as a CLI's do, and the CLI stays
+        // open until it is closed.
+        await prompt[Symbol.asyncIterator]().next();
+        for (const frame of sdk.frames) yield frame;
+        await closed;
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close,
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
 
 /** The name the CLI calls a contributed tool by. */
-const CALLED = 'mcp__ahp__post_message';
+const CALLED = 'mcp__host__post_message';
 
 /** A host tool as the bind hands it to a backend. */
 const offered = (over: Partial<BoundTool> = {}): BoundTool => ({
@@ -68,7 +76,7 @@ const settle = async (times = 30): Promise<void> => {
 async function sessionWith(tools: BoundTool[], settings: Bag = {}): Promise<{ canUseTool: NonNullable<typeof sdk.canUseTool>; sent: Bag[] }> {
   sdk.frames = [];
   const sent: Bag[] = [];
-  createSession({
+  const session = createSession({
     uri: 'ahp-session:/confirm',
     chatUri: 'ahp-chat:/confirm',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-confirm-')),
@@ -76,6 +84,9 @@ async function sessionWith(tools: BoundTool[], settings: Bag = {}): Promise<{ ca
     tools,
     settings,
   });
+  await settle();
+  // A turn running, as the CLI asks about a call only inside one.
+  session.sendMessage('t1', 'go');
   await settle();
   return { canUseTool: sdk.canUseTool!, sent };
 }
@@ -108,8 +119,8 @@ it('still refuses a tool the deny list names', async () => {
   );
 
   // The flag is the host's claim about the tool; the deny list is a person's
-  // answer, and it wins.
+  // answer, and it wins, refused in VS Code's words.
   expect(await canUseTool(CALLED, { text: 'hello' }, { toolUseID: 'toolu_denied' }))
-    .toEqual({ behavior: 'deny', message: `${CALLED} is denied for this session` });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toEqual([]);
 });

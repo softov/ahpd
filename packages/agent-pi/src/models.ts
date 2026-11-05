@@ -14,7 +14,7 @@
  * is exactly where `begin` reads it from.
  */
 
-import type { Bag } from '@ahpd/sdk';
+import type { Offered } from '@ahpd/sdk';
 
 /** As much of a pi model as anything here needs. */
 export interface PiModel {
@@ -41,15 +41,42 @@ export const THINKING_KEY = 'thinkingLevel';
 export const idOf = (model: PiModel): string => `${model.provider}/${model.id}`;
 
 /**
- * One model as a session's `models()` and the agent's `probe` list it.
+ * One model as a session's `models()` and the agent's `probe` list it, in the
+ * spec's model info fields read from pi's own: the limits pi knows, whether it
+ * takes an image, and the thinking levels pi's rule gives it as the model's
+ * `configSchema`, as VS Code's agents list each model; the host adds the
+ * provider.
  *
  * The one shape both answer with, so the list the host holds from boot and the
- * one a session reports later name every model the same way.
+ * one a session reports later name every model the same way. `configSchema` is
+ * present only when the model has more than one thinking level to choose
+ * between: a form with one option is a control that cannot be used.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L120-L144
  */
-export const listed = (model: PiModel): { id: string; name: string } => ({
-  id: idOf(model),
-  name: model.name ?? model.id,
-});
+export function listed(model: PiModel, levels: readonly string[]): Offered['models'][number] {
+  return {
+    id: idOf(model),
+    name: model.name ?? model.id,
+    // A model pi knows nothing about gets no number rather than a made-up one.
+    ...(typeof model.contextWindow === 'number' && model.contextWindow > 0 ? { maxContextWindow: model.contextWindow } : {}),
+    ...(typeof model.maxTokens === 'number' && model.maxTokens > 0 ? { maxOutputTokens: model.maxTokens } : {}),
+    ...(model.input === undefined ? {} : { supportsVision: model.input.includes('image') }),
+    ...(levels.length > 1 ? {
+      configSchema: {
+        type: 'object',
+        properties: {
+          [THINKING_KEY]: {
+            type: 'string',
+            title: 'Thinking',
+            description: 'How much the model reasons before it answers.',
+            enum: [...levels],
+            default: levels[0],
+          },
+        },
+      },
+    } : {}),
+  };
+}
 
 /**
  * The model a wire id names.
@@ -73,45 +100,3 @@ export function modelFor<T extends PiModel>(
   return undefined;
 }
 
-/**
- * One model, as a client is offered it.
- *
- * `configSchema` is present only when the model has more than one thinking
- * level to choose between: a form with one option is a control that cannot be
- * used, and a client that drew it would be asking a question with one answer.
- */
-export function offered(model: PiModel, levels: readonly string[]): Bag {
-  const row: Bag = {
-    id: idOf(model),
-    name: model.name ?? model.id,
-    // Said plainly, because two providers serving a model of the same name is
-    // the ordinary case and the row is all a person has to tell them apart.
-    description: `${model.id} on ${model.provider}`,
-  };
-  if (levels.length > 1) {
-    row.configSchema = {
-      type: 'object',
-      properties: {
-        [THINKING_KEY]: {
-          type: 'string',
-          title: 'Thinking',
-          description: 'How much the model reasons before it answers.',
-          enum: [...levels],
-          default: levels[0],
-        },
-      },
-    };
-  }
-  /*
-   * The limits, when pi has them. A client sizes the conversation against the
-   * window, and a model pi knows nothing about gets no number rather than a
-   * made-up one.
-   */
-  if (typeof model.contextWindow === 'number' && model.contextWindow > 0) {
-    row.maxContextWindow = model.contextWindow;
-  }
-  if (typeof model.maxTokens === 'number' && model.maxTokens > 0) {
-    row.maxOutputTokens = model.maxTokens;
-  }
-  return row;
-}

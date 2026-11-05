@@ -127,10 +127,10 @@ export const hostHoldsTasks = (values: Bag, offering: BoundTool[]): boolean =>
 /**
  * The host's agent terminal tool, under the name the CLI calls it.
  *
- * The host serves its tools as the MCP server `ahp`, and the CLI names a tool
- * of an MCP server `mcp__<server>__<tool>`.
+ * The host serves its own tools as the in-process MCP server `host`, and the
+ * CLI names a tool of an MCP server `mcp__<server>__<tool>`.
  */
-export const HOST_SHELL_TOOL = 'mcp__ahp__bash';
+export const HOST_SHELL_TOOL = 'mcp__host__bash';
 
 /**
  * Whether the host runs Claude's shell commands instead of Claude.

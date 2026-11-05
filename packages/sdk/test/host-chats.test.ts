@@ -12,6 +12,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { idOf, Status } from '../src/sessions/catalog.js';
 import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
+import { startedNow } from './support/started.js';
 import type { Agent, Bag, HostOptions, Session, Start } from '@ahpd/sdk';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -147,6 +148,41 @@ describe('dropping the turns after one', () => {
       snapshot: { state: { turns: { id: string }[] } };
     }).snapshot.state;
     expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+  });
+
+  /*
+   * The cut is the kept turn's last assistant message on the main chain, as
+   * VS Code's resolveForkAnchorUuid reads it: a tool's result after it, and a
+   * worker's frames, are no anchor.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
+   */
+  it('rewinds to the kept turn\'s last assistant message, past a tool\'s result and a worker\'s frame', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }] } });
+    await emit({ type: 'user', uuid: 'result-1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a b' }] } });
+    await emit({ type: 'assistant', uuid: 'worker-1', parent_tool_use_id: 'toolu_task', message: { id: 'w1', content: [{ type: 'text', text: 'working' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    wrote('sdk-1', String(sessionQueries().at(-1)?.options.cwd));
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second' } } },
+    });
+    await settle();
+    await emit({ type: 'assistant', uuid: 'reply-2', message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.resumeSessionAt).toBe('reply-1');
   });
 
   it('says so before it restarts, so nobody is shown what they asked to be rid of', async () => {
@@ -521,7 +557,7 @@ describe('more than one chat in a session', () => {
       .toEqual({ fork: true, sideChat: true });
   });
 
-  it('spreads a session-scoped key across every chat, and keeps a chat-scoped one where it was', async () => {
+  it('spreads a session-scoped key across every chat', async () => {
     const { client, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const before = sdk.modesSet.length;
@@ -539,16 +575,6 @@ describe('more than one chat in a session', () => {
      * schema's answer rather than this host's.
      */
     expect(sdk.modesSet.length - before).toBe(2);
-
-    const efforts = sdk.effortsSet.length;
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
-    });
-    await settle();
-    // One, because that one says `scope: 'chat'`. How hard a conversation
-    // thinks is that conversation's.
-    expect(sdk.effortsSet.length - efforts).toBe(1);
   });
 
   it('opens one, and lists both on the session', async () => {
@@ -832,7 +858,7 @@ describe('more than one chat in a session', () => {
   /** The same backend, answering that it cannot take a conversation back. */
   const unresumable = (starts: Start[]): Agent => {
     const base = backend(starts);
-    return { ...base, create: (start: Start): Session => ({ ...base.create(start), resumable: () => false }) };
+    return { ...base, create: (start: Start): Session => ({ ...startedNow(base.create(start)), resumable: () => false }) };
   };
 
   /** Every `movable` a chat's own channel said, in the order it said them. */
@@ -1799,7 +1825,7 @@ describe('more than one chat in a session', () => {
         create: (start: Start): Session => {
           if (start.chatUri === PEER && start.uri === 'ahp-session:/two')
             throw new Error('this backend will not work there');
-          return base.create(start);
+          return startedNow(base.create(start));
         },
       };
       const { client, p } = await apart(join(root, 'sessions'), refusing);

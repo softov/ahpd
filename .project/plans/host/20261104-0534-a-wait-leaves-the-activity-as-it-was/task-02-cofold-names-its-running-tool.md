@@ -1,6 +1,6 @@
 ---
 title: cofold names its running tool
-status: implemented
+status: dropped
 depends:
   - task-01-no-agent-says-waiting-on-you.md
 layer: "agent-cofold"

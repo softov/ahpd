@@ -15,6 +15,7 @@ import {
   toolsOf,
 } from '../src/index.js';
 import type { CofoldOptions, ToolsConfig } from '../src/index.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * The four capabilities a cofold session runs itself.
@@ -129,7 +130,7 @@ async function open(args: {
   const agent = cofoldAgent(options);
   const v = view(args.trace, args.onEmit);
   const edits: Edit[] = [];
-  const session: Session = agent.create({
+  const session: Session = startedNow(agent.create({
     uri: 'ahp-session:/tools',
     chatUri: 'ahp-chat:/tools',
     settings: { ...agent.defaults(), ...(args.settings ?? {}) },
@@ -141,7 +142,7 @@ async function open(args: {
       edits.push({ turnId, path, phase });
       args.trace?.push(`edit:${phase}`);
     },
-  } as unknown as Start);
+  } as unknown as Start));
   return { model, session, v, edits };
 }
 
@@ -434,25 +435,6 @@ it('reads a file through the files capability', async () => {
   const done = completeFor(v, 'c1');
   expect(done?.result).toMatchObject({ success: true });
   expect((done?.result as Bag).content).toEqual([{ type: 'text', text: '1│hello world' }]);
-  rmSync(dir, { recursive: true, force: true });
-});
-
-it('names the tool it runs, and goes back to Thinking when it completes', async () => {
-  const dir = place();
-  const { session, v } = await open({
-    script: [{ toolCalls: [call('read_file', { path: 'a.txt' })] }, { text: 'done' }],
-    workspace: dir,
-    store: dir,
-  });
-  session.sendMessage('t1', 'read it');
-  await when(() => ended(v));
-
-  const said = v.of('chat', 'chat/activityChanged').map((one) => one.activity);
-  const named = said.indexOf('read_file a.txt');
-  // The turn begins thinking, the row names what runs while it runs, and the
-  // call's end is the model thinking again - then a finished turn says none.
-  expect(named).toBeGreaterThan(-1);
-  expect(said.slice(named + 1)).toEqual(['Thinking', undefined]);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -772,19 +754,14 @@ it('draws a shell call as a terminal, with its command as the intention', async 
 
   const turn = (session.chatState().turns as Bag[])[0] as Bag;
   const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
-  expect((part?.toolCall as Bag)._meta).toEqual({
-    toolKind: 'terminal',
-    'ahpd.startedAt': expect.any(String),
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
+  expect((part?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
   expect((part?.toolCall as Bag).intention).toBe('echo hi');
   expect((part?.toolCall as Bag).toolInput).toBe('echo hi');
   expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
-it('says when a call started and ended, on its ready and its complete', async () => {
+it('says how long a call ran at its completion, as cofold measured it', async () => {
   const dir = place();
   const { session, v } = await open({
     script: [{ toolCalls: [call('shell_exec', { command: 'echo hi' })] }, { text: 'done' }],
@@ -795,31 +772,15 @@ it('says when a call started and ended, on its ready and its complete', async ()
   session.sendMessage('t1', 'run it');
   await when(() => ended(v));
 
-  const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
-  const started = (ready?._meta as Bag | undefined)?.['ahpd.startedAt'];
-  expect(typeof started).toBe('string');
-  expect((ready?._meta as Bag)['ahpd.endedAt']).toBeUndefined();
   // The kind a shell call is drawn by has to survive: an action's `_meta`
-  // replaces the whole bag rather than adding to it.
-  expect((ready?._meta as Bag).toolKind).toBe('terminal');
+  // replaces the whole bag rather than adding to it. Nothing of the call's
+  // times is said before it completes.
+  const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
+  expect(ready?._meta).toEqual({ toolKind: 'terminal' });
+  expect(completeFor(v, 'c1')?._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 
-  const complete = completeFor(v, 'c1');
-  expect(complete?._meta).toMatchObject({
-    toolKind: 'terminal',
-    'ahpd.startedAt': started,
-    'ahpd.endedAt': expect.any(String),
-    'ahpd.durationMs': expect.any(Number),
-  });
-  // cofold measured the call itself, so the duration is its own rather than
-  // the span between the two events, which also carries what it did around the
-  // call. It still fits inside them.
-  const times = complete?._meta as Bag;
-  const span = Date.parse(times['ahpd.endedAt'] as string) - Date.parse(times['ahpd.startedAt'] as string);
-  expect(times['ahpd.durationMs']).toBeLessThanOrEqual(span);
-
-  // And no call says its times under a name of its own.
-  const bare = ['startedAt', 'endedAt', 'durationMs'];
-  expect(v.notes.every((note) => bare.every((key) => ((note.action._meta ?? {}) as Bag)[key] === undefined))).toBe(true);
+  // And no call says its times under a key of this host's own.
+  expect(v.notes.every((note) => Object.keys((note.action._meta ?? {}) as Bag).every((key) => !key.startsWith('ahpd.')))).toBe(true);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -839,9 +800,6 @@ it('says no times for a call the run refused before it ran', () => {
 
   expect(refused.actions.map((one) => one.type)).toEqual(['chat/toolCallReady', 'chat/toolCallComplete']);
   expect(refused.actions.every((one) => (one._meta as Bag | undefined)?.['ahpd.startedAt'] === undefined)).toBe(true);
-  // A call that never ran leaves the model thinking rather than naming a tool
-  // that was refused.
-  expect(refused.doing).toBe('Thinking');
   // The kind is still there: it is what the call is drawn as, and it was never
   // a time.
   expect((parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
@@ -929,6 +887,27 @@ it('sends the after for an edit still waiting when the turn is cancelled', async
 });
 
 // A bash command line; on Windows cofold runs PowerShell.
+it.skipIf(!posix)('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('shell_exec', { command: 'sleep 30' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.sendMessage('t1', 'run it');
+  await when(() => v.of('chat', 'chat/toolCallReady').length > 0);
+
+  session.abort();
+  await when(() => ended(v));
+  // The chat a client opens now holds the call as one that watched the turn
+  // end holds it: cancelled, as skipped.
+  const held = (session.allTurns().at(-1)?.responseParts as Bag[]).find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined;
+  expect(held).toMatchObject({ toolCallId: 'c1', status: 'cancelled', reason: 'skipped' });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// A bash command line; on Windows cofold runs PowerShell.
 it.skipIf(!posix)('kills a cancelled shell command and the child it started', async () => {
   const dir = place();
   const { session, v } = await open({
@@ -980,9 +959,9 @@ it('keeps the tools for a session with no working directory', async () => {
   expect(names).toContain('read_file');
   const done = completeFor(v, 'c1');
   expect(done?.result).toMatchObject({ success: true });
-  // No directory named, so the command runs in the daemon's own.
+  // No directory named, so the command runs in the session's scratch folder.
   const said = ((done?.result as Bag).content as { text?: string }[]).map((one) => one.text ?? '').join('');
-  expect(said).toContain(process.cwd());
+  expect(said).toMatch(/\.copilot[\\/]chats[\\/]/);
   rmSync(dir, { recursive: true, force: true });
 });
 

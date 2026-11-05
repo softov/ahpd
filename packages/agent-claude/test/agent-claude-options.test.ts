@@ -57,7 +57,6 @@ it.each<[string, unknown]>([
   ['paths', 'x'],
   ['computerExecutable', 5],
   ['computerConfigDir', true],
-  ['workerStop', 'all'],
   ['computerCli', 'image'],
   ['computerCliFallback', 'skip'],
 ])('reports %s of the wrong type and skips the plugin', async (key, value) => {
@@ -280,14 +279,14 @@ it('sends no sessionId when the conversation is resumed by name', () => {
 });
 
 /*
- * What the operator's environment becomes in front of a Bash command.
+ * What the operator's environment becomes for the session's shells.
  *
  * `Start.shellEnv` is the daemon's, resolved before the session is built, and
- * the `PreToolUse` hook the CLI runs on every Bash call is the one place a
- * session's shells can be given it. A session with nothing to say about the
- * environment must leave a command exactly as the client wrote it - an
- * `updatedInput` that only repeated the command would be a rewrite of every
- * Bash call for nothing.
+ * it is handed to the CLI as VS Code's Claude hands its own environment: a
+ * name set in the CLI's `settings.env`, which the CLI layers onto the commands
+ * it runs, a name removed out of the environment the CLI is spawned with. A
+ * command runs as the model wrote it unless a client's script is in force.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
  */
 
 /** One hook input, as the CLI sends it. */
@@ -316,31 +315,44 @@ const commandedWith = async (start: Record<string, unknown>, command: string): P
   return answer?.hookSpecificOutput?.updatedInput?.command;
 };
 
-it('puts the operator\'s environment in front of a Bash command', async () => {
-  const sent = await commandedWith({ shellEnv: { XDG_CONFIG_HOME: '/home/me/.config' } }, 'echo $XDG_CONFIG_HOME');
-  expect(sent).toBe("export XDG_CONFIG_HOME='/home/me/.config'\necho $XDG_CONFIG_HOME");
+/** The query options a session built with `start` handed the SDK. */
+const builtWith = (start: Record<string, unknown>): { settings?: { env?: Record<string, string> }; env?: Record<string, string | undefined> } => {
+  bashHook(start);
+  return cli.options.at(0) as { settings?: { env?: Record<string, string> }; env?: Record<string, string | undefined> };
+};
+
+it('hands a variable the operator set to the CLI as settings.env, and leaves the command as written', async () => {
+  const start = { shellEnv: { XDG_CONFIG_HOME: '/home/me/.config' } };
+  expect(builtWith(start).settings?.env).toEqual({ XDG_CONFIG_HOME: '/home/me/.config' });
+  expect(await commandedWith(start, 'echo $XDG_CONFIG_HOME')).toBeUndefined();
 });
 
-it('unsets a variable the operator removed', async () => {
-  expect(await commandedWith({ shellEnv: { PORT: null } }, 'echo $PORT')).toBe('unset PORT\necho $PORT');
+it('spawns the CLI without a variable the operator removed', async () => {
+  process.env.AHPD_OPERATOR_REMOVED = 'from the daemon';
+  try {
+    const env = builtWith({ shellEnv: { AHPD_OPERATOR_REMOVED: null } }).env;
+    expect(env?.AHPD_OPERATOR_REMOVED).toBeUndefined();
+    // Over the daemon's own environment, the one name taken out.
+    expect(env?.PATH).toBe(process.env.PATH);
+  }
+  finally { delete process.env.AHPD_OPERATOR_REMOVED; }
 });
 
-it('quotes a value that has a quote in it', async () => {
-  expect(await commandedWith({ shellEnv: { SAY: "it's" } }, 'echo "$SAY"')).toBe("export SAY='it'\\''s'\necho \"$SAY\"");
+it('hands a value with a quote in it as it is', async () => {
+  expect(builtWith({ shellEnv: { SAY: "it's" } }).settings?.env).toEqual({ SAY: "it's" });
 });
 
-it('leaves a command alone when the operator named no environment and no script is in force', async () => {
+it('leaves a command alone when no script is in force', async () => {
   expect(await commandedWith({}, 'echo hi')).toBeUndefined();
   expect(await commandedWith({ shellEnv: {} }, 'echo hi')).toBeUndefined();
+  expect(await commandedWith({ shellEnv: { SAY: 'b' } }, 'echo hi')).toBeUndefined();
 });
 
-it('puts the operator\'s lines before the session\'s own init script', async () => {
-  const sent = await commandedWith(
-    { shellEnv: { SAY: 'b' }, settings: { shellInitScripts: [{ shell: 'bash', script: 'echo init' }] } },
-    'echo hi',
-  );
-  const lines = String(sent).split('\n');
-  expect(lines[0]).toBe("export SAY='b'");
-  expect(lines[1]).toMatch(/ahpd-shell-init-[^']*\.sh/u);
-  expect(lines.at(-1)).toBe('echo hi');
+it('puts the session\'s own init script in front of a command, the operator\'s environment in the CLI\'s', async () => {
+  const start = { shellEnv: { SAY: 'b' }, settings: { shellInitScripts: [{ shell: 'bash', script: 'echo init' }] } };
+  const lines = String(await commandedWith(start, 'echo hi')).split('\n');
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toMatch(/ahpd-shell-init-[^']*\.sh/u);
+  expect(lines[1]).toBe('echo hi');
+  expect(builtWith(start).settings?.env).toEqual({ SAY: 'b' });
 });

@@ -104,6 +104,33 @@ describe('what the harness offers', () => {
     expect(models.find((one) => one.id === 'haiku')?.configSchema).toBeUndefined();
   });
 
+  /*
+   * The models as VS Code's Claude agent offers them: the SDK's alias row for
+   * the model the CLI is set to use left out, and each model's effort titled
+   * and described as VS Code's schema titles it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L147-L164
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
+   */
+  it('leaves the SDK\'s default alias out, and titles each model\'s effort as VS Code\'s Claude does', async () => {
+    sdk.init = {
+      models: [
+        { value: 'default', displayName: 'Default (recommended)', supportedEffortLevels: ['low', 'high'] },
+        { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'high'] },
+      ],
+      commands: [], agents: [],
+    };
+    const { client } = await running();
+    const models = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; configSchema?: { properties: Record<string, Record<string, unknown>> } }[] }[] } };
+    }).snapshot.state.agents[0]?.models ?? [];
+    expect(models.map((one) => one.id)).toEqual(['sonnet']);
+    expect(models[0]?.configSchema?.properties.thinkingLevel).toMatchObject({
+      title: 'Effort Level',
+      enumLabels: ['Low', 'High'],
+      enumDescriptions: ['Faster responses with less reasoning', 'Greater reasoning depth but slower'],
+    });
+  });
+
   it('offers one effort control, not the model\'s and the session\'s both', async () => {
     sdk.init = {
       models: [
@@ -131,7 +158,13 @@ describe('what the harness offers', () => {
     expect(cfg.values.effortLevel).toBeUndefined();
   });
 
-  it('keeps the session-wide effort where no model has one of its own', async () => {
+  /*
+   * The effort is the model's own control alone, as VS Code's Claude offers
+   * it: a model that names no levels draws none, and the session has no
+   * effort key to fall back on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
+   */
+  it('offers no session-wide effort where no model has one of its own', async () => {
     sdk.init = {
       models: [{ value: 'haiku', displayName: 'Haiku' }],
       commands: [], agents: [],
@@ -140,9 +173,7 @@ describe('what the harness offers', () => {
     const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
       schema: { properties: Record<string, unknown> };
     };
-    // Otherwise a harness whose models say nothing about effort would offer no
-    // effort control at all, which is worse than a general one.
-    expect(Object.keys(cfg.schema.properties)).toContain('effortLevel');
+    expect(Object.keys(cfg.schema.properties)).not.toContain('effortLevel');
   });
 
   it('runs a turn on the model and the thinking level the client chose', async () => {
@@ -172,36 +203,29 @@ describe('what the harness offers', () => {
   });
 
   /*
-   * A turn's thinking level is that turn's, and the session's config stays.
+   * A turn's thinking level is that turn's, and no config moves.
    *
-   * The reference host hands a turn's model to its agent, which sets the
-   * model's effort on the SDK, and says no config action (agentSideEffects.ts
-   * L2228-L2235, claudeAgentSession.ts L1206-L1226 at a4e689ae). The CLI holds
-   * one effort for the query, so the next turn that names none goes back to
-   * the session's.
+   * VS Code's Claude sets the effort each model selection resolves to and
+   * says no config action; the CLI holds one effort for the query, so a turn
+   * whose model names none clears it, back to the model's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224
    */
-  it('runs a turn on its own thinking level, and the session keeps its effort', async () => {
+  it('runs a turn on its own thinking level, and clears it for a turn that names none', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     const turn = (turnId: string, model: Record<string, unknown>) => client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' }, model } } },
     });
-    const held = async (): Promise<Record<string, unknown>> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { config: { values: Record<string, unknown> } } };
-    }).snapshot.state.config.values;
-    const before = (await held()).effortLevel;
-    expect(before).toBe('high');
 
     void turn('t1', { id: 'sonnet', config: { thinkingLevel: 'xhigh' } });
     await settle();
     expect(sdk.effortsSet.at(-1)).toBe('xhigh');
     expect(actions(p, uri).filter((one) => one.action.type === 'session/configChanged')).toEqual([]);
-    expect((await held()).effortLevel).toBe(before);
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
     void turn('t2', { id: 'sonnet' });
     await settle();
-    expect(sdk.effortsSet.at(-1)).toBe(before);
+    expect(sdk.effortsSet.at(-1)).toBeNull();
   });
 
   it('says what a harness offers on the root channel, before any session exists', async () => {
@@ -659,6 +683,23 @@ describe('turning a customization on and off', () => {
     (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state.customizations.find((one) => one.id === 'mcp:desk');
+
+  /*
+   * The two in-process servers a session declares itself are no
+   * customization: they have no definition a person can act on, as VS Code's
+   * Claude leaves them out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMcpServerNames.ts#L9-L30
+   */
+  it('lists no server of the session\'s own in-process two', async () => {
+    sdk.init = { commands: [] };
+    sdk.mcp = [{ name: 'desk', status: 'connected' }, { name: 'host', status: 'connected' }, { name: 'client', status: 'connected' }];
+    const { client, uri } = await running();
+    await settle(8);
+    const listed = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { customizations: { id: string; type: string }[] } };
+    }).snapshot.state.customizations.filter((one) => one.type === 'mcpServer').map((one) => one.id);
+    expect(listed).toEqual(['mcp:desk']);
+  });
 
   it('switches an MCP server off through the CLI, and reports what it became', async () => {
     const { client, peer: p, uri } = await withServers('connected');

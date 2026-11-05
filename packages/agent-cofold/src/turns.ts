@@ -59,17 +59,18 @@ export interface Turns {
    */
   resumeTurn: (turnId: string) => boolean;
   /**
-   * Whether the model the running turn was built on takes an image.
+   * Whether the model the running turn was built on takes an image, the
+   * spec's `supportsVision`.
    *
    * Read by `steer`, which has no agent of its own: a correction reaches the
    * model the turn is already running on, and a picture sent to one that
    * refuses images is a turn that fails rather than a correction.
    */
-  takesImages: () => boolean;
+  supportsVision: () => boolean;
 }
 
 export const createTurns = (ctx: SessionContext): Turns => {
-  const { start, options, harness, sessionId, where, store, settings, turns } = ctx;
+  const { start, options, harness, sessionId, where, store, turns } = ctx;
 
   /**
    * Whether the model the turn now running was built on takes an image.
@@ -77,7 +78,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * Set where the agent is built, because that is the one place the adapter in
    * force is known, and read by `steer` for a message sent into that same run.
    */
-  let takesImages = false;
+  let supportsVision = false;
 
   /**
    * The values a turn runs on, and the model reference they resolve to.
@@ -87,7 +88,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * in force, then the plugin option, then the harness file.
    */
   const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {
-    const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
+    const values: Record<string, unknown> = model === undefined ? ctx.values : { ...ctx.values, model: model.id };
     return { values, reference: modelReferenceOf(options, values, harness) };
   };
 
@@ -110,7 +111,13 @@ export const createTurns = (ctx: SessionContext): Turns => {
     chatUri: start.chatUri,
     parts,
     startedAt: began,
-    displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
+    // The title the host offered the tool under, else the name its row draws:
+    // a client's tool by the name the client announced.
+    displayNameOf: (name) => {
+      const tool = ctx.offered.find((one) => one.definition.name === name);
+      const owner = tool?.owner;
+      return tool?.definition.title ?? (owner !== undefined && name.startsWith(`${owner}__`) ? name.slice(owner.length + 2) : name);
+    },
     ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
     cancelled: () => ctx.cancelRequested,
     // The operator's rule, read when a call is put to a person: a matched
@@ -118,8 +125,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
     asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
     // A failed turn can be put back when there is a point to cut to: the last
     // message of the turn before, or, for a conversation's first turn, no
-    // session at all. A turn read back after a restart has no point, so it is
-    // not one this process can resume.
+    // session at all. A turn before it that nobody named a point for is one
+    // this process cannot cut back to.
     canCut: () => {
       const before = turns.at(-1);
       return before === undefined || ctx.points.has(String(before.id));
@@ -128,13 +135,18 @@ export const createTurns = (ctx: SessionContext): Turns => {
   });
 
   /**
-   * Title a session nobody has named from the first thing said in it.
+   * Title a session nobody has named from the first thing said in it, which
+   * replaces a title a local command suggested, as VS Code's title controller
+   * seeds one. A message of nothing but blanks names nothing.
    *
    * Said, because a client that opened the session holds the old one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L229
    */
   const retitle = (text: string): void => {
-    if (ctx.title !== 'Cofold session' || text === '') return;
-    const said = titleFrom(text, 'Cofold session');
+    if (ctx.title !== 'Cofold session' && !ctx.provisional) return;
+    const said = titleFrom(text, '');
+    if (said === '') return;
+    ctx.provisional = false;
     if (said === ctx.title) return;
     ctx.title = said;
     start.emit('session', { type: 'session/titleChanged', title: said });
@@ -157,9 +169,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
     from?: MessageFrom,
     attachments?: MessageAttachment[],
   ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
-    if (ctx.closed || ctx.active !== undefined) return undefined;
+    if (ctx.disposed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
-    ctx.failed = undefined;
+    ctx.error = undefined;
     const { values, reference } = valuesFor(model);
     const began = Date.now();
     // No part yet: each is opened when the model starts writing the block it holds.
@@ -183,6 +195,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       },
       responseParts: [],
     };
+    ctx.setModifiedAt(String(ctx.active.startedAt));
     /*
      * The first message titles a session nobody has named.
      *
@@ -192,7 +205,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
      * so nothing moves and nothing is said about it.
      */
     retitle(text);
-    ctx.doing('Thinking');
 
     const mapping = mappingOn(turnId, ctx.active.responseParts as Bag[], began, reference);
     ctx.activeMapping = mapping;
@@ -223,6 +235,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
     mapping: TurnMapping,
     instructions: readonly string[] = [],
   ): void => {
+    // A run a restart left paused holds the writer claim this run needs, so it
+    // is let go first: this message took the place of resuming its turn.
+    if (ctx.paused !== undefined) {
+      void ctx.dropPaused().then(() => { runTurn(turnId, input, values, reference, mapping, instructions); });
+      return;
+    }
     let agent: CofoldAgent;
     try {
       agent = ctx.agentOf(values, instructions);
@@ -233,7 +251,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     }
     // Before the run, so a correction sent the moment the turn appears is read
     // on the model this turn is about to run on.
-    takesImages = agent.model.features.images;
+    supportsVision = agent.model.features.images;
 
     const launch = (prompt: string | ContentPart[]): void => {
       let live: ReturnType<typeof run>;
@@ -261,7 +279,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
       }
       ctx.handle = live;
       ctx.read(live, mapping, turnId);
-      ctx.touch();
     };
 
     if (typeof input === 'string') {
@@ -279,7 +296,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // A turn somebody else settled while the files were being read is not
         // this call's to start, and not this call's to fail either.
         if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
-        if (ctx.cancelRequested || ctx.closed) {
+        if (ctx.cancelRequested || ctx.disposed) {
           await ctx.apply(mapping, turnId, stopped(turnId));
           return;
         }
@@ -374,8 +391,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * nothing can settle. The failure goes through the mapping like every other
    * ending, so a client draws the same `chat/error` a failed run produces.
    *
-   * This is the path a session whose fork or rewind could not be cut takes: the
-   * honest answer to "carry on from there" is that there is no there.
+   * This is the path a turn takes whose record can no longer be used.
    */
   const failTurn = (
     turnId: string,
@@ -387,7 +403,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
   ): void => {
     const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
-    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
+    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'record_refused', why));
   };
 
   /**
@@ -407,12 +423,36 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * drops them with the prompt. The host said the client's resume.
    */
   const resumeTurn = (turnId: string): boolean => {
-    if (ctx.closed || ctx.active !== undefined || ctx.waiting.length > 0 || ctx.opening !== undefined) return false;
+    if (ctx.disposed || ctx.active !== undefined || ctx.pendingTurns.length > 0 || ctx.opening !== undefined) return false;
     const last = turns.at(-1);
     if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
     const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
     const end = kept.at(-1);
     if (end === undefined || end.kind !== 'error' || end.resumable !== true) return false;
+    // What the turn took and used before, which it holds with what this run adds.
+    const resumedFrom = {
+      duration: typeof last.duration === 'number' ? last.duration : 0,
+      at: Date.now(),
+      usage: typeof last.usage === 'object' && last.usage !== null ? last.usage as Bag : undefined,
+    };
+    /*
+     * The turn of the run a restart left paused: reopened as it was, as the
+     * reducer reopens it, and the run itself continued on its question.
+     */
+    if (ctx.paused?.turnId === turnId) {
+      turns.pop();
+      const reopened: Bag = { ...last };
+      delete reopened.state;
+      delete reopened.duration;
+      ctx.active = reopened;
+      ctx.resumedFrom = resumedFrom;
+      ctx.cancelRequested = false;
+      ctx.error = undefined;
+      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
+      ctx.activeMapping = mapping;
+      void ctx.resumePaused(turnId, mapping);
+      return true;
+    }
     /*
      * The turn leaves the history before the cut is read, because the point a
      * resume cuts at is the end of the turn *before* this one.
@@ -421,8 +461,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const before = turns.at(-1);
     const point = before === undefined ? undefined : ctx.points.get(String(before.id));
     /*
-     * A turn read back after a restart has no entry in `points`, and a
-     * conversation this process did not watch run cannot be cut back to. The
+     * A turn before it with no entry in `points` is one nobody named a point
+     * for, and a conversation cannot be cut back to a point nobody named. The
      * turn goes back into the history rather than running on a conversation it
      * cannot be taken out of. Past this point a point is absent only when
      * there is no turn before, which is a conversation starting over.
@@ -440,8 +480,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
     delete again.state;
     delete again.duration;
     ctx.active = again;
+    ctx.resumedFrom = resumedFrom;
     ctx.cancelRequested = false;
-    ctx.failed = undefined;
+    ctx.error = undefined;
     const message = bag(again.message);
     const named = bag(message.model);
     const id = str(named.id);
@@ -452,8 +493,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const began = Date.now();
     const mapping = mappingOn(turnId, kept, began, reference);
     ctx.activeMapping = mapping;
-    ctx.doing('Thinking');
-    ctx.touch();
     /*
      * A record that can no longer be used cannot run the turn either, and the
      * turn is open again by now: the sentence ends it rather than leaving a
@@ -471,8 +510,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
         else await store.sessions.truncate({ sessionId, throughMessageId: point });
       }
       catch (error) {
-        // The store would not make the cut, so there is nothing to run on. The
-        // turn ends with the reason, the way a cut refused before it started.
+        // The store would not truncate the conversation, so there is nothing
+        // to run on, and the resumed turn ends with the reason.
         await ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', error));
         return;
       }
@@ -506,9 +545,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
     attachments?: MessageAttachment[],
     options?: TurnOptions,
   ): void => {
-    const shown = ctx.waiting.at(-1)?.turnId ?? (ctx.cancelRequested ? undefined : str(ctx.active?.id));
+    const shown = ctx.pendingTurns.at(-1)?.turnId ?? (ctx.cancelRequested ? undefined : str(ctx.active?.id));
     if (shown !== undefined) ctx.replaced.add(shown);
-    ctx.waiting.push({ turnId, text, model, from, attachments, options });
+    ctx.pendingTurns.push({ turnId, text, model, from, attachments, options });
     sendNext();
   };
 
@@ -519,40 +558,17 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * second run would fight the paused one for the session's writer claim and
    * fail `writer_busy`. Waiting for the lookup is what tells the two apart,
    * and it costs an ordinary session nothing: `opening` is only set when the
-   * host named a conversation to continue and when a fork or a rewind is being
-   * cut.
-   *
-   * A chain that ended in a refusal - a cut the store would not make - leaves
-   * every turn on the failure path rather than on the ordinary one: the client
-   * asked to carry on from a point, and carrying on from somewhere else
-   * without saying so is the one answer that is worse than an error.
+   * host named a conversation to continue.
    */
   const sendNext = (): void => {
-    if (ctx.refused === undefined && ctx.opening !== undefined) {
+    if (ctx.opening !== undefined) {
       void ctx.opening.then(sendNext, sendNext);
       return;
     }
-    if (ctx.closed || ctx.active !== undefined) return;
-    const next = ctx.waiting.shift();
+    if (ctx.disposed || ctx.active !== undefined) return;
+    const next = ctx.pendingTurns.shift();
     if (next === undefined) return;
     const { turnId, text, model, from, attachments, options } = next;
-    // A turn a reopened run took the place of is the chat's again from here.
-    if (next.displaced === true) {
-      start.emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt: new Date().toISOString(),
-        message: {
-          text,
-          origin: from?.origin ?? { kind: 'user' },
-          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-        },
-      });
-    }
-    if (ctx.refused !== undefined) {
-      failTurn(turnId, text, model, from, attachments, ctx.refused);
-      return;
-    }
     /*
      * The record first, so this turn runs on what it says now.
      *
@@ -571,6 +587,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     beginTurn,
     resumeTurn,
     sendNext,
-    takesImages: () => takesImages,
+    supportsVision: () => supportsVision,
   };
 };

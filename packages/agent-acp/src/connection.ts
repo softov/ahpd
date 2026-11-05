@@ -70,13 +70,6 @@ const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
  */
 const EXIT_GRACE_MS = 1000;
 
-/**
- * How much of the child's stderr is kept.
- *
- * Enough for the stack trace a server prints before it dies, and bounded so a
- * server that talks all day costs a fixed amount per session.
- */
-const STDERR_BYTES = 8 * 1024;
 
 /**
  * How long a server has to act on the SIGTERM before it is killed outright.
@@ -228,26 +221,24 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     // opens a window of its own without this.
     windowsHide: true,
   });
-  // Drained rather than inherited: a server that chatters on stderr must not
-  // block on a full pipe, and it must not write into the daemon's own output.
-  // The last of it is kept, because a server that dies says why on stderr and
-  // the exit code alone is rarely the sentence a person needs.
-  let stderr = Buffer.alloc(0);
-  /** Whether the ring has dropped bytes, and so may hold half a line. */
-  let stderrCut = false;
-  child.stderr.on('data', (chunk: Buffer) => {
-    const held = Buffer.concat([stderr, chunk]);
-    if (held.length <= STDERR_BYTES) {
-      stderr = held;
-      return;
-    }
-    stderr = held.subarray(held.length - STDERR_BYTES);
-    stderrCut = true;
+  /*
+   * Drained rather than inherited: a server that chatters on stderr must not
+   * block on a full pipe, and it must not write into the daemon's own output.
+   * Each line goes to the log as it arrives, as VS Code's agents log a
+   * runtime's stderr, so a server that dies says why where the operator reads.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
+   */
+  let partial = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    const lines = `${partial}${chunk}`.split('\n');
+    partial = lines.pop() ?? '';
+    for (const line of lines) if (line.trim() !== '') options.log?.(`${options.command} stderr: ${line}`);
   });
-  /** Settles when the server's stderr has been read to its end. */
-  let readStderr: () => void = () => {};
-  const drained = new Promise<void>((resolve) => { readStderr = resolve; });
-  child.stderr.on('end', () => { readStderr(); });
+  child.stderr.on('end', () => {
+    if (partial.trim() !== '') options.log?.(`${options.command} stderr: ${partial}`);
+    partial = '';
+  });
 
   /** Why the server is gone, once it is; undefined while it runs. */
   let death: Error | undefined;
@@ -387,13 +378,13 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   const connection = app.connect(stream);
 
   /**
-   * The handshake's reply, kept so it is asked for once.
+   * The server's `initialize` answer, kept so it is asked for once.
    *
    * A server is told what a client can do at the start of a connection and
    * never again, so `initialize` answers the held reply on a second call
    * rather than negotiating twice.
    */
-  let handshake: InitializeResponse | undefined;
+  let initializeResponse: InitializeResponse | undefined;
 
   /**
    * One call, failed with the server's death rather than the SDK's closed stream.
@@ -411,27 +402,6 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       throw death ?? why;
     });
     return Promise.race([answered, ended.then((why): never => { throw why; })]);
-  };
-
-  /**
-   * What the server wrote on stderr, for a failure to say out loud.
-   *
-   * A dead server's exit can be heard before its last words have been read off
-   * the pipe, so the tail waits for the stream to end - bounded, because a
-   * grandchild that inherited the pipe keeps it open long after the server that
-   * spawned it is gone. A ring that has dropped bytes may have kept the middle
-   * of a line, so that line goes rather than being shown as half a frame; a
-   * ring that has dropped nothing keeps every byte it was given.
-   */
-  const stderrTail = async (): Promise<string> => {
-    if (death !== undefined) {
-      await Promise.race([
-        drained,
-        new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); }),
-      ]);
-    }
-    const held = stderr.toString('utf8');
-    return (stderrCut ? held.slice(held.indexOf('\n') + 1) : held).trim();
   };
 
   /**
@@ -465,14 +435,14 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
 
   return {
     initialize: (): Promise<InitializeResponse> => {
-      if (handshake !== undefined) return Promise.resolve(handshake);
+      if (initializeResponse !== undefined) return Promise.resolve(initializeResponse);
       const greeting: InitializeRequest = {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities,
         clientInfo: CLIENT_INFO,
       };
       return heard(() => connection.agent.request(methods.agent.initialize, greeting)).then((reply) => {
-        handshake = reply;
+        initializeResponse = reply;
         const says = reply.agentCapabilities?._meta?.[AUTH_STATUS];
         announces = says !== undefined && says !== null;
         handOver();
@@ -523,7 +493,6 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     deleteSession: (sessionId: string): Promise<void> =>
       heard(() => connection.agent.request(methods.agent.session.delete, { sessionId })).then(() => {}),
     ended,
-    stderrTail,
     close: async (): Promise<void> => {
       // The stdin end is what a well-behaved server reads as a shutdown; the
       // kill is for one that does not, and it goes to the whole group so what

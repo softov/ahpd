@@ -121,7 +121,7 @@ interface Kept {
   turns: Bag[];
 }
 
-export function notes(options: NotesOptions): Agent {
+export function notes(options: NotesOptions): Agent<Session> {
   const dir = options.path;
   const pace = options.pace ?? 40;
   const kept = new Map<string, Kept>();

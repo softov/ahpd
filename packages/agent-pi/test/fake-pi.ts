@@ -42,7 +42,6 @@ export const turn = (turnId = 't1'): PiTurn => ({
   turnId,
   messages: 0,
   blocks: new Map(),
-  waiting: new Map(),
   parts: [],
   calls: new Map(),
 });
@@ -118,6 +117,12 @@ export function fakePi() {
       if (steers !== undefined) throw steers;
       return 'queued';
     },
+    sendCustomMessage: async (content) => {
+      asked.push({ kind: 'customMessage', content });
+    },
+    appendEntry: (customType, data) => {
+      asked.push({ kind: 'appendEntry', customType, data });
+    },
     // pi says its queue emptied, as `clearQueue` does.
     clearSteering: () => {
       asked.push({ kind: 'clearSteering' });
@@ -129,18 +134,18 @@ export function fakePi() {
     },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
-    chosen: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
-    takesImages: () => takes,
+    modelSelection: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
+    supportsVision: () => takes,
     /*
      * pi's own runtime is what resolves a pick, so a model it does not list is
-     * refused rather than taken. That is the whole of what a turn cannot do.
+     * answered `false` and the session stays on its model.
      */
-    choose: async (id, config) => {
-      asked.push({ kind: 'choose', id, ...(config ? { config } : {}) });
+    setModel: async (id, config) => {
+      asked.push({ kind: 'setModel', id, ...(config ? { config } : {}) });
       return modelFor(runtime, id) !== undefined;
     },
     rename: (title) => { asked.push({ kind: 'rename', title }); },
-    rewind: async (entryId) => { asked.push({ kind: 'rewind', entryId }); return moves; },
+    truncate: async (entryId) => { asked.push({ kind: 'truncate', entryId }); return moves; },
     // No settle, as pi raises none for a run outside its own loop.
     resume: async () => {
       asked.push({ kind: 'resume' });
@@ -154,7 +159,7 @@ export function fakePi() {
     useEnv: async (env) => { asked.push({ kind: 'useEnv', env: { ...env } }); },
     leaf: () => leaf,
     promptAfter: (entryId) => { asked.push({ kind: 'promptAfter', entryId }); return prompted; },
-    close: () => { asked.push({ kind: 'close' }); },
+    dispose: () => { asked.push({ kind: 'dispose' }); },
   };
   return {
     backend,
@@ -166,7 +171,7 @@ export function fakePi() {
     holdStops: () => { stops = false; },
     setLeaf: (next: string) => { leaf = next; },
     setPrompted: (next: string | undefined) => { prompted = next; },
-    refuseRewind: () => { moves = false; },
+    refuseTruncate: () => { moves = false; },
     /** What the next `resume` answers: `false`, an error it throws, or a run that ends later. */
     resumeWith: (next: boolean | Error | Promise<boolean>) => { resumes = next; },
     /** The session's model takes no image, so a picture goes by its path. */

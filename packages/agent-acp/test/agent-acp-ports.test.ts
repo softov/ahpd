@@ -10,6 +10,8 @@ import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
+import { createHandlers } from '../src/session/handlers.js';
+import type { SessionContext } from '../src/session/context.js';
 import { anyone, signIn } from './people.js';
 import type { ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -277,6 +279,54 @@ it('opens a shell the host owns, waits for it, and reads what it printed', async
   expect(prose(p, chatUri)).toContain('term=hello from the shell|exit=0');
 });
 
+it('refuses a permission and a question asked with no turn running, and an empty question in one', async () => {
+  const said: Bag[] = [];
+  const ctx = {
+    emit: (_channel: string, action: Bag) => { said.push(action); },
+    provider: 'acp',
+    start: { chatUri: 'ahp-chat:/none', getAutoApproval: () => undefined },
+    cwd: tmpdir(),
+    seeds: [],
+    replay: [],
+    permissions: new Map(),
+    terminals: new Map(),
+    elicitations: new Map(),
+    mapping: undefined,
+    options: {},
+  } as unknown as SessionContext;
+  const handlers = createHandlers(ctx);
+  const form = { sessionId: 's', mode: 'form', message: 'Which branch?', requestedSchema: { type: 'object', properties: { branch: { type: 'string' } } } };
+  // No turn holds a call or a question to show, so the server is answered at
+  // once, as VS Code's host rejects a permission without an active turn and
+  // its Claude cancels a question asked outside one.
+  expect(await handlers.requestPermission({
+    sessionId: 's',
+    toolCall: { toolCallId: 'c1', title: 'Remove a file', kind: 'delete' },
+    options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }],
+  } as never)).toBe('cancelled');
+  expect(await handlers.askElicitation(form as never)).toEqual({ action: 'cancel' });
+  // In a turn, a question with neither a page nor a field is cancelled unasked.
+  ctx.mapping = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  expect(await handlers.askElicitation({ ...form, requestedSchema: { type: 'object', properties: {} } } as never)).toEqual({ action: 'cancel' });
+  expect(said).toEqual([]);
+});
+
+it('hands back at most outputByteLimit bytes of output, cut at a character boundary', async () => {
+  // Four bytes each: a cut that counted characters would keep twice the limit.
+  const output = `start ${'\u{1F600}'.repeat(4)}`;
+  const terminals = new Map([['t1', { handle: { output: () => ({ output }) }, outputByteLimit: 10, openedAt: '', command: 'x' }]]);
+  const handlers = createHandlers({
+    emit: () => {}, provider: 'acp', start: {}, cwd: tmpdir(),
+    seeds: [], replay: [], permissions: new Map(), terminals, elicitations: new Map(), options: {},
+  } as unknown as SessionContext);
+  const read = await handlers.terminalOutput({ sessionId: 's', terminalId: 't1' } as never);
+  // The last two characters, eight bytes: a third would cross the limit, and
+  // half of one is no character.
+  expect(read.output).toBe('\u{1F600}'.repeat(2));
+  expect(Buffer.byteLength(read.output, 'utf8')).toBeLessThanOrEqual(10);
+  expect(read.truncated).toBe(true);
+});
+
 it('asks the person, and answers with the once option they chose', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'ask me first');
@@ -317,11 +367,14 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   await endedTurn(p, chatUri, 1);
   begin('t2', 'ask me first');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
+  // An approval as VS Code's client sends one, which the host says as it came
+  // and the backend says nothing more of.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true } },
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true, confirmed: 'user-action' } },
   });
   await endedTurn(p, chatUri, 2);
+  expect(p.notes.filter((note) => note.method === 'action' && ((note.params as Bag).action as Bag).type === 'chat/toolCallConfirmed')).toHaveLength(1);
   begin('t3', '!echo declared');
   await endedTurn(p, chatUri, 3);
 
@@ -442,12 +495,12 @@ it('leaves the activity as it was while a confirmation waits', async () => {
   begin(client, chatUri, 't1', 'ask me first');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
 
-  // The status says a person is needed; the activity keeps the line the turn
-  // began with rather than naming the wait a second time.
+  // The status says a person is needed; the activity says nothing of the
+  // turn or the wait, and so names neither.
   const said = actions(p, chatUri)
     .filter((e) => e.action.type === 'chat/activityChanged')
     .map((e) => e.action.activity);
-  expect(said).toEqual(['Thinking']);
+  expect(said).toEqual([]);
 
   client.handle({
     method: 'dispatchAction',
@@ -645,12 +698,13 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   expect((request?.questions as unknown[])?.[1]).toMatchObject({ kind: 'boolean', defaultValue: false });
   expect((request?.questions as unknown[])?.[2]).toMatchObject({ kind: 'integer', min: 1, max: 5 });
   // An untitled enum is its own options, and an array of one is a selection of
-  // many, with the bounds the array set.
+  // many, with the bounds the array set. Both are closed sets of answers, said
+  // with `allowFreeformInput: false`, as VS Code's Claude closes a form's selects.
   expect((request?.questions as unknown[])?.[3]).toMatchObject({
-    kind: 'single-select', options: [{ id: 'fast', label: 'fast' }, { id: 'careful', label: 'careful' }],
+    kind: 'single-select', options: [{ id: 'fast', label: 'fast' }, { id: 'careful', label: 'careful' }], allowFreeformInput: false,
   });
   expect((request?.questions as unknown[])?.[4]).toMatchObject({
-    kind: 'multi-select', options: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }],
+    kind: 'multi-select', options: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }], allowFreeformInput: false,
   });
 
   // The session says somebody is needed, as a permission does, and the entry is
@@ -706,12 +760,12 @@ it('leaves the activity as it was while a question waits', async () => {
   begin(client, chatUri, 't1', 'elicitform please');
   await until(() => types(p, chatUri).includes('chat/inputRequested'));
 
-  // The status says a person is needed; the activity keeps the line the turn
-  // began with rather than naming the wait a second time.
+  // The status says a person is needed; the activity says nothing of the
+  // turn or the wait, and so names neither.
   const said = actions(p, chatUri)
     .filter((e) => e.action.type === 'chat/activityChanged')
     .map((e) => e.action.activity);
-  expect(said).toEqual(['Thinking']);
+  expect(said).toEqual([]);
 
   client.handle({
     method: 'dispatchAction',

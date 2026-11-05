@@ -108,7 +108,7 @@ async function open(tools: BoundTool[], extra: Partial<ClaudeSessionOptions> = {
   return { session, sent };
 }
 
-/** The handler of a tool the session declared on its `ahp` server. */
+/** The handler of a tool the session declared on its `host` server. */
 const handlerOf = (name: string): ((input: Record<string, unknown>, extra?: unknown) => Promise<Bag>) => {
   const server = sdk.servers.at(-1) as { tools: { name: string; handler: (input: Record<string, unknown>, extra?: unknown) => Promise<Bag> }[] };
   const one = server.tools.find((tool) => tool.name === name);
@@ -160,9 +160,12 @@ it('shows the terminal a host tool opened on its call, and keeps it in the compl
       return 'opened a.txt';
     },
   };
-  const { sent } = await open([tool]);
+  const { session, sent } = await open([tool]);
+  // A turn for the call to run in: a lead frame no prompt is pending for opens none.
+  session.sendMessage('t1', 'open a.txt');
+  await settle();
 
-  sdk.push(called('mcp__ahp__open_file', 'toolu_1'));
+  sdk.push(called('mcp__host__open_file', 'toolu_1'));
   await until(() => sent.some((one) => one.type === 'chat/toolCallStart' && one.toolCallId === 'toolu_1'));
   await handlerOf('open_file')({ path: 'a.txt' }, { _meta: { 'claudecode/toolUseId': 'toolu_1' } });
 
@@ -195,7 +198,7 @@ it('disallows Bash and aliases it to a marked host bash, and leaves an unmarked 
   };
   await open([shell]);
   expect(sdk.options?.disallowedTools).toContain('Bash');
-  expect(sdk.options?.toolAliases).toEqual({ Bash: 'mcp__ahp__bash' });
+  expect(sdk.options?.toolAliases).toEqual({ Bash: 'mcp__host__bash' });
 
   // The same tool without the mark is just another host tool: Claude keeps its
   // own Bash.
@@ -221,13 +224,13 @@ it('reads a marked host shell\'s calls by the owner\'s terminal rules, as Bash l
     run: async () => 'ran',
   }], { getAutoApproval: check });
 
-  expect(await sdk.canUseTool!('mcp__ahp__bash', { command: 'make test' }, { toolUseID: 'toolu_bash' }))
+  expect(await sdk.canUseTool!('mcp__host__bash', { command: 'make test' }, { toolUseID: 'toolu_bash' }))
     .toEqual({ behavior: 'allow', updatedInput: { command: 'make test' } });
   // The operator's rule is asked about the tool's name and then about the
   // command line, with the host tool's own name so a rule can tell them apart.
   expect(asked).toEqual([
-    { kind: 'tool', line: 'ahp/bash', shell: undefined, tool: undefined },
-    { kind: 'shell', line: 'make test', shell: 'bash', tool: 'mcp__ahp__bash' },
+    { kind: 'tool', line: 'host/bash', shell: undefined, tool: undefined },
+    { kind: 'shell', line: 'make test', shell: 'bash', tool: 'mcp__host__bash' },
   ]);
   // Approved before a question was drawn: no client is left holding one.
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toEqual([]);

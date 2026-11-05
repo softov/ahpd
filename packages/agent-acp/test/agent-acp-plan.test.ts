@@ -22,7 +22,7 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
  * prompt containing `plan` is the script that sends two plan updates over one
  * turn, the second with the entries' statuses moved on. What is under test is
  * the seam: each update reaches a `plan_update` listener as the whole list,
- * with the tool `plan`, while the turn keeps the one Plan call it drew before.
+ * with the tool `plan`, and the chat draws no call of the bridge's own for it.
  */
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/acp-server.mjs', import.meta.url));
@@ -217,21 +217,16 @@ it('hands the next turn\'s plan for the same session', async () => {
   ]);
 });
 
-it('keeps the turn\'s one Plan call while the list goes to the host', async () => {
+it('draws no call of its own for a plan while the list goes to the host', async () => {
   const { client, peer: p, chatUri, heard } = await planning();
   begin(client, chatUri, 't1', 'plan it');
   await until(() => heard.length >= 2);
   await until(() => finished(p, chatUri, 1));
 
-  // One row for two plans: opened and readied by the first, rewritten by the
-  // second, and completed by the turn ending rather than by an update.
-  expect(planCalls(p, chatUri, 't1')).toEqual([
-    'chat/toolCallStart',
-    'chat/toolCallReady',
-    'chat/toolCallContentChanged',
-    'chat/toolCallContentChanged',
-    'chat/toolCallComplete',
-  ]);
+  // Two plans heard, and no row for either: a plan update is no tool call,
+  // and VS Code draws nothing for a plan notification that is no tool call.
+  expect(planCalls(p, chatUri, 't1')).toEqual([]);
+  expect(actions(p, chatUri).some((e) => String(e.action.type).startsWith('chat/toolCall'))).toBe(false);
 });
 
 it('draws the Plan call from the host\'s tasks when the tasks plugin holds them', async () => {

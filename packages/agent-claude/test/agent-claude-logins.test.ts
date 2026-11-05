@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { Adapter, AgentView, Bag, Connector, ConnectorOwner, Engine, MessageAttachment, PluginHost, Start } from '@ahpd/sdk';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * One Claude agent on several logins, as the model proxy routes a name over
@@ -399,6 +401,11 @@ const failure = (error: string, said = SPENT, resetsAt?: number) => [
   { type: 'result', subtype: 'success', is_error: true, session_id: 'cli-1', duration_ms: 5, result: said },
 ];
 
+/** The CLI's retry of a request, with the HTTP status it had, or null for one no answer came to. */
+const retriedWith = (status: number | null, error: string) => ({
+  type: 'system', subtype: 'api_retry', session_id: 'cli-1', attempt: 1, max_retries: 1, retry_delay_ms: 0, error_status: status, error,
+});
+
 /** Whether a chat was shown the words of a failure. */
 const shown = (chat: Bag[], said = SPENT): boolean => chat.some((action) => JSON.stringify(action).includes(said));
 
@@ -444,17 +451,16 @@ describe('a failed login', () => {
     expect(tokenOf()).toBe('token-work');
   });
 
-  it('moves a turn the same way for a 5xx, a 529 and a connection that never arrived', async () => {
-    for (const [error, said] of [
-      ['server_error', 'API Error: 500 Internal server error. This is a server-side issue, usually temporary.'],
-      ['overloaded', 'API Error: 529 Overloaded'],
-      ['server_error', 'API Error: Connection error.'],
+  it('moves a turn the same way for a 5xx and a 529 the API answered', async () => {
+    for (const [error, said, status] of [
+      ['server_error', 'API Error: 500 Internal server error. This is a server-side issue, usually temporary.', 500],
+      ['overloaded', 'API Error: 529 Overloaded', 529],
     ] as const) {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
       session.sendMessage('t2', 'two');
       await settle();
-      sdk.push(...failure(error, said));
+      sdk.push(retriedWith(status, error), ...failure(error, said));
       await settle();
       expect(tokenOf(), said).toBe('token-personal');
       expect(sdk.said.at(-1), said).toMatchObject({ content: 'two', query: 1 });
@@ -779,7 +785,7 @@ describe('a failed login', () => {
     await settle();
     expect(tokenOf()).toBe('token-home');
     const down = 'API Error: 500 Internal server error';
-    sdk.push(...failure('server_error', down));
+    sdk.push(retriedWith(500, 'server_error'), ...failure('server_error', down));
     await settle();
 
     expect(sdk.queries).toHaveLength(3);
@@ -787,6 +793,31 @@ describe('a failed login', () => {
     expect(failed).toHaveLength(1);
     expect(JSON.stringify(failed[0])).toContain(down);
     expect(JSON.stringify(failed[0])).toContain(`personal is back first, at ${new Date(soon * 1000).toISOString()}`);
+  });
+
+  /*
+   * A server's failure the API never answered may have run at the provider,
+   * so the turn ends with it and no other login runs it again, as the model
+   * proxy sends a call that may have arrived to no other entry; one the API
+   * answered with a 5xx moves on.
+   */
+  it('ends the turn on a server failure no answer came to, and moves on from one the API answered', async () => {
+    const logins = twoLogins();
+    const { session, chat } = await answeredOnce(logins, ['work', 'personal']);
+    session.sendMessage('t2', 'two');
+    await settle();
+    const lost = 'API Error: Connection error.';
+    sdk.push(retriedWith(null, 'server_error'), ...failure('server_error', lost));
+    await settle();
+    expect(sdk.queries).toHaveLength(1);
+    expect(tokenOf()).toBe('token-work');
+    expect(JSON.stringify(ofTurn(chat, 'chat/error', 't2'))).toContain(lost);
+
+    session.sendMessage('t3', 'three');
+    await settle();
+    sdk.push(retriedWith(529, 'overloaded'), ...failure('overloaded', 'API Error: 529 Overloaded'));
+    await settle();
+    expect(tokenOf()).toBe('token-personal');
   });
 
   it('refuses a turn that starts with every open login resting, and names the earliest retry time', async () => {
@@ -887,7 +918,12 @@ describe('the plugin', () => {
   /** One connector of `claude-login`, as the host hands it to `open` and `check`. */
   const connectorOf = (id: string, token: string): Connector => ({ id, adapter: 'claude-login', owner: 'host', config: { token } });
 
-  it("logs a login's failure, asks the host to check that connector and to keep each call of it, on one connection", async () => {
+  /*
+   * A failed call noted and logged, and no check run, as the model proxy
+   * keeps a failed attempt; the connection offers every version the protocol
+   * package speaks, as ahpd's own nested client does.
+   */
+  it("logs a login's failure and asks the host to keep each call of it, on one connection, checking nothing", async () => {
     const { apply } = await import('../src/plugin.js');
     const { host, adapters, engines, requests, logged, connects } = fakeHost();
     // Before the load, which is when the adapter takes the `fetch` it checks with.
@@ -910,7 +946,7 @@ describe('the plugin', () => {
       emit: () => {},
       workingDirectory: host.paths[0] as string,
     };
-    const session = engine.open(view).create(start);
+    const session = startedNow(engine.open(view).create(start));
     await settle();
     expect(tokenOf()).toBe('token-work');
     await turn(session, 't1', 'one');
@@ -920,26 +956,25 @@ describe('the plugin', () => {
       session.sendMessage('t2', 'two');
       await settle();
       sdk.push(...failure('authentication_failed', denied));
-      await until(() => requests.length >= 4);
+      await until(() => requests.length >= 3);
       expect(requests).toEqual([
-        { method: 'initialize', params: { clientId: 'agent-claude', protocolVersions: ['0.9.0'] } },
+        { method: 'initialize', params: { clientId: 'agent-claude', protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] } },
         // The first turn's calls went through.
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: true } },
-        { method: 'x-ahpd/connectors/check', params: { id: 'work' } },
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: false, error: `authentication_failed: ${denied}` } },
       ]);
       expect(logged.some((line) => line.includes('work') && line.includes('authentication_failed') && line.includes(denied))).toBe(true);
-      // The check asks the API with the login's token.
+      // The check is the adapter's to answer when the host asks, and the
+      // failure asked it nothing.
+      expect(fetcher).toHaveBeenCalledTimes(0);
       expect(await adapter.check?.(connectorOf('work', 'token-work'))).toEqual({ result: 'ok' });
-      expect(fetcher).toHaveBeenCalledTimes(1);
 
-      // A failure that moves the turn is checked and kept too, on the same connection.
+      // A failure that moves the turn is kept too, on the same connection.
       session.sendMessage('t3', 'three');
       await settle();
       sdk.push(...failure('rate_limit'));
-      await until(() => requests.length >= 6);
-      expect(requests.slice(4)).toEqual([
-        { method: 'x-ahpd/connectors/check', params: { id: 'work' } },
+      await until(() => requests.length >= 4);
+      expect(requests.slice(3)).toEqual([
         { method: 'x-ahpd/connectors/note', params: { id: 'work', ok: false, error: `rate_limit: ${SPENT}` } },
       ]);
       expect(tokenOf()).toBe('token-personal');

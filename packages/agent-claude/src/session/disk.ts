@@ -35,7 +35,7 @@ export interface DiskRoots {
   configDir: string;
   /** The session's working directory, whose `.claude` is the project scope. */
   cwd?: string;
-  /** The managed directory, whose `.claude/skills` an administrator writes. */
+  /** The managed directory, whose `.claude/skills` and `.claude/agents` an administrator writes. */
   managedDir?: string;
 }
 
@@ -260,7 +260,15 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
   const { configDir, cwd, managedDir } = roots;
   const project = projectDirOf(roots);
   const out: DiskFile[] = [];
-  if (managedDir !== undefined) out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed'));
+  if (managedDir !== undefined) {
+    out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed'));
+    /*
+     * The managed subagents, which the CLI reads from the managed settings
+     * directory's `.claude/agents` and ranks over a project's and a person's.
+     * https://code.claude.com/docs/en/sub-agents
+     */
+    out.push(...markdownIn(join(managedDir, '.claude', 'agents'), 'agent', 'managed'));
+  }
   out.push(...skillsIn(join(configDir, 'skills'), 'user'));
   if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project'));
   out.push(...syncedIn(join(configDir, 'skills', 'synced')));

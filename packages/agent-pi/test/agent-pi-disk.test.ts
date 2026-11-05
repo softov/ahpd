@@ -34,12 +34,9 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         pastTenseMessage: 'a.ts',
         // What the tool returned, as its completion carried it.
         content: [{ type: 'text', text: 'export {};' }],
-        // The times pi's own entries carry for it, off the file.
-        _meta: {
-          'ahpd.startedAt': expect.any(String),
-          'ahpd.endedAt': expect.any(String),
-          'ahpd.durationMs': expect.any(Number),
-        },
+        // The kind pi's read is drawn as, and how long it ran between pi's
+        // own entries for it, off the file.
+        _meta: { toolKind: 'read', 'vscode.toolCallDurationMs': expect.any(Number) },
       },
     },
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },
@@ -193,6 +190,48 @@ it('reads back what a turn used as the sum of its answers, as the turn said it l
     { type: 'message', id: 'a2', parentId: 'a1', timestamp: at, message: answer([{ type: 'text', text: 'Two' }], 'stop') },
   ] as never);
   expect(turns[0]?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10, model: 'anthropic/claude-opus-5' });
+});
+
+/*
+ * pi's prompt joins the person's words with what was attached. A turn reads
+ * back with the message as the turn had it, which this host keeps as the
+ * prompt's parent entry, and a prompt typed into pi itself with its words and
+ * the model in force, as VS Code's readers restore a message's text,
+ * attachments and model.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L852-L890
+ */
+const keptMessage = {
+  text: 'what is in it',
+  origin: { kind: 'user' },
+  attachments: [{ type: 'resource', uri: 'file:///work/a.txt', label: 'a.txt', contentType: 'text/plain' }],
+  model: { id: 'openai/gpt-5' },
+};
+
+it('reads a turn back with the message this host kept for its prompt, and a prompt typed into pi with the model in force', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const at = new Date().toISOString();
+  const { turns } = replayEntries([
+    { type: 'model_change', id: 'm1', parentId: null, timestamp: at, provider: 'anthropic', modelId: 'claude-opus-5' },
+    { type: 'custom', id: 'k1', parentId: 'm1', timestamp: at, customType: 'ahpd.message', data: { message: keptMessage } },
+    {
+      type: 'message', id: 'u1', parentId: 'k1', timestamp: at,
+      message: { role: 'user', content: 'what is in it\n\nThe user provided the following references:\n- /work/a.txt', timestamp: 0 },
+    },
+    { type: 'message', id: 'a1', parentId: 'u1', timestamp: at, message: answer([{ type: 'text', text: 'Nothing.' }], 'stop') },
+    { type: 'message', id: 'u2', parentId: 'a1', timestamp: at, message: { role: 'user', content: 'and now', timestamp: 0 } },
+    { type: 'message', id: 'a2', parentId: 'u2', timestamp: at, message: answer([{ type: 'text', text: 'Still.' }], 'stop') },
+  ] as never);
+  expect(turns.map((one) => one.message)).toEqual([
+    keptMessage,
+    { text: 'and now', origin: { kind: 'user' }, model: { id: 'anthropic/claude-opus-5' } },
+  ]);
+});
+
+it('reads a turn this process watched back with the message as the turn had it', async () => {
+  const { turnsOf } = await import('../src/transcript.js');
+  const at = new Date().toISOString();
+  const [turn] = turnsOf({ turns: [{ turnId: 't1', startedAt: at, message: keptMessage, parts: [], state: 'complete' }] });
+  expect(turn?.message).toEqual(keptMessage);
 });
 
 it('reads a call with no result back as one its turn ended around, and an earlier turn that held it as stopped', async () => {

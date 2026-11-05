@@ -476,23 +476,18 @@ describe('a command typed into the conversation', () => {
     expect(done?.content[0]).toMatchObject({ ...named, result: { exitCode: 0 } });
   });
 
-  it('says when the command ran, and how long it took', async () => {
+  it('says how long the command ran at its completion, on the key VS Code reads', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo timed', origin: { kind: 'user' } } } },
     });
     const said = await ended(p, chatUri, 't1');
-    const metaOf = (type: string): Record<string, unknown> =>
-      (said.find((one) => one.type === type)?._meta ?? {}) as Record<string, unknown>;
-    // Started when it was ready to run, and not yet ended then.
-    expect(metaOf('chat/toolCallReady')['ahpd.startedAt']).toEqual(expect.any(String));
-    expect(metaOf('chat/toolCallReady')['ahpd.endedAt']).toBeUndefined();
-    expect(metaOf('chat/toolCallComplete')).toMatchObject({
-      'ahpd.startedAt': expect.any(String),
-      'ahpd.endedAt': expect.any(String),
-      'ahpd.durationMs': expect.any(Number),
-    });
+    const ready = said.find((one) => one.type === 'chat/toolCallReady');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete');
+    // Nothing on the ready, as VS Code's local command says it.
+    expect(ready?._meta).toBeUndefined();
+    expect(done?._meta).toEqual({ 'vscode.toolCallDurationMs': expect.any(Number) });
   });
 
   /** A session of the echo example, which runs no command of its own and says back what it is handed, `pace` apart. */

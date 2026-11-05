@@ -75,7 +75,7 @@ async function serving() {
   /** The tool as the backend was handed it. */
   const tool = (): Tool => {
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const found = servers?.ahp?.tools.find((one) => one.name === 'inquire');
+    const found = servers?.host?.tools.find((one) => one.name === 'inquire');
     if (found === undefined) throw new Error('the backend was handed no inquire tool');
     return found;
   };

@@ -1,11 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { idOf, steerPart } from '@ahpd/sdk';
+import { idOf, mergeLogicalTurnUsage, reason, steerPart } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
-import { failureOf } from './failure.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
@@ -150,23 +149,26 @@ export function createQuery(ctx: SessionContext): Query {
    *
    * The CLI's own door for context the person did not type: a
    * `UserPromptSubmit` hook returns `additionalContext`, and the harness puts
-   * it into the prompt without it appearing as part of the message. Registered
-   * once with the query and asked on every prompt, which is what makes it a
-   * turn's own: the words are read off the turn now running, so a turn that
-   * ended has already taken its instruction with it.
+   * it into the prompt without it appearing as part of the message, as VS
+   * Code's Claude agent gives its host's instructions on each turn. The
+   * session's own instructions first, then what the turn now running was
+   * handed: registered once with the query and asked on every prompt, so a
+   * turn that ended has already taken its instruction with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L206
    *
-   * Nothing when the host said nothing, which is every turn of a session it
-   * began itself - and the key is left off rather than sent empty, because
-   * empty context is a heading with nothing under it.
+   * Nothing when the host said nothing, and the key is left off rather than
+   * sent empty, because empty context is a heading with nothing under it.
    */
   const giveHostInstructions: HookCallback = async (input) => {
     if (input.hook_event_name !== 'UserPromptSubmit') return {};
     const held = ctx.hostInstructions;
-    if (held === undefined || held.turn !== ctx.active || held.said.length === 0) return {};
+    const turns = held !== undefined && held.turn === ctx.active ? held.said : [];
+    const said = [...(ctx.options.instructions ?? []), ...turns].filter((one) => one.trim() !== '');
+    if (said.length === 0) return {};
     return {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit' as const,
-        additionalContext: held.said.join('\n\n'),
+        additionalContext: said.join('\n\n'),
       },
     };
   };
@@ -283,7 +285,6 @@ export function createQuery(ctx: SessionContext): Query {
           const said = ctx.steering;
           ctx.steering = undefined;
           ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
-          ctx.touch();
         }
       }
       if (ctx.closed || mine !== bound) return;
@@ -304,41 +305,37 @@ export function createQuery(ctx: SessionContext): Query {
     const turn = ctx.active;
     if (turn) {
       turn.state = 'error';
-      turn.duration = Date.now() - ctx.startedAt;
+      const attempt = Date.now() - ctx.startedAt;
+      turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
+      ctx.resumedFrom = undefined;
       ctx.settleOpen(turn);
-      const part = ctx.addFailure(turn, why);
+      const part = ctx.addFailure(turn, 'sendFailed', why);
       ctx.turns.push(turn);
       ctx.active = undefined;
-      ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
+      ctx.endedAt(turn);
+      ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: attempt, part });
     }
-    ctx.doing(undefined);
-    ctx.touch();
   };
 
   /**
-   * Fail the turn now running, and this session with it, for the reason given.
+   * Put away a CLI that died, never answered its handshake or ended its stream
+   * without a result.
    *
-   * The road a CLI that died takes, and the road the bound below takes when one
-   * never answers: a turn in flight is recorded as one that failed, with the
-   * reason as its error part, and the session is marked gone for the turns that
-   * follow.
+   * The turn it was answering fails for the reason given, what it was handed
+   * goes with it, and the next send starts a CLI that resumes the
+   * conversation, as the reference pipeline fails every pending send and
+   * rebinds at the next; a turn handed behind it is that send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
    */
-  const died = (why: string): void => {
-    /*
-     * The CLI is gone, and it is not coming back on this session.
-     *
-     * Remembered separately from `failed`, which is about the last *turn*
-     * and is cleared by the next `begin`. This is about the session: the
-     * query is built once, at creation, so a CLI that dies before any turn
-     * exists leaves nothing for the branch below to report and a `begin`
-     * afterwards would start a turn nothing is left to answer. That is a
-     * session that says it is thinking for as long as anyone watches it.
-     */
+  const putAway = (handle: unknown, why: string): void => {
+    ctx.rebind = handle;
     ctx.gone = why;
-    // And it owes nothing: what it was handed went with it.
+    ctx.waiting.length = 0;
     ctx.owed.clear();
     ctx.answering = undefined;
+    ctx.steering = undefined;
     failTurn(why);
+    ctx.sendNext();
   };
 
   /**
@@ -362,8 +359,8 @@ export function createQuery(ctx: SessionContext): Query {
   const bounded = (handle: ReturnType<typeof query>): ReturnType<typeof query> => {
     const within = ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS;
     const timer = setTimeout(() => {
-      if (ctx.handle !== handle) return;
-      died(`Claude Code did not answer within ${within / 1000} seconds`);
+      if (ctx.query !== handle || ctx.rebind === handle) return;
+      putAway(handle, `Claude Code did not answer within ${within / 1000} seconds`);
       /*
        * Closed rather than left running: a CLI that answers ten minutes later
        * would be a process nobody is reading, for a session that has already
@@ -394,9 +391,35 @@ export function createQuery(ctx: SessionContext): Query {
    * Every query built here goes out with the bound on its handshake, which is
    * this one place rather than the two a session starts one from.
    */
+  /**
+   * The operator's environment for the session's shells, handed to the CLI as
+   * VS Code's Claude hands its own: a name set goes in the CLI's
+   * `settings.env`, which the CLI layers onto the commands it runs, and a name
+   * removed comes out of the environment the CLI is spawned with, which those
+   * commands inherit. Each command runs as the model wrote it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L178
+   */
+  const withShellEnv = (options: Bag): Bag => {
+    const entries = Object.entries(ctx.options.shellEnv ?? {});
+    const set = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    const removed = entries.filter(([, value]) => value === null).map(([name]) => name);
+    const out: Bag = { ...options };
+    if (Object.keys(set).length > 0) {
+      const settings = bag(options.settings);
+      out.settings = { ...settings, env: { ...bag(settings.env), ...set } };
+    }
+    if (removed.length > 0) {
+      const env: Bag = { ...bag(options.env ?? process.env) };
+      for (const name of removed) delete env[name];
+      out.env = env;
+    }
+    return out;
+  };
+
   const buildQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => bounded(query({
     prompt: input(bound),
-    options: {
+    options: withShellEnv({
       cwd: ctx.options.cwd,
       /*
        * Where the CLI runs, when it is not here.
@@ -423,7 +446,7 @@ export function createQuery(ctx: SessionContext): Query {
        * that is the only way a token a client signed in with can be applied -
        * `setMcpServers` does not touch servers that came from a settings file.
        */
-      ...(Object.keys(ctx.declared).length > 0 ? { mcpServers: ctx.declared as never } : {}),
+      ...(Object.keys(ctx.mcpServers).length > 0 ? { mcpServers: ctx.mcpServers as never } : {}),
       /*
        * The client plugins this session runs with.
        *
@@ -440,16 +463,12 @@ export function createQuery(ctx: SessionContext): Query {
         plugins: ctx.options.plugins.map((one) => ({ type: 'local' as const, path: one.path, skipMcpDiscovery: true })),
       }),
       /*
-       * What the host wants said, after the CLI's own prompt.
-       *
-       * The preset with an `append`, not a prompt of this backend's own: the
-       * CLI's prompt is what makes it the CLI. `snapshot`, so the prompt is
-       * recorded once for the conversation and a resume does not rewrite it
-       * under the model's reasoning.
+       * The CLI's own prompt alone, as VS Code's Claude options name it: the
+       * CLI's prompt is what makes it the CLI, and what the host wants said
+       * reaches each turn through `giveHostInstructions`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L206
        */
-      ...(ctx.options.instructions && ctx.options.instructions.length > 0
-        ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: ctx.options.instructions.join('\n\n'), snapshot: true } }
-        : {}),
+      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
       includePartialMessages: true,
       /*
        * Which of the CLI's settings files this session loads.
@@ -522,10 +541,10 @@ export function createQuery(ctx: SessionContext): Query {
        * exactly as `take` leaves it off.
        */
       ...(ctx.chosen && ctx.chosen !== 'default' ? { model: ctx.chosen } : {}),
-      // Before every shell command, the operator's environment and any client
-      // script in force; before every call, the question for a tool the
-      // operator's rule names; on every prompt, what the host asked said on
-      // that turn; and at the end of each turn, what the CLI still has in hand.
+      // Before every shell command, any client script in force; before every
+      // call, the question for a tool the operator's rule names; on every
+      // prompt, what the host asked said on that turn; and at the end of each
+      // turn, what the CLI still has in hand.
       hooks: {
         PreToolUse: [
           { matcher: 'Bash', hooks: [ctx.sourceFirst] },
@@ -615,7 +634,7 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...(agent === undefined ? {} : { agent }),
       canUseTool: ctx.canUseTool,
-    },
+    }),
   } as Parameters<typeof query>[0]));
 
   /**
@@ -648,9 +667,11 @@ export function createQuery(ctx: SessionContext): Query {
     const replaced = ctx.wake;
     ctx.wake = undefined;
     replaced?.();
-    // A new CLI owes nothing: what the last one was handed went with it.
+    // A new CLI owes nothing: what the last one was handed went with it, and
+    // it runs at its model's own effort until a turn names one.
     ctx.owed.clear();
     ctx.answering = undefined;
+    ctx.appliedEffort = undefined;
     return buildQuery(agent, first, cut);
   };
 
@@ -669,9 +690,6 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const ends = new Map<string, string>(endsOf(ctx.options.seed, ctx.options.seedEnds, ctx.options.rewindAt));
 
-  /** The turns a result left open for an answer the CLI still owed, by turn id. */
-  const spanning = new Set<string>();
-
   /**
    * Ask the CLI for a model, and say why it would not take it if it will not.
    *
@@ -683,7 +701,7 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const take = async (id: string): Promise<string | undefined> => {
     try {
-      await ctx.handle.setModel(id === 'default' ? undefined : id);
+      await ctx.query.setModel(id === 'default' ? undefined : id);
       return undefined;
     }
     catch (error: unknown) {
@@ -709,14 +727,14 @@ export function createQuery(ctx: SessionContext): Query {
   const switchAgent = (uri: string | undefined): string | undefined => {
     const name = uri === undefined ? undefined : agentNameOf(uri);
     if (name === ctx.running) return undefined;
-    const was = ctx.handle;
+    const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
       return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
     }
     ctx.running = name;
     ctx.gone = undefined;
-    ctx.handle = startQuery(name, false);
+    ctx.query = startQuery(name, false);
     void consume();
     return undefined;
   };
@@ -731,7 +749,7 @@ export function createQuery(ctx: SessionContext): Query {
    * doing and the session is exactly where it was.
    */
   const consume = async (): Promise<void> => {
-    const mine = ctx.handle;
+    const mine = ctx.query;
     try {
       for await (const raw of mine) {
         // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
@@ -821,15 +839,13 @@ export function createQuery(ctx: SessionContext): Query {
         }
 
         /*
-         * How far this turn has got, in the backend's own names for things.
-         *
-         * `user` and `assistant` are the frames that become entries in the
-         * transcript chain; a `stream_event` is a piece of one that is not
-         * written down separately, and a `result` closes a turn without being
-         * part of it. So the last of these two seen while a turn is active is
-         * that turn's last chain entry, which is where a rewind cuts.
+         * Where a fork or a rewind of this turn cuts: its last assistant
+         * message on the main chain, as VS Code's resolveForkAnchorUuid reads
+         * it from the transcript. A worker's frames are off the main chain,
+         * and a tool's result is no assistant message.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
          */
-        if (ctx.active !== undefined && (type === 'user' || type === 'assistant')) {
+        if (ctx.active !== undefined && type === 'assistant' && str(message.parent_tool_use_id) === undefined) {
           const entry = str(message.uuid);
           if (entry !== undefined) ends.set(String(ctx.active.id), entry);
         }
@@ -894,8 +910,23 @@ export function createQuery(ctx: SessionContext): Query {
           const task = str(message.task_id);
           if (id !== undefined) ctx.background.add(id);
           if (id !== undefined && task !== undefined && !ctx.ended.has(id)) ctx.tasks.set(id, task);
+          /*
+           * Whether the worker runs in the background is the SDK's own report
+           * of its task, as VS Code marks a spawn from `task_started`; a later
+           * move there is `task_updated`'s patch below.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L103-L111
+           */
+          const spawn = id === undefined ? undefined : ctx.spawning.get(id);
+          if (spawn !== undefined && typeof message.is_backgrounded === 'boolean') spawn.foreground = !message.is_backgrounded;
           ctx.noteTask(message);
           continue;
+        }
+        if (type === 'system' && str(message.subtype) === 'task_updated' && bag(message.patch).is_backgrounded === true) {
+          const task = str(message.task_id);
+          for (const [call, held] of ctx.tasks) {
+            const spawn = held === task ? ctx.spawning.get(call) : undefined;
+            if (spawn !== undefined) spawn.foreground = false;
+          }
         }
         /*
          * Every task the harness is running, after a change to that set.
@@ -914,10 +945,10 @@ export function createQuery(ctx: SessionContext): Query {
           const status = str(message.status);
           if (status === 'completed' || status === 'failed' || status === 'stopped') {
             if (task !== undefined) ctx.dropTask(task);
-            if (id !== undefined && ctx.background.has(id)) {
-              ctx.endWorker(id, status === 'completed' ? 'complete' : status === 'stopped' ? 'cancelled' : 'error',
-                status === 'failed' ? str(message.summary) : undefined);
-            }
+            // Complete however the task ended, as VS Code completes a
+            // subagent's chat on its terminal notification.
+            // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
+            if (id !== undefined && ctx.background.has(id)) ctx.endWorker(id, 'complete');
           }
           /*
            * A notification that arrives while no turn is open is the one the
@@ -946,6 +977,9 @@ export function createQuery(ctx: SessionContext): Query {
          * that carries a failure's `error` and names when the login is back.
          */
         if (type === 'rate_limit_event') { ctx.limited(bag(message.rate_limit_info)); continue; }
+        // The status of a request the CLI retries, which says whether the API
+        // answered it at all.
+        if (type === 'system' && str(message.subtype) === 'api_retry') ctx.retried(message);
         if (type === 'stream_event') { ctx.streamed(bag(message.event), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'assistant') {
           // A failure of the turn's login that the turn does not show.
@@ -990,19 +1024,16 @@ export function createQuery(ctx: SessionContext): Query {
           /*
            * Read before the turn is pushed, because the reason goes inside it.
            * A failure of the turn's login that it did not show says its own
-           * words. Otherwise a result fails its turn only as the reference
-           * reads one: a `success` that says `is_error`, in the words it holds
-           * in `result`, and `error_during_execution`, in its `errors`. Every
-           * other subtype is a limit the CLI stopped at, such as its turn or
-           * budget limit, and the turn ends as one that completed.
-           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L532-L547
-           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+           * words. A result fails its turn as VS Code's Claude mapper reads
+           * one: a `success` the CLI says failed, in its `result`, and an
+           * `error_during_execution`, in its `errors`. Every other subtype, a
+           * turn or budget limit the CLI stopped at, completes the turn.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
            */
           const subtype = str(message.subtype);
-          const failed = subtype === 'success' ? message.is_error === true : subtype === 'error_during_execution';
-          const words = subtype === 'success'
-            ? str(message.result)
-            : list(message.errors).map(String).join('\n');
+          const errorText = subtype === 'success'
+            ? (message.is_error === true ? str(message.result) ?? '' : undefined)
+            : subtype === 'error_during_execution' ? list(message.errors).map(String).join('\n') : undefined;
           /*
            * A failure of the turn's login is kept apart from the result's own.
            *
@@ -1011,7 +1042,7 @@ export function createQuery(ctx: SessionContext): Query {
            * there is either nowhere left to go or a CLI already on it.
            */
           const ofLogin = ctx.failure();
-          const wrong = ofLogin ?? (failed ? (words || 'The turn failed') : undefined);
+          const wrong = ofLogin ?? (errorText === undefined ? undefined : errorText || 'The turn failed');
           if (wrong === undefined) ctx.answered();
           /*
            * The prompts this result answered, which the CLI no longer owes,
@@ -1032,8 +1063,6 @@ export function createQuery(ctx: SessionContext): Query {
            * handed behind them is begun once the CLI owes nothing in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
-            if (turn === undefined) ctx.doing(undefined);
-            ctx.touch();
             ctx.sendNext();
             continue;
           }
@@ -1048,10 +1077,7 @@ export function createQuery(ctx: SessionContext): Query {
            * one that stopped at a limit does not.
            * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
            */
-          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) {
-            spanning.add(String(turn.id));
-            continue;
-          }
+          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) continue;
           if (turn) {
             /*
              * Every turn that ends says how it ended.
@@ -1064,12 +1090,17 @@ export function createQuery(ctx: SessionContext): Query {
              * reads the snapshot, and the snapshot is this.
              */
             turn.state = wrong !== undefined ? 'error' : 'complete';
-            // `duration_ms` is the CLI's last turn alone, so a turn that took
-            // more than one of them is measured from its own start.
-            const spanned = spanning.delete(String(turn.id));
-            turn.duration = !spanned && typeof message.duration_ms === 'number'
-              ? message.duration_ms
-              : Date.now() - ctx.startedAt;
+            /*
+             * The time from the send, on this host's own clock, as VS Code's
+             * pipeline completes a turn with its stopwatch from the send.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L684-L693
+             */
+            const attempt = Date.now() - ctx.startedAt;
+            // The turn holds its time and usage across a resume, and its
+            // usage and ending say this run's.
+            const resumedFrom = ctx.resumedFrom;
+            ctx.resumedFrom = undefined;
+            turn.duration = (resumedFrom?.duration ?? 0) + attempt;
             // Before the turn completes, not after: the reducer hangs usage on
             // `activeTurn`, and `chat/turnComplete` is what moves that into
             // `turns` - so the other order reports it about nothing.
@@ -1082,7 +1113,7 @@ export function createQuery(ctx: SessionContext): Query {
               // writes go, rather than beside them as a field of its own.
               const total: Bag = used ?? {};
               if (cost !== undefined) total._meta = { ...bag(total._meta), 'ahpd.cost': cost };
-              turn.usage = total;
+              turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
             ctx.settleOpen(turn);
@@ -1094,9 +1125,10 @@ export function createQuery(ctx: SessionContext): Query {
              */
             const part = wrong === undefined
               ? undefined
-              : ctx.addFailure(turn, wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
+              : ctx.addFailure(turn, String(message.subtype), wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
             ctx.turns.push(turn);
             ctx.active = undefined;
+            ctx.endedAt(turn);
             ctx.ran = undefined;
             ctx.parts.clear();
             ctx.calling.clear();
@@ -1122,17 +1154,15 @@ export function createQuery(ctx: SessionContext): Query {
              * the snapshot and nowhere in the stream.
              */
             if (part !== undefined) {
-              ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
+              ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: attempt, part });
             }
             else {
-              ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
+              ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: attempt });
             }
           }
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
           if (wrong !== undefined) ctx.failed = wrong;
-          ctx.doing(undefined);
-          ctx.touch();
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed
@@ -1145,45 +1175,21 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a stop closed it for the
-      // next send to start again.
-      if (ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+      // to another login is about to start it, or a stop, a death or the
+      // bound above closed it for the next send to start again, a close
+      // keeping the reason it was put away for.
+      if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
-       * A session already gone keeps the reason it went.
-       *
-       * The bound above closes a CLI that never answered, and what a close
-       * raises afterwards is the close rather than the reason - which would
-       * land here and replace the one sentence a person can act on with the
-       * SDK's own words for a socket that went away.
+       * The failure in its own words, a CLI that never started included, as
+       * VS Code's host ends a send that failed with the error's own message.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
        */
-      if (ctx.gone !== undefined) return;
-      /*
-       * What the CLI never starting reads as, rather than what the SDK says
-       * about this host.
-       *
-       * A spawn failure arrives with the SDK's own words for it - the bundled
-       * binary's path, the libc it wanted, the errno - and none of that is
-       * something a person can act on. `failureOf` answers the short message
-       * for those and leaves every other error's message alone.
-       */
-      died(failureOf(error));
+      putAway(mine, reason(error));
+      return;
     }
-    /*
-     * A stream that ended without a result, which fails the turn it was
-     * answering and what that turn had handed it, as the reference pipeline
-     * fails every pending entry; the next send starts a CLI that resumes the
-     * conversation, and a turn handed behind it is that send.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
-     */
-    if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine || ctx.gone !== undefined) return;
-    ctx.rebind = mine;
-    ctx.waiting.length = 0;
-    ctx.owed.clear();
-    ctx.answering = undefined;
-    ctx.steering = undefined;
-    if (ctx.active !== undefined) failTurn('Claude SDK stream ended without a result message');
-    ctx.touch();
-    ctx.sendNext();
+    // A stream that ended without a result.
+    if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+    putAway(mine, 'Claude SDK stream ended without a result message');
   };
 
   /**
@@ -1212,7 +1218,7 @@ export function createQuery(ctx: SessionContext): Query {
     if (unready !== undefined) return unready;
     const login = ctx.loginFor(now);
     if (startedFrom(now, login) === ctx.startedWith) return undefined;
-    const was = ctx.handle;
+    const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
       return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
@@ -1220,7 +1226,7 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.values = now;
     ctx.login = login;
     ctx.gone = undefined;
-    ctx.handle = startQuery(ctx.running, false);
+    ctx.query = startQuery(ctx.running, false);
     void consume();
     return undefined;
   };

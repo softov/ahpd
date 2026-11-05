@@ -356,8 +356,9 @@ export interface Start {
    * one, then one per client rule of the session that always applies, and then
    * what the session's request adds: a request may name a tool only its session
    * has, so what it says belongs after the tools every session is told about. A
-   * backend that can add to its system prompt adds these; one that cannot gets
-   * them in the first message instead.
+   * backend gives these by its runtime's own channel: beside each prompt where
+   * the runtime has one, as VS Code's Claude agent does, in its system prompt
+   * where it can add to one, and in the first message otherwise.
    */
   instructions?: string[];
   /**
@@ -570,6 +571,17 @@ export interface Start {
    */
   onEditSettled?(toolCallId: string): void;
   /**
+   * An edit a call made, with the text on either side of it as the agent said
+   * them, answered as the file edit a client draws the call's diff from.
+   *
+   * For a backend whose agent reports an edit with both texts, as an ACP diff
+   * does: the host holds them under URIs of the call's own and counts the
+   * lines each has that the other lacks. `before` absent is a file the call
+   * created. Optional both ways: nothing back is a host that holds no sides,
+   * and the caller draws the edit as the file it left.
+   */
+  onEditCompleted?(toolCallId: string, path: string, before: string | undefined, after: string): FileEdit | undefined;
+  /**
    * A turn this backend has written under an id of its own.
    *
    * The host names a turn when a client sends one, and what this host keeps
@@ -677,8 +689,12 @@ export interface RestoredSubagent {
  * is optional, and what is left out is a real answer rather than a gap: a
  * backend with no `list` has no sessions to browse, one with no `probe`
  * offers no models and no commands until a session of its own reports them.
+ *
+ * `Started` is what `create` answers: a backend that answers its session at
+ * once says `Session`, and one with a step to make first says that it may
+ * answer a promise of it.
  */
-export interface Agent {
+export interface Agent<Started extends Session | Promise<Session> = Session | Promise<Session>> {
   /** The id clients name. Unique among a host's agents. */
   provider: string;
   /** What a person reads instead of the id. */
@@ -962,8 +978,18 @@ export interface Agent {
    */
   subagents?(id: string, turns?: WireTurn<Turn>[], at?: SessionAt): Promise<RestoredSubagent[] | undefined>;
 
-  /** Start one. */
-  create(start: Start): Session;
+  /**
+   * Start one.
+   *
+   * A backend with a step to make before the session can be answered for,
+   * a fork's copy or a truncation's cut of the conversation it resumes,
+   * answers a promise of the session, which settles once that step is made:
+   * the host answers the request that asked for the session when it settles,
+   * and a rejection is that request's failure, as VS Code's agent provisions
+   * a fork inside the `createChat` that asked for it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7132-L7132
+   */
+  create(start: Start): Started;
 }
 
 /** One endpoint a backend suggests probing. */

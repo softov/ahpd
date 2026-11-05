@@ -259,14 +259,6 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   const confirmed = said.find((e) => e.rejectionReason === undefined);
   expect(confirmed?.action).toMatchObject({ toolCallId: 'call-a', approved: true, confirmed: 'user-action' });
 
-  /*
-   * Named while it runs, once the person allowed it - and by the tool's own
-   * title, because a host tool declares no subject of its own.
-   */
-  const doing = actions(p, chatUri)
-    .filter((e) => e.action.type === 'chat/activityChanged')
-    .map((e) => e.action.activity);
-  expect(doing).toContain('Write a note');
 
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
@@ -410,7 +402,7 @@ it('denies a tool, carries the reason and does not run it', async () => {
  * the model's alone.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
  */
-it('says a refusal with no reason back as denied, and gives the model its sentence', async () => {
+it('says a refusal once, as the client sent it, and gives the model its sentence', async () => {
   const ran: string[] = [];
   const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
   const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
@@ -418,14 +410,14 @@ it('says a refusal with no reason back as denied, and gives the model its senten
   begin(client, chatUri, 't1', 'write hi');
   await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
 
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: false } },
-  });
+  const refusal = { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: false };
+  await client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: refusal } });
   await until(() => ended(p, chatUri));
 
-  const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
-  expect(confirmed?.action.reason).toBe('denied');
+  // The client's own action and nothing of the backend's, as VS Code's host
+  // says a client's action as it came.
+  const confirmed = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallConfirmed');
+  expect(confirmed.map((e) => e.action)).toEqual([refusal]);
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
 });
 

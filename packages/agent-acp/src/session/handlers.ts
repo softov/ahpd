@@ -28,14 +28,15 @@ import { hostPathOf, str } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
 import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
+import { TOOL_USE_ID } from './clientcalls.js';
 import { bag } from './common.js';
 import { HOST_TOOLS, machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
 
 /** Everything the server sends this session: its updates, its requests and the answers to them. */
 export interface Handlers {
-  receivedUpdate(sessionId: string, update: SessionUpdate): void;
-  askPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
+  sessionUpdate(sessionId: string, update: SessionUpdate): void;
+  requestPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
   /**
    * Whether a tool the host serves may run, asked before the tools server runs
    * it.
@@ -43,27 +44,26 @@ export interface Handlers {
    * The agent calls that server directly, so this is the one place a question
    * about such a call can be put before the tool has already done its work.
    */
-  askTool(tool: BoundTool, input: Record<string, unknown>): Promise<boolean>;
+  askTool(tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean>;
   askElicitation(request: CreateElicitationRequest, signal?: AbortSignal): Promise<CreateElicitationResponse>;
   heardElicitationComplete(notification: CompleteElicitationNotification): void;
   answerElicitation(requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel'): boolean;
   settleElicitations(): void;
   readTextFile(request: ReadTextFileRequest): Promise<ReadTextFileResponse>;
   writeTextFile(request: WriteTextFileRequest): Promise<WriteTextFileResponse>;
-  openTerminal(request: CreateTerminalRequest): Promise<CreateTerminalResponse>;
+  createTerminal(request: CreateTerminalRequest): Promise<CreateTerminalResponse>;
   terminalOutput(request: TerminalOutputRequest): Promise<TerminalOutputResponse>;
   waitForTerminalExit(request: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse>;
   killTerminal(request: KillTerminalRequest): Promise<KillTerminalResponse>;
   releaseTerminal(request: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse>;
   /**
-   * The turn's end: the terminals its closing actions named, and every other
-   * one still running.
+   * The turn's end: every terminal still running.
    *
    * A terminal is background work once the call that made it has ended, and a
    * turn ending is the last moment a call can name one. What no call named is
    * still a shell the agent left running.
    */
-  settleTerminals(closing: Bag[]): void;
+  settleTerminals(): void;
   settlePermissions(): void;
   confirm: Session['confirm'];
 }
@@ -91,42 +91,49 @@ const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
   options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
 
 export function createHandlers(ctx: SessionContext): Handlers {
-  const { emit, provider, start, where, doing, touch, seeds, replay, permissions, terminals, elicitations } = ctx;
+  const { emit, provider, start, cwd, seeds, replay, permissions, terminals, elicitations } = ctx;
 
   /**
-   * One command the server offers, as the customization a client draws.
+   * One command the server offers, as the skill a client draws.
    *
-   * ACP commands are the slash surface, which is a prompt leaf rather than a
-   * file: there is no path behind one, so the URI names the command itself
-   * rather than pretending a file exists. The input hint is carried as an
+   * A runtime's slash commands are skills, as VS Code's Claude agent publishes
+   * the commands its runtime reports and as the spec classes a slash command:
+   * a skill whose URI is the `agent-builtin:` one VS Code mints for a skill no
+   * file stands behind, its id that URI. The input hint is carried as an
    * argument hint, which is what a composer puts beside the name, under
-   * `_meta['ahpd.argumentHint']`: `PromptCustomization` declares `description`
+   * `_meta['ahpd.argumentHint']`: `SkillCustomization` declares `description`
    * and no argument hint.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L90-L123
    */
-  const commandLeaf = (command: AvailableCommand): Bag => ({
-    type: 'prompt',
-    id: `command:${command.name}`,
-    name: command.name,
-    uri: `acp-command:${provider}/${command.name}`,
-    enabled: true,
-    ...(command.description === '' ? {} : { description: command.description }),
-    ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
-  });
+  const commandLeaf = (command: AvailableCommand): Bag => {
+    const uri = `agent-builtin:/skill/${encodeURIComponent(command.name)}`;
+    return {
+      type: 'skill',
+      id: uri,
+      uri,
+      name: command.name,
+      ...(command.description === '' ? {} : { description: command.description }),
+      ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
+    };
+  };
 
   /*
-   * The server's commands, as the protocol holds prompts: the children of a
+   * The server's commands, as the protocol holds skills: the children of a
    * container, never customizations of their own. They are the server's and
-   * no folder a client could write into, so one read-only directory holds
-   * them, under the URI their own `acp-command:` URIs extend.
+   * no folder a client could write into, so they sit in VS Code's one
+   * read-only built-in skills container, loaded, under the URI its skills'
+   * own URIs share.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L112-L123
    */
   const commandsIn = (leaves: Bag[]): Bag[] => (leaves.length === 0 ? [] : [{
     type: 'directory',
-    id: 'directory:commands',
-    uri: `acp-command:${provider}`,
-    name: 'commands',
-    contents: 'prompt',
+    id: 'agent-builtin:/skills',
+    uri: 'agent-builtin:/skills',
+    name: 'builtin',
     enabled: true,
+    contents: 'skill',
     writable: false,
+    load: { kind: 'loaded' },
     children: leaves,
   }]);
 
@@ -200,8 +207,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     }
   };
 
-  const settleTerminals = (closing: Bag[]): void => {
-    for (const action of closing) noteCall(bag(action));
+  const settleTerminals = (): void => {
     // A terminal no call named is still work: the agent opened a shell and the
     // turn is over, and the process it started is not. The command line is the
     // only label there is, because no call carried a title for it.
@@ -215,10 +221,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * this conversation's; it is dropped rather than written into the wrong turn.
    * A mode, a config or a command update moves the session whether or not a
    * turn is running, because the server may say so at any time and a client
-   * draws them from the session's state.
+   * draws them from the session's state. ACP's `sessionUpdate`.
    */
-  const receivedUpdate = (sessionId: string, update: SessionUpdate): void => {
-    if (ctx.closed) return;
+  const sessionUpdate = (sessionId: string, update: SessionUpdate): void => {
+    if (ctx.disposed) return;
     if (ctx.acpSessionId !== undefined && sessionId !== ctx.acpSessionId) return;
     /*
      * When this arrived, which is what a tool call's start and end are: ACP
@@ -238,9 +244,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
        */
       if (typeof said === 'string' && said !== '' && !ctx.renamed && said !== ctx.title) {
         ctx.title = said;
+        ctx.provisional = false;
         if (ctx.record !== undefined) ctx.record.title = said;
         emit('session', { type: 'session/titleChanged', title: said });
-        touch();
       }
       return;
     }
@@ -248,13 +254,11 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (update.sessionUpdate === 'current_mode_update') {
       if (ctx.modes !== undefined) ctx.modes = { ...ctx.modes, currentModeId: update.currentModeId };
       ctx.configChanged('permissionMode', update.currentModeId);
-      touch();
       return;
     }
     if (update.sessionUpdate === 'config_option_update') {
-      ctx.offersChanged(update.configOptions);
-      ctx.learnOffers(update.configOptions);
-      touch();
+      ctx.configOptionsChanged(update.configOptions);
+      ctx.learnConfigOptions(update.configOptions);
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {
@@ -382,8 +386,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * The request's `cwd` is a machine path, so the port is given it in the host's
    * spelling. No `cwd` at all is sent when the request names none, so the port
    * uses the machine's own working directory, as the server's own spawn does.
+   * ACP's `createTerminal`.
    */
-  const openTerminal = async (request: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
+  const createTerminal = async (request: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
     const shells = start.terminals;
     if (shells === undefined) throw new Error(`${provider}: this session has no shells`);
     const env = environmentOf(request);
@@ -391,7 +396,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     let run: OpenTerminal;
     if (id === undefined) {
       run = {
-        cwd: request.cwd ?? where,
+        cwd: request.cwd ?? cwd,
         command: request.command,
         ...(request.args !== undefined && request.args.length > 0 ? { args: request.args } : {}),
         ...(env === undefined ? {} : { env }),
@@ -415,7 +420,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       // directory the command itself works in is the machine's, in the argv
       // `how` answered.
       run = {
-        cwd: where,
+        cwd,
         command: how.command,
         ...(how.args === undefined ? {} : { args: how.args }),
         ...(how.env === undefined ? {} : { env: how.env }),
@@ -426,7 +431,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       handle,
       openedAt: new Date().toISOString(),
       command: [request.command, ...(request.args ?? [])].join(' '),
-      ...(typeof request.outputByteLimit === 'number' ? { limit: request.outputByteLimit } : {}),
+      ...(typeof request.outputByteLimit === 'number' ? { outputByteLimit: request.outputByteLimit } : {}),
     };
     terminals.set(handle.uri, held);
     const gone = (): void => {
@@ -449,10 +454,18 @@ export function createHandlers(ctx: SessionContext): Handlers {
   const terminalOutput = async (request: TerminalOutputRequest): Promise<TerminalOutputResponse> => {
     const held = terminalOf(request.terminalId);
     const said = held.handle.output();
-    const limit = held.limit;
-    // The protocol truncates from the beginning to stay within the limit,
-    // which keeps the tail: what a person watching wants is the end of it.
-    const output = limit === undefined || said.output.length <= limit ? said.output : said.output.slice(-limit);
+    const limit = held.outputByteLimit;
+    /*
+     * At most `outputByteLimit` bytes, cut from the beginning at a character
+     * boundary, as ACP has a client retain them: the tail is kept, which is
+     * what a person watching wants, and a cut that would split a character
+     * skips its continuation bytes.
+     * https://agentclientprotocol.com/protocol/terminals
+     */
+    const bytes = Buffer.from(said.output, 'utf8');
+    let from = limit === undefined || bytes.length <= limit ? 0 : bytes.length - limit;
+    while (from < bytes.length && ((bytes[from] ?? 0) & 0xc0) === 0x80) from += 1;
+    const output = from === 0 ? said.output : bytes.subarray(from).toString('utf8');
     return {
       output,
       truncated: output.length !== said.output.length,
@@ -500,9 +513,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
    *
    * A tool the operator's rule names is the exception: its question offers the
    * once options alone, so the card has nothing on it that would keep an
-   * answer.
+   * answer. ACP's `requestPermission`.
    */
-  const askPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
+  const requestPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
     const option = (kind: PermissionOptionKind): string | undefined =>
       request.options.find((one) => one.kind === kind)?.optionId;
     const allow = option('allow_once');
@@ -538,6 +551,16 @@ export function createHandlers(ctx: SessionContext): Handlers {
       if (command !== undefined && (await start.getAutoApproval?.('shell', command, 'bash')) === 'not-needed') {
         if (allow !== undefined) return { optionId: allow };
       }
+    }
+    /*
+     * A question with no turn running is one nobody can be shown: the chat has
+     * no turn to hold the call. It is refused at once, as VS Code's host
+     * rejects a permission without an active turn.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+     */
+    if (ctx.mapping === undefined) {
+      ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`);
+      return 'cancelled';
     }
     const offered = confirmationOptions(matched ? onlyOnce(request.options) : request.options);
     const toolCallId = request.toolCall.toolCallId;
@@ -634,12 +657,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
       type: 'session/inputNeededSet',
       request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
     });
-    touch();
     return answered;
   };
-
-  /** How many questions this bridge has raised about a tool it serves. */
-  let questioned = 0;
 
   /**
    * Whether a tool the host serves may run, asked by the tools server first.
@@ -647,20 +666,40 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * The agent calls the host's tools over the MCP server this session handed
    * it, so the call never passes through this bridge and the server has to be
    * the one that asks. A tool the rule does not name answers at once, which is
-   * every call in a session with no rule. A tool it names is put to a person
-   * with one approval and one refusal and nothing to keep, named as the agent
-   * spells that server's tools, and the person's answer is the server's.
+   * every call in a session with no rule.
+   *
+   * A tool it names is asked about on the call the agent reported for it, as
+   * VS Code's host asks on the agent's own call, which then runs and
+   * completes: the call the request names in its `_meta`, and otherwise the
+   * latest call of the running turn that names this tool as the host offers
+   * it, with one approval and one refusal and nothing to keep, and the MCP
+   * call held on the person's answer. A call a person has answered for
+   * already, on the agent's own question, runs on that answer. A call the
+   * agent never reported is one no client draws a question on, and is
+   * refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1770-L1790
    */
-  const askTool = async (tool: BoundTool, input: Record<string, unknown>): Promise<boolean> => {
+  const askTool = async (tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean> => {
     const name = tool.definition.name;
     if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
-    questioned += 1;
-    const answered = await askPermission({
+    const calls = [...(ctx.mapping?.calls.values() ?? [])];
+    const reported = calls.find((call) => call.toolCallId === meta?.[TOOL_USE_ID])
+      ?? calls.findLast((call) => (call.owner === undefined
+        ? [call.toolName, call.displayName].some((one) => referenceName(one) === `${HOST_TOOLS}/${name}`)
+        : `${call.owner}__${call.toolName}` === name));
+    if (reported === undefined || ctx.mapping === undefined) {
+      ctx.options.log?.(`${provider}: refusing ${HOST_TOOLS}/${name}: the agent reported no call for it to ask on`);
+      return false;
+    }
+    if (reported.asked) {
+      return bag(bag(callPartOf(ctx.mapping, reported.toolCallId)).toolCall).confirmed === 'user-action';
+    }
+    const answered = await requestPermission({
       sessionId: ctx.acpSessionId ?? '',
       toolCall: {
-        toolCallId: `mcp-question-${questioned}`,
-        title: tool.definition.title ?? name,
-        name: `mcp__${HOST_TOOLS}__${name}`,
+        toolCallId: reported.toolCallId,
+        title: reported.displayName,
+        name: reported.toolName,
         kind: 'other',
         status: 'pending',
         rawInput: input,
@@ -731,6 +770,14 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const held = bag(request);
     const page = pageOf(request);
     const questions = page === undefined ? questionsFor(held.requestedSchema) : [];
+    /*
+     * A question is put on the chat only while a turn runs there, and only as
+     * a page to open or a form with something on it, as VS Code's Claude puts
+     * an elicitation to a person; any other is answered `cancel` at once.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1346-L1349
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitationBridge.ts#L50-L59
+     */
+    if (ctx.mapping === undefined || (page === undefined && questions.length === 0)) return Promise.resolve({ action: 'cancel' });
     const id = nameOf(request, str(held.toolCallId));
     const message = str(held.message);
     const asking: Bag = {
@@ -770,10 +817,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       if (open === undefined) return;
       elicitations.delete(id);
       open.settle({ action: 'cancel' });
-      doing('Thinking');
-      touch();
     }, { once: true });
-    touch();
     return answered;
   };
 
@@ -804,13 +848,12 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const open = elicitations.get(requestId);
     if (open === undefined) return false;
     elicitations.delete(requestId);
-    emit('session', { type: 'session/inputNeededRemoved', id: requestId });
+    // The entry follows the chat's state: the host took it down when it said
+    // the completion that answered the request.
     const content = contentOf(answers, open.fields, open.typed);
     open.settle(accepted
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
       : { action: response === 'cancel' ? 'cancel' : 'decline' });
-    doing('Thinking');
-    touch();
     return true;
   };
 
@@ -856,17 +899,14 @@ export function createHandlers(ctx: SessionContext): Handlers {
    *
    * The protocol asks a client that stops a turn to answer what its server is
    * still blocked on, so the server is not left waiting on a person who has
-   * already said stop. Each entry takes its input-needed row with it: the
-   * question was asked and has now been answered, and a client still drawing it
-   * is offering a decision nobody can make.
-   *
-   * The settle is what a close does here, which is why both go through this.
+   * already said stop. The input-needed rows follow the chat's state: the host
+   * said the stop that ended the turn, and takes down every row of the chat
+   * that no longer stands, as VS Code's host keeps a session's entries by its
+   * chats' state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L120-L130
    */
   const settlePermissions = (): void => {
-    for (const held of permissions.values()) {
-      emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
-      held.settle('cancelled');
-    }
+    for (const held of permissions.values()) held.settle('cancelled');
     permissions.clear();
   };
 
@@ -884,7 +924,8 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const held = permissions.get(toolCallId);
     if (held === undefined) return false;
     permissions.delete(toolCallId);
-    emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
+    // The entry follows the chat's state: the host took it down when it said
+    // the confirmation that moved the call.
     const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
     const part = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     if (part !== undefined) {
@@ -901,35 +942,27 @@ export function createHandlers(ctx: SessionContext): Handlers {
      *
      * The mapping's own readiness never comes for a call a question has stood
      * on - `asked` is what stopped it - so without this a client would never be
-     * told about a call the person has just allowed. Before the action that
-     * says the call is running, because the entry exists before the chat does.
+     * told about a call the person has just allowed. The host has said the
+     * client's confirmation by now, so the entry follows the call into
+     * `running`, as VS Code's host raises it from the chat's state.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
      */
     const allowed = ctx.mapping?.calls.get(toolCallId);
     if (approved && allowed !== undefined && ctx.mapping !== undefined) {
       ctx.openCall(allowed, ctx.mapping.turnId);
     }
-    emit('chat', {
-      type: 'chat/toolCallConfirmed',
-      turnId: ctx.mapping?.turnId,
-      toolCallId,
-      approved,
-      ...(approved ? { confirmed: 'user-action' } : {}),
-      ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-    });
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
-    doing(approved ? 'Running' : 'Thinking');
-    touch();
     return true;
   };
 
   return {
-    receivedUpdate,
-    askPermission,
+    sessionUpdate,
+    requestPermission,
     askTool,
     readTextFile,
     writeTextFile,
-    openTerminal,
+    createTerminal,
     terminalOutput,
     waitForTerminalExit,
     killTerminal,

@@ -478,7 +478,7 @@ export function botChatAgent(
   store: BotStore,
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
   stopped?: (session: string, turnId: string) => void,
-): Agent {
+): Agent<Session> {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
    *

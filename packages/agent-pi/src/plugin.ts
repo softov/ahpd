@@ -197,6 +197,6 @@ export function apply(host: PluginHost, values: Record<string, unknown>): void {
   for (const [key, where] of Object.entries(perRecord)) {
     if (values[key] !== undefined) throw new Error(`options.${key} is written per record now, as ${where}`);
   }
-  host.registerEngine(engineOf(optionsOf(values), host.paths));
+  host.registerEngine(engineOf({ ...optionsOf(values), log: (line) => { host.log(line); } }, host.paths));
   loadPi().catch(() => {});
 }

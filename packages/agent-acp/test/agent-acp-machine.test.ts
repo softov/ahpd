@@ -10,6 +10,7 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { acpAgent } from '../src/agent.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import { name } from '../src/plugin.js';
 import { presets } from '../src/presets.js';
 import { readParts } from '../../computer/src/parts.js';
@@ -357,7 +358,7 @@ const signedIn = async (placed: boolean) => {
   const ended: string[] = [];
   // A folder that is there and that no case removes: a server on this host runs in it.
   const folder = join(REPO, 'packages', 'agent-acp');
-  const session = agent.create({
+  const session = startedNow(agent.create({
     uri: `ahp-session:/signin-${String(placed)}`,
     chatUri: `ahp-chat:/signin-${String(placed)}`,
     workingDirectory: folder,
@@ -380,7 +381,7 @@ const signedIn = async (placed: boolean) => {
         if (action.type === 'chat/error') said.push(String(action.message));
       }
     },
-  } as never);
+  } as never));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
@@ -557,7 +558,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
   const { kind } = await load({});
   const agent = kind.open(viewOf('gemini', () => ({ command: process.execPath, args: ['-e', script] })));
   const ended: string[] = [];
-  const session = agent.create({
+  const session = startedNow(agent.create({
     uri: 'ahp-session:/row-host',
     chatUri: 'ahp-chat:/row-host',
     settings: {},
@@ -566,7 +567,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/error' || action.type === 'chat/turnComplete') ended.push(String(action.type));
     },
-  } as never);
+  } as never));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });

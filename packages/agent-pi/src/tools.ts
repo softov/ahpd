@@ -19,13 +19,13 @@ import { loadPi } from './pi.js';
 /**
  * pi's own tool names.
  *
- * A custom tool with one of these takes the place of pi's built-in of the same
- * name, which is how pi replaces one of its own: its containerization extension
- * overrides `bash` and the file tools so they run in a VM (pi's
- * `docs/containerization.md`). pi's tools are the ones a session runs on, so a
- * tool that only happens to share a name is dropped, and only a tool marked as
- * taking the place of the harness's own - the host's agent terminal tool - is
- * handed to pi under one of these names.
+ * pi registers a custom tool of one of these names in place of its built-in,
+ * so a host tool of such a name is the one the model is offered, as VS Code's
+ * host tools override the runtime's built-in of the same name. A client's tool
+ * of such a name is dropped, as VS Code registers a client's tool without that
+ * override.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L450
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L168-L171
  */
 const PI_TOOLS = new Set(['bash', 'edit', 'find', 'grep', 'ls', 'powershell', 'read', 'write']);
 
@@ -71,7 +71,8 @@ const stopped = (signal: AbortSignal | undefined): Promise<never> => new Promise
 });
 
 /**
- * One bound tool as a pi definition, or nothing when pi already owns the name.
+ * One bound tool as a pi definition, or nothing for a client's tool of one of
+ * pi's own names.
  *
  * A host tool's answer is its `run` return, and a `run` that throws rejects the
  * call, which is how pi's own tools report a failure. A client-owned tool's
@@ -90,8 +91,8 @@ export async function toPiTool(
   openedFor?: (toolCallId: string) => ((terminal: CommandTerminal) => void) | undefined,
 ): Promise<ToolDefinition | undefined> {
   const { definition } = bound;
-  if (PI_TOOLS.has(definition.name) && bound.overridesBuiltInTool !== true) {
-    console.warn(`@ahpd/agent-pi: dropping tool "${definition.name}", which is one of pi's own`);
+  if (bound.run === undefined && PI_TOOLS.has(definition.name)) {
+    console.warn(`@ahpd/agent-pi: dropping client tool "${definition.name}", which is one of pi's own`);
     return undefined;
   }
   const { defineTool, Type } = await loadPi();

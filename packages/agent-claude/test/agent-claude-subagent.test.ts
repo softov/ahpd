@@ -103,9 +103,8 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), extra: { workerStop?: 'worker' | 'session' } = {}) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = []) {
   sdk.reset();
-  sdk.push(...frames);
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
   /** Every call id the seam was asked for, once per ask. */
@@ -131,8 +130,13 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-sub-')),
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
-    ...extra,
+    ...(tools.length > 0 ? { tools } : {}),
   });
+  await settle();
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
+  await settle();
+  sdk.push(...frames);
   await settle();
   return { main, workers, session, asked, askedAt };
 }
@@ -297,12 +301,18 @@ it('records the spawn from the permission callback, which the SDK runs first', a
   expect(main.some((one) => one.action.toolCallId === call)).toBe(true);
 });
 
-it('opens a held worker on its own result when no spawn was ever recorded', async () => {
+/*
+ * A worker no spawn was recorded for is never announced, its frames held, as
+ * VS Code's host holds a subagent's signals for a chat not yet announced: its
+ * spawning call's result and a stop open nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L60-L66
+ */
+it('opens no chat for a worker no spawn was recorded for, on its result or at a stop', async () => {
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
   // The harness's `tool_use` never arrives: all there is of the spawning call
   // is a result, naming a worker that has already spoken.
-  const { main, workers, asked } = await replay('none', [
+  const { main, session, asked } = await replay('none', [
     lines[0] as Record<string, unknown>,
     lines[4] as Record<string, unknown>,
   ]);
@@ -310,46 +320,33 @@ it('opens a held worker on its own result when no spawn was ever recorded', asyn
 
   sdk.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: call, content: 'done' }] } });
   await settle();
-
-  // The fallback title, because there is nothing to name it by, and the frames
-  // it held are on it rather than nowhere.
-  expect(asked).toEqual([call]);
-  const worker = workers.get(call);
-  expect(worker?.request).toMatchObject({ title: 'Subagent' });
-  expect(worker?.request.prompt).toBeUndefined();
-  expect(drew(worker as Worker).some((one) => JSON.stringify(one).includes('directory contents'))).toBe(true);
+  expect(asked).toEqual([]);
   // Nothing on the lead either: a result with no call behind it draws no row.
   expect(main.some((one) => one.action.type === 'chat/toolCallComplete')).toBe(false);
-});
-
-it('cancels a worker that was still waiting for its spawn', async () => {
-  const lines = fixture('claude-subagent.jsonl');
-  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  // The worker spoke and the call that names it never came, so it is held.
-  const { workers, session, asked } = await replay('none', [
-    lines[0] as Record<string, unknown>,
-    lines[4] as Record<string, unknown>,
-  ]);
-  expect(asked).toEqual([]);
 
   session.abort();
   await settle();
+  expect(asked).toEqual([]);
+});
 
-  // Its chat opens as the turn is stopped rather than five seconds after it,
-  // with the fallback title it had nothing to name it by, and it ends with the
-  // turn that spawned it.
+/*
+ * A spawn recorded at its call's block start, before its input exists: a
+ * worker that speaks before the input arrives opens its chat with what the
+ * spawn holds, as VS Code's mapper records a spawn at the block's start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L646-L653
+ */
+it('opens a worker that speaks after its call\'s block start with what the spawn holds then', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { workers, asked } = await replay('none', [
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_spawn' } } },
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: call, name: 'Agent', input: {} } } },
+    lines[4] as Record<string, unknown>,
+  ]);
   expect(asked).toEqual([call]);
-  const worker = workers.get(call);
-  expect(worker?.request).toMatchObject({ title: 'Subagent' });
-  expect(drew(worker as Worker).length).toBeGreaterThan(0);
-  expect(worker?.ended).toEqual([{ state: 'cancelled' }]);
-
-  // And nothing opens afterwards: the timer went with the chat. Waited out
-  // past `SPAWN_GRACE` rather than settling, because settling is not the claim.
-  await new Promise((resolve) => { setTimeout(resolve, 5200); });
-  expect(asked).toEqual([call]);
-  expect(worker?.ended).toEqual([{ state: 'cancelled' }]);
-}, 10000);
+  expect(workers.get(call)?.request).toMatchObject({ title: 'Subagent' });
+  expect(drew(workers.get(call) as Worker).some((one) => JSON.stringify(one).includes('directory contents'))).toBe(true);
+});
 
 it('names a worker chat by its task, cut to sixty characters', () => {
   expect(titleOf('x'.repeat(80), 'Explore')).toBe(`${'x'.repeat(60)}…`);
@@ -366,14 +363,17 @@ it('says nothing for a subagent when the host has no seam', async () => {
   // The same fixture, without `subagent`: a worker's frames stay in the turn
   // that spawned them.
   sdk.reset();
-  sdk.push(...fixture('claude-subagent.jsonl'));
   const main: Bag[] = [];
-  createSession({
+  const session = createSession({
     uri: 'ahp-session:/plain',
     chatUri: 'ahp-chat:/plain',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-plain-')),
     emit: (_channel, action) => { main.push(action as Bag); },
   });
+  await settle();
+  session.sendMessage('t1', 'go');
+  await settle();
+  sdk.push(...fixture('claude-subagent.jsonl'));
   await settle();
   // The lead turn still draws the worker's frames inline.
   expect(main.some((one) => one.type === 'chat/toolCallStart' && one.toolName === 'Bash')).toBe(true);
@@ -408,10 +408,11 @@ it('asks about a tool inside a subagent on that subagent\'s chat', async () => {
   const needed = (session.sessionState().inputNeeded as Bag[]) ?? [];
   expect(needed.some((one) => one.chat === worker.uri)).toBe(true);
 
-  // Approving it there lets the tool run and is said back where it was asked.
+  // Approving it there lets the tool run. The confirmation is the client's,
+  // which the host says where it was asked, so the backend says none of its own.
   session.confirm(write, true);
   await expect(asked).resolves.toMatchObject({ behavior: 'allow' });
-  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed' && one.toolCallId === write)).toBe(true);
+  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed')).toBe(false);
 
   // The rest of the turn: the tool's result on the worker's chat, which ends once.
   sdk.push(...lines.slice(at + 1));
@@ -428,13 +429,13 @@ it('asks a client to run a worker\'s call on the worker\'s chat', async () => {
    */
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { main, workers, session } = await replay('none', lines.slice(0, 5));
-  const worker = workers.get(call) as Worker;
-  expect(worker).toBeDefined();
-  await session.setTools?.([{
+  // The client's tool on offer from the session's start, so the turn has it.
+  const { main, workers } = await replay('none', lines.slice(0, 5), [{
     owner: 'probe',
     definition: { name: 'probe__openFile', description: 'Open a file', inputSchema: { type: 'object', properties: {} } },
   } as unknown as BoundTool]);
+  const worker = workers.get(call) as Worker;
+  expect(worker).toBeDefined();
 
   sdk.push({
     type: 'assistant',
@@ -443,7 +444,7 @@ it('asks a client to run a worker\'s call on the worker\'s chat', async () => {
     message: {
       id: 'msg-worker-open',
       role: 'assistant',
-      content: [{ type: 'tool_use', id: 'toolu_open', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      content: [{ type: 'tool_use', id: 'toolu_open', name: 'mcp__client__probe__openFile', input: { path: '/a.txt' } }],
     },
   });
   await settle();
@@ -519,16 +520,30 @@ it('ends a foreground worker on its result when no notification came', async () 
   expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
+/*
+ * Whether a worker runs in the background is the SDK's own report of its
+ * task, `task_started`'s `is_backgrounded` and a later `task_updated` patch,
+ * as VS Code marks a spawn from `task_started`: a worker moved there is not
+ * ended by its call's result, and ends on its notification.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L103-L111
+ */
+it('keeps a worker the SDK moved to the background running past its call\'s result', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const moved = { type: 'system', subtype: 'task_updated', task_id: 'a39214c163af9a96a', patch: { is_backgrounded: true } };
+  const { workers } = await replay('claude-subagent.jsonl', [...lines.slice(0, 3), moved, ...lines.slice(3, 11), lines[12] as Record<string, unknown>]);
+  expect(workers.get(call)?.ended).toEqual([]);
+  sdk.push(lines[11] as Record<string, unknown>);
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+});
+
 it('describes the spawning call in its _meta, on its start and its ready action', async () => {
   const { main } = await replay('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
   const lead = main.map((one) => one.action);
   const described = { toolKind: 'subagent', subagentDescription: 'List files in folder', subagentAgentName: 'Explore' };
-  // The ready also says when the call started, which is the only place a live
-  // call's start is stamped; the start action is sent before there is one.
-  const ready = lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta as Bag;
-  expect({ ...ready, 'ahpd.startedAt': undefined }).toEqual({ ...described, 'ahpd.startedAt': undefined });
-  expect(ready['ahpd.startedAt']).toEqual(expect.any(String));
+  expect(lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta).toEqual(described);
   expect(lead.find((one) => one.type === 'chat/toolCallStart' && one.toolCallId === call)?._meta).toEqual(described);
 });
 
@@ -550,7 +565,7 @@ it('stops one foreground worker with its task id, and leaves the lead turn runni
   expect(workers.get(call)?.ended).toEqual([]);
   sdk.push(stoppedNotice(call, 'a39214c163af9a96a'), stoppedNotice(call, 'a39214c163af9a96a'));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
 it('stops one background worker with its task id', async () => {
@@ -563,29 +578,36 @@ it('stops one background worker with its task id', async () => {
   expect(sdk.interrupted).toBe(0);
   sdk.push(stoppedNotice(call, 'af279e8136cb23ae9'));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
-it('cancels the lead turn instead when configured to stop the session', async () => {
-  const lines = fixture('claude-subagent.jsonl');
-  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6), { workerStop: 'session' });
-  session.stopWorker?.(call);
+/*
+ * A worker's chat completes however its task ended, failed and stopped
+ * alike, as VS Code completes a subagent's chat on its terminal notification.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
+ */
+it('completes a worker\'s chat whose task failed', async () => {
+  const lines = fixture('claude-subagent-background.jsonl');
+  const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
+  const { workers } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  sdk.push({ type: 'system', subtype: 'task_notification', tool_use_id: call, task_id: 'af279e8136cb23ae9', status: 'failed', summary: 'it broke' });
   await settle();
-  // The lead turn's stop closes the CLI, as the reference stop aborts its query.
-  expect(sdk.stopped).toEqual([]);
-  expect(sdk.closed).toBe(1);
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
-it('cancels the lead turn when the worker has no task id yet', async () => {
+/*
+ * A stop in a worker's chat never cancels the lead turn: VS Code's Claude
+ * agent, asked to stop a subagent's chat, stops nothing else.
+ */
+it('stops nothing for a worker the CLI named no task for, and leaves the lead turn running', async () => {
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { session } = await replay('claude-subagent.jsonl', lines.slice(0, 2));
+  const { main, session } = await replay('claude-subagent.jsonl', lines.slice(0, 2));
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.closed).toBe(1);
+  expect(sdk.interrupted).toBe(0);
+  expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
 });
 
 /** A session with a lead turn open, and the asks and frames a test drives it with. */

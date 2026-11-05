@@ -95,9 +95,9 @@ export interface AcpOptions {
   /**
    * The approval modes this agent's server is known to name.
    *
-   * A preset carries the modes its agent's own source lists, so a client draws
-   * a picker before any session of the agent has opened. A session that hears
-   * its server's modes replaces this list in the agent.
+   * A preset carries the modes its agent's own source lists, and the agent's
+   * schema draws them as a picker. The modes a session's server offers are
+   * that session's own `availableApprovalModes`.
    */
   modes?: { id: string; name: string }[];
   /**
@@ -266,6 +266,8 @@ export interface AcpConnectionOptions {
   env?: Record<string, string>;
   cwd?: string;
   handlers: AcpHandlers;
+  /** Where each line the server writes on stderr goes. */
+  log?: (line: string) => void;
 }
 
 /** One open ACP connection over a server's stdio. */
@@ -354,14 +356,6 @@ export interface AcpConnection {
    * reason.
    */
   readonly ended: Promise<Error>;
-  /**
-   * The last of what the server wrote on stderr, for a failure to carry.
-   *
-   * Nothing surfaces it while the server runs: a healthy server's chatter is
-   * the server's, and a client is told about it only when it died. Settles once
-   * a dead server's last words have been read off the pipe.
-   */
-  stderrTail(): Promise<string>;
   /** End the subprocess; settles once it has gone, and never rejects. */
   close(): Promise<void>;
 }
@@ -430,6 +424,12 @@ export interface AcpReach {
    */
   changed(path: string, before?: string): void;
   /**
+   * An edit a call made, as the file edit a client draws: both sides held as
+   * the call's own, from the texts the diff carries. Nothing where the host
+   * holds no sides.
+   */
+  completed(toolCallId: string, path: string, before: string | undefined, after: string): Bag | undefined;
+  /**
    * Whether a pseudoterminal runs a terminal this session opened for the
    * server, as its handle says. Nothing for one it did not open, or whose
    * handle says nothing.
@@ -447,18 +447,8 @@ export interface AcpReach {
 export interface AcpTurn {
   /** The turn the client began. */
   turnId: string;
-  /**
-   * Whether the host draws this turn's Plan call itself.
-   *
-   * A plan update is still handed to the host through `planUpdate`, because
-   * that is how the list the host draws changes; the call drawn from the
-   * entries is the one this suppresses, so a turn holds one Plan call.
-   */
-  hostPlan?: boolean;
   /** Every response part this turn holds, shared with the session's snapshot. */
   parts: Bag[];
-  /** The whitespace a run of message chunks has written before its part opened. */
-  waiting?: string;
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
   /** The session behind this turn, absent on one the transcript replays. */
@@ -510,8 +500,6 @@ export interface AcpTurn {
 export interface WatchedTurn {
   /** The turn the client began. */
   turnId: string;
-  /** Whether the host drew this turn's Plan call, kept so a replay agrees. */
-  hostPlan?: boolean;
   /** ISO 8601 timestamp, taken from the action the turn began with. */
   startedAt: string;
   /** What began the turn, as the transcript reports it. */
@@ -562,7 +550,10 @@ export interface WatchedSession {
   cwd: string;
   /** Directories beside it, as paths rather than URIs. */
   additional: string[];
-  /** The title the session reports, which is the first thing said until one is set. */
+  /**
+   * The title the session reports, which is the first thing said until one is
+   * set, and empty for a session read back by a load, which names none.
+   */
   title: string;
   /** ISO 8601 timestamp of the first time this process watched it. */
   createdAt: string;

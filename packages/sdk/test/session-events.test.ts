@@ -330,7 +330,7 @@ it('records the parent of a session the create tool started', async () => {
   const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
     name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
   }[] }>;
-  const create = servers.ahp?.tools.find((one) => one.name === 'create_session');
+  const create = servers.host?.tools.find((one) => one.name === 'create_session');
   const said = await create?.handler({
     relationship: 'independent', workspace: '/home/softov', title: 'Child', prompt: 'go', worktree: false,
   });

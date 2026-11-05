@@ -63,9 +63,8 @@ export interface AcpPreset {
    * The approval modes the agent's server names, as the server names them.
    *
    * Set only where the agent's own source or documentation lists them, and the
-   * row says where. A client draws these before any session of the agent has
-   * opened; a session that hears its server's modes replaces the list in the
-   * agent, which is what a server whose modes have moved is read from.
+   * row says where. They are the agent's schema's list; the modes a session's
+   * server offers are that session's own `availableApprovalModes`.
    */
   modes?: { id: string; name: string }[];
   /**

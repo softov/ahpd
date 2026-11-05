@@ -655,33 +655,24 @@ it('answers the request with isError when nobody answers in time', async () => {
   }]);
 });
 
-it('opens a row of its own for a request the agent never reported', async () => {
-  const { host, client, peer: p, uri, chatUri, arrived } = await talking();
-  const a = await joining(host, uri, chatUri, 'a');
+it('answers a request no reported call is for with an error result, and draws no call', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await joining(host, uri, chatUri, 'a');
   begin(client, chatUri, 't1', 'client tool mreq=a__openFile={"path":"/a.txt"}=-');
-  await until(() => arrived() === 1);
-
-  /*
-   * Nothing reported this call, and the agent is blocked on it all the same:
-   * the call is held and asked for, and drawn on the chat with the client on
-   * its start, because a client watching the chat rather than the session has
-   * to see the call it is being asked about.
-   */
-  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
-  expect(start?.action).toMatchObject({
-    toolCallId: 'ahp-mcp-1',
-    toolName: 'a__openFile',
-    contributor: { kind: 'client', clientId: 'a' },
-  });
-  // The entry names the tool the client announced, not the one the agent was
-  // offered - the same name every sentence about the call uses.
-  expect(asked(p, uri).map((request) => (request.toolCall as Bag).toolName)).toEqual(['openFile']);
-
-  await complete(a.client, chatUri, 'ahp-mcp-1', OK('opened /a.txt'));
   await until(() => ended(p, chatUri));
-  expect(results(p, chatUri)).toEqual([
-    { isError: false, content: [{ type: 'text', text: 'opened /a.txt' }] },
-  ]);
+
+  // Nothing reported this call, so nothing here can be its call: the agent is
+  // told so in the result, as VS Code's client tool server answers a request
+  // it cannot name a call for, and no client is asked to run anything.
+  expect(results(p, chatUri)).toEqual([{
+    isError: true,
+    content: [{
+      type: 'text',
+      text: 'Client tool "openFile" could not run: the agent reported no call it is for, and the request names none (expected at _meta["claudecode/toolUseId"]).',
+    }],
+  }]);
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
+  expect(asked(p, uri)).toEqual([]);
 });
 
 it("answers with the client's blocks as the MCP content an agent reads", async () => {

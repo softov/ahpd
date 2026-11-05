@@ -120,14 +120,16 @@ const listedOf = (session: WatchedSession): Listed => ({
  *
  * ACP carries one timestamp, `updatedAt`, where the contract wants a creation
  * and a modification; the same instant answers both rather than a creation
- * invented out of nothing. A session the server never titled is titled by its
- * id, which is what the reference store does with the same absence.
+ * invented out of nothing. A session the server never titled is listed with an
+ * empty title, which a client draws as an untitled session, as VS Code lists a
+ * provider's session that has no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6141-L6146
  */
 const listedFrom = (info: SessionInfo, now: string): Listed => {
   const at = info.updatedAt ?? now;
   return {
     id: info.sessionId,
-    title: info.title ?? info.sessionId,
+    title: info.title ?? '',
     createdAt: at,
     modifiedAt: at,
     workingDirectories: [info.cwd, ...(info.additionalDirectories ?? [])].map((directory) => uriOf(directory)),
@@ -159,6 +161,27 @@ export const deletes = (options: AcpOptions): boolean => deletesSessions.get(opt
 const deletesOf = (agentCapabilities: AgentCapabilities | undefined): boolean =>
   agentCapabilities?.sessionCapabilities?.delete !== undefined && agentCapabilities.sessionCapabilities.delete !== null;
 
+/**
+ * Whether the server behind these options advertised `session/fork`, as its
+ * last handshake said, a listing's or a session's.
+ *
+ * What the agent's `chats.fork` is read from, so the host offers a fork only
+ * for an agent whose server can make one, as VS Code's agents advertise fork
+ * only where they can fork their chats. Nothing until a server has spoken.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L741-L742
+ */
+const forksSessions = new WeakMap<AcpOptions, boolean>();
+
+/** Whether the last handshake for these options advertised `session/fork`. */
+export const forks = (options: AcpOptions): boolean => forksSessions.get(options) === true;
+
+/** Keep what one handshake said the server can do with its sessions. */
+export const heardCapabilities = (options: AcpOptions, agentCapabilities: AgentCapabilities | undefined): void => {
+  deletesSessions.set(options, deletesOf(agentCapabilities));
+  const fork = agentCapabilities?.sessionCapabilities?.fork;
+  forksSessions.set(options, fork !== undefined && fork !== null);
+};
+
 /** The rows the watched sessions answer with, in the order they were opened. */
 export const watchedRows = (provider: string): Listed[] =>
   [...watched.values()].filter((one) => one.provider === provider).map(listedOf);
@@ -174,8 +197,6 @@ export function watchSession(fields: {
   replay?: SessionUpdate[];
   /** The turns the host already held, for a resume no replay was sent for. */
   seed?: Bag[];
-  /** Whether the host draws this session's Plan call, so a replay does not. */
-  hostPlan?: boolean;
 }): WatchedSession {
   const at = new Date().toISOString();
   const known = watched.get(keyOf(fields.provider, fields.id));
@@ -184,7 +205,7 @@ export function watchSession(fields: {
     known.additional = fields.additional;
     if (fields.title !== '') known.title = fields.title;
     known.modifiedAt = at;
-    prepend(known, fields.replay ?? [], at, fields.hostPlan === true);
+    prepend(known, fields.replay ?? [], at);
     hold(known, fields.seed ?? []);
     return known;
   }
@@ -200,7 +221,7 @@ export function watchSession(fields: {
     held: [],
   };
   watched.set(keyOf(fields.provider, fields.id), created);
-  prepend(created, fields.replay ?? [], at, fields.hostPlan === true);
+  prepend(created, fields.replay ?? [], at);
   hold(created, fields.seed ?? []);
   return created;
 }
@@ -228,9 +249,9 @@ function hold(session: WatchedSession, seed: Bag[]): void {
  * process watching, so a second load is saying the same conversation again and
  * putting it in would read as one happening twice.
  */
-function prepend(session: WatchedSession, replay: SessionUpdate[], at: string, hostPlan: boolean): void {
+function prepend(session: WatchedSession, replay: SessionUpdate[], at: string): void {
   if (replay.length === 0 || session.turns.length > 0) return;
-  session.turns.push(...replayedTurns(replay, at, hostPlan));
+  session.turns.push(...replayedTurns(replay, at));
 }
 
 /** One watched session, or nothing when this process never opened it. */
@@ -298,6 +319,7 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
   ...(options.env === undefined ? {} : { env: options.env }),
   ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   handlers,
+  ...(options.log === undefined ? {} : { log: options.log }),
 });
 
 /**
@@ -336,7 +358,8 @@ export async function loadedSession(
     if (handshake.agentCapabilities?.loadSession !== true) return undefined;
     const cwd = placeOf.get(keyOf(provider, id)) ?? options.cwd ?? process.cwd();
     await connection.loadSession({ sessionId: id, cwd, mcpServers: [] });
-    return watchSession({ provider, id, cwd, additional: [], title: id, replay });
+    // A load names no title, so the record holds none, as an untitled row is listed.
+    return watchSession({ provider, id, cwd, additional: [], title: '', replay });
   }
   catch {
     return undefined;
@@ -403,11 +426,12 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   try {
     const handshake = await held.connection.initialize();
     /*
-     * What the server said it can do, kept for the agent's `delete` rather than
-     * for this read: the handshake is the only place `session/delete` is ever
-     * advertised, and this is the one call that reads it every time.
+     * What the server said it can do, kept for the agent's `delete` and
+     * `chats.fork` rather than for this read: the handshake is the only place
+     * `session/delete` and `session/fork` are ever advertised, and this is the
+     * one call that reads it every time.
      */
-    deletesSessions.set(options, deletesOf(handshake.agentCapabilities));
+    heardCapabilities(options, handshake.agentCapabilities);
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;

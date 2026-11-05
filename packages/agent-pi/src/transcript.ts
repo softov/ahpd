@@ -8,6 +8,7 @@
  */
 
 import type { Agent } from '@ahpd/sdk';
+import { INTERRUPTED } from './types.js';
 import type { WatchedSession } from './types.js';
 
 /**
@@ -20,24 +21,33 @@ import type { WatchedSession } from './types.js';
 type Transcript = NonNullable<Awaited<ReturnType<NonNullable<Agent['transcript']>>>>;
 export type TranscriptTurn = Transcript[number];
 
-/** One session's watched or rebuilt turns, in the order they ran. */
+/**
+ * One session's watched or rebuilt turns, in the order they ran.
+ *
+ * A turn with no ending is one still running when the record is read, and it
+ * reads back interrupted, as pi's own file reads such a turn back: in error,
+ * after its parts, VS Code's resumable `executionInterrupted`.
+ */
 export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[] {
-  return session.turns.map((watched) => ({
-    id: watched.turnId,
-    startedAt: watched.startedAt,
+  return session.turns.map((turn) => ({
+    id: turn.turnId,
+    startedAt: turn.startedAt,
     /*
-     * A turn this bridge began is the person's unless somebody said otherwise,
-     * and the transcript states that rather than leaving the origin off: the
-     * protocol requires one, and the live snapshot's omission is a `Bag` that
-     * a typed read cannot carry.
+     * The message as the turn had it, its attachments and model included. A
+     * turn this bridge began is the person's unless somebody said otherwise,
+     * and the transcript states that: the protocol requires an origin, and a
+     * typed read cannot carry a `Bag` that has none.
      */
     message: {
-      text: String(watched.message.text ?? ''),
-      origin: watched.message.origin ?? { kind: 'user' },
+      ...turn.message,
+      text: String(turn.message.text ?? ''),
+      origin: turn.message.origin ?? { kind: 'user' },
     },
-    responseParts: watched.parts,
-    usage: watched.usage,
-    state: watched.state,
-    ...(watched.duration === undefined ? {} : { duration: watched.duration }),
+    responseParts: turn.state === undefined
+      ? [...turn.parts, { kind: 'error', error: { ...INTERRUPTED }, resumable: true }]
+      : turn.parts,
+    usage: turn.usage,
+    state: turn.state ?? 'error',
+    ...(turn.duration === undefined ? {} : { duration: turn.duration }),
   })) as TranscriptTurn[];
 }

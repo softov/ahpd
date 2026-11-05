@@ -81,7 +81,7 @@ it('marks the tool the instruction names eager, defers remove and list, and leav
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/policy', provider: 'claude' } });
   await settle();
 
-  const tools = (sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>).ahp?.tools ?? [];
+  const tools = (sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>).host?.tools ?? [];
   const byName = new Map(tools.map((one) => [one.name, one]));
   expect(byName.get('add_artifact_or_reference')?._meta).toEqual({ 'anthropic/alwaysLoad': true });
   expect(byName.get('remove_artifact_or_reference')?._meta).toEqual({ 'anthropic/alwaysLoad': false });

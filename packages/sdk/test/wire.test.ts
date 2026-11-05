@@ -617,7 +617,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   };
   const steady = (text: string): string => text
     .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '2020-01-01T00:00:00.000Z')
-    .replace(/"ahpd\.durationMs":\d+/g, '"ahpd.durationMs":0')
+    .replace(/"vscode\.toolCallDurationMs":\d+/g, '"vscode.toolCallDurationMs":0')
     /*
      * A chat's URI names its session in base64url, so a session's UUID is in
      * there too, where the pattern below cannot see it. Decoded, mapped and

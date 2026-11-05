@@ -319,7 +319,7 @@ describe('a first-party plugin', () => {
     ['activepieces', ['pieces']],
     ['agent-acp', ['hostTools', 'toolsChanged']],
     ['agent-claude', [
-      'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir', 'workerStop',
+      'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir',
       'handshakeTimeoutMs',
     ]],
     ['agent-cofold', [

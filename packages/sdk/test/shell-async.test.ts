@@ -119,7 +119,7 @@ const hosted = async (extra: { time?: Clock; users?: boolean; usage?: Usage } = 
   const call = async (name: string, input: Record<string, unknown> = {}, id = 'tc-async'): Promise<Answer> => {
     const options = sessionQueries().at(-1)?.options as Record<string, unknown>;
     const servers = options.mcpServers as Record<string, { tools: { name: string; handler: Handler }[] }>;
-    const found = servers.ahp?.tools.find((one) => one.name === name);
+    const found = servers.host?.tools.find((one) => one.name === name);
     if (found === undefined) throw new Error(`no tool ${name}`);
     return await found.handler(input, { _meta: { 'claudecode/toolUseId': id } });
   };

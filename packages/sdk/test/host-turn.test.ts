@@ -210,12 +210,10 @@ describe('driving a turn', () => {
       // stamped at the start ride along, because an action carrying `_meta`
       // replaces the bag whole.
       const worker = { toolKind: 'subagent', subagentDescription: 'look', subagentChatUri: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/) };
-      // The times ride with them: the plugin stamped the call's start when it
-      // began running and the completion adds the end.
-      const started = { ...worker, 'ahpd.startedAt': expect.any(String) };
-      const ended = {
-        ...started, 'ahpd.endedAt': expect.any(String), 'ahpd.durationMs': expect.any(Number),
-      };
+      // How long the call ran rides its completion, on the key VS Code's host
+      // says it on.
+      const started = worker;
+      const ended = { ...worker, 'vscode.toolCallDurationMs': expect.any(Number) };
       expect(changed).toEqual([
         { ...started, progressMessage: 'Reading the tests' },
         { ...started, progressMessage: 'Running Grep' },
@@ -302,13 +300,15 @@ describe('driving a turn', () => {
     expect(mid.snapshot.state.activeTurn).toBeDefined();
     expect(mid.snapshot.state.turns).toHaveLength(0);
 
-    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 42 });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 600000 });
     const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: { duration: number }[]; activeTurn?: unknown } };
     };
     expect(after.snapshot.state.activeTurn).toBeUndefined();
     expect(after.snapshot.state.turns).toHaveLength(1);
-    expect(after.snapshot.state.turns[0]?.duration).toBe(42);
+    // Timed on this host from the send, as VS Code's pipeline times a turn,
+    // and not by the CLI's own figure.
+    expect(after.snapshot.state.turns[0]?.duration).toBeLessThan(600000);
     expect(actions(p, chatUri).map((e) => e.action.type)).toContain('chat/turnComplete');
   });
 
@@ -346,6 +346,18 @@ describe('driving a turn', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'weather?' } } },
     });
     await settle();
+    // The model's two calls, whose rows the questions are put on, as a CLI
+    // names a call before it asks about it.
+    await emit({
+      type: 'assistant',
+      message: {
+        id: 'm1',
+        content: [
+          { type: 'tool_use', id: 'call-a', name: 'WebFetch', input: { url: 'https://example.test' } },
+          { type: 'tool_use', id: 'call-b', name: 'WebSearch', input: { query: 'rain' } },
+        ],
+      },
+    });
 
     // Both in flight before either is answered.
     const first = sdk.canUseTool?.('WebFetch', { url: 'https://example.test' }, { toolUseID: 'call-a' });
@@ -368,7 +380,7 @@ describe('driving a turn', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action' },
+        action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-a', approved: true, confirmed: 'user-action' },
       },
     });
     await settle();
@@ -388,7 +400,7 @@ describe('driving a turn', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-b', approved: false, reason: 'denied' },
+        action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-b', approved: false, reason: 'denied' },
       },
     });
     await settle();
@@ -455,7 +467,7 @@ describe('driving a turn', () => {
     expect(ending.map((one) => one.type)).toEqual(['chat/error']);
     expect(ending[0]).toMatchObject({
       turnId: 't1',
-      duration: 7,
+      duration: expect.any(Number),
       part: { kind: 'error', error: { message: 'the tool exploded' } },
     });
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/responsePart'
@@ -534,6 +546,28 @@ describe('driving a turn', () => {
     expect(await sessionSide()).toEqual({ error: undefined, row: Status.Idle, listed: Status.Idle });
   });
 
+  /*
+   * A turn the CLI stopped at its turn limit completes, as VS Code's Claude
+   * mapper reads a result that is neither a failed success nor an error during
+   * execution.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
+   */
+  it('completes a turn the harness stopped at a limit', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'error_max_turns', duration_ms: 3 });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { state: string; responseParts: { kind: string }[] }[] } };
+    };
+    expect(after.snapshot.state.turns[0]?.state).toBe('complete');
+    expect(after.snapshot.state.turns[0]?.responseParts.some((one) => one.kind === 'error')).toBe(false);
+  });
+
   it('says a turn ended badly even when the harness gave no words', async () => {
     const { client, chatUri } = await running();
     client.handle({
@@ -546,32 +580,10 @@ describe('driving a turn', () => {
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
 
     const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { responseParts: { kind: string; error?: { message?: string } }[] }[] } };
+      snapshot: { state: { turns: { state: string; responseParts: { kind: string; error?: { message?: string } }[] }[] } };
     };
     const failure = after.snapshot.state.turns[0]?.responseParts.find((one) => one.kind === 'error');
     expect(failure?.error?.message).toBe('The turn failed');
-  });
-
-  /*
-   * A limit the CLI stopped at is not a failure, as the reference reads a
-   * result: only `error_during_execution` and a `success` that says
-   * `is_error` end a turn in an error.
-   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
-   */
-  it('completes a turn the CLI stopped at a limit', async () => {
-    const { client, chatUri } = await running();
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
-    });
-    await settle();
-    await emit({ type: 'result', subtype: 'error_max_turns', is_error: true, duration_ms: 3, errors: ['Reached maximum number of turns (1)'] });
-
-    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { state: string; responseParts: { kind: string }[] }[] } };
-    };
-    expect(after.snapshot.state.turns[0]?.state).toBe('complete');
-    expect(after.snapshot.state.turns[0]?.responseParts.some((one) => one.kind === 'error')).toBe(false);
   });
 
   it('tells every client when a session goes', async () => {
@@ -776,7 +788,7 @@ describe('one tool call, one row', () => {
     const started = await running({ terminalAutoApproveDefaults: 'none' });
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.uri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
     });
     await settle();
     await emit({
@@ -852,7 +864,7 @@ describe('one tool call, one row', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' } },
     });
     await settle();
 
@@ -895,7 +907,7 @@ describe('one tool call, one row', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' } },
     });
     await settle();
 
@@ -996,6 +1008,53 @@ describe('running a failed turn again', () => {
     expect(state.turns).toEqual([]);
   });
 
+  /*
+   * A resumed turn's end and usage are both its runs', as VS Code's host says
+   * them: the time the run took with the time the run before took, and its
+   * usage merged over what the run before used, the costs added. A chat opened
+   * after it holds what a client that watched it was told.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L975
+   */
+  it('ends a resumed turn with the time and the cost of both its runs', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
+    });
+    await settle();
+    // A first run long enough that a second run timed alone ends sooner.
+    await new Promise((r) => { setTimeout(r, 40); });
+    await emit({
+      type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 5,
+      usage: { input_tokens: 10, output_tokens: 2 }, modelUsage: { 'claude-x': { costUSD: 0.5 } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+    });
+    await settle();
+    await emit({
+      type: 'result', subtype: 'success', is_error: false, duration_ms: 7, stop_reason: 'end_turn',
+      usage: { input_tokens: 4, output_tokens: 1 }, modelUsage: { 'claude-x': { costUSD: 0.75 } },
+    });
+
+    const said = actions(p, chatUri).map((e) => e.action);
+    const both = { inputTokens: 4, outputTokens: 1, _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' } } };
+    // Timed on this host, as VS Code's host times a turn: the first run's time
+    // is what its failure said, and the resumed end adds the second run's.
+    const first = Number(said.find((one) => one.type === 'chat/error')?.duration);
+    expect(first).toBeGreaterThanOrEqual(30);
+    const ended = said.filter((one) => one.type === 'chat/turnComplete').map((one) => Number(one.duration));
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toBeGreaterThanOrEqual(first);
+    expect(said.filter((one) => one.type === 'chat/usage').at(-1)?.usage).toMatchObject(both);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string; duration?: number; usage?: unknown }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => [one.id, one.duration])).toEqual([['t1', ended[0]]]);
+    expect(state.turns[0]?.usage).toMatchObject(both);
+  });
+
   it('refuses one that is not the latest turn', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
@@ -1011,13 +1070,19 @@ describe('running a failed turn again', () => {
 
   it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
     const { client, peer: p, chatUri } = await running();
-    // A turn that ends well, which leaves nothing a client could run again.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
     });
     await settle();
-    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5, user_message_uuids: [sdk.uuids.at(-1)] });
+    // The CLI's stream ends under the turn, which fails it with nothing a
+    // client could run again.
+    const cli = sessionQueries().at(-1);
+    if (cli !== undefined) {
+      // The same ending the fake's own `close()` gives: no more frames.
+      cli.closed = true;
+      cli.wake?.();
+    }
     await settle();
     const clis = sessionQueries().length;
 

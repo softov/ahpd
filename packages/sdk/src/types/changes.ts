@@ -480,6 +480,16 @@ export interface ChangesetSource {
    */
   propose?(dir: string, session: string, toolCallId: string, path: string, apply: (current: string | undefined) => string | undefined): Promise<FileEdit | undefined>;
   /**
+   * An edit a call made, with both sides as the call said them, held for a
+   * client to draw the call's diff from.
+   *
+   * For an agent that reports its edit with the text on either side of it, as
+   * an ACP diff does: both are held under URIs of the call's own, with how many
+   * lines each side has that the other lacks, as VS Code's file edit tracker
+   * keeps a call's two sides. `before` absent is a file the call created.
+   */
+  complete?(session: string, toolCallId: string, path: string, before: string | undefined, after: string): FileEdit;
+  /**
    * The preview for a call is done with, so what it was serving goes.
    *
    * Called once the person has answered the question, whichever way they

@@ -112,8 +112,9 @@ it('fails the turn with what the server said when it refuses the sign-in', async
   // The refusal came from `authenticate` and carries the same code the
   // protocol's `auth_required` does, so a code alone cannot tell the two
   // apart. It is not a request for a sign-in: nobody is being asked to set an
-  // option they have already set.
-  expect(errored(actions)?.errorType).toBe('turnFailed');
+  // option they have already set. It is a send that failed, as VS Code's host
+  // types one.
+  expect(errored(actions)?.errorType).toBe('sendFailed');
   expect(String(errored(actions)?.message)).toMatch(/^acp-signin: sign-in with api-key failed: That API key was rejected/);
   expect(actions.some((action) => action.type === 'chat/turnComplete')).toBe(false);
 });

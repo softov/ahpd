@@ -8,17 +8,27 @@
  *
  * The protocol requires a part to exist before text streams into it, so this
  * file opens a markdown or reasoning part at the first chunk of each run of
- * that kind, a markdown run at its first chunk holding more than whitespace,
- * and a turn's parts land in the order the server wrote them. An
+ * that kind, and a turn's parts land in the order the server wrote them. An
  * update this bridge does not understand returns nothing rather than
  * throwing, so a 1.5 server does not fail a 1.4 bridge.
  */
 
 import { normalize } from 'node:path';
-import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
-import { bag, callTimes, hostPathOf, str, strings, uriOf, withCallTimes } from '@ahpd/sdk';
+import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate, ToolKind } from '@agentclientprotocol/sdk';
+import { bag, hostPathOf, str, strings, toolCallDurationMs, uriOf, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
+
+/**
+ * The prefix every tool of the host's own MCP server is seen under.
+ *
+ * A client's tool rides that server with the host's own, because a server this
+ * plugin points the agent at is the one way an ACP agent can be handed a host
+ * tool at all. So an agent that names the tool it called spells it
+ * `mcp__ahp__<clientId>__<name>`, and one that has its own idea of the name
+ * says it in the title instead.
+ */
+export const HOST_SERVER = 'mcp__ahp__';
 
 /** The text of a content block, or nothing for a kind this bridge does not carry. */
 const textOf = (content: ContentBlock): string | undefined =>
@@ -38,26 +48,17 @@ export const callPartOf = (turn: { parts: Bag[] }, callId: string): Bag | undefi
   turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === callId);
 
 /**
- * The id of the turn's plan call.
- *
- * Named rather than numbered, because a turn keeps one plan for as long as the
- * agent sends plans and a second one would have to be told apart from it.
- */
-const planId = (turnId: string): string => `${turnId}:plan`;
-
-/**
  * The part a chunk of one kind appends to, with the action that announces it
  * when this chunk opens it.
  *
  * ACP chunks carry no block index, so a run is what the order says: the part
- * last opened in the turn takes the chunk when it is of the same kind and
- * `continues`, and a chunk of the other kind, one after a tool call, or one
- * after a run of held whitespace, opens a new part. Its id is the turn's and
- * its position in the turn, which no later part changes.
+ * last opened in the turn takes the chunk when it is of the same kind, and a
+ * chunk of the other kind or one after a tool call opens a new part. Its id is
+ * the turn's and its position in the turn, which no later part changes.
  */
-const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', continues: boolean): { part: Bag; opened?: Bag } => {
+const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; opened?: Bag } => {
   const last = turn.parts.at(-1);
-  if (continues && last !== undefined && last.kind === kind) return { part: last };
+  if (last !== undefined && last.kind === kind) return { part: last };
   const part: Bag = { id: `${turn.turnId}:${turn.parts.length}`, kind, content: '' };
   turn.parts.push(part);
   return { part, opened: { type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } } };
@@ -66,23 +67,13 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', continues: boolean
 /**
  * One chunk's actions: its part's announcement when it opens one, then the text.
  *
- * A run of message chunks is held while it is only whitespace and leads the
- * part it opens once a chunk writes something else, so a message that is only
- * whitespace, as some models write before a call, opens nothing and takes no
- * position in the turn.
+ * Any text opens its part, whitespace included, as VS Code's agents open a
+ * part for whatever text their runtime sends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
  */
-const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', written: string): Bag[] => {
-  const held = turn.waiting;
-  delete turn.waiting;
-  let text = written;
-  if (kind === 'markdown' && turn.parts.at(-1)?.kind !== 'markdown') {
-    text = `${held ?? ''}${written}`;
-    if (text.trim() === '') {
-      turn.waiting = text;
-      return [];
-    }
-  }
-  const { part, opened } = runOf(turn, kind, held === undefined);
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', text: string): Bag[] => {
+  if (text === '') return [];
+  const { part, opened } = runOf(turn, kind);
   part.content = `${String(part.content ?? '')}${text}`;
   const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
   const streamed: Bag = { type, turnId: turn.turnId, partId: part.id, content: text };
@@ -110,29 +101,48 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
    * some other client's tool is not what the agent said it reached for.
    */
   const owner = turn.ownerOf?.(named, title);
+  /*
+   * A client's tool by the name the client announced it with: the host MCP
+   * server's prefix and the client's own are taken off, as VS Code's agents
+   * strip their client tool server's prefix, so the row names a tool the
+   * client has.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+   */
+  const bare = name.startsWith(HOST_SERVER) ? name.slice(HOST_SERVER.length) : name;
+  const toolName = owner !== undefined && bare.startsWith(`${owner}__`) ? bare.slice(owner.length + 2) : name;
   const call: AcpCall = {
     toolCallId: update.toolCallId,
-    toolName: name,
+    toolName,
     displayName: title,
     readied: false,
     asked: false,
     ...(owner === undefined ? {} : { owner }),
   };
   turn.calls.set(update.toolCallId, call);
-  // A call ends the run of message chunks before it, held whitespace and all.
-  delete turn.waiting;
+  const toolKind = 'kind' in update && update.kind !== undefined && update.kind !== null ? KINDS[update.kind] : undefined;
   turn.parts.push({
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
-      toolName: name,
+      toolName,
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),
+      ...(toolKind === undefined ? {} : { _meta: { toolKind } }),
     },
   });
   return call;
 };
+
+/**
+ * The kind a client routes a call's row by, from the kind ACP reports for the
+ * call, as VS Code's agents stamp `_meta.toolKind` from their harness's kind of
+ * tool: a command is a terminal, a search a search, a read a read. Any other
+ * kind carries none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L652
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L689
+ */
+const KINDS: Partial<Record<ToolKind, string>> = { execute: 'terminal', search: 'search', read: 'read' };
 
 /**
  * The contributor an action about a call carries, when a client owns its tool.
@@ -222,12 +232,10 @@ const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[]
 };
 
 /**
- * A call's times, as the `_meta` an action about it carries.
+ * A call's bag, as the `_meta` an action about it carries.
  *
- * The start is the receive time of the first update about the call and the end
- * the receive time of the one that finished it, both on this plugin's clock:
- * ACP carries no time of its own. An action's `_meta` replaces the call's whole
- * bag, so every action sent after the start carries them again.
+ * An action's `_meta` replaces the call's whole bag, so every action that
+ * carries one carries all of it again.
  */
 const metaOf = (turn: AcpTurn, call: AcpCall): Bag => {
   const held = callPartOf(turn, call.toolCallId);
@@ -239,27 +247,28 @@ const metaOf = (turn: AcpTurn, call: AcpCall): Bag => {
 /**
  * The start a call's first update about it gives it.
  *
- * The first word about a call is what starts it, whichever update that is: a
+ * The receive time of the first word about a call, on this plugin's clock,
+ * since ACP carries no time of its own; whichever update that is: a
  * `tool_call` holding the agent still deciding has started it, and so has the
  * `tool_call_update` of a call whose `tool_call` went missing. A row a
- * permission request opened is no different, and the request itself stamps
- * nothing. A call that arrives already finished is stamped twice over by the
- * one update that carries both.
+ * permission request opened is no different, and the request itself starts
+ * nothing. A call that arrives already finished starts and ends in the one
+ * update that carries both.
  */
-const stampStart = (turn: AcpTurn, call: AcpCall, at?: number): void => {
+const stampStart = (call: AcpCall, at?: number): void => {
   if (at === undefined || call.startedAt !== undefined) return;
   call.startedAt = at;
-  const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-  held._meta = withCallTimes(bag(held._meta), callTimes(at));
 };
 
 /**
- * The end a call's finishing update gives it, kept beside the start.
+ * How long a call ran, on its `_meta`, from its start to the receive time of
+ * the update that finished it.
  */
 const stampEnd = (turn: AcpTurn, call: AcpCall, at?: number): void => {
   if (at === undefined) return;
   const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
-  held._meta = withCallTimes(bag(held._meta), callTimes(call.startedAt ?? at, at));
+  const meta = withToolCallDuration(held._meta === undefined ? undefined : bag(held._meta), toolCallDurationMs(call.startedAt, at));
+  if (meta !== undefined) held._meta = meta;
 };
 
 /**
@@ -343,23 +352,19 @@ const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Ba
 const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] =>
   call.status === 'completed' || call.status === 'failed' ? closed(turn, call, content, actions, at) : shown(turn, call, content, actions);
 
-/** The content a call's held part carries, which is what its completion repeats. */
-const heldContent = (part: Bag | undefined): Bag[] => {
-  const content = part === undefined ? undefined : bag(part.toolCall).content;
-  return Array.isArray(content) ? content as Bag[] : [];
-};
-
 /**
  * One diff, as the file edit a client draws and as an entry in the changeset.
  *
- * Only the `after` side goes in the block: no `file://` URI addresses what a
- * file used to be, and the diff's own `oldText` is what the turn's review holds
- * as the before side. A file with no `oldText` is one the agent created. A
- * diff of a path outside the session's own directories is shown and not
- * recorded - it is something the agent says it did somewhere this session was
- * never given.
+ * The block's two sides are the diff's own texts, held by the host as the
+ * call's, with the lines each has that the other lacks, as VS Code's file edit
+ * tracker keeps a call's sides; a file with no `oldText` is one the agent
+ * created. A turn the transcript replays has no host to hold them, and its
+ * block names the file as it is. A diff of a path outside the session's own
+ * directories is shown and not recorded in the changeset: it is something the
+ * agent says it did somewhere this session was never given.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/fileEditTracker.ts#L331-L342
  */
-const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
+const fileEdit = (turn: AcpTurn, toolCallId: string, diff: Diff): Bag => {
   // In the system's own spelling, as the write's capture is: a server on
   // Windows may join a path with `/`, and one file named two ways is two rows.
   // A path an agent in a machine names is its machine path, read as the host's.
@@ -368,7 +373,8 @@ const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
   if (turn.reach !== undefined && turn.reach.within(path)) {
     turn.reach.changed(path, diff.oldText ?? undefined);
   }
-  return { type: 'fileEdit', after: { uri, content: { uri } } };
+  return turn.reach?.completed(toolCallId, path, diff.oldText ?? undefined, diff.newText)
+    ?? { type: 'fileEdit', after: { uri, content: { uri } } };
 };
 
 /**
@@ -379,7 +385,7 @@ const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
  * It says `isPty` as the session's handle does, and nothing on a turn the
  * transcript replays, which holds no handle.
  */
-const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[] => {
+const contentBlocks = (turn: AcpTurn, toolCallId: string, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
   for (const entry of content ?? []) {
     if (entry.type === 'content' && entry.content.type === 'text') {
@@ -388,7 +394,7 @@ const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[]
       const isPty = turn.reach?.isPty(entry.terminalId);
       blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', ...(isPty === undefined ? {} : { isPty }) });
     } else if (entry.type === 'diff') {
-      blocks.push(fileEdit(turn, entry));
+      blocks.push(fileEdit(turn, toolCallId, entry));
     }
   }
   return blocks;
@@ -397,19 +403,6 @@ const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[]
 /** What a call's content says in words, which is all a failure carries. */
 const contentText = (blocks: Bag[]): string =>
   blocks.filter((block) => block.type === 'text').map((block) => String(block.text ?? '')).join('\n');
-
-/**
- * One plan entry, as a line of the plan.
- *
- * A checkbox says whether the entry is done, and the status is written out
- * where a checkbox cannot say it, because an entry that is running is not an
- * entry that is waiting either.
- */
-const entryLine = (entry: PlanEntry): string => {
-  const done = entry.status === 'completed';
-  const where = done || entry.status === 'pending' ? '' : ` (${entry.status})`;
-  return `- [${done ? 'x' : ' '}] ${entry.content}${where}`;
-};
 
 /**
  * One plan entry as the host reads it.
@@ -424,45 +417,6 @@ const planEntryOf = (entry: PlanEntry): HarnessPlanEntry => ({
   status: entry.status,
   priority: entry.priority,
 });
-
-/**
- * The turn's one plan, as the call that holds it.
- *
- * A plan is something the agent writes rather than streams, so it is a call:
- * one for the whole turn, opened by the first plan and rewritten by every one
- * after it. The protocol sends the whole list each time rather than a change to
- * it, so there is nothing to append and each update replaces what the call
- * shows - an update carrying no entries replacing it with nothing. Nothing in
- * the protocol says when the agent has finished writing a plan, so the call is
- * completed by the turn ending, with the last plan as its result.
- */
-const plan = (turn: AcpTurn, entries: PlanEntry[]): Bag[] => {
-  const call = callOf(turn, { toolCallId: planId(turn.turnId), title: 'Plan', name: 'plan' });
-  const first = call.readied === false;
-  call.status = 'in_progress';
-  const content: Bag[] = entries.map((entry) => ({ type: 'text', text: entryLine(entry) }));
-  bag(callPartOf(turn, call.toolCallId)?.toolCall).content = content;
-  return [
-    // The row, and the ready that says nobody is ever going to be asked about
-    // a plan - a question is a question about a tool, and a plan is not one.
-    ...(first ? opened(turn, call) : []),
-    ...(first ? [ready(turn, call, undefined)] : []),
-    { type: 'chat/toolCallContentChanged', turnId: turn.turnId, toolCallId: call.toolCallId, content },
-  ];
-};
-
-/**
- * The turn's plan, completed as the turn ends.
- *
- * A plan is the one row the protocol never closes itself, so the turn ending is
- * what closes it - with the last plan the agent wrote as what it returned.
- */
-export function closePlan(turn: AcpTurn): Bag[] {
-  const call = turn.calls.get(planId(turn.turnId));
-  if (call === undefined) return [];
-  call.status = 'completed';
-  return closed(turn, call, heldContent(callPartOf(turn, call.toolCallId)), []);
-}
 
 /**
  * One update's actions, in the order they must be sent.
@@ -513,11 +467,11 @@ export function mapUpdate(
     case 'tool_call': {
       const call = callOf(turn, update);
       call.status = update.status ?? 'pending';
-      stampStart(turn, call, at);
+      stampStart(call, at);
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
     }
 
     /*
@@ -532,12 +486,12 @@ export function mapUpdate(
       const call = callOf(turn, update);
       if (update.status !== undefined && update.status !== null) call.status = update.status;
       const input = inputOf(call, update);
-      stampStart(turn, call, at);
+      stampStart(call, at);
       const actions = known ? [] : opened(turn, call);
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
       if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
     }
 
     /*
@@ -568,15 +522,18 @@ export function mapUpdate(
     }
 
     /*
-     * The agent's plan, as the turn's one call for it, and as the session's
-     * plan in the host.
+     * The agent's plan, as the session's plan in the host.
+     *
+     * A plan update is no call the agent made, so it is drawn as no row of the
+     * chat: VS Code shows a plan only as the tool call its harness made, as
+     * Claude's TodoWrite, and its Codex mapping draws nothing for Codex's
+     * `turn/plan/updated`. The list goes to the host, which is how the plan it
+     * keeps moves.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
      */
     case 'plan':
       planUpdate?.({ turn: turn.turnId, tool: 'plan', entries: update.entries.map(planEntryOf) });
-      // A turn holds one Plan call, and the host draws the one a plugin gives
-      // the lines for. The entries still go up, because they are how that
-      // list moves; only the bridge's own call is left out.
-      return turn.hostPlan === true ? [] : plan(turn, update.entries);
+      return [];
 
     /*
      * Everything else - a user echo, a mode or command catalogue - is a variant
@@ -694,11 +651,13 @@ const questionOf = (key: string, schema: Bag, required: boolean): Bag => {
      * "something else", and its ACP adapter carries it on the field's own
      * `_meta`, under the vendor prefix a `_meta` is namespaced by. A question
      * asked that way takes a typed answer beside its options, which is what
-     * `allowFreeformInput` says; one without the flag is a question the server
-     * wrote a closed set of answers for, and a box offered over it would be
-     * this bridge deciding what that server accepts.
+     * `allowFreeformInput` says. One without the flag is a question the server
+     * wrote a closed set of answers for, and says so with the flag `false`: a
+     * client reads an absent one as open and draws a box whose words go
+     * nowhere, so VS Code's Claude closes every select a form asks.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L236
      */
-    const freeform = bag(bag(schema._meta).codex).isOther === true ? { allowFreeformInput: true } : {};
+    const freeform = { allowFreeformInput: bag(bag(schema._meta).codex).isOther === true };
     // A list is a question answered many times over, and the bounds the array
     // set are part of what is being asked.
     return schema.type === 'array'

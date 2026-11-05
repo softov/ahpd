@@ -1,5 +1,5 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Activity, BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
+import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
 import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
@@ -29,8 +29,6 @@ export interface Owed {
    * nothing yet, `queued` once it holds it, `started` once it took it in.
    */
   cli: 'sent' | 'queued' | 'started';
-  /** A steering message a client took back while the CLI held it, whose answer goes nowhere. */
-  withdrawn?: boolean;
 }
 
 /**
@@ -61,10 +59,9 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /**
    * The environment the operator names for the shells this session runs.
    *
-   * Carried from `Start.shellEnv`, and written into the same hook the session's
-   * own `shellInitScripts` go through: an `export` line for each name the
-   * operator set and an `unset` for each one they removed. Absent when the
-   * operator named none, and then the hook says nothing about the environment.
+   * Carried from `Start.shellEnv` and handed to the CLI: each name the
+   * operator set in its `settings.env`, each one they removed out of the
+   * environment the CLI is spawned with.
    */
   shellEnv?: ShellEnv;
   /**
@@ -81,11 +78,6 @@ export interface ClaudeSessionOptions extends SessionOptions {
   spawnExecutable?: string;
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
-  /**
-   * What a stop given in a worker's chat stops: that worker, by default, or
-   * with `session` the lead turn that runs it.
-   */
-  workerStop?: 'worker' | 'session';
   /**
    * Where each turn of `seed` ended, in the CLI's own names, by turn id.
    *
@@ -203,10 +195,15 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   active: Bag | undefined;
   title: string;
   modified: string;
-  /** What the session is doing: the one handle that says it, and holds it. */
-  activity: Activity;
   /** When the running turn started, in milliseconds. */
   startedAt: number;
+  /**
+   * The time the running turn took and what it used before a client resumed
+   * it, which the turn holds with this run's; its usage and its ending say
+   * this run's alone, which the host merges the rest into, as VS Code's host
+   * says a resumed turn.
+   */
+  resumedFrom: { duration: number; usage: Bag | undefined } | undefined;
   /**
    * Why the *last* turn failed, or nothing.
    *
@@ -217,11 +214,13 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
-   * The CLI a stop closed, or whose stream ended without a result, while the
-   * next send has not yet started one that resumes the conversation, as the
-   * reference marks its pipeline for a rebind. Its reader ends without failing
-   * the session. Nothing while the CLI answering is the one reading.
+   * The CLI a stop closed, or that died, never answered its handshake or
+   * ended its stream without a result, while the next send has not yet
+   * started one that resumes the conversation, as the reference marks its
+   * pipeline for a rebind. Its reader ends without failing the session.
+   * Nothing while the CLI answering is the one reading.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
    */
   rebind: unknown;
   /**
@@ -311,11 +310,9 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** The CLI's `init` frame, once it has answered with one. */
   handshake: Bag | undefined;
   /**
-   * Why this session's CLI is gone, once it is.
-   *
-   * Survives `begin`, unlike `failed`: the query is built once and a session
-   * whose process has exited cannot run another turn however many are asked
-   * for. Set when the run loop ends, for whatever reason, and never cleared.
+   * Why the CLI this session holds went, while it is held for the next send
+   * to start again: a turn preparing while it went fails with this. Cleared
+   * when a CLI is started.
    */
   gone: string | undefined;
   /** What this session has been told the CLI can do, by customization. */
@@ -370,33 +367,29 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** What the client picked. Absent means whatever the CLI defaults to. */
   chosen: string | undefined;
   /**
-   * The effort level a turn's model set over the session's `effortLevel`.
-   *
-   * The CLI holds one effort for the whole query, so a turn that names a
-   * level moves it, and the next turn that names none puts the session's
-   * back. Absent while the CLI runs at the session's level.
+   * The effort level the CLI was last given, VS Code's pipeline's applied
+   * effort: absent while the CLI runs at its model's own, which a new CLI
+   * does until a turn names one.
    */
-  turnEffort: string | undefined;
+  appliedEffort: string | undefined;
   /*
    * The tools on offer, which is not a fixed list.
    *
    * The host's own are settled when the session is built; a client's arrive
    * when it announces itself and go when it leaves. So this is held rather
-   * than read from `options` once, and `setTools` re-declares the server the
-   * model reaches them through.
+   * than read from `options` once: what the CLI was last given, which a send
+   * moves to the set `toolDiff` holds.
    */
   offering: BoundTool[];
   /**
-   * The query this session is reading, once there is one.
+   * The query this session is reading, once there is one: the SDK's `Query`,
+   * named as the SDK and VS Code's Claude name it.
    *
-   * Typed as the query and not as the query or nothing, because as a `let` in
-   * the closure it was declared where it was first built and TypeScript kept it
-   * narrowed from there. As a field it exists from the start of the session, so
-   * `undefined` would have to be widened into it by hand; nothing reads it
-   * before the query is built, and the identity checks that follow it want the
-   * query either way.
+   * Typed as the query and not as the query or nothing: it exists from the
+   * start of the session, nothing reads it before the query is built, and the
+   * identity checks that follow it want the query either way.
    */
-  handle: ReturnType<typeof query>;
+  query: ReturnType<typeof query>;
   /**
    * What somebody is part-way through typing.
    *
@@ -416,14 +409,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   beginning: string | undefined;
   /**
-   * The change of tools the CLI has not finished taking, while there is one.
-   *
-   * The host hands the session a client's tools when the client becomes active
-   * and does not wait for them to land, and a turn the client sends next is a
-   * turn of a session that has them. So a change waits for the one before it,
-   * and a turn waits for the last of them before its prompt goes out.
+   * The tools the host handed since the CLI was last given a set, while there
+   * are any: VS Code's client-tool diff, which the next send gives the CLI
+   * before its prompt.
    */
-  retooling: Promise<void> | undefined;
+  toolDiff: BoundTool[] | undefined;
 }
 
 /**
@@ -454,6 +444,4 @@ export interface Scope {
    * whole when the chat opens, so it is applied as if it had arrived then.
    */
   waiting?: (() => void)[] | undefined;
-  /** What releases `waiting` when no spawn is recorded in time. */
-  release?: ReturnType<typeof setTimeout> | undefined;
 }

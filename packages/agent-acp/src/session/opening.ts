@@ -2,7 +2,7 @@ import { RequestError } from '@agentclientprotocol/sdk';
 import type { AgentCapabilities, McpServer as AcpMcpServer } from '@agentclientprotocol/sdk';
 import { machineAsked, machinePathOf } from '@ahpd/sdk';
 import type { Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
-import { watchSession } from '../catalog.js';
+import { heardCapabilities, watchSession } from '../catalog.js';
 import { connectAcp } from '../connection.js';
 import type { AcpConnection, AcpOptions } from '../types.js';
 import { messageOf } from './common.js';
@@ -11,7 +11,7 @@ import type { SessionContext } from './context.js';
 /** Spawning the server, signing in and opening the one session on it. */
 export interface Opening {
   open(): Promise<{ connection: AcpConnection; sessionId: string }>;
-  signInFailure(why: unknown): { errorType: string; message: string } | undefined;
+  authenticationFailure(why: unknown): { errorType: string; message: string } | undefined;
   /**
    * Read the record again, and put a new server behind the conversation when
    * what it spawns with changed.
@@ -218,7 +218,7 @@ export const machineIdOf = (start: Start): string | undefined => {
 const AUTH_REQUIRED = RequestError.authRequired().code;
 
 export function createOpening(ctx: SessionContext): Opening {
-  const { options, provider, settings, start, where, replay } = ctx;
+  const { options, provider, start, cwd, replay } = ctx;
 
   /**
    * The host's own tools, as the one HTTP server this session hands its agent.
@@ -260,13 +260,13 @@ export function createOpening(ctx: SessionContext): Opening {
   /** Whether the server said it can be given directories beside the one it runs in. */
   let extras = false;
   /**
-   * The ids the server offered for sign-in, kept from the handshake.
+   * The ids of the `authMethods` the server's `initialize` answer offered.
    *
    * A server names them once, at the start of a connection, and an error that
    * arrives later has to name them itself: the sentence that says which way
    * to sign in is the whole of what a person is given.
    */
-  let signIns: string[] = [];
+  let authMethods: string[] = [];
 
   /**
    * The machine this session was told to run in, as something to spawn.
@@ -287,9 +287,9 @@ export function createOpening(ctx: SessionContext): Opening {
       throw new Error(`This session asked to run in ${id}, and this host has no computer plugin to run it in`);
     }
     /*
-     * No `cwd` here: `where` is this host's directory, and the only paths that
-     * mean anything inside the machine are its own. The port uses the
-     * machine's working directory when the caller names none.
+     * No `cwd` here: the session's `cwd` is this host's directory, and the only
+     * paths that mean anything inside the machine are its own. The port uses
+     * the machine's working directory when the caller names none.
      */
     const spawn = await computers.how(id, {
       command: options.command,
@@ -315,11 +315,11 @@ export function createOpening(ctx: SessionContext): Opening {
    * `placed` says the server runs in a machine, where the preset's machine
    * variables are set too and `authenticateInMachine` is the one sent.
    */
-  const signIn = async (connection: AcpConnection, placed: boolean): Promise<void> => {
+  const authenticate = async (connection: AcpConnection, placed: boolean): Promise<void> => {
     const asked = placed ? options.authenticateInMachine ?? options.authenticate : options.authenticate;
     if (asked === undefined) return;
-    if (!signIns.includes(asked.methodId)) {
-      const offered = signIns.join(', ');
+    if (!authMethods.includes(asked.methodId)) {
+      const offered = authMethods.join(', ');
       throw new Error(`${provider} offers ${offered === '' ? 'no sign-in method' : offered}, not ${asked.methodId}`);
     }
     await connection.authenticate({
@@ -339,11 +339,11 @@ export function createOpening(ctx: SessionContext): Opening {
    * A server answers `session/new` and `session/prompt` with it when it wants
    * to be signed in, and the generic failure would carry the sentence
    * "Authentication required" with nothing to do about it. The methods come
-   * from the handshake, which is the only place they are ever named.
+   * from the `initialize` answer, which is the only place they are ever named.
    */
-  const signInFailure = (why: unknown): { errorType: string; message: string } | undefined => {
+  const authenticationFailure = (why: unknown): { errorType: string; message: string } | undefined => {
     if (!(why instanceof RequestError) || why.code !== AUTH_REQUIRED) return undefined;
-    const offered = signIns.length === 0 ? 'offers no sign-in method' : `offers ${signIns.join(', ')}`;
+    const offered = authMethods.length === 0 ? 'offers no sign-in method' : `offers ${authMethods.join(', ')}`;
     return {
       errorType: 'authRequired',
       message: `${provider}: this ACP server wants to be signed in before it answers, and ${offered}; set the authenticate option to the one to use`,
@@ -375,14 +375,14 @@ export function createOpening(ctx: SessionContext): Opening {
   const open = (): Promise<{ connection: AcpConnection; sessionId: string }> => {
     if (ctx.opening !== undefined) return ctx.opening;
     ctx.loading = true;
+    /*
+     * The config every client holds as the open begins, read before the open
+     * learns the server's own: `learnModes`, `learnConfigOptions` and
+     * `learnModels` write the server's values over the session's, and the
+     * session's own are what the open sends.
+     */
+    const values = { ...ctx.values };
     const pending = (async () => {
-      /*
-       * The mode this session asked for, read before the open learns the
-       * server's own: `learnModes` and `learnOffers` write the server's
-       * current mode over `settings.permissionMode`, and the send needs the
-       * value the session was started with rather than the server's answer.
-       */
-      const asked = settings.permissionMode;
       /*
        * A folder the host did not vouch for, and an agent that loads the
        * folder's own hooks and settings unchecked.
@@ -394,8 +394,8 @@ export function createOpening(ctx: SessionContext): Opening {
        * the folder's own configuration - and an absent `Start.trusted` is the
        * host having said nothing, which is the same answer as untrusted.
        */
-      if (options.honoursTrust !== true && start.trusted?.(where) !== true) {
-        throw new Error(`${provider}: ${where} is not a folder this host trusts, and an ACP agent loads a project's own settings and hooks from the folder it runs in; trust the folder, or set honoursTrust on this preset if its agent asks before it loads them`);
+      if (options.honoursTrust !== true && start.trusted?.(cwd) !== true) {
+        throw new Error(`${provider}: ${cwd} is not a folder this host trusts, and an ACP agent loads a project's own settings and hooks from the folder it runs in; trust the folder, or set honoursTrust on this preset if its agent asks before it loads them`);
       }
       const moved = await placed();
       /*
@@ -404,7 +404,7 @@ export function createOpening(ctx: SessionContext): Opening {
        * Linux and macOS, drive-style on Windows. The catalogue's record below
        * keeps the host's, since that is the folder a client named.
        */
-      const told = moved === undefined ? where : machinePathOf(where);
+      const told = moved === undefined ? cwd : machinePathOf(cwd);
       const connection = connectAcp({
         command: moved?.command ?? options.command,
         ...(moved !== undefined
@@ -413,10 +413,10 @@ export function createOpening(ctx: SessionContext): Opening {
         ...(moved?.env !== undefined
           ? { env: moved.env }
           : moved === undefined && options.env !== undefined ? { env: options.env } : {}),
-        ...(moved?.cwd !== undefined ? { cwd: moved.cwd } : moved === undefined ? { cwd: where } : {}),
+        ...(moved?.cwd !== undefined ? { cwd: moved.cwd } : moved === undefined ? { cwd } : {}),
         handlers: {
-          update: ctx.receivedUpdate,
-          permission: ctx.askPermission,
+          update: ctx.sessionUpdate,
+          permission: ctx.requestPermission,
           // A question needs nothing but a chat to put it on, so both of these
           // are always here rather than behind a capability the host might not
           // have sent.
@@ -436,13 +436,14 @@ export function createOpening(ctx: SessionContext): Opening {
           ...(start.terminals === undefined
             ? {}
             : {
-                createTerminal: ctx.openTerminal,
+                createTerminal: ctx.createTerminal,
                 terminalOutput: ctx.terminalOutput,
                 waitForTerminalExit: ctx.waitForTerminalExit,
                 killTerminal: ctx.killTerminal,
                 releaseTerminal: ctx.releaseTerminal,
               }),
         },
+        ...(options.log === undefined ? {} : { log: options.log }),
       });
       ctx.live = connection;
       // A server that dies between turns is let go, so the next turn spawns
@@ -452,15 +453,18 @@ export function createOpening(ctx: SessionContext): Opening {
         ctx.live = undefined;
         ctx.opening = undefined;
       });
-      const handshake = await connection.initialize();
-      ctx.closes = advertised(handshake.agentCapabilities?.sessionCapabilities?.close);
-      ctx.loads = handshake.agentCapabilities?.loadSession === true;
-      ctx.resumes = advertised(handshake.agentCapabilities?.sessionCapabilities?.resume);
-      ctx.forks = advertised(handshake.agentCapabilities?.sessionCapabilities?.fork);
-      ctx.takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
-      extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
-      signIns = (handshake.authMethods ?? []).map((one) => one.id);
-      await signIn(connection, moved !== undefined);
+      const initializeResponse = await connection.initialize();
+      const { agentCapabilities } = initializeResponse;
+      ctx.closes = advertised(agentCapabilities?.sessionCapabilities?.close);
+      ctx.loads = agentCapabilities?.loadSession === true;
+      ctx.resumes = advertised(agentCapabilities?.sessionCapabilities?.resume);
+      ctx.forks = advertised(agentCapabilities?.sessionCapabilities?.fork);
+      // And for the agent, which offers a fork only where its server can make one.
+      heardCapabilities(options, agentCapabilities);
+      ctx.promptCapabilities = agentCapabilities?.promptCapabilities ?? undefined;
+      extras = advertised(agentCapabilities?.sessionCapabilities?.additionalDirectories);
+      authMethods = (initializeResponse.authMethods ?? []).map((one) => one.id);
+      await authenticate(connection, moved !== undefined);
       /*
        * The directories beside the one the server runs in, only to a server that
        * advertised them.
@@ -482,7 +486,7 @@ export function createOpening(ctx: SessionContext): Opening {
       const servers = serversFor(
         start,
         toolsServer,
-        handshake.agentCapabilities,
+        agentCapabilities,
         options.hostTools !== false,
         moved === undefined ? undefined : machineAsked(start),
         (line) => options.log?.(line),
@@ -532,9 +536,9 @@ export function createOpening(ctx: SessionContext): Opening {
         });
         ctx.acpSessionId = copied.sessionId;
         ctx.learnModes(copied.modes);
-        ctx.learnOffers(copied.configOptions);
+        ctx.learnConfigOptions(copied.configOptions);
         ctx.learnModels(copied);
-        await ctx.sendAskedMode({ connection, sessionId: copied.sessionId }, asked);
+        await ctx.sendAsked({ connection, sessionId: copied.sessionId }, values);
       }
       else if (reopen !== undefined) {
         /*
@@ -568,9 +572,9 @@ export function createOpening(ctx: SessionContext): Opening {
           : await connection.loadSession(request);
         ctx.acpSessionId = reopen;
         ctx.learnModes(taken.modes);
-        ctx.learnOffers(taken.configOptions);
+        ctx.learnConfigOptions(taken.configOptions);
         ctx.learnModels(taken);
-        await ctx.sendAskedMode({ connection, sessionId: reopen }, asked);
+        await ctx.sendAsked({ connection, sessionId: reopen }, values);
       }
       else {
         const created = await connection.newSession({
@@ -580,9 +584,9 @@ export function createOpening(ctx: SessionContext): Opening {
         });
         ctx.acpSessionId = created.sessionId;
         ctx.learnModes(created.modes);
-        ctx.learnOffers(created.configOptions);
+        ctx.learnConfigOptions(created.configOptions);
         ctx.learnModels(created);
-        await ctx.sendAskedMode({ connection, sessionId: created.sessionId }, asked);
+        await ctx.sendAsked({ connection, sessionId: created.sessionId }, values);
       }
       /*
        * The server has now said what it serves, so the host can read
@@ -593,8 +597,9 @@ export function createOpening(ctx: SessionContext): Opening {
       /*
        * The catalogue's record starts here, where the server has named the
        * session and what it said is known. The turn already running is attached
-       * because `begin` opens it before the server does, and a transcript that
-       * dropped the first turn would be a conversation missing its question.
+       * because `sendMessage` starts it before the server does, and a
+       * transcript that dropped the first turn would be a conversation missing
+       * its question.
        *
        * The host's own turns go with it for the same reason: a resume and a
        * fork both replay nothing, so without them the record would hold a
@@ -603,12 +608,11 @@ export function createOpening(ctx: SessionContext): Opening {
       ctx.record = watchSession({
         provider,
         id: ctx.acpSessionId,
-        cwd: where,
+        cwd,
         additional: start.additional ?? [],
         title: ctx.title,
         replay,
         seed: start.seed ?? [],
-        ...(start.plan === true ? { hostPlan: true } : {}),
       });
       /*
        * The record has it now, and this list must not keep it: a server that
@@ -620,9 +624,17 @@ export function createOpening(ctx: SessionContext): Opening {
       return { connection, sessionId: ctx.acpSessionId };
     })();
     ctx.opening = pending;
-    // The replay ends where the open does, whether it worked or not: what the
-    // server said on the way belongs to no turn after this point.
-    const opened = (): void => { ctx.loading = false; };
+    /*
+     * The replay ends where the open does, whether it worked or not: what the
+     * server said on the way belongs to no turn after this point. What the
+     * open learned is said then, where it differs from the config every client
+     * held as it began: the mode, the options and the model the server runs
+     * with, once the values the session holds have been sent.
+     */
+    const opened = (): void => {
+      ctx.loading = false;
+      ctx.syncConfig(values);
+    };
     void pending.then(opened, opened);
     return pending;
   };
@@ -678,5 +690,5 @@ export function createOpening(ctx: SessionContext): Opening {
     return undefined;
   };
 
-  return { open, refreshOptions, signInFailure, toolsEndpoint: () => endpoint };
+  return { open, refreshOptions, authenticationFailure, toolsEndpoint: () => endpoint };
 }

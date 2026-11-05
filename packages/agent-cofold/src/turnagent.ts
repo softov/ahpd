@@ -242,7 +242,7 @@ export const createTurnAgent = (
   const releaseCalls = (why: string): void => { calls.release(why); };
 
   /** The requests a client can still answer: the person's, and the clients'. */
-  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(calls.entries());
+  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.request).concat(calls.entries());
 
   /**
    * Ask the client that provides a tool to run a call.

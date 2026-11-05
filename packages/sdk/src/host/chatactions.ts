@@ -1582,7 +1582,11 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1817-L1876
        */
       dispatch(channel, action, origin);
-      const resumed = { duration: typeof last.duration === 'number' ? last.duration : 0, since: Date.now() };
+      const resumed = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        since: Date.now(),
+        ...(typeof last.usage === 'object' && last.usage !== null ? { usage: last.usage as Bag } : {}),
+      };
       ctx.resumedTurns.set(`${channel}\n${named}`, resumed);
       const rejected = (error: unknown): void => {
         if (!ctx.resumedTurns.has(`${channel}\n${named}`)) return;
@@ -2140,7 +2144,7 @@ export function chatAction(
           await session.close('stopping');
           const failed = own === undefined || own === '' ? undefined : await ctx.deletedChat(own, agent, ctx.dirOf(uri));
           ctx.described.delete(chatUri);
-          spawn(
+          await spawn(
             agent,
             uri,
             chatUri,
@@ -2247,19 +2251,47 @@ export function chatAction(
       // So the next thing the new session says about itself is reported
       // rather than compared against what the old one last said.
       ctx.described.delete(session.chatUri);
-      spawn(
-        chatAgent(owner, session.chatUri),
-        session.uri,
-        session.chatUri,
-        chatIdFor(session.uri, session.chatUri),
-        chatConfig(owner, session.chatUri),
-        { resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] },
+      /*
+       * The backend started again at the point, which a backend with a cut to
+       * make answers once it has made it. A cut it could not make is logged
+       * and the chat comes back on the conversation it had, as VS Code's host
+       * logs a truncation its provider failed and the provider keeps its
+       * history. Held in `restarting` the whole time, so an action sent behind
+       * it reaches the backend that comes back.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1983-L1988
+       */
+      const uri = session.uri;
+      const chatUri = session.chatUri;
+      const restartedAt = (resuming: { resume: string; rewindAt?: string; seed: Bag[] }): Promise<Session> => spawn(
+        chatAgent(owner, chatUri),
+        uri,
+        chatUri,
+        chatIdFor(uri, chatUri),
+        chatConfig(owner, chatUri),
+        resuming,
         owner.workingDirectory,
         undefined,
-        beside.get(session.chatUri) ?? owner.additional,
+        beside.get(chatUri) ?? owner.additional,
         connection,
       );
-      log(`truncated ${session.chatUri} to ${turnId}`);
+      const work = restartedAt({ resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] }).then(
+        () => { log(`truncated ${chatUri} to ${turnId}`); },
+        async (error: unknown) => {
+          log(`${chatUri} keeps the history after ${turnId}: ${error instanceof Error ? error.message : String(error)}`);
+          await restartedAt({ resume: started, seed: all as Bag[] });
+        },
+      );
+      restarting.set(uri, work.then(() => undefined, (error: unknown) => (byChat.has(chatUri)
+        ? undefined
+        : error instanceof Error ? error.message : String(error))));
+      const held = restarting.get(uri);
+      void work.then(
+        () => { if (restarting.get(uri) === held) restarting.delete(uri); },
+        (error: unknown) => {
+          if (restarting.get(uri) === held) restarting.delete(uri);
+          log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      );
       break;
     }
     /*

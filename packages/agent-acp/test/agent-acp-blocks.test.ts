@@ -10,6 +10,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Agent, Bag, Emit, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * What a prompt carries, what a queued message keeps, and what a session is
@@ -100,7 +101,7 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
 /** One session of a backend, watched and remembered for cleanup. */
 function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
   const watch = watcher();
-  const session = agent.create(opening(id, { ...over, emit: watch.emit }));
+  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
   started.push(session);
   return { session, watch };
 }

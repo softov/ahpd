@@ -41,6 +41,17 @@ export interface PiBackend {
   /** Run a turn. The promise spans the whole run. */
   prompt(text: string, images?: ImageContent[]): Promise<void>;
   /**
+   * Hand the next turn words the model reads and nobody is shown: pi's own
+   * custom message, delivered with that turn's run and kept out of its
+   * transcript, which is pi's way for words beside a prompt.
+   */
+  sendCustomMessage(content: string): Promise<void>;
+  /**
+   * Keep data in the conversation's file that the model never reads: pi's own
+   * custom entry, which is how pi keeps an extension's data with a session.
+   */
+  appendEntry(customType: string, data: unknown): void;
+  /**
    * Put a message into the turn that is already running, answering with what
    * pi did with it: queued for the turn, or handled by an extension.
    */
@@ -64,24 +75,25 @@ export interface PiBackend {
   promptAfter(entryId: string | undefined): string | undefined;
   /** The thinking levels a model offers, which is pi's own rule. */
   levels(model: PiModel): string[];
-  /** What a new message would run on right now. */
-  chosen(): { id: string; config: Record<string, unknown> } | undefined;
+  /** The protocol's `ModelSelection` a new message would run on right now. */
+  modelSelection(): { id: string; config: Record<string, unknown> } | undefined;
   /**
-   * Whether the model the session is on takes an image.
+   * Whether the model the session is on takes an image, the spec's
+   * `supportsVision`.
    *
    * pi takes one text and a list of images, so a picture the model will not
    * accept is a failed turn rather than a degraded one. The session asks this
    * before it decides whether a picture goes as bytes or by path.
    */
-  takesImages(): boolean;
+  supportsVision(): boolean;
   /**
-   * Run the next turn on this model, and at this thinking level.
+   * Run the next turn on this model, and at this thinking level: pi's own
+   * `setModel` and `setThinkingLevel`.
    *
    * Answers `false` for an id pi's runtime does not have, and the session stays
-   * on the model it was already on. What a caller does about that is its own:
-   * a turn fails the turn rather than run on another model.
+   * on the model it was already on, which the turn then runs on.
    */
-  choose(id: string, config?: Record<string, unknown>): Promise<boolean>;
+  setModel(id: string, config?: Record<string, unknown>): Promise<boolean>;
   /** Give the conversation a name pi will keep. */
   rename(title: string): void;
   /**
@@ -102,9 +114,9 @@ export interface PiBackend {
    * pi's sessions are append-only trees, so nothing is deleted: the leaf moves
    * and later messages form a new branch. The context is built leaf to root,
    * so the abandoned path stops being context, which is what the protocol
-   * means by a truncation.
+   * means by a truncation and VS Code's agents call `truncate`.
    */
-  rewind(entryId: string): Promise<boolean>;
+  truncate(entryId: string): Promise<boolean>;
   /**
    * Continue from a failed reply or a cut-off request, without a new message.
    * The promise spans the whole run.
@@ -128,8 +140,8 @@ export interface PiBackend {
    * and retries nothing itself: what ends the turn is this promise settling.
    */
   resume(): Promise<boolean>;
-  /** Stop, and let go of what the session was holding. */
-  close(): void;
+  /** Stop, and let go of what the session was holding: pi's own `dispose`. */
+  dispose(): void;
 }
 
 /** How to build one. */
@@ -318,12 +330,13 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
 }
 
 /**
- * How the models pi's own runtime has are read, before any session exists.
+ * How the models pi's own runtime has are read, before any session exists,
+ * each with the thinking levels pi's own rule gives it.
  *
  * The default reads pi's agent directory; a caller may pass its own, as a
  * session may pass its own `open`.
  */
-export type RuntimeModels = () => Promise<PiModel[]>;
+export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[] }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
@@ -340,7 +353,10 @@ export const runtimeModels: RuntimeModels = async () => {
     modelsPath: join(agentDir, 'models.json'),
   });
   const available = await runtime.getAvailable();
-  return available as unknown as PiModel[];
+  return (available as unknown as PiModel[]).map((model) => ({
+    model,
+    levels: sdk.getSupportedThinkingLevels(model as never) as string[],
+  }));
 };
 
 /**
@@ -410,6 +426,11 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
     }),
     steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }),
+    sendCustomMessage: (content) => session.sendCustomMessage(
+      { customType: 'ahpd.instructions', content, display: false },
+      { deliverAs: 'nextTurn' },
+    ),
+    appendEntry: (customType, data) => { session.sessionManager.appendCustomEntry(customType, data); },
     clearSteering: () => { session.clearQueue(); },
     abort: () => session.abort(),
     models,
@@ -424,7 +445,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * the current model's would offer a control the other rows do not have.
      */
     levels: (model) => sdk.getSupportedThinkingLevels(model as never) as string[],
-    chosen: () => {
+    modelSelection: () => {
       const model = session.model as PiModel | undefined;
       return model === undefined
         ? undefined
@@ -435,16 +456,16 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * runs on. A session with no model yet answers false, and the picture is
      * named by its path rather than risking a turn the provider refuses.
      */
-    takesImages: () => (session.model as PiModel | undefined)?.input?.includes('image') === true,
-    choose: async (id, config) => {
+    supportsVision: () => (session.model as PiModel | undefined)?.input?.includes('image') === true,
+    setModel: async (id, config) => {
       const available = await models();
       const current = session.model as PiModel | undefined;
       const wanted = modelFor(available, id, current);
       /*
-       * A pick this host cannot resolve is reported rather than taken, and the
-       * session stays on the model it was already on. It is usually a stale
-       * list in a client open since before a credential changed, and what that
-       * costs is for the caller to decide.
+       * A pick this host cannot resolve is reported, and the session stays on
+       * the model it was already on. It is usually a stale list in a client
+       * open since before a credential changed, and the turn runs on the model
+       * in force.
        */
       if (wanted === undefined) return false;
       if (current === undefined || current.id !== wanted.id || current.provider !== wanted.provider) {
@@ -488,7 +509,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
         keyed.delete(id);
       }
     },
-    rewind: async (entryId) => {
+    truncate: async (entryId) => {
       const moved = await session.navigateTree(entryId);
       return !moved.cancelled;
     },
@@ -502,6 +523,6 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       await session.agent.continue();
       return true;
     },
-    close: () => { session.dispose(); },
+    dispose: () => { session.dispose(); },
   };
 }

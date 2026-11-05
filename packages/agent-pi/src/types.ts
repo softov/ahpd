@@ -19,6 +19,31 @@ import type { BackendOptions, PiBackend } from './backend.js';
 export const UNTITLED = 'pi session';
 
 /**
+ * The custom entry a turn's message is kept under in pi's file.
+ *
+ * pi's prompt is one text, the person's words joined with the attachments
+ * inlined and the reference block, so the message as the turn had it is kept
+ * beside it as pi keeps an extension's data: an entry the model never reads,
+ * written just before pi writes the turn's prompt. `replay.ts` reads it back as
+ * the message of the prompt that follows it, as VS Code's readers take a
+ * restored message's text, attachments and model from the runtime's record.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L852-L890
+ */
+export const MESSAGE_ENTRY = 'ahpd.message';
+
+/**
+ * The error a turn still running when its record is read ends with, as VS
+ * Code's reader ends a turn whose request is still active at the end of its
+ * events: a resumable `executionInterrupted`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7991-L7994
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+ */
+export const INTERRUPTED = {
+  errorType: 'executionInterrupted',
+  message: 'The agent was interrupted before this request finished.',
+} as const;
+
+/**
  * The permission modes every backend offers, in the order a client reads them.
  *
  * The same six `@ahpd/agent-claude` and `@ahpd/agent-cofold` advertise, because
@@ -128,6 +153,8 @@ export interface PiOptions {
    * turn lifecycle without a model provider.
    */
   open?: (options: BackendOptions) => Promise<PiBackend>;
+  /** Where a line for the daemon's log goes; the plugin hands the host's. */
+  log?: (line: string) => void;
 }
 
 /** One tool call inside a running turn, as far as the wire cares. */
@@ -135,8 +162,12 @@ export interface PiCall {
   toolCallId: string;
   toolName: string;
   displayName: string;
-  /** What the call runs on, as its row is titled once pi names its arguments. */
-  said?: string;
+  /** The row's `invocationMessage`, what the call runs on once pi names its arguments. */
+  invocationMessage?: string;
+  /** The arguments pi named for the call, which its past tense reads. */
+  input?: Bag;
+  /** The output a shell call has printed so far, which each change says whole. */
+  output?: string;
 }
 
 /** The running turn, and what has been opened inside it. */
@@ -146,8 +177,6 @@ export interface PiTurn {
   messages: number;
   /** Each thinking or text block's part id, by `${message}:${contentIndex}`. */
   blocks: Map<string, string>;
-  /** The whitespace a text block has written before its part opened, by the same key. */
-  waiting: Map<string, string>;
   /** The parts, as the snapshot carries them. Mutated as the answer arrives. */
   parts: Bag[];
   /** The calls this turn opened, by pi's own id for each. */
@@ -178,7 +207,8 @@ export interface WatchedTurn {
   startedAt: string;
   message: Bag;
   parts: Bag[];
-  state: 'complete' | 'cancelled' | 'error';
+  /** How the turn ended, or nothing while it runs. */
+  state?: 'complete' | 'cancelled' | 'error';
   duration?: number;
   /** What the turn's last answer used, when pi reported any. */
   usage?: Bag;

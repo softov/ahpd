@@ -53,7 +53,7 @@ export interface EchoOptions {
   pace?: number;
 }
 
-export function echo(options: EchoOptions): Agent {
+export function echo(options: EchoOptions): Agent<Session> {
   const dir = options.path;
   const pace = options.pace ?? 60;
   /** Everything this backend has ever finished, by its own id. */

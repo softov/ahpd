@@ -136,7 +136,7 @@ it('opens the template with nothing set on the CLI\'s own models', async () => {
   const engine = await engineOf();
   const template = engine.templates?.[0];
   const agent = engine.open(viewOf('claude', () => template?.config ?? {}, template?.name));
-  expect([agent.provider, agent.displayName]).toEqual(['claude', 'Claude Code']);
+  expect([agent.provider, agent.displayName]).toEqual(['claude', 'Claude']);
   expect(await modelsOf(agent)).toEqual([]);
 });
 

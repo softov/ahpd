@@ -69,7 +69,7 @@ export function createTurns(ctx: SessionContext): Turns {
    * A message onto the CLI's own input stream, as what it is.
    *
    * Where a turn beginning and a message steering one reach the CLI: the wake
-   * and the touch happen in one place, and a message's attachments become the
+   * happens in one place, and a message's attachments become the
    * blocks the CLI takes whichever way it arrived. A message with none is the
    * string it always was. `uuid` is the id the CLI writes the prompt under and
    * names its answer by, and `owed` is the answer that is to come, held until
@@ -84,20 +84,25 @@ export function createTurns(ctx: SessionContext): Turns {
     // Held before the wait: a result read while the blocks are built is not
     // this prompt's answer, and has to know that one is still to come.
     if (uuid !== undefined && owed !== undefined) ctx.owed.set(uuid, owed);
-    const to = ctx.handle;
+    const to = ctx.query;
     const content = await blocksFor(text, attachments);
     // A CLI put away meanwhile took what it was owed with it, and the one in
     // its place is sent that by whatever put it there.
-    if (ctx.handle !== to) return;
+    if (ctx.query !== to) return;
     ctx.waiting.push({
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
+      /*
+       * A steering message goes in now, into the work the CLI is doing, as
+       * VS Code's Claude agent injects one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1271-L1282
+       */
+      ...(owed?.steering === true ? { priority: 'now' as const } : {}),
       ...(uuid === undefined ? {} : { uuid: uuid as `${string}-${string}-${string}-${string}-${string}` }),
     });
     ctx.wake?.();
     ctx.wake = undefined;
-    ctx.touch();
   };
 
   /**
@@ -169,14 +174,13 @@ export function createTurns(ctx: SessionContext): Turns {
       },
       responseParts: [],
     } as unknown as Bag;
-    const part = ctx.addFailure(turn, why);
+    const part = ctx.addFailure(turn, 'sendFailed', why);
     turn.state = 'error';
     turn.duration = Math.max(0, Date.now() - began);
     ctx.turns.push(turn);
     ctx.failed = why;
+    ctx.endedAt(turn);
     ctx.emit('chat', { type: 'chat/error', turnId, duration: turn.duration, part });
-    ctx.doing(undefined);
-    ctx.touch();
     sendNext();
   };
 
@@ -208,28 +212,38 @@ export function createTurns(ctx: SessionContext): Turns {
     if (ctx.rebind !== undefined) {
       ctx.rebind = undefined;
       ctx.gone = undefined;
-      ctx.handle = ctx.startQuery(ctx.running, false);
+      ctx.buildClientMcpServers();
+      ctx.query = ctx.startQuery(ctx.running, false);
       void ctx.consume();
     }
     /*
-     * The tools the session was handed before this turn, landed first.
-     *
-     * A change of tools reaches the CLI as `setMcpServers`, which the CLI
-     * answers once it has the servers, and the host hands it over without
-     * waiting; a turn that comes after it is a turn of a session that has
-     * those tools.
+     * The tools the session was handed since the CLI was last given a set,
+     * given to it before this turn's prompt, as VS Code's send rebinds its
+     * query when the client-tool diff is dirty: a turn that comes after a
+     * client announced its tools is a turn of a session that has them. A set
+     * the CLI refuses fails the turn, as VS Code's failed rebuild fails the
+     * send, and waits for the next.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
      */
-    if (ctx.retooling !== undefined) await ctx.retooling;
+    let untooled: string | undefined;
+    try { await ctx.rebindForClientTools(); }
+    catch (error: unknown) { untooled = error instanceof Error ? error.message : String(error); }
     if (ctx.closed || stops !== stopped) return;
     /*
-     * A session whose CLI has exited answers at once, and says why.
+     * A CLI that went while this turn prepared fails the turn, and says why;
+     * the next send starts one again.
      *
      * The turn is recorded as one that failed rather than refused, because a
      * person typed it and it belongs in the transcript beside the reason.
      */
-    if (ctx.gone !== undefined) {
+    if (ctx.gone !== undefined && ctx.rebind === ctx.query) {
       ctx.beginning = undefined;
       refuseTurn(turnId, text, ctx.gone, began, from, attachments);
+      return;
+    }
+    if (untooled !== undefined) {
+      ctx.beginning = undefined;
+      refuseTurn(turnId, text, untooled, began, from, attachments);
       return;
     }
     /*
@@ -258,23 +272,19 @@ export function createTurns(ctx: SessionContext): Turns {
      * The form the model came with, which is one key here.
      *
      * `thinkingLevel` is what a client writes into `ModelSelection.config`,
-     * and it is this turn's: the reference host hands a turn's model to its
-     * agent, which sets the model's effort on the SDK, and no session config
-     * moves. The CLI holds one effort for the whole query, so a turn that
-     * names none after one that did puts the session's `effortLevel` back.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1206-L1226
+     * and it is this turn's: VS Code's Claude sets the effort each model
+     * selection resolves to, and clears it where the selection names none,
+     * since the CLI holds one effort for the whole query. A level the CLI
+     * already holds is not sent again, as VS Code's pipeline keeps the one it
+     * applied.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L375-L385
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L66-L78
      */
     const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
-    const sessions = EFFORTS.find((one) => one === ctx.settings.effortLevel);
-    const running = ctx.turnEffort ?? sessions;
-    if (level !== undefined && level !== running) {
-      ctx.turnEffort = level === sessions ? undefined : level;
-      void ctx.handle.applyFlagSettings({ effortLevel: level }).catch(() => {});
-    }
-    else if (level === undefined && ctx.turnEffort !== undefined) {
-      ctx.turnEffort = undefined;
-      if (sessions !== undefined) void ctx.handle.applyFlagSettings({ effortLevel: sessions }).catch(() => {});
+    if (level !== ctx.appliedEffort) {
+      ctx.appliedEffort = level;
+      void ctx.query.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
     }
     ctx.beginning = undefined;
     // The turn this session runs from now, as the host said it.
@@ -292,6 +302,7 @@ export function createTurns(ctx: SessionContext): Turns {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     ctx.active = turn;
+    ctx.setModifiedAt(String(turn.startedAt));
     /*
      * What the host has to say on this turn, asked now that the turn exists.
      *
@@ -310,7 +321,6 @@ export function createTurns(ctx: SessionContext): Turns {
      * already held - so nothing moves and nothing is said about it.
      */
     if (ctx.title === 'New session' && text) ctx.retitle(titleFrom(text, 'New session'));
-    ctx.doing('Thinking');
     /*
      * What the model is given, which is not always what the transcript shows.
      *
@@ -405,9 +415,13 @@ export function createTurns(ctx: SessionContext): Turns {
      * A steering message the CLI was handed and has not taken in, taken back
      * by a client: withdrawn, as the reference host has its provider withdraw
      * a steering message a client removes after handing it over. One the CLI
-     * has not read leaves its input; one it holds is answered nowhere. Nothing
-     * is said: the host has said the removal.
+     * has not read leaves its input; one it holds is withdrawn through the
+     * CLI's own `cancel_async_message`, as VS Code's Copilot withdraws one its
+     * SDK holds, and one the CLI no longer holds runs and is answered in the
+     * turn, as Copilot keeps one already delivered. Nothing is said: the host
+     * has said the removal.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6884-L6905
      */
     withdrawSteeringMessage: (id) => {
       for (const [uuid, owed] of [...ctx.owed]) {
@@ -416,15 +430,19 @@ export function createTurns(ctx: SessionContext): Turns {
         if (unread >= 0) {
           ctx.waiting.splice(unread, 1);
           ctx.owed.delete(uuid);
+          continue;
         }
-        else owed.withdrawn = true;
+        // The SDK's own request for the control the CLI names
+        // `cancel_async_message`, which the SDK's types leave undeclared.
+        const handle = ctx.query as typeof ctx.query & { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
+        void handle.cancelAsyncMessage(uuid).then((cancelled) => {
+          if (cancelled && ctx.query === handle) ctx.owed.delete(uuid);
+        }, () => {});
       }
       if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
     },
 
-    // The draft the host said, held for the chat's state. Not `touch()`: typing
-    // is not a change to the conversation, and a catalogue that reordered
-    // itself on every keystroke would be unusable.
+    // The draft the host said, held for the chat's state.
     setDraft: (next) => { ctx.draft = next; },
 
     /*
@@ -471,13 +489,17 @@ export function createTurns(ctx: SessionContext): Turns {
       // `state` and `duration` are what made it a finished turn; an active one
       // has neither, and the protocol says the reducer reopens *this* turn
       // rather than replacing it.
+      ctx.resumedFrom = {
+        duration: typeof last.duration === 'number' ? last.duration : 0,
+        usage: typeof last.usage === 'object' && last.usage !== null ? last.usage as Bag : undefined,
+      };
       delete again.state;
       delete again.duration;
       ctx.active = again as unknown as NonNullable<typeof ctx.active>;
+      // This run counts its own calls, which the host merges over the run before's.
+      ctx.newTurn();
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
-      ctx.doing('Thinking');
-      ctx.touch();
       const login = ctx.login;
       void (async () => {
         const restarted = await ctx.restartAt(turnId, cut, login);
@@ -503,11 +525,12 @@ export function createTurns(ctx: SessionContext): Turns {
       stops += 1;
       handed.length = 0;
       // A turn blocked on a person is stopped by answering no, not by leaving
-      // a promise nobody will settle. All of them, not the last one.
+      // a promise nobody will settle. All of them, not the last one. Their
+      // entries follow the chat's state: the host said the stop that ended the
+      // turn and took down every entry that no longer stands.
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
-        ctx.inputNeededRemoved(one.id);
       }
       // And the previews those questions were carrying. A call that will never
       // run leaves no file to show, so the text the host was holding goes with
@@ -519,20 +542,17 @@ export function createTurns(ctx: SessionContext): Turns {
       /*
        * And every worker and task the CLI runs, foreground or background,
        * since they go with the CLI the stop closes, as a background task ends
-       * with the reference's abort. A worker still waiting to be told what it
-       * is is opened first, with whatever the record said by now, so the loop
-       * below ends it with the rest.
+       * with the reference's abort. A worker whose chat was never announced
+       * has nothing to end, and what it held goes with the CLI.
        */
       for (const scope of [...ctx.scopes.values()]) {
-        if (scope.waiting !== undefined) ctx.releaseHeld(scope.parent);
-      }
-      for (const scope of [...ctx.scopes.values()]) {
-        if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+        if (scope.waiting !== undefined) ctx.scopes.delete(scope.parent);
+        else if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
       }
       ctx.noteLive({ tasks: [] });
       // The files the turn's edit calls began changing, as the stop leaves them.
       ctx.editsStopped();
-      const was = ctx.handle;
+      const was = ctx.query;
       ctx.rebind = was;
       try { was.close(); }
       catch { /* A CLI already closing is stopped all the same. */ }
@@ -544,14 +564,15 @@ export function createTurns(ctx: SessionContext): Turns {
       const turn = ctx.active;
       if (turn) {
         turn.state = 'cancelled';
-        turn.duration = Date.now() - ctx.startedAt;
+        const attempt = Date.now() - ctx.startedAt;
+        turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
+        ctx.resumedFrom = undefined;
         ctx.settleOpen(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
-        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
+        ctx.endedAt(turn);
+        ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
       }
-      ctx.doing(undefined);
-      ctx.touch();
     },
   };
 
