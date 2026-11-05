@@ -182,6 +182,54 @@ describe('what the window asks', () => {
     await expect(client.handle({ method: 'vscode/readAgentHostDebugLogsChunk', params: { resource: uriOf(join(dir, 'daemon.log')), position: 0 } })).rejects.toMatchObject({ code: -32602 });
   });
 
+  /*
+   * VS Code's report: the first account a provider is signed in as, each
+   * endpoint once by URL, and the version its product has, none made up.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostProviderService.ts#L199-L233
+   */
+  it('reports the account a backend is signed in as, each endpoint once, and no version it was not given', async () => {
+    const dir = scratch();
+    const { client } = await serving(dir, {
+      endpoints: () => [{ name: 'Echo', url: 'http://127.0.0.1:1/' }, { name: 'Echo again', url: 'http://127.0.0.1:1' }],
+      probe: async () => ({ models: [], commands: [], customizations: [], account: { status: 'signedIn', email: 'me@example.com' } }),
+    })();
+    await new Promise((r) => { setTimeout(r, 20); });
+    const info = await client.handle({ method: 'getNetworkDiagnosticsInfo', params: {} }) as Record<string, unknown>;
+    expect(info).not.toHaveProperty('version');
+    expect(info.account).toBe('me@example.com');
+    expect(info.endpoints).toEqual([{ name: 'Echo', url: 'http://127.0.0.1:1/' }]);
+  });
+
+  /*
+   * VS Code's probe reports the proxy it goes through, and a URL that does not
+   * parse fails the request.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/networkDiagnosticsService.ts#L106-L155
+   */
+  it('reports the proxy a probe goes through, none for a host NO_PROXY names, and fails a URL that does not parse', async () => {
+    const dir = scratch();
+    const { client } = await serving(dir)();
+    const kept = { use: process.env.NODE_USE_ENV_PROXY, http: process.env.http_proxy, no: process.env.no_proxy };
+    process.env.NODE_USE_ENV_PROXY = '1';
+    process.env.http_proxy = 'http://127.0.0.1:2';
+    process.env.no_proxy = 'localhost,.internal:8080';
+    try {
+      const through = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://127.0.0.1:1/' } }) as Record<string, unknown>;
+      expect(through.proxyUrl).toBe('http://127.0.0.1:2');
+      const direct = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://localhost:1/' } }) as Record<string, unknown>;
+      expect(direct).not.toHaveProperty('proxyUrl');
+      const named = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://a.internal:8080/' } }) as Record<string, unknown>;
+      expect(named).not.toHaveProperty('proxyUrl');
+    }
+    finally {
+      for (const [key, value] of [['NODE_USE_ENV_PROXY', kept.use], ['http_proxy', kept.http], ['no_proxy', kept.no]] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    // Thrown as it is, which the wire answers as an internal error.
+    await expect(client.handle({ method: 'diagnosticsFetch', params: { url: 'not a url' } })).rejects.toMatchObject({ name: 'TypeError', message: 'Invalid URL' });
+  });
+
   it('describes the network from here, and probes one endpoint', async () => {
     const dir = scratch();
     const { client, said } = await serving(dir, { endpoints: () => [{ name: 'Echo', url: 'http://127.0.0.1:1/', expectedStatus: 200 }] }, { version: '9.9.9' })();
@@ -200,7 +248,6 @@ describe('what the window asks', () => {
     expect(typeof probe.error).toBe('string');
     expect(typeof probe.durationMs).toBe('number');
     expect(probe.statusCode).toBeUndefined();
-    await expect(client.handle({ method: 'diagnosticsFetch', params: { url: 'not a url' } })).rejects.toMatchObject({ code: -32602 });
   });
 
   /*

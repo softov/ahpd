@@ -1044,11 +1044,13 @@ threw are the same `false`, because a client shows the same thing after each;
 an empty id or a `chat` that is not an AHP chat URI is `-32602`. The row is
 left where it is, and the backend's own `remove` takes it down when the work
 has ended. The request needs `chat:cancel`.
-`getNetworkDiagnosticsInfo` reports the version, platform, the proxy
-variables that are set and the endpoints the backends name - the Anthropic
-API, answering 401 unauthenticated, and the GitHub API where the host was
-given `githubPullRequests()` - and `diagnosticsFetch` looks one up over IPv4
-and IPv6 and fetches it, timed, with the body kept to 64 KiB.
+`getNetworkDiagnosticsInfo` reports the version the daemon gave, the platform,
+the first account a backend is signed in as, the proxy variables that are set
+and the endpoints the backends name, each once - the Anthropic API, answering
+401 unauthenticated, and the GitHub API where the host was given
+`githubPullRequests()` - and `diagnosticsFetch` looks one up over IPv4 and
+IPv6 and fetches it, timed, with the body kept to 64 KiB and the proxy it went
+through, a URL that does not parse failing the request.
 `getManagedSettingsDiagnostics` is an empty list: the policy layer it reports
 on is Copilot's. `shutdown` closes the host, every backend stopped and every
 store closed, and answers `{}` once that is done, the process and the

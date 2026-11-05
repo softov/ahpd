@@ -13,8 +13,12 @@ import type { LogFile } from '../sessions/debuglogs.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from '../types/containers.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
-/** The proxy variables the network diagnostics report, when set. */
-const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'] as const;
+/**
+ * The proxy variables the network diagnostics report, when set: the reference
+ * host's list.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/networkDiagnosticsService.ts#L44-L48
+ */
+const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy', 'COPILOT_PROXY_KERBEROS_SPN'] as const;
 /** How long a network probe waits, and how much of the body it keeps. */
 const PROBE_TIMEOUT = 10_000;
 const MAX_BODY = 64 * 1024;
@@ -463,43 +467,89 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       await logs.close();
       return {};
     },
+    /*
+     * The report as the reference host composes it: the backends' endpoints
+     * once each by URL, the first account a backend is signed in as, and the
+     * version where the daemon gave one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostProviderService.ts#L199-L233
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/networkDiagnosticsService.ts#L65-L96
+     */
     getNetworkDiagnosticsInfo: async () => {
       const proxyEnv: Record<string, string> = {};
       for (const key of PROXY_ENV) {
         const value = process.env[key];
         if (value) proxyEnv[key] = value;
       }
-      const endpoints = [...agents.values()].flatMap((agent) => agent.endpoints?.() ?? []);
-      if (options.github !== undefined) endpoints.push({ name: 'GitHub API', url: 'https://api.github.com/' });
+      const named = [...agents.values()].flatMap((agent) => agent.endpoints?.() ?? []);
+      if (options.github !== undefined) named.push({ name: 'GitHub API', url: 'https://api.github.com/' });
+      const seen = new Set<string>();
+      const endpoints = named.filter((endpoint) => {
+        const key = URL.canParse(endpoint.url) ? new URL(endpoint.url).toString() : endpoint.url;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const account = [...agents.values()].map((agent) => ctx.learned.get(agent.provider)?.account?.email).find((email) => email !== undefined && email !== '');
+      const version = options.diagnostics?.version;
       return {
-        version: options.diagnostics?.version ?? '0.0.1',
+        ...(version === undefined ? {} : { version }),
         os: process.platform,
         arch: process.arch,
+        ...(account === undefined ? {} : { account }),
         proxySettings: {},
         proxyEnv,
         endpoints,
       };
     },
     getManagedSettingsDiagnostics: async () => [],
+    /*
+     * One endpoint probed as the reference host probes it: a URL that does not
+     * parse fails the request, and the result reports the proxy the probe goes
+     * through. This process's fetch goes through the environment's proxy only
+     * when Node is told to use it, and then through the one undici's
+     * environment agent picks for the URL: NO_PROXY's entries match a host or
+     * a domain under it, at a port where one is named.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/networkDiagnosticsService.ts#L106-L155
+     * https://github.com/nodejs/undici/blob/v8.10.2/lib/dispatcher/env-http-proxy-agent.js#L64-L160
+     */
     diagnosticsFetch: async (params) => {
       const url = stringParam(params, 'url');
-      let target: URL;
-      try { target = new URL(url); }
-      catch { throw new RpcError(INVALID_PARAMS, `${url} is not a URL`); }
+      const target = new URL(url);
       const [dnsIpv4, dnsIpv6] = await Promise.all([resolved(target.hostname, 4), resolved(target.hostname, 6)]);
+      const viaEnvironment = process.env.NODE_USE_ENV_PROXY === '1' || process.execArgv.includes('--use-env-proxy');
+      const http = process.env.http_proxy ?? process.env.HTTP_PROXY;
+      const named = target.protocol === 'https:' ? process.env.https_proxy ?? process.env.HTTPS_PROXY ?? http : http;
+      const bare = target.hostname.startsWith('[') ? target.hostname.slice(1, -1) : target.hostname;
+      const host = (bare.length > 1 && bare.endsWith('.') ? bare.slice(0, -1) : bare).toLowerCase();
+      const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
+      const noProxy = process.env.no_proxy ?? process.env.NO_PROXY ?? '';
+      const skipped = noProxy === '*' || noProxy.split(/[,\s]/).filter((entry) => entry !== '').some((entry) => {
+        const bracketed = entry.startsWith('[') ? entry.indexOf(']:') : -1;
+        const single = entry.indexOf(':') === entry.lastIndexOf(':') ? entry.lastIndexOf(':') : -1;
+        const cut = bracketed > 0 ? bracketed + 1 : single;
+        const digits = cut > 0 ? entry.slice(cut + 1) : '';
+        const at = digits !== '' && [...digits].every((one) => one >= '0' && one <= '9') ? Number(digits) : 0;
+        const raw = at > 0 ? entry.slice(0, cut) : entry;
+        const unbracketed = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+        const dotless = unbracketed.startsWith('*.') ? unbracketed.slice(2) : unbracketed.startsWith('.') ? unbracketed.slice(1) : unbracketed;
+        const name = (dotless.length > 1 && dotless.endsWith('.') ? dotless.slice(0, -1) : dotless).toLowerCase();
+        return (at === 0 || at === port) && (host === name || host.endsWith(`.${name}`));
+      });
+      const proxyUrl = viaEnvironment && named !== undefined && named !== '' && !skipped ? named : undefined;
+      const base = { url, ...(proxyUrl === undefined ? {} : { proxyUrl }), dnsIpv4, dnsIpv6 };
       const began = Date.now();
       try {
         const answer = await fetch(target, { signal: AbortSignal.timeout(PROBE_TIMEOUT) });
         const body = await answer.text();
         return {
-          url, dnsIpv4, dnsIpv6,
-          statusCode: answer.status, statusMessage: answer.statusText,
+          ...base,
+          statusCode: answer.status,
           body: body.length > MAX_BODY ? body.slice(0, MAX_BODY) : body,
           durationMs: Date.now() - began,
         };
       }
       catch (error) {
-        return { url, dnsIpv4, dnsIpv6, error: reason(error), durationMs: Date.now() - began };
+        return { ...base, error: reason(error), durationMs: Date.now() - began };
       }
     },
     /*
