@@ -213,22 +213,17 @@ const CONFLICT = -32011;
       return {};
     },
     /*
-     * Both ends are the store's business, including the source.
-     *
-     * The source is emptied and the destination is filled, so a store that
-     * can write one and not the other refuses the half it cannot do. A
-     * `copy` reads the source, which the read half already allows inside a
-     * served directory.
-     *
-     * Two different schemes are refused rather than attempted: neither
-     * provider could carry out the other's half, which is the same answer
-     * two different clients already get for a cross-client move.
+     * A move or a copy is the source's store's to carry out, whatever the
+     * destination, as VS Code's host hands either to the provider of the
+     * source: a store that can write one end and not the other refuses the
+     * half it cannot do in its own words. A `copy` reads the source, which the
+     * read half already allows inside a served directory.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L68-L78
      */
     resourceMove: async (params) => {
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(source);
-      if (held !== storeFor(destination)) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
       await need(need(held, 'resourceMove').move, 'resourceMove')(
         source, destination, params.failIfExists === true,
       );
@@ -240,8 +235,7 @@ const CONFLICT = -32011;
     resourceCopy: async (params) => {
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
-      const held = storeFor(destination);
-      if (storeFor(source) !== held) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
+      const held = storeFor(source);
       await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
         source, destination, params.failIfExists === true,
       );

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -93,13 +93,20 @@ it('answers a scheme nobody serves with a code that says so, not a permission co
   expect((refused as { message: string }).message).toContain('nothing here serves notes:');
 });
 
-it('refuses a move whose two ends are different schemes', async () => {
+/*
+ * A move is the source's store's to carry out, whatever the destination, as
+ * VS Code's host hands it to the source's provider: the file store refuses a
+ * destination it cannot write, in its own words, and the file stays.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L68-L78
+ */
+it('hands a move whose two ends are different schemes to the source\'s store', async () => {
   writeFileSync(join(root, 'from.txt'), 'carried');
   const client = await open(host());
   await expect(client.handle({
     method: 'resourceMove',
     params: { channel: 'ahp-root://', source: `file://${root}/from.txt`, destination: 'computer://local/from.txt' },
-  })).rejects.toMatchObject({ code: -32602 });
+  })).rejects.toMatchObject({ code: -32009, message: expect.stringContaining('computer://local/from.txt') });
+  expect(existsSync(join(root, 'from.txt'))).toBe(true);
 });
 
 it('reads a provider\'s scheme from the provider, and a client\'s resource from the client under the client scheme', async () => {
