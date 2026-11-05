@@ -2090,7 +2090,7 @@ export function createHost(options: HostOptions): Host {
       if (principal !== undefined) principals.set(ownerOfPrincipal(principal), principal);
       connections.add(connection);
 
-      const conn = { connection, alive: true, containers: new Map() } as ConnectionContext;
+      const conn = { connection, alive: true, containers: new Map(), subscriptions: new Map() } as ConnectionContext;
       // Held beside `connections`, and for the same span: `stop` and `remove`
       // ask across every live connection's relays, and a map there is the one
       // this connection's own methods write.
@@ -2158,6 +2158,8 @@ export function createHost(options: HostOptions): Host {
           // shed one consumer kills the stream the others are reading.
           const channel = String(params.channel ?? '');
           connection.watching.delete(channel);
+          // A subscribe of it still being answered loses its place with it.
+          conn.subscriptions.delete(channel);
           // A changeset nobody watches any more is a directory with no reason
           // for a git watch, so the last unsubscribe is what closes it.
           const at = changesetAt(channel);

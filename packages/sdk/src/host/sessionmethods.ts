@@ -413,7 +413,32 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const asked = params.view;
       const view = typeof asked === 'object' && asked !== null ? asked as SubscribeView : undefined;
-      const snapshot = await snapshotOf(meantBy(channel), connection, view);
+      /*
+       * A state channel's place on this connection, taken before the snapshot
+       * is read: a watched channel's that stands, or a new one. A subscribe
+       * whose place another subscribe or an unsubscribe took while it was read
+       * is refused, as the reference host refuses one, and its snapshot
+       * answers nobody. A telemetry channel and a resource watch are answered
+       * at once there, and hold no place here.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2130-L2199
+       */
+      const placed = schemeOf(channel) !== 'ahp-otlp' && schemeOf(channel) !== 'ahp-resource-watch';
+      const watched = connection.watching.has(channel);
+      const place = (watched ? conn.subscriptions.get(channel) : undefined) ?? {};
+      if (placed) conn.subscriptions.set(channel, place);
+      const kept = (): boolean => !placed || conn.subscriptions.get(channel) === place;
+      const overtaken = (): RpcError => new RpcError(INTERNAL_ERROR, `Subscription cancelled: ${channel}`);
+      let snapshot: Awaited<ReturnType<typeof snapshotOf>>;
+      try {
+        snapshot = await snapshotOf(meantBy(channel), connection, view);
+      }
+      catch (error) {
+        if (!kept()) throw overtaken();
+        if (placed && !watched) conn.subscriptions.delete(channel);
+        throw error;
+      }
+      if (!kept()) throw overtaken();
+      if (placed) conn.subscriptions.set(channel, {});
       // A stateless channel is watched from here on and answered with no
       // snapshot, and nothing of it is held to replay.
       if (snapshot === undefined) {

@@ -1724,3 +1724,27 @@ describe('what a backend offers, asked again', () => {
     await host.close();
   });
 });
+
+describe('a subscribe another overtook', () => {
+  /*
+   * One subscription of a channel per connection, as VS Code's host keeps one
+   * per client: a second subscribe of a channel not yet watched takes the
+   * first's place, and an unsubscribe takes the place away, so the subscribe
+   * left without one is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2163-L2199
+   */
+  it('refuses the earlier of two subscribes of one channel, and one an unsubscribe overtook, as VS Code\'s host', async () => {
+    const { host, uri } = await running();
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const subscribe = (): Promise<unknown> => client.handle({ method: 'subscribe', params: { channel: uri } });
+    const [first, second] = await Promise.allSettled([subscribe(), subscribe()]);
+    expect(first).toMatchObject({ status: 'rejected', reason: { code: -32603, message: `Subscription cancelled: ${uri}` } });
+    expect(second).toMatchObject({ status: 'fulfilled', value: { snapshot: { resource: uri } } });
+
+    const third = subscribe();
+    void client.handle({ method: 'unsubscribe', params: { channel: uri } });
+    await expect(third).rejects.toMatchObject({ code: -32603, message: `Subscription cancelled: ${uri}` });
+    await host.close();
+  });
+});

@@ -536,6 +536,17 @@ export interface ConnectionContext {
   /** A dispatch applied now, under the origin its client sent it with, and what it waits on when it waits. */
   applyNow: (params: Record<string, unknown>, origin: Origin) => Promise<void> | undefined;
   /**
+   * The subscription each channel holds on this connection, by channel: the
+   * one a subscribe still being answered took, or the one that stands.
+   *
+   * One per channel, as the reference host's client record keeps one: a
+   * subscribe of a channel not yet watched takes the place, one of a watched
+   * channel shares the place that stands, and an unsubscribe empties it. A
+   * subscribe whose place was taken before it was answered is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2163-L2199
+   */
+  subscriptions: Map<string, object>;
+  /**
    * The dev containers this connection opened, by the client's own name.
    *
    * Per connection, because a relay is one client's: the name is theirs,
