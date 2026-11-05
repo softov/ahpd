@@ -108,6 +108,7 @@ export const NEEDS: Record<string, Grant> = {
 
   // diagnostics
   'vscode/collectAgentHostDebugLogs': 'diagnostics:logs',
+  'vscode/cancelAgentHostDebugLogs': 'diagnostics:logs',
   'vscode/readAgentHostDebugLogsChunk': 'diagnostics:logs',
   getNetworkDiagnosticsInfo: 'diagnostics:network',
   // The window asks this beside `getNetworkDiagnosticsInfo`, for the same

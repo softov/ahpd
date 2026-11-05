@@ -1028,14 +1028,21 @@ The rest of the reference window's own requests, served in the shapes it
 reads. `vscode/getAgentHostSessionStateFile` answers the backend's own record
 of a session - the Claude transcript under `~/.claude/projects`, found under
 the CLI's spelling of the directory or any project it moved from - or of one
-chat, since a chat here is its own backend session; `initialize` says so
-under `_meta['vscode.getAgentHostSessionStateFile.chat']`, and a backend that
+chat, since a chat here is its own backend session, checked against the
+session its record says owns it; `initialize` says so under
+`_meta['vscode.getAgentHostSessionStateFile.chat']`, and a backend that
 writes no file answers no `resource`. `vscode/collectAgentHostDebugLogs`
-packs the host's log files under `agenthost/` and the session's record as
-`events.jsonl`, the collector's own names, as a zip written here with what
+packs the session's record as `events.jsonl` and the host's log files under
+`agenthost/`, the collector's own names, as a zip written here with what
 Node ships or as a directory left where it is; either goes after ten
-minutes, and `vscode/readAgentHostDebugLogsChunk` reads an archive back a
-megabyte at a time, and only an archive this host made.
+minutes. Under a `progressToken` it says `root/progress` as it goes and once
+when it settles, marked `_meta['vscode.debugLogs']`, refuses a token already
+in use, and is called off by `vscode/cancelAgentHostDebugLogs` from the
+window that follows it or when that window goes; `initialize` says so under
+`_meta['vscode.debugLogsCancellation']`. `vscode/readAgentHostDebugLogsChunk`
+reads an archive back a megabyte at a time, and only an archive this host
+made. `vscode/removeSessionArtifact` takes a session's URI, a chat's refused,
+and restores the session first, refusing one it cannot restore with -32001.
 `vscode/stopBackgroundWork` takes `{ chat, id }` and calls the stop the
 backend that reported the task gave - the row says it may be stopped under
 `_meta['vscode.stopBackgroundWork']`, and the answer is `{ stopped }`.
@@ -1083,6 +1090,7 @@ refused `-32601`.
 | `vscode/stopBackgroundWork` | The Stop button on a background task's row, which the host answers by calling the backend that reported it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `vscode/getAgentHostSessionStateFile` | The backend's own record of a session, read by the window's debug view. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `vscode/collectAgentHostDebugLogs` | The window's own bundle of logs, for a bug report. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `vscode/cancelAgentHostDebugLogs` | The same bundle, called off by the window that follows it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `vscode/readAgentHostDebugLogsChunk` | The same bundle, read back a megabyte at a time. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `vscode/devContainers/isDockerAvailable` | The window drives a dev container from its own client and not from here, so the whole surface is the relay it holds. [CONTAINERS.md](../plugins/CONTAINERS.md) |
 | `vscode/devContainers/connect` | The same surface: it opens the relay into the container. [CONTAINERS.md](../plugins/CONTAINERS.md) |

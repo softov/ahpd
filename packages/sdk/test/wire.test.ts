@@ -703,6 +703,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/stopBackgroundWork': 'What the window asks a host about itself',
     'vscode/getAgentHostSessionStateFile': 'What the window asks a host about itself',
     'vscode/collectAgentHostDebugLogs': 'What the window asks a host about itself',
+    'vscode/cancelAgentHostDebugLogs': 'What the window asks a host about itself',
     'vscode/readAgentHostDebugLogsChunk': 'What the window asks a host about itself',
     'vscode/devContainers/isDockerAvailable': 'CONTAINERS.md',
     'vscode/devContainers/connect': 'CONTAINERS.md',

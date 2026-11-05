@@ -2273,6 +2273,10 @@ export function createHost(options: HostOptions): Host {
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);
+          // A debug-log collection it followed is called off, as the reference
+          // host calls one off when its client goes.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4123-L4128
+          logs.abandon(connection.clientId);
           ctx.reconcile();
           log(`${connection.clientId || 'a client'} went away`);
         },

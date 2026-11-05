@@ -2,11 +2,12 @@ import { lookup } from 'node:dns/promises';
 import { realpathSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import { INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, numberParam, optionalStringParam, stringParam } from '../rpc.js';
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
+import { INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, optionalStringParam, stringParam } from '../rpc.js';
 import { idOf } from '../sessions/catalog.js';
 import { hostLogPath } from '../sessions/debuglogs.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
-import { spaceOf } from './channels.js';
+import { ROOT, spaceOf } from './channels.js';
 import { need, reason } from './common.js';
 import { symlinkFolders } from './lifecycle.js';
 import type { LogFile } from '../sessions/debuglogs.js';
@@ -65,6 +66,7 @@ export interface VscodeMethods {
   'vscode/stopBackgroundWork': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/getAgentHostSessionStateFile': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/collectAgentHostDebugLogs': (params: Record<string, unknown>) => Promise<unknown>;
+  'vscode/cancelAgentHostDebugLogs': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/readAgentHostDebugLogsChunk': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/devContainers/isDockerAvailable': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/devContainers/connect': (params: Record<string, unknown>) => Promise<unknown>;
@@ -92,19 +94,26 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    * The backend's own file for a session, or for one chat of it.
    *
    * A chat here is its own backend session with an id of its own, so a chat
-   * named is that id; a session named is its lead's. A row that is not
-   * running has the id in its URI, which is what the catalogue listed it by.
+   * named is that id, a live one's or the one its record holds; a session
+   * named is its lead's. A row that is not running has the id in its URI,
+   * which is what the catalogue listed it by. A chat named is checked against
+   * the session its record says owns it, as the reference host resolves a
+   * chat's owner from its records, so a chat of a session nobody runs passes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4326-L4331
    */
   const stateFileOf = (session: string, chat?: string): string | undefined => {
     const uri = sessions.has(session) ? session : sessionFor(session);
+    if (chat !== undefined && (spaceOf(chat) !== 'chat' || sessionFor(chat) !== uri)) {
+      throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
+    }
     const held = sessions.get(uri);
     const agent = held?.agent ?? owners.get(uri);
     const dir = dirOf(uri);
-    const chosen = chat === undefined ? undefined : byChat.get(chat);
-    if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
     if (agent?.stateFile === undefined || dir === undefined) return undefined;
-    const live = chosen?.chat ?? (held ? leadOf(held) : undefined);
-    return agent.stateFile(live?.agentId() ?? idOf(uri), dir);
+    const own = chat === undefined
+      ? (held ? leadOf(held)?.agentId() : undefined)
+      : byChat.get(chat)?.chat.agentId() ?? ctx.recordedChat(idOf(uri), chat)?.backendId;
+    return agent.stateFile(own ?? idOf(uri), dir);
   };
 
   /**
@@ -375,14 +384,32 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       }
       return {};
     },
+    /*
+     * An artifact taken off a session, as the reference host takes one: the
+     * params checked and refused in its words, the session restored first, a
+     * session it cannot restore refused in its restore's words, and an id the
+     * session does not hold left as it is.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3400-L3417
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3600-L3612
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2292-L2305
+     */
     'vscode/removeSessionArtifact': async (params) => {
-      const session = String(params.session ?? '');
-      const artifactId = String(params.artifactId ?? '').trim();
-      if (session === '' || artifactId === '') throw new RpcError(INVALID_PARAMS, 'session and artifactId must be non-empty strings');
-      const uri = sessions.has(session) ? session : sessionFor(session);
-      const held = kept.artifacts(idOf(uri)) ?? [];
+      const session = stringParam(params, 'session', 'a URI string');
+      const artifactId = stringParam(params, 'artifactId');
+      if (artifactId.trim() === '') throw new RpcError(INVALID_PARAMS, 'artifactId must be a non-empty string');
+      if (!URL.canParse(session)) throw new RpcError(INVALID_PARAMS, 'session must be a valid URI string');
+      const parsed = new URL(session);
+      if (!parsed.pathname.startsWith('/') || parsed.pathname.length < 2 || parsed.host !== ''
+        || parsed.search !== '' || parsed.hash !== '' || spaceOf(session) === 'chat') {
+        throw new RpcError(INVALID_PARAMS, 'session must be an Agent Session URI');
+      }
+      if (!sessions.has(session) && (ctx.waitingFor(idOf(session)) !== undefined
+        || await ctx.past(idOf(session)) === undefined || ctx.nameOf(idOf(session)) !== session)) {
+        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${session}`);
+      }
+      const held = kept.artifacts(idOf(session)) ?? [];
       const left = held.filter((one) => one.id !== artifactId);
-      if (left.length !== held.length) setArtifacts(uri, left);
+      if (left.length !== held.length) setArtifacts(session, left);
       return {};
     },
     /**
@@ -432,22 +459,81 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      * same. The archive is read back in chunks; the directory is opened
      * where it is.
      */
+    /*
+     * Followed under the client's progress token, as the reference host
+     * follows a collection: a token already in use refused, `root/progress`
+     * said as it goes and once more when it settles, marked as the debug
+     * logs', and the collection called off by its client's cancel or when
+     * that client goes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4086-L4158
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16074-L16101
+     */
     'vscode/collectAgentHostDebugLogs': async (params) => {
       const kind = params.kind;
       if (kind !== 'archive' && kind !== 'directory') throw new RpcError(INVALID_PARAMS, 'kind must be archive or directory');
       const session = optionalStringParam(params, 'session', 'a URI string');
       const chat = optionalStringParam(params, 'chat', 'a URI string');
+      const token = optionalStringParam(params, 'progressToken');
+      if (session !== undefined && !URL.canParse(session)) throw new RpcError(INVALID_PARAMS, 'session must be a valid URI string');
+      if (chat !== undefined && !URL.canParse(chat)) throw new RpcError(INVALID_PARAMS, 'chat must be a valid URI string');
       if (chat !== undefined && session === undefined) throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
-      const files: LogFile[] = (options.diagnostics?.logs?.() ?? []).map((file) => ({ path: hostLogPath(file), from: file }));
+      // The session's backend's file first, then the host's own, the order the
+      // reference collector takes them in.
       const record = session === undefined ? undefined : stateFileOf(session, chat);
-      if (record !== undefined) files.push({ path: 'events.jsonl', from: record, provider: true });
-      return await logs.collect(files, kind);
+      const owning = session === undefined ? undefined : (sessions.has(session) ? session : sessionFor(session));
+      const provider = owning === undefined ? undefined : (sessions.get(owning)?.agent ?? owners.get(owning))?.provider;
+      const files: LogFile[] = [
+        ...(record !== undefined && provider !== undefined ? [{ path: 'events.jsonl', from: record, provider }] : []),
+        ...(options.diagnostics?.logs?.() ?? []).map((file) => ({ path: hostLogPath(file), from: file })),
+      ];
+      const said = (progress: number, total: number | undefined, message?: string): void => {
+        ctx.broadcast(ROOT, 'root/progress', {
+          channel: ROOT, progressToken: token, progress,
+          ...(total === undefined ? {} : { total }),
+          ...(message === undefined ? {} : { message }),
+          _meta: { 'vscode.debugLogs': true },
+        });
+      };
+      let last = 0;
+      try {
+        return await logs.collect(files, kind, token === undefined ? undefined : {
+          token,
+          owner: connection.clientId,
+          report: (bytes, total, message) => {
+            last = bytes;
+            said(bytes, total > 0 ? total : undefined, message);
+          },
+        });
+      }
+      finally {
+        if (token !== undefined) said(last, last);
+      }
     },
+    /*
+     * A collection called off by the client that follows it, in the reference
+     * host's words for a token it does not follow.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4148-L4159
+     */
+    'vscode/cancelAgentHostDebugLogs': async (params) => {
+      if (typeof params.progressToken !== 'string') throw new RpcError(INVALID_PARAMS, 'progressToken must be a string');
+      if (!logs.cancel(params.progressToken, connection.clientId)) throw new RpcError(INVALID_PARAMS, 'Unknown debug-log collection');
+      return {};
+    },
+    /*
+     * One chunk of an artifact, the params refused in the reference host's
+     * words and a failure of the read itself left as it is, which the wire
+     * answers as an internal error.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4160-L4184
+     */
     'vscode/readAgentHostDebugLogsChunk': async (params) => {
-      const resource = stringParam(params, 'resource', 'a URI string');
-      const position = numberParam(params, 'position');
-      try { return await logs.read(resource, position); }
-      catch (error) { throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error)); }
+      const resource = params.resource;
+      if (typeof resource !== 'string') throw new RpcError(INVALID_PARAMS, 'resource must be a URI string');
+      if (!URL.canParse(resource)) throw new RpcError(INVALID_PARAMS, 'resource must be a valid URI string');
+      const position = params.position;
+      if (typeof position !== 'number' || !Number.isSafeInteger(position) || position < 0) {
+        throw new RpcError(INVALID_PARAMS, 'position must be a non-negative integer');
+      }
+      return await logs.read(resource, position);
     },
     /**
      * The four the window asks of its own host about itself.

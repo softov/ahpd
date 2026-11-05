@@ -354,6 +354,25 @@ describe('what a session recorded', () => {
     await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'nobody' } });
     expect(actions(p, uri).length).toBe(before);
   });
+
+  /*
+   * VS Code's params and restore: each refused in its words, a chat's URI
+   * among them, and a session it cannot restore refused -32001.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3400-L3417
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3600-L3612
+   */
+  it('refuses a removal\'s params and a session it cannot restore, in VS Code\'s words', async () => {
+    const { client, uri } = await withTools();
+    const remove = (params: Record<string, unknown>) => client.handle({ method: 'vscode/removeSessionArtifact', params });
+    await expect(remove({ session: uri, artifactId: ' ' })).rejects.toMatchObject({ code: -32602, message: 'artifactId must be a non-empty string' });
+    await expect(remove({ session: 'not a uri', artifactId: 'a' })).rejects.toMatchObject({ code: -32602, message: 'session must be a valid URI string' });
+    for (const session of ['ahp-chat:/one', 'ahp-session://elsewhere/one', 'ahp-session:/one?x', 'ahp-session:/']) {
+      await expect(remove({ session, artifactId: 'a' })).rejects.toMatchObject({ code: -32602, message: 'session must be an Agent Session URI' });
+    }
+    await expect(remove({ session: 'ahp-session:/nobody', artifactId: 'a' }))
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: ahp-session:/nobody' });
+    expect(await remove({ session: uri, artifactId: 'nobody' })).toEqual({});
+  });
 });
 
 describe('the pull request a create-pr recorded', () => {
