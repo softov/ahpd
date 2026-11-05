@@ -228,10 +228,12 @@ export function chatAction(
     && (action.message as Record<string, unknown>).origin === undefined) {
     action.message = { origin: { kind: 'user' }, ...(action.message as Record<string, unknown>) };
   }
-  // How an approval was given, which the protocol requires too: a client that
-  // answers a call it was asked about answered as the user.
-  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L250-L255
+  // How an approval was given and why a call was turned down, which the
+  // protocol requires too: a client that answers a call it was asked about
+  // answered as the user, and a person who turned it down denied it.
+  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L250-L283
   if (type === 'chat/toolCallConfirmed' && action.approved === true && typeof action.confirmed !== 'string') action.confirmed = 'user-action';
+  if (type === 'chat/toolCallConfirmed' && action.approved === false && typeof action.reason !== 'string') action.reason = 'denied';
 
   /** The message an action carries, which its text and its attachments ride on. */
   const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
