@@ -140,14 +140,14 @@ it('fails a turn on a session whose CLI is gone, instead of thinking for ever', 
   // The CLI has to have exited before the turn, which is the case that broke:
   // a person picks a machine, reads the screen, then types.
   await new Promise((resolve) => setTimeout(resolve, 600));
-  session.begin('t1', 'anything');
+  session.sendMessage('t1', 'anything');
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   const failure = seen.find((one) => one.type === 'chat/error');
   expect(failure, `emitted: ${seen.map((one) => one.type).join(', ')}`).toBeDefined();
   expect(failure?.message).toMatch(/exited with code/);
-  // Started as well as failed, so a client clears the message it just sent.
-  expect(seen.some((one) => one.type === 'chat/turnStarted')).toBe(true);
+  // The start is the host's to say, so the backend says only the failure.
+  expect(seen.some((one) => one.type === 'chat/turnStarted')).toBe(false);
   // 2 is Error, 8 is InProgress: the whole point is that it is not 8.
   expect(session.status()).toBe(2);
   session.close();

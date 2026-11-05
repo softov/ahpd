@@ -192,6 +192,27 @@ it('matches the line the model wrote, not the one the shell prefix made', async 
   ]);
 });
 
+/*
+ * A command a person is asked about is shown as the model wrote it, its line
+ * and its input, whatever the host puts in front of it to run, as the reference
+ * asks about the command the model wrote; an approval runs it with the prefix.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174
+ */
+it('asks about a command as the model wrote it, and runs it with the shell prefix', async () => {
+  const { check } = approving([]);
+  const { session, canUseTool, options, sent } = await sessionWith(check, {}, { SAY: 'b' });
+  const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_shown', tool_input: { command: 'make test' } });
+  const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
+  const asking = canUseTool('Bash', rewritten, { toolUseID: 'toolu_shown' });
+  await settle();
+  const ready = readyOf(sent, 'toolu_shown');
+  const entry = sent.find((one) => one.type === 'session/inputNeededSet');
+  expect(JSON.stringify([ready, entry])).toContain('make test');
+  expect(JSON.stringify([ready, entry])).not.toContain('export');
+  session.confirm('toolu_shown', true);
+  expect(await asking).toEqual({ behavior: 'allow', updatedInput: rewritten });
+});
+
 it('asks for a command no rule matches', async () => {
   const { check } = approving([]);
   const { canUseTool, sent } = await sessionWith(check);

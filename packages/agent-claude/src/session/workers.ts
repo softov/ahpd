@@ -745,7 +745,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   const stopWorker = (toolCallId: string): void => {
     const task = tasks.get(toolCallId);
     if (ctx.options.workerStop === 'session' || task === undefined) {
-      ctx.self.cancel('');
+      void ctx.self.abort();
       return;
     }
     void ctx.handle.stopTask(task).catch(() => {});

@@ -734,30 +734,13 @@ export function createQuery(ctx: SessionContext): Query {
     const mine = ctx.handle;
     try {
       for await (const raw of mine) {
+        // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
+        if (ctx.rebind === mine) break;
         const message = bag(raw as unknown);
         const type = str(message.type);
         // Every message carries it, so this needs no particular one to arrive.
         const said = str(message.session_id);
         if (said) ctx.agentId = said;
-
-        /*
-         * A stop waiting to interrupt the CLI until it has recorded the
-         * answers the stop gave (`cancel`). Each result reported for one of
-         * them is one fewer to wait for; the CLI starting on anything else has
-         * moved past them, and a result ends the turn with no interrupt owed.
-         */
-        if (ctx.stopAnswers !== undefined) {
-          if (type === 'user') {
-            for (const block of list(bag(message.message).content) as Bag[]) {
-              if (block.type === 'tool_result') ctx.stopAnswers.delete(str(block.tool_use_id) ?? '');
-            }
-          }
-          if (type === 'result') ctx.stopAnswers = undefined;
-          else if (ctx.stopAnswers.size === 0 || type === 'assistant' || type === 'stream_event') {
-            ctx.stopAnswers = undefined;
-            void mine.interrupt().catch(() => {});
-          }
-        }
 
         // The message stream's own init. Capabilities come from the control
         // protocol instead (see `describe`), because those are needed before
@@ -825,11 +808,8 @@ export function createQuery(ctx: SessionContext): Query {
          * The first frame of each kind in an answer names the prompt in
          * `user_message_uuid`, and the frames after it are the same answer's.
          * An answer belongs to the turn its prompt belongs to, and a turn that
-         * has ended takes no more of it: the rest of a stopped turn's answer
-         * goes nowhere, and neither does it reach a turn begun since. A
-         * steering message whose turn ended before the CLI took it in is
-         * answered after, in a turn of its own, which opens now if the end
-         * did not open it.
+         * has ended takes no more of it: the rest of an ended turn's answer
+         * goes nowhere, and neither does it reach a turn begun since.
          */
         if (str(message.parent_tool_use_id) === undefined
           && (type === 'stream_event' || type === 'assistant' || type === 'user')) {
@@ -837,11 +817,7 @@ export function createQuery(ctx: SessionContext): Query {
           if (named !== undefined) ctx.answering = named;
           const owed = ctx.answering === undefined ? undefined : ctx.owed.get(ctx.answering);
           const running = ctx.active === undefined ? undefined : String(ctx.active.id);
-          if (owed !== undefined && owed.turn !== running) {
-            // A steering message a client took back is answered nowhere.
-            if (owed.steering && owed.withdrawn !== true && running === undefined) ctx.present(String(ctx.answering));
-            else continue;
-          }
+          if (owed !== undefined && owed.turn !== running) continue;
         }
 
         /*
@@ -1014,15 +990,17 @@ export function createQuery(ctx: SessionContext): Query {
           /*
            * Read before the turn is pushed, because the reason goes inside it.
            * A failure of the turn's login that it did not show says its own
-           * words. `is_error` carries the CLI's words: a `success` that failed
-           * holds them in `result`, as a request the CLI gave up on does, and
-           * an error subtype in `errors`, as the reference reads them. A
-           * subtype that is not `success` is a turn that ended badly with none,
-           * and saying which is better than an error part that says only that
-           * there was one.
-           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L567-L575
+           * words. Otherwise a result fails its turn only as the reference
+           * reads one: a `success` that says `is_error`, in the words it holds
+           * in `result`, and `error_during_execution`, in its `errors`. Every
+           * other subtype is a limit the CLI stopped at, such as its turn or
+           * budget limit, and the turn ends as one that completed.
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L532-L547
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
            */
-          const words = str(message.subtype) === 'success'
+          const subtype = str(message.subtype);
+          const failed = subtype === 'success' ? message.is_error === true : subtype === 'error_during_execution';
+          const words = subtype === 'success'
             ? str(message.result)
             : list(message.errors).map(String).join('\n');
           /*
@@ -1033,11 +1011,7 @@ export function createQuery(ctx: SessionContext): Query {
            * there is either nowhere left to go or a CLI already on it.
            */
           const ofLogin = ctx.failure();
-          const wrong = ofLogin ?? (message.is_error === true
-            ? (words || 'The turn failed')
-            : str(message.subtype) !== 'success'
-              ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
-              : undefined);
+          const wrong = ofLogin ?? (failed ? (words || 'The turn failed') : undefined);
           if (wrong === undefined) ctx.answered();
           /*
            * The prompts this result answered, which the CLI no longer owes,
@@ -1054,35 +1028,15 @@ export function createQuery(ctx: SessionContext): Query {
           for (const uuid of named) ctx.owed.delete(uuid);
           ctx.answering = undefined;
           /*
-           * A result about turns that have ended, which ends none.
-           *
-           * A stopped turn's result comes after `cancel` ended the turn, and a
-           * turn begun since, or opened for the steering messages the stopped
-           * turn left, is running when it comes. It says the turn was stopped,
-           * which is not a failure. A turn a later one took the place of while
-           * it ran ends the same way, in no history. The queue behind a stopped turn stays, as
-           * the reference host keeps it, so the start made here is only one a
-           * client's change to the queue asked for since.
-           * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+           * A result about turns that have ended, which ends none, and a turn
+           * handed behind them is begun once the CLI owes nothing in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
-            ctx.interrupted = false;
-            if (turn === undefined) {
-              ctx.doing(undefined);
-              if (ctx.deferred) ctx.startNext();
-            }
-            // A turn handed while the one answered here ran is begun once the
-            // CLI owes nothing in front of it.
-            else ctx.startNext();
+            if (turn === undefined) ctx.doing(undefined);
             ctx.touch();
+            ctx.sendNext();
             continue;
           }
-          /*
-           * A stopped turn's result that names a prompt of the running turn
-           * too: the CLI took that turn's steering message into the stopped
-           * turn as it was stopped, and it ends stopped with it.
-           */
-          const stopping = ctx.interrupted && owners.some((owner) => owner !== undefined && owner !== running);
           /*
            * A turn the CLI still owes an answer in.
            *
@@ -1090,8 +1044,9 @@ export function createQuery(ctx: SessionContext): Query {
            * run once this result is out, as a turn of the CLI's own, and its
            * answer is this turn's: the turn stays open until a result has named
            * every prompt handed over in it, as the reference completes a turn
-           * only when its prompts are settled. A result that failed ends it.
-           * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
+           * only when its prompts are settled. A result that failed ends it;
+           * one that stopped at a limit does not.
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
            */
           if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) {
             spanning.add(String(turn.id));
@@ -1108,12 +1063,11 @@ export function createQuery(ctx: SessionContext): Query {
              * `chat/turnComplete` - but a client that subscribes afterwards
              * reads the snapshot, and the snapshot is this.
              */
-            turn.state = stopping ? 'cancelled' : wrong !== undefined ? 'error' : 'complete';
+            turn.state = wrong !== undefined ? 'error' : 'complete';
             // `duration_ms` is the CLI's last turn alone, so a turn that took
-            // more than one of them, or that the result is not about, is
-            // measured from its own start.
+            // more than one of them is measured from its own start.
             const spanned = spanning.delete(String(turn.id));
-            turn.duration = !spanned && !stopping && typeof message.duration_ms === 'number'
+            turn.duration = !spanned && typeof message.duration_ms === 'number'
               ? message.duration_ms
               : Date.now() - ctx.startedAt;
             // Before the turn completes, not after: the reducer hangs usage on
@@ -1121,9 +1075,8 @@ export function createQuery(ctx: SessionContext): Query {
             // `turns` - so the other order reports it about nothing.
             // A stream that carried no partial messages leaves the sum empty,
             // and the result's own main-loop count is then the best there is.
-            // A stopped turn's result counts that turn, not this one.
-            const used = stopping ? ctx.sum() : ctx.sum() ?? ctx.usageOf(message.usage, ctx.ran);
-            const cost = stopping ? undefined : ctx.costOf(message);
+            const used = ctx.sum() ?? ctx.usageOf(message.usage, ctx.ran);
+            const cost = ctx.costOf(message);
             if (used !== undefined || cost !== undefined) {
               // The cost rides the tokens' own `_meta`, the same place cache
               // writes go, rather than beside them as a field of its own.
@@ -1139,7 +1092,7 @@ export function createQuery(ctx: SessionContext): Query {
              * not, and nor is a turn with no cut point - the failed prompt and
              * its reply are still in the conversation a new CLI would resume.
              */
-            const part = wrong === undefined || stopping
+            const part = wrong === undefined
               ? undefined
               : ctx.addFailure(turn, wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
             ctx.turns.push(turn);
@@ -1168,41 +1121,33 @@ export function createQuery(ctx: SessionContext): Query {
              * that failed was drawn as one that worked, and the reason was in
              * the snapshot and nowhere in the stream.
              */
-            if (stopping) {
-              ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
-            }
-            else if (part !== undefined) {
+            if (part !== undefined) {
               ctx.emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
             }
             else {
               ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
             }
           }
-          // The result an interrupt ends with, for a turn `cancel` already
-          // ended: it says the turn was stopped, which is not a failure.
-          const stopped = (turn === undefined && ctx.interrupted) || stopping;
-          ctx.interrupted = false;
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (message.is_error === true && !stopped) ctx.failed = wrong ?? 'The turn failed';
+          if (wrong !== undefined) ctx.failed = wrong;
           ctx.doing(undefined);
           ctx.touch();
-          // A turn that failed or stopped leaves its steering messages with the CLI.
-          if (turn) ctx.handOver(String(turn.id));
           /*
-           * Only a turn that completed starts the queue, as the reference host
-           * drains it after a success: a stopped or failed turn leaves it
-           * waiting, and starts only what a client's change to it asked for.
-           * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+           * The turn handed behind it, however this one ended, as the
+           * reference agent runs each send after the one before it: a failed
+           * send fails its own turn only.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L408-L436
            */
-          if (turn?.state === 'complete' || ctx.deferred) ctx.startNext();
+          ctx.sendNext();
         }
       }
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
-      // replaced it is already running the same conversation, or a turn
-      // moving to another login is about to start it.
-      if (ctx.handle !== mine || ctx.replacing(mine)) return;
+      // replaced it is already running the same conversation, a turn moving
+      // to another login is about to start it, or a stop closed it for the
+      // next send to start again.
+      if (ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
        * A session already gone keeps the reason it went.
        *
@@ -1223,11 +1168,22 @@ export function createQuery(ctx: SessionContext): Query {
        */
       died(failureOf(error));
     }
-    // A loop that ended without throwing has ended all the same: the CLI
-    // exited and said nothing, and a later turn has as little to answer it.
-    if (ctx.handle !== mine || ctx.replacing(mine)) return;
-    ctx.gone ??= 'The agent stopped';
+    /*
+     * A stream that ended without a result, which fails the turn it was
+     * answering and what that turn had handed it, as the reference pipeline
+     * fails every pending entry; the next send starts a CLI that resumes the
+     * conversation, and a turn handed behind it is that send.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
+     */
+    if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine || ctx.gone !== undefined) return;
+    ctx.rebind = mine;
+    ctx.waiting.length = 0;
+    ctx.owed.clear();
+    ctx.answering = undefined;
+    ctx.steering = undefined;
+    if (ctx.active !== undefined) failTurn('Claude SDK stream ended without a result message');
     ctx.touch();
+    ctx.sendNext();
   };
 
   /**

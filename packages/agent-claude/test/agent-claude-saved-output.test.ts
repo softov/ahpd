@@ -369,9 +369,6 @@ it.each(none)('names no terminal for $name', async ({ frames, options, outputs }
   expect(bag(completionOf(sent)?.result).content).toEqual([{ type: 'text', text: first?.content }]);
 });
 
-/** The turns the session has started, in order. */
-const started = (sent: Bag[]): Bag[] => sent.filter((one) => one.type === 'chat/turnStarted');
-
 it('keeps nothing for a turn stopped while the file was read', async () => {
   const path = saved();
   let release: (() => void) | undefined;
@@ -380,12 +377,10 @@ it('keeps nothing for a turn stopped while the file was read', async () => {
     const { session, sent, kept } = await open();
     sdk.push(called('Bash'), answered(noticeFor(path), structuredFor(path)));
     await settle();
-    session.cancel(String(started(sent)[0]?.turnId));
-    // The model's next call waits behind the read, so its turn starts once the
-    // stopped call's result has been read and mapped.
-    sdk.push(called('Bash', 'toolu_2', 'm2'));
+    session.abort();
+    // The read ends after the stop, which closed the CLI the result came from.
     release?.();
-    await until(() => started(sent).length === 2);
+    await settle();
     expect(kept.size).toBe(0);
     const completions = sent.filter((one) => one.type === 'chat/toolCallComplete');
     expect(completions.some((one) => (bag(one.result).content as Bag[] | undefined)?.some((block) => block.type === 'terminal'))).toBe(false);
@@ -398,29 +393,13 @@ it('keeps nothing for a turn stopped while the file was read', async () => {
 
 it('keeps nothing for a result that arrives after its turn was stopped', async () => {
   const path = saved();
-  const { session, sent, kept } = await open();
+  const { session, kept } = await open();
   sdk.push(called('Bash'));
   await settle();
-  session.cancel(String(started(sent)[0]?.turnId));
-  // The model's next call opens a turn once the stopped call's result has been
-  // read, so the result has been read when that turn starts.
-  sdk.push(answered(noticeFor(path), structuredFor(path)), called('Bash', 'toolu_2', 'm2'));
-  await until(() => started(sent).length === 2);
-  expect(kept.size).toBe(0);
-});
-
-it('keeps nothing for a stopped turn\'s result that arrives while a later turn runs', async () => {
-  const path = saved();
-  const { session, sent, kept } = await open();
-  sdk.push(called('Bash'));
+  session.abort();
+  // What the closed CLI says after the stop is read by nobody.
+  sdk.push(answered(noticeFor(path), structuredFor(path)));
   await settle();
-  session.cancel(String(started(sent)[0]?.turnId));
-  sdk.push(called('Bash', 'toolu_2', 'm2'));
-  await until(() => started(sent).length === 2);
-  // The stopped call's result, then the running call's: the second is read
-  // after the first, so its completion says the first has been read.
-  sdk.push(answered(noticeFor(path), structuredFor(path)), answered('done', undefined, {}, false, 'toolu_2'));
-  await until(() => sent.some((one) => one.type === 'chat/toolCallComplete' && one.toolCallId === 'toolu_2'));
   expect(kept.size).toBe(0);
 });
 

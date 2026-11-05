@@ -25,7 +25,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { ComputerPort } from '../src/types/computers.js';
-import type { Chosen, MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
+import type { MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /** A PNG's first bytes. Nothing here decodes it, so a header is a picture. */
@@ -104,10 +104,10 @@ const scripted = (said: Bag[], order: string[], dir: string): Agent => {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => {
+        sendMessage: (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[]) => {
           order.push('begun');
           said.push({ turnId, text, ...(attachments === undefined ? {} : { attachments }) });
-          session.begin(turnId, text, model, from, attachments);
+          return session.sendMessage(turnId, text, from, attachments);
         },
       };
     },
@@ -167,7 +167,7 @@ it('puts the file into the machine after it is written and before the turn', asy
   const order: string[] = [];
   const { dir, lines, said: turns, open, turn } = await serving(port(said, order), order);
   const chat = await open('echo:/one');
-  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'look', attachments: [png()] } });
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } });
   await until(() => said.put.length > 0);
 
   const copy = first(said.put);
@@ -193,8 +193,8 @@ it('puts each session\'s own file into the machine the two share', async () => {
   const { dir, said: turns, open, turn } = await serving(port(said));
   const one = await open('echo:/one');
   const two = await open('echo:/two');
-  await turn(one, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'mine', attachments: [png('one.png')] } });
-  await turn(two, { type: 'chat/turnStarted', turnId: 't2', message: { text: 'yours', attachments: [png('two.png')] } });
+  await turn(one, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'mine', attachments: [png('one.png')] } });
+  await turn(two, { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'yours', attachments: [png('two.png')] } });
   await until(() => said.put.length === 2);
 
   // Both into the one machine, each at a path under its own session's folder:
@@ -213,7 +213,7 @@ it('says so in a line when a copy fails, and runs the turn anyway', async () => 
   const said = { ...asked(), fail: true };
   const { lines, said: turns, open, turn } = await serving(port(said));
   const chat = await open('echo:/one');
-  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'look', attachments: [png()] } });
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } });
   await until(() => said.put.length > 0 && turns.length > 0);
 
   expect(lines.some((one) => one.includes("computers: putting a message's attachments into box for echo:/one failed: the machine is not running"))).toBe(true);
@@ -227,7 +227,7 @@ it('takes a gone session\'s folder back out of its machine', async () => {
   const said = asked();
   const { dir, client, open, turn } = await serving(port(said));
   const chat = await open('echo:/one');
-  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'look', attachments: [png()] } });
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } });
   await until(() => said.put.length > 0);
 
   await client.handle({ method: 'disposeSession', params: { channel: 'echo:/one' } });
@@ -249,7 +249,7 @@ it('hands nothing over for a session in no machine', async () => {
   const said = asked();
   const { open, turn, said: turns } = await serving(port(said));
   const chat = await open('echo:/one', '');
-  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'look', attachments: [png()] } });
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } });
   await until(() => turns.length > 0);
 
   // Nothing entered, so nothing is copied anywhere - and the file is written

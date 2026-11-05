@@ -16,7 +16,7 @@ import type { Agent, Start } from '../src/types/agent.js';
 import type { AgentOwner } from '../src/types/agents.js';
 import type { AutomationRun, AutomationStore, StartSession } from '../src/types/automations.js';
 import type { Principal, Users } from '../src/types/users.js';
-import type { Chosen, MessageFrom, Session } from '../src/types/session.js';
+import type { Chosen, Session } from '../src/types/session.js';
 
 /*
  * Automations, on a host that holds no clock.
@@ -1032,9 +1032,9 @@ it('starts the first turn on the model the session template names', async () => 
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom) => {
+        changeModel: (model: Chosen) => {
           models.push(model);
-          session.begin(turnId, text, model, from);
+          return session.changeModel(model);
         },
       };
     },

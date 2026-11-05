@@ -169,9 +169,9 @@ it('opens one backend per record, with the record\'s own id, name and instructio
   expect([second.agent.provider, second.agent.displayName]).toEqual(['cofold-two', 'Two']);
 
   // One at a time, so the request each turn made is the request of that agent.
-  first.session.begin('t1', 'hello');
+  first.session.sendMessage('t1', 'hello');
   await until(() => endings(first.actions).length === 1);
-  second.session.begin('t1', 'hello');
+  second.session.sendMessage('t1', 'hello');
   await until(() => endings(second.actions).length === 1);
   expect(endings(first.actions)).toEqual(['chat/turnComplete']);
   expect(endings(second.actions)).toEqual(['chat/turnComplete']);
@@ -187,14 +187,14 @@ it('applies an edit at the next turn, not to the one already running', async () 
   let held: Bag = { instructions: 'You are the first.' };
   const { session, actions } = opened(engine, 'cofold-live', () => held, folderOf('live'));
 
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await until(() => endings(actions).length === 1);
   expect(endings(actions)).toEqual(['chat/turnComplete']);
 
   // The record changes under the session. The second turn is built from what
   // it says now, because a session reads its record before each turn.
   held = { instructions: 'You are the second.' };
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await until(() => endings(actions).length === 2);
   expect(endings(actions)).toEqual(['chat/turnComplete', 'chat/turnComplete']);
 

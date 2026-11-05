@@ -572,14 +572,14 @@ it('gives a turn the instructions the host asked for, and nothing once it ends',
   expect(await submitted()).toEqual([{}]);
 
   // A turn the host said nothing about, which is every ordinary one.
-  session.begin('t-plain', 'hello');
+  session.sendMessage('t-plain', 'hello');
   await settle();
   expect(await submitted()).toEqual([{}]);
-  await session.cancel('t-plain');
+  await session.abort();
   await settle();
 
   let asked = 0;
-  session.begin('t-told', 'and this', undefined, undefined, undefined, {
+  session.sendMessage('t-told', 'and this', undefined, undefined, {
     instructions: () => { asked += 1; return words; },
   });
   await settle();
@@ -589,7 +589,7 @@ it('gives a turn the instructions the host asked for, and nothing once it ends',
   }]);
 
   // Taken with the turn that ended, rather than left for the next prompt.
-  await session.cancel('t-told');
+  await session.abort();
   await settle();
   expect(await submitted()).toEqual([{}]);
 });

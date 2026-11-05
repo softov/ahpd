@@ -233,7 +233,7 @@ it('a real inner host killed mid-turn ends the turn and the session, naming the 
   let host: ChildProcessWithoutNullStreams | undefined;
   const env = { ...home(), PACE: '50' };
   const session = proxy(() => { host = ahpd(env); return host; }).create(start(emit));
-  session.begin('t1', 'one two three four five six seven eight nine ten');
+  session.sendMessage('t1', 'one two three four five six seven eight nine ten');
   await until(() => has('chat/delta'));
   expect(has('chat/delta')).toBe(true);
   host?.kill('SIGKILL');
@@ -250,14 +250,14 @@ it('a turn after the inner host was killed is refused with the sentence the sess
   let inner: ChildProcessWithoutNullStreams | undefined;
   const env = home();
   const served = await outer(proxy(() => { inner = ahpd(env); return inner; }));
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } });
   await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
   inner?.kill('SIGKILL');
   await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/creationFailed'));
   const said = String(served.on(served.uri).find(({ action }) => action.type === 'session/creationFailed')?.action.error.message);
   expect(said).toMatch(/SIGKILL/);
 
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } });
   await until(() => served.on(served.chatUri).some(({ action, rejectionReason }) => action.turnId === 't2' && rejectionReason !== undefined), 3_000);
   const refused = served.on(served.chatUri).find(({ action, rejectionReason }) => action.turnId === 't2' && rejectionReason !== undefined);
   expect(refused?.rejectionReason).toBe(said);
@@ -267,7 +267,7 @@ it('a turn after the inner host was killed is refused with the sentence the sess
 it('every chat a turn through a real inner host names is the outer chat', async () => {
   const env = home();
   const served = await outer(proxy(() => ahpd(env)));
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } });
   await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
   const updated = served.on(served.uri).filter(({ action }) => action.type === 'session/chatUpdated').map(({ action }) => action.chat);
   expect(updated.length).toBeGreaterThan(0);
@@ -293,7 +293,7 @@ it('a restart waits for the inner host it replaces, and resumes its conversation
     return one;
   }));
 
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words' } });
   await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
 
   /** What the inner host has written down about the session it is running. */
@@ -320,7 +320,7 @@ it('a restart waits for the inner host it replaces, and resumes its conversation
   expect(replacedTooEarly).toBe(false);
 
   // And the new one continues the conversation rather than starting another.
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second words' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second words' } });
   await until(() => kept().length === 2);
   expect(kept().map((turn) => turn.message?.text)).toEqual(['first words', 'second words']);
   await served.host.close();
@@ -341,7 +341,7 @@ it('a restart before the first turn starts a session the inner host does not hol
   await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/workingDirectorySet'));
   expect(started).toHaveLength(2);
 
-  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words' } });
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words' } });
   // The turn ends either way, so the case reads what happened rather than
   // waiting out a turn that nothing is going to answer.
   await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete' || action.type === 'chat/error'));
@@ -355,7 +355,7 @@ it('a resumed session continues the transcript the inner host kept under its id'
   const first = recorder();
   let inner: ChildProcessWithoutNullStreams | undefined;
   const one = proxy(() => { inner = ahpd(env); return inner; }).create(start(first.emit, { uri: 'ahp-session:/kept-here', chatUri: 'ahp-chat:/kept-here' }));
-  one.begin('t1', 'first words');
+  one.sendMessage('t1', 'first words');
   await until(() => first.has('chat/turnComplete'));
   const gone = new Promise((resolve) => { inner?.once('close', resolve); });
   one.close();
@@ -363,7 +363,7 @@ it('a resumed session continues the transcript the inner host kept under its id'
 
   const second = recorder();
   const two = proxy(() => ahpd(env)).create(start(second.emit, { uri: 'ahp-session:/kept-here', chatUri: 'ahp-chat:/kept-here', resume: 'kept-here' }));
-  two.begin('t2', 'second words');
+  two.sendMessage('t2', 'second words');
   await until(() => second.has('chat/turnComplete') || second.has('session/creationFailed'));
   expect(second.of('session/creationFailed')).toBeUndefined();
   const turns = two.allTurns() as Bag[];
@@ -401,7 +401,7 @@ it('a daemon that stops leaves the session inside the machine for the next one',
   const options = { store: dir, computers, agentPlugins: { [PROVIDER]: FIXTURE } };
 
   const first = await outer(backendless, options);
-  first.dispatch(first.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words' } });
+  first.dispatch(first.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words' } });
   await until(() => first.on(first.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
   /*
    * Down the way a restart takes a daemon: every chat stopped, none of them
@@ -413,7 +413,7 @@ it('a daemon that stops leaves the session inside the machine for the next one',
 
   const second = await outer(backendless, { ...options, create: false });
   // A turn on it, which is the moment the session is resumed inside.
-  second.dispatch(second.chatUri, { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second words' } });
+  second.dispatch(second.chatUri, { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second words' } });
   await until(() => second.on(second.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
   const opened = await second.client.handle({ method: 'subscribe', params: { channel: second.chatUri } }) as {
     snapshot: { state: { turns: Bag[] } };
@@ -432,7 +432,7 @@ it('a resume the inner host has no transcript for makes the session there', asyn
    * answers the subscribe with `No agent for session`, and the session is made
    * there under that same id rather than the turn being refused.
    */
-  session.begin('t1', 'first words');
+  session.sendMessage('t1', 'first words');
   await until(() => has('chat/turnComplete') || has('session/creationFailed'));
   expect(of('session/creationFailed')).toBeUndefined();
   expect(has('chat/turnComplete')).toBe(true);
@@ -483,7 +483,7 @@ it.skipIf(!posix)('a closed session stops an inner host that will not take SIGTE
   let inner: ChildProcessWithoutNullStreams | undefined;
   const env = { ...home(), IGNORE_SIGTERM: '1' };
   const session = proxy(() => { inner = ahpd(env); return inner; }).create(start(emit));
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => has('chat/turnComplete'));
   const gone = new Promise<string | null>((resolve) => { inner?.once('close', (_code, signal) => { resolve(signal); }); });
   const closedAt = Date.now();

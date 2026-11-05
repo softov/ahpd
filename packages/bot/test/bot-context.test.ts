@@ -239,7 +239,7 @@ it('keeps the block out of the text the main chat shows', async () => {
     clientToolTimeoutMs: 0,
   } as Start);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await woken;
 
   // What the person sees is what they typed: the chat's open turn holds the

@@ -15,7 +15,7 @@ import { opened, settled } from './fake-pi.js';
 /** What the backend was opened with, once the session has started a turn. */
 const openedWith = async (over: Partial<Start>, projectTrust?: 'trust' | 'deny') => {
   const { session, pi } = opened(over, projectTrust === undefined ? {} : { projectTrust });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   return pi.opens[0];
 };

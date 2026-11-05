@@ -8,11 +8,11 @@ import type { Bag } from '@ahpd/sdk';
 /*
  * A turn stopped by a person leaves the session idle, not failed.
  *
- * `cancel` ends the turn as cancelled and interrupts the SDK, and the SDK
- * then ends the interrupted turn with a result of its own:
- * `error_during_execution` with `is_error: true`. That frame is copied below
- * from the SDK this package depends on. Read as a failure, it set the
- * session's error, and VS Code drew every stopped session as failed.
+ * The host says the stop, and the session's `abort` ends the turn cancelled
+ * and closes the CLI. A CLI that is interrupted ends its turn with a result of
+ * its own, `error_during_execution` with `is_error: true`, copied below from
+ * the SDK this package depends on: what a closed CLI says after the stop is
+ * read by nobody, so it fails nothing.
  */
 
 /** The SDK's stream as a queue a test pushes frames into, read one at a time. */
@@ -97,12 +97,20 @@ const late = {
   },
 };
 
+/**
+ * A session running turn `t1`: `sent` is what the session says, and `chat` is
+ * what the chat's clients are told, the host's actions among them. The host
+ * says the client's start before it hands the session the turn, and the
+ * client's stop before it tells the session to stop; an end the session then
+ * reports of a turn already ended is no client's to reduce.
+ */
 async function started() {
   sdk.reset();
   const sent: Bag[] = [];
   const chat: Bag[] = [];
   const edits: string[][] = [];
-  const session = createSession({
+  const said = (action: Bag): void => { chat.push(action); };
+  const backend = createSession({
     uri: 'ahp-session:/cancelled',
     chatUri: 'ahp-chat:/cancelled',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-cancelled-')),
@@ -113,8 +121,16 @@ async function started() {
     onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
   });
   await settle();
-  const before = session.chatState();
-  session.begin('t1', 'count to 200');
+  const before = backend.chatState();
+  const session = {
+    ...backend,
+    abort: (): void => {
+      said({ type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+      backend.abort();
+    },
+  };
+  said({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'count to 200', origin: { kind: 'user' } } });
+  session.sendMessage('t1', 'count to 200');
   await settle();
   return { session, sent, chat, before, edits };
 }
@@ -129,14 +145,15 @@ const callIn = (state: Bag, id: string): Bag | undefined => ((state.turns ?? [])
   .map((part) => part.toolCall as Bag | undefined)
   .find((call) => call?.toolCallId === id);
 
-it('leaves a session idle when its turn was stopped and the interrupt result comes after', async () => {
+it('leaves a session idle when its turn was stopped, whatever its closed CLI says after', async () => {
   const { session, sent } = await started();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push(interrupted);
   await settle();
 
+  // The session reports the turn's end once, and no failure.
   expect(sent.filter((one) => one.type === 'chat/turnCancelled')).toHaveLength(1);
   expect(sent.some((one) => one.type === 'chat/error')).toBe(false);
   expect(session.chatState().status).toBe(1);
@@ -147,7 +164,7 @@ it('leaves a stopped call as a client watching it built it', async () => {
   sdk.push(running);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push(interrupted);
   await settle();
@@ -162,7 +179,7 @@ it('changes nothing when a stopped call\'s result comes after the stop', async (
   sdk.push(running);
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   const stopped = chat.length;
   sdk.push(late, interrupted);
@@ -189,7 +206,7 @@ it('records a stopped edit against the turn it was made in', async () => {
   });
   await settle();
 
-  session.cancel('t1');
+  session.abort();
   await settle();
   sdk.push({ ...late, message: { role: 'user', content: [{ ...late.message.content[0], tool_use_id: 'toolu_write' }] } }, interrupted);
   await settle();

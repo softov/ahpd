@@ -8,6 +8,7 @@ import type { Agent } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Usage, UsageEntry } from '../src/types/usage.js';
 import type { Principal, Users } from '../src/types/users.js';
 
 /*
@@ -86,7 +87,7 @@ const failer = (): Agent => {
       const session = inner.create(start);
       return {
         ...session,
-        begin: (turnId, text) => {
+        sendMessage: (turnId, text) => {
           start.emit('chat', { type: 'chat/turnStarted', turnId, message: { text } });
           start.emit('chat', {
             type: 'chat/error',
@@ -100,20 +101,18 @@ const failer = (): Agent => {
   };
 };
 
-/** A backend that answers each turn in a later tick, by refusing it. */
-const refusing = (): Agent => {
+/** The echo backend, reporting what each turn it is handed used before it answers. */
+const reporting = (): Agent => {
   const inner = echo({ path: DIR, pace: 0 });
   return {
     ...inner,
-    provider: 'refusing',
-    displayName: 'Refusing',
     create: (start) => {
       const session = inner.create(start);
       return {
         ...session,
-        begin: (turnId, text) => {
-          const handed = start.handed?.({ type: 'chat/turnStarted', turnId, message: { text } });
-          void Promise.resolve().then(() => { handed?.refuse('the machine will not take it'); });
+        sendMessage: (turnId, text, from, attachments, options) => {
+          start.emit('chat', { type: 'chat/usage', turnId, usage: { inputTokens: 3, outputTokens: 5 } });
+          return session.sendMessage(turnId, text, from, attachments, options);
         },
       };
     },
@@ -141,66 +140,78 @@ const EMPTY = { senders: [], sentBy: [] };
 describe('a turn lets go of its sender', () => {
   it('when a queued message becomes a turn and completes', async () => {
     const { dispatch, held } = await signedIn();
-    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'hello there' } });
+    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'hello there' } });
     await wait(100);
     expect(held()).toEqual(EMPTY);
   });
 
-  it('keeps the queued sender on the turn it becomes', async () => {
-    const { dispatch, peer: p, chat } = await signedIn();
-    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'hello there' } });
+  /*
+   * Who sent a turn is this host's own record, used for what it runs and
+   * charges and carried by no action and no state a client reads, as the
+   * reference host keeps a pending message's sender, hands it to the turn the
+   * message becomes, and says it in no action.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L77-L83
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L326
+   */
+  it('names who sent each turn on its usage record, a queued message\'s included, and on no action or turn', async () => {
+    const records: UsageEntry[] = [];
+    const usage = {
+      record: async (entry: UsageEntry) => { records.push(entry); },
+      total: async () => ({}),
+      pools: async () => [],
+      records: async () => [],
+      groups: async () => [],
+    } as Usage;
+    const { client, dispatch, peer: p, chat } = await signedIn({ usage, agents: [reporting()] });
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
+    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'hello there' } });
     await wait(100);
     const started = p.notes
       .filter((note) => note.method === 'action')
       .map((note) => note.params as { channel: string; action: Bag })
-      .find((one) => one.channel === chat && one.action.type === 'chat/turnStarted')?.action;
-    expect(started).toMatchObject({ queuedMessageId: 'q1', _meta: { 'ahpd.sender': 'user:ana' } });
+      .filter((one) => one.channel === chat && one.action.type === 'chat/turnStarted')
+      .map((one) => one.action);
+    expect(started.map((one) => one.queuedMessageId)).toEqual([undefined, 'q1']);
+    expect(records.map((one) => [one.turn, one.owner])).toEqual([['t1', 'user:ana'], [started[1]?.turnId, 'user:ana']]);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chat } });
+    expect(JSON.stringify([p.notes, opened])).not.toContain('ahpd.sender');
   });
 
   it('when the turn ends with chat/error', async () => {
     const { dispatch, held } = await signedIn({ agents: [failer()] }, 'failer');
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
     await wait(100);
     expect(held()).toEqual(EMPTY);
   });
 
   it('when a client takes a queued message back', async () => {
     const { dispatch, held } = await signedIn({ agents: [echo({ path: DIR, pace: 20 })] });
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
-    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } });
-    expect(held().sentBy).toContain('q1');
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
+    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'later' } });
+    // The queued message's sender is the queue's, beside the turn's own.
+    expect(held().sentBy).toEqual(['t1']);
     await dispatch({ type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'q1' });
     await wait(150);
     expect(held()).toEqual(EMPTY);
   });
 
-  it('when a ! command reaches a backend that cannot run one', async () => {
+  it('when a ! command\'s turn completes', async () => {
     const { dispatch, held, peer: p } = await signedIn({ terminals: shellTerminals() });
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo must-not-run' } });
-    await wait(50);
-    const refused = p.notes
-      .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
-      .find((reason): reason is string => typeof reason === 'string');
-    expect(refused).toContain('cannot run a command in a turn');
-    expect(held()).toEqual(EMPTY);
-  });
-
-  it('when a backend that answers later refuses the turn it was handed', async () => {
-    const { dispatch, held, peer: p } = await signedIn({ agents: [refusing()] }, 'refusing');
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
-    await wait(50);
-    const refused = p.notes
-      .map((note) => note.params as { action?: Bag; rejectionReason?: string })
-      .filter((params) => params.rejectionReason !== undefined);
-    expect(refused.map((params) => [params.action?.type, params.rejectionReason])).toEqual([['chat/turnStarted', 'the machine will not take it']]);
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo let-go' } });
+    const completed = (): boolean => p.notes
+      .map((note) => note.params as { action?: { type?: string; turnId?: string } })
+      .some((params) => params.action?.type === 'chat/turnComplete' && params.action.turnId === 't1');
+    for (let i = 0; i < 200 && !completed(); i++) await wait(25);
+    expect(completed()).toBe(true);
     expect(held()).toEqual(EMPTY);
   });
 
   it('when the session is disposed with a turn running and a message queued', async () => {
     const { client, dispatch, held } = await signedIn({ agents: [echo({ path: DIR, pace: 1000 })] });
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three' } });
-    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } });
-    expect(held().sentBy.sort()).toEqual(['q1', 't1']);
+    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three' } });
+    await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'later' } });
+    // The queued message's sender is the queue's, beside the turn's own.
+    expect(held().sentBy).toEqual(['t1']);
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/s' } });
     await wait(20);
     expect(held()).toEqual(EMPTY);
@@ -212,7 +223,7 @@ describe('a turn lets go of its sender', () => {
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/s', chat: other } });
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: other, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'one two three' } } },
+      params: { channel: other, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three' } } },
     });
     expect(held().sentBy).toEqual(['t2']);
     await client.handle({ method: 'disposeChat', params: { channel: other } });

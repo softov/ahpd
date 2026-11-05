@@ -181,7 +181,7 @@ afterEach(() => {
 it('turns all four capabilities on by default, so the model is offered their nine tools and cofold\'s own', async () => {
   const dir = place();
   const { model, session, v } = await open({ script: [{ text: 'ok' }], workspace: dir, store: dir });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await when(() => ended(v));
 
   expect(DEFAULT_TOOLS).toEqual({ files: true, shell: true, web: true, memory: true });
@@ -200,7 +200,7 @@ it('turns one capability off with the tools option, and leaves the other three o
     store: dir,
     tools: { shell: false },
   });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await when(() => ended(v));
 
   const names = offeredNames(model);
@@ -221,7 +221,7 @@ it('turns one capability off with the tools option, and leaves the other three o
 it('offers no memory tools for a session whose store is in memory', async () => {
   const dir = place();
   const { model, session, v } = await open({ script: [{ text: 'ok' }], workspace: dir });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await when(() => ended(v));
 
   const names = offeredNames(model);
@@ -253,7 +253,7 @@ it('lets a host tool keep the name it shares with a capability\'s', async () => 
     store: dir,
     hostTools: [mine],
   });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await when(() => ended(v));
 
   const offered = model.requests[0]?.tools ?? [];
@@ -263,45 +263,6 @@ it('lets a host tool keep the name it shares with a capability\'s', async () => 
   // The capability's other tools are still there, so the run did not fail on
   // the clash either.
   expect(offeredNames(model)).toContain('read_file');
-  rmSync(dir, { recursive: true, force: true });
-});
-
-it('gives a host tool its call id, and puts the terminal it opened on the call', async () => {
-  const dir = place();
-  const terminal = { uri: 'ahp-terminal://shell/chat/c1', isPty: true };
-  let seen: string | undefined;
-  const mine: BoundTool = {
-    definition: { name: 'mine', description: 'The host\'s own.', inputSchema: { type: 'object' } },
-    run: async (_input, call) => {
-      seen = call?.toolCallId;
-      call?.opened?.(terminal);
-      return 'ran it';
-    },
-  };
-  const { session, v } = await open({
-    script: [{ toolCalls: [call('mine', {})] }, { text: 'done' }],
-    workspace: dir,
-    store: dir,
-    hostTools: [mine],
-    settings: { permissionMode: 'bypassPermissions' },
-  });
-  session.begin('t1', 'run it');
-  await when(() => ended(v));
-
-  // The id the call carries on every chat action is the one the tool is told.
-  expect(seen).toBe('c1');
-  const block = { type: 'terminal', resource: terminal.uri, title: 'Terminal', isPty: true };
-  const changed = v.of('chat', 'chat/toolCallContentChanged').find((action) => action.toolCallId === 'c1');
-  expect(changed?.content).toEqual([block]);
-  // The completion replaces the call's content, so the terminal it showed
-  // while it ran is carried into the result.
-  expect((completeFor(v, 'c1')?.result as Bag).content).toEqual([
-    block,
-    { type: 'text', text: 'ran it' },
-  ]);
-  const turn = (session.chatState().turns as Bag[])[0] as Bag;
-  const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
-  expect((part?.toolCall as Bag).content).toEqual([block, { type: 'text', text: 'ran it' }]);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -326,7 +287,7 @@ it('gives the ask_user name to the host\'s tool', async () => {
     hostTools: [mine],
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'ask it');
+  session.sendMessage('t1', 'ask it');
   await when(() => ended(v));
 
   const asked = (model.requests[0]?.tools ?? []).filter((one) => one.name === 'ask_user');
@@ -339,10 +300,49 @@ it('gives the ask_user name to the host\'s tool', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('gives a host tool its call id, and puts the terminal it opened on the call', async () => {
+  const dir = place();
+  const terminal = { uri: 'ahp-terminal://shell/chat/c1', isPty: true };
+  let seen: string | undefined;
+  const mine: BoundTool = {
+    definition: { name: 'mine', description: 'The host\'s own.', inputSchema: { type: 'object' } },
+    run: async (_input, call) => {
+      seen = call?.toolCallId;
+      call?.opened?.(terminal);
+      return 'ran it';
+    },
+  };
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('mine', {})] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    hostTools: [mine],
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.sendMessage('t1', 'run it');
+  await when(() => ended(v));
+
+  // The id the call carries on every chat action is the one the tool is told.
+  expect(seen).toBe('c1');
+  const block = { type: 'terminal', resource: terminal.uri, title: 'Terminal', isPty: true };
+  const changed = v.of('chat', 'chat/toolCallContentChanged').find((action) => action.toolCallId === 'c1');
+  expect(changed?.content).toEqual([block]);
+  // The completion replaces the call's content, so the terminal it showed
+  // while it ran is carried into the result.
+  expect((completeFor(v, 'c1')?.result as Bag).content).toEqual([
+    block,
+    { type: 'text', text: 'ran it' },
+  ]);
+  const turn = (session.chatState().turns as Bag[])[0] as Bag;
+  const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
+  expect((part?.toolCall as Bag).content).toEqual([block, { type: 'text', text: 'ran it' }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('offers web_search only when a search provider is configured', async () => {
   const dir = place();
   const plain = await open({ script: [{ text: 'ok' }], workspace: dir, store: dir });
-  plain.session.begin('t1', 'hi');
+  plain.session.sendMessage('t1', 'hi');
   await when(() => ended(plain.v));
   expect(offeredNames(plain.model)).toContain('web_fetch');
   expect(offeredNames(plain.model)).not.toContain('web_search');
@@ -355,7 +355,7 @@ it('offers web_search only when a search provider is configured', async () => {
   });
   // The same conversation on the same store, so a turn of its own: cofold
   // keeps each turn's prompt under the turn's id.
-  searching.session.begin('t2', 'hi');
+  searching.session.sendMessage('t2', 'hi');
   await when(() => ended(searching.v));
   const names = offeredNames(searching.model);
   expect(names).toContain('web_search');
@@ -390,7 +390,7 @@ it('asks the search providers in the order the configuration lists them', async 
     tools: { web: { search: { duckduckgo: true, brave: { apiKey: 'b' } } } },
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'search it');
+  session.sendMessage('t1', 'search it');
   await when(() => ended(v));
 
   const done = completeFor(v, 'c1');
@@ -428,7 +428,7 @@ it('reads a file through the files capability', async () => {
     workspace: dir,
     store: dir,
   });
-  session.begin('t1', 'read it');
+  session.sendMessage('t1', 'read it');
   await when(() => ended(v));
 
   const done = completeFor(v, 'c1');
@@ -444,7 +444,7 @@ it('names the tool it runs, and goes back to Thinking when it completes', async 
     workspace: dir,
     store: dir,
   });
-  session.begin('t1', 'read it');
+  session.sendMessage('t1', 'read it');
   await when(() => ended(v));
 
   const said = v.of('chat', 'chat/activityChanged').map((one) => one.activity);
@@ -463,7 +463,7 @@ it('fetches a page through the web capability', async () => {
     workspace: dir,
     store: dir,
   });
-  session.begin('t1', 'fetch it');
+  session.sendMessage('t1', 'fetch it');
   await when(() => ended(v));
 
   const done = completeFor(v, 'c1');
@@ -482,7 +482,7 @@ it('refuses to fetch an internal address, without reaching it', async () => {
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'fetch it');
+  session.sendMessage('t1', 'fetch it');
   await when(() => ended(v));
 
   expect(completeFor(v, 'c1')?.result).toMatchObject({ success: false });
@@ -505,7 +505,7 @@ it('reports an edit before the row that runs it', async () => {
     settings: { permissionMode: 'bypassPermissions' },
     trace,
   });
-  session.begin('t1', 'edit it');
+  session.sendMessage('t1', 'edit it');
   await when(() => ended(v));
 
   // The file is announced as changing before the client is told a call began,
@@ -530,7 +530,7 @@ it('reports a file edit through onFileEdit, before and after, on the resolved pa
     store: dir,
     settings: { permissionMode: 'acceptEdits' },
   });
-  session.begin('t1', 'edit it');
+  session.sendMessage('t1', 'edit it');
   await when(() => ended(v));
 
   expect(edits).toEqual([
@@ -558,7 +558,7 @@ it('refuses an edit of a file the session never read, and leaves it as it was', 
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'edit it');
+  session.sendMessage('t1', 'edit it');
   await when(() => ended(v));
 
   const refused = completeFor(v, 'c1')?.result as Bag;
@@ -586,7 +586,7 @@ it('runs an edit of an unread file when the configuration turns the rule off', a
     tools: { files: { requireRead: false } },
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'edit it');
+  session.sendMessage('t1', 'edit it');
   await when(() => ended(v));
 
   expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
@@ -604,7 +604,7 @@ it('still sends the after when the person declines the edit', async () => {
     store: dir,
     settings: { permissionMode: 'default' },
   });
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => asked(v));
   // Announced as changing, and the tool has not run.
   expect(edits).toEqual([{ turnId: 't1', path: join(dir, 'b.txt'), phase: 'before' }]);
@@ -629,7 +629,7 @@ it('sends a declined edit its after before the next ask', async () => {
     store: dir,
     settings: { permissionMode: 'default' },
   });
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => asked(v));
 
   session.confirm('c1', false);
@@ -667,7 +667,7 @@ it('takes an approval given inside the emit that asks for it, and runs the tool'
     },
   });
   session = opened.session;
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => ended(opened.v));
 
   expect(opened.v.of('chat', 'chat/turnComplete')).toHaveLength(1);
@@ -689,7 +689,7 @@ it('takes a decline given inside the emit that asks for it, and sends the after'
     },
   });
   session = opened.session;
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => ended(opened.v));
 
   expect(opened.v.of('chat', 'chat/turnComplete')).toHaveLength(1);
@@ -707,11 +707,11 @@ it('takes a cancel given inside the emit that asks, and ends the turn cancelled'
     store: dir,
     settings: { permissionMode: 'default' },
     onEmit: (channel, action) => {
-      if (channel === 'session' && action.type === 'session/inputNeededSet') session?.cancel('t1');
+      if (channel === 'session' && action.type === 'session/inputNeededSet') void session?.abort();
     },
   });
   session = opened.session;
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => ended(opened.v));
 
   expect(opened.v.of('chat', 'chat/turnCancelled')).toHaveLength(1);
@@ -735,7 +735,7 @@ it('titles a row by the subject cofold sent rather than the model spelling', asy
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'read them');
+  session.sendMessage('t1', 'read them');
   await when(() => ended(v));
 
   const titled = (callId: string): unknown =>
@@ -759,7 +759,7 @@ it('draws a shell call as a terminal, with its command as the intention', async 
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => ended(v));
 
   const start = v.of('chat', 'chat/toolCallStart').find((action) => action.toolCallId === 'c1');
@@ -792,7 +792,7 @@ it('says when a call started and ended, on its ready and its complete', async ()
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => ended(v));
 
   const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
@@ -855,7 +855,7 @@ it('asks before a shell command and sends its bare command on the request', asyn
     store: dir,
     settings: { permissionMode: 'default' },
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   await when(() => asked(v));
 
   const request = v.of('session', 'session/inputNeededSet')[0]?.request as Bag;
@@ -875,7 +875,7 @@ it('keeps memory files under the store root, by workspace, and out of the change
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'remember it');
+  session.sendMessage('t1', 'remember it');
   await when(() => ended(v));
 
   const roots = readdirSync(join(dir, 'memory'));
@@ -897,7 +897,7 @@ it('sends the after for a denied edit before the call completes', async () => {
     settings: { permissionMode: 'plan' },
     trace,
   });
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => ended(v));
 
   // `plan` denies the write, so the `after` comes from the denial; the end-of-run
@@ -917,11 +917,11 @@ it('sends the after for an edit still waiting when the turn is cancelled', async
     store: dir,
     settings: { permissionMode: 'default' },
   });
-  session.begin('t1', 'write it');
+  session.sendMessage('t1', 'write it');
   await when(() => asked(v));
   expect(edits.map((one) => one.phase)).toEqual(['before']);
 
-  session.cancel('t1');
+  session.abort();
   await when(() => ended(v));
   expect(edits.map((one) => one.phase)).toEqual(['before', 'after']);
   expect(v.of('chat', 'chat/turnCancelled')).toHaveLength(1);
@@ -937,13 +937,13 @@ it.skipIf(!posix)('kills a cancelled shell command and the child it started', as
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'run it');
+  session.sendMessage('t1', 'run it');
   const pidFile = join(dir, 'child.pid');
   await when(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   expect(pid).toBeGreaterThan(0);
 
-  session.cancel('t1');
+  session.abort();
   await when(() => ended(v));
   expect(v.of('chat', 'chat/turnCancelled')).toHaveLength(1);
 
@@ -972,7 +972,7 @@ it('keeps the tools for a session with no working directory', async () => {
     store: dir,
     settings: { permissionMode: 'bypassPermissions' },
   });
-  session.begin('t1', 'where am I');
+  session.sendMessage('t1', 'where am I');
   await when(() => ended(v));
 
   const names = offeredNames(model);
@@ -1111,7 +1111,7 @@ async function outcomeOf(mode: Mode, row: Row): Promise<Outcome> {
     store: away,
     settings: { permissionMode: mode },
   });
-  session.begin('t1', 'go');
+  session.sendMessage('t1', 'go');
   await when(() => ended(v) || asked(v));
   const paused = asked(v);
   const completion = completeFor(v, toolCall.callId);

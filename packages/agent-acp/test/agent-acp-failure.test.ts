@@ -83,13 +83,13 @@ const failure = (actions: Bag[]): string | undefined => {
 
 it('fails the first turn of a session whose command is missing, and nothing escapes', async () => {
   const { session, actions } = start(MISSING);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => failure(actions) !== undefined);
 
   expect(failure(actions)).toContain(MISSING);
   expect(failure(actions)).toContain('not found');
   // A second turn fails the same way rather than waiting on the first attempt.
-  session.begin('t2', 'hi again');
+  session.sendMessage('t2', 'hi again');
   await until(() => actions.filter((action) => action.type === 'chat/error').length > 1);
   expect(actions.filter((action) => action.type === 'chat/error')).toHaveLength(2);
   expect(escaped).toEqual([]);
@@ -114,7 +114,7 @@ it('answers a listing with the watched sessions when the command is missing', as
 
 it('fails the turn with the exit code when the server exits mid-prompt', async () => {
   const { session, actions } = start(process.execPath, [FIXTURE]);
-  session.begin('t1', 'die now');
+  session.sendMessage('t1', 'die now');
   await until(() => failure(actions) !== undefined);
 
   expect(failure(actions)).toContain('exited with code 3');
@@ -123,7 +123,7 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
 
 it('fails the turn with what the server wrote on stderr before it died', async () => {
   const { session, actions } = start(process.execPath, [FIXTURE]);
-  session.begin('t1', 'be noisy');
+  session.sendMessage('t1', 'be noisy');
   await until(() => failure(actions) !== undefined);
 
   expect(failure(actions)).toContain('exited with code 4');
@@ -134,7 +134,7 @@ it('fails the turn with what the server wrote on stderr before it died', async (
 
 it('never surfaces the stderr of a server that answered', async () => {
   const { session, actions } = start(process.execPath, [FIXTURE]);
-  session.begin('t1', 'chatter a little');
+  session.sendMessage('t1', 'chatter a little');
   await until(() => actions.some((action) => action.type === 'chat/turnComplete'));
 
   // The line went to the connection and stayed there: a client hears about a

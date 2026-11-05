@@ -97,7 +97,7 @@ async function sitting(): Promise<Sitting> {
   };
   const session = agent.create(start);
   turns(MAIN).onMessage = () => {};
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   return { session, sent };
 }
 

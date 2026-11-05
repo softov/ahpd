@@ -74,7 +74,7 @@ const ranTooLarge = async (dir: string, store: SessionStore) => {
   await client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'claude', workingDirectories: [uriOf(dir)] } });
   const chat = String((await stateOf(client, SESSION)).defaultChat);
   await stateOf(client, chat);
-  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'count it' } } } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'count it' } } } });
   await settle();
   const { path, output, notice } = savedOutput();
   await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_big', name: 'Bash', input: { command: 'seq 1 100000' } }] } });

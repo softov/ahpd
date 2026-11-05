@@ -127,7 +127,7 @@ it('brings the machine\'s work back when a turn ends, and exactly once', async (
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => turnEnded(p, chatUri));
   await settle();
@@ -145,13 +145,13 @@ it('brings it back when a turn is cancelled', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight nine ten' } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight nine ten' } },
     },
   });
   await settle(2);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => said.includes('bringBack box'));
   await settle();
@@ -216,7 +216,7 @@ it('logs a machine that could not be brought back, and the turn still ends', asy
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => lines.some((one) => one.includes('bringing the work of box back')));
   // A turn that could not have its work fetched is still a turn that ended:

@@ -134,7 +134,7 @@ it('hands the machine the host\'s branch before a turn starts, and not after', a
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => said.includes('follow box'));
   await settle(4);
@@ -165,21 +165,31 @@ it('hands it over after a changeset operation, and not for a read', async () => 
   expect(said).toEqual(['enter box ahp-session:/one', 'bringBack box', 'invoke commit', 'follow box']);
 });
 
-it('does not hand it over for a message queued behind a running turn', async () => {
+it('hands it over for a queued message when its turn starts, and not while the turn in front of it runs', async () => {
   const said: string[] = [];
-  const { client, chatUri } = await running(machinePort(said));
+  let letGo = (): void => {};
+  const held = new Promise<void>((resolve) => { letGo = resolve; });
+  const { client, chatUri } = await running(machinePort(said, async () => await held));
   await until(() => said.includes('enter box ahp-session:/one'));
 
-  await client.handle({
+  client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', id: 'q1', kind: 'queued', message: { text: 'later' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await until(() => said.includes('follow box'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', id: 'q1', kind: 'queued', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   await settle(4);
-  // The turn a queued message becomes runs behind the one that is running, in a
-  // machine an agent is working in: the writes a hand-over makes are not for a
-  // turn that has not begun, and the fetch at the running turn's end is what
-  // puts the machine where the host is.
-  expect(said).not.toContain('follow box');
+  // Waiting behind the turn in front of it, in a machine an agent is about to
+  // work in: the writes a hand-over makes are not for a turn that has not begun.
+  expect(said.filter((one) => one === 'follow box')).toEqual(['follow box']);
+
+  // Its turn starts once the one in front of it has ended, and is handed the
+  // host's branch as any turn is.
+  letGo();
+  await until(() => said.filter((one) => one === 'follow box').length === 2);
 });
 
 it('starts the turn anyway where the machine could not be moved, and says so', async () => {
@@ -191,7 +201,7 @@ it('starts the turn anyway where the machine could not be moved, and says so', a
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => turnEnded(p, chatUri));
   // A machine that could not be moved costs one turn on a branch that is
@@ -220,7 +230,7 @@ it('asks for nothing where the session is in no machine', async () => {
   // arrived in, with nothing asked of a port.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => turnEnded(p, chatUri));
   expect(said).toEqual([]);

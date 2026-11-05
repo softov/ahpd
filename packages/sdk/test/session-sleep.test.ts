@@ -5,8 +5,8 @@
  * `sleepAfterMinutes`, over `sessionResidencyLimit`, or archived, the host lets
  * the agent go with `close('stopping')`, and the session stays in the
  * catalogue, the same as after a daemon restart. What keeps it awake: a
- * running or queued turn, a person being asked something, `resumable()`
- * false, `busy()` true, and a client subscribed to it.
+ * running turn or a message pending in its chat, a person being asked
+ * something, `resumable()` false, `busy()` true, and a client subscribed to it.
  *
  * Its state stays resident, asleep or not, until the residency lets the
  * session go: archived, or the least recent while more sessions are resident
@@ -74,6 +74,8 @@ interface Knobs {
   state?: (state: Bag) => Bag;
   /** A `SessionStatus` to answer in place of the backend's own. */
   status?: number;
+  /** Whether a turn sent now fails, as a client can resume it. */
+  fail?: boolean;
   /** What a `close` waits on before it finishes, as an agent slow to exit. */
   exiting?: Promise<void>;
   /** What a read of the record answers in place of the turns the backend kept. */
@@ -106,6 +108,16 @@ const wrapped = (dir: string, knobs: Knobs): Agent => {
         resumable: () => knobs.resumable ?? true,
         busy: () => knobs.busy ?? false,
         status: () => knobs.status ?? session.status(),
+        sendMessage: (turnId, text, from, attachments, options) => {
+          if (knobs.fail !== true) return session.sendMessage(turnId, text, from, attachments, options);
+          start.emit('chat', {
+            type: 'chat/error',
+            turnId,
+            duration: 0,
+            part: { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true },
+          });
+          return undefined;
+        },
         chatState: () => {
           const state = session.chatState() as Bag;
           return knobs.state === undefined ? state : knobs.state(state);
@@ -169,7 +181,7 @@ async function serving(knobs: Knobs, options: Options = {}) {
       const before = await turns(chatUri);
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, clientSeq, action: { type: 'chat/turnStarted', turnId: `${name}-${String(before)}`, message: { text } } },
+        params: { channel: chatUri, clientSeq, action: { type: 'chat/turnStarted', turnId: `${name}-${String(before)}`, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
       });
       for (let i = 0; i < 200 && await turns(chatUri) === before; i++) await settle(1);
     };
@@ -179,7 +191,17 @@ async function serving(knobs: Knobs, options: Options = {}) {
       await client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
       await client.handle({ method: 'unsubscribe', params: { channel } });
     };
-    return { channel, resource, chatUri, say, leave };
+    /** A queued message set, or taken back. */
+    const queue = async (id: string, text: string): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
+      });
+    };
+    const unqueue = async (id: string): Promise<void> => {
+      await client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id } } });
+    };
+    return { channel, resource, chatUri, say, leave, queue, unqueue };
   };
 
   const turns = async (chatUri: string): Promise<number> => {
@@ -221,15 +243,19 @@ it('keeps a session awake while a turn runs or a message is queued', async () =>
   const knobs: Knobs = { closes: [] };
   const { time, open, awake } = await serving(knobs);
   const one = await open('one');
+  // Queued behind a failure a client can resume, which holds the chat's queue.
+  knobs.fail = true;
+  await one.say('again');
+  delete knobs.fail;
+  await one.queue('q', 'next');
   await one.leave();
 
-  knobs.state = (state) => ({ ...state, queuedMessages: [{ id: 'q', message: { text: 'next' } }] });
   time.pass(31);
   await settle();
   expect(awake()).toBe(1);
   expect(knobs.closes).toEqual([]);
 
-  delete knobs.state;
+  await one.unqueue('q');
   // `SessionStatus` 8, in progress: a turn running.
   knobs.status = 8;
   time.pass(31);

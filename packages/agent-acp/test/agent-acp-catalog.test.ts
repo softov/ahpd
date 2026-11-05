@@ -136,7 +136,7 @@ const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
 /** Run one turn and wait for the action that ends it. */
 const runTurn = async (session: Session, watch: Watcher, turnId: string, text: string): Promise<void> => {
   const before = watch.endings().length;
-  session.begin(turnId, text);
+  session.sendMessage(turnId, text);
   await until(() => watch.endings().length > before);
 };
 
@@ -223,7 +223,8 @@ it('sets the model a turn chose on the server before prompting', async () => {
   const { agent, log } = backend();
   const { session, watch } = start(agent, 'chosen');
   const before = watch.endings().length;
-  session.begin('t1', 'hi', { id: 'thorough' });
+  session.changeModel({ id: 'thorough' });
+  session.sendMessage('t1', 'hi');
   await until(() => watch.endings().length > before);
 
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
@@ -241,7 +242,8 @@ it('reads the legacy models list, and sets a chosen model the old way', async ()
   // there is none to offer.
   expect(session.models()).toEqual([]);
   const before = watch.endings().length;
-  session.begin('t1', 'hi', { id: 'thorough' });
+  session.changeModel({ id: 'thorough' });
+  session.sendMessage('t1', 'hi');
   await until(() => watch.endings().length > before);
 
   expect(session.models()).toEqual([
@@ -290,7 +292,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log } = withLog();
     const { session, watch } = start(agent, 'stdio', { mcpServers: servers });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([
@@ -313,7 +315,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
     const { session, watch } = start(agent, 'nohttp', { mcpServers: servers });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     // The stdio one is untouched: only what the handshake refuses is left out.
@@ -327,7 +329,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log } = withLog();
     const { session, watch } = start(agent, 'tools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([{
@@ -342,7 +344,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log } = withLog({ hostTools: false });
     const { session, watch } = start(agent, 'notools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([]);
@@ -352,7 +354,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
     const { session, watch } = start(agent, 'notoolshttp', { toolsServer: () => hostTools });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     // The host's tools are an HTTP server like any other, so the handshake that
@@ -387,7 +389,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log } = withLog();
     const { session, watch } = start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(requests(log).find((one) => one.method === 'session/load')?.params?.['mcpServers']).toEqual([
@@ -424,7 +426,7 @@ describe('the MCP servers a session is opened with', () => {
       const { agent, log, said } = withLog();
       const { session, watch } = start(agent, `boxed-${at}`, inBox(url));
       const before = watch.endings().length;
-      session.begin('t1', 'hi');
+      session.sendMessage('t1', 'hi');
       await until(() => watch.endings().length > before);
 
       expect(watch.endings()).toEqual(['chat/turnComplete']);
@@ -439,7 +441,7 @@ describe('the MCP servers a session is opened with', () => {
     const { agent, log, said } = withLog();
     const { session, watch } = start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
     const before = watch.endings().length;
-    session.begin('t1', 'hi');
+    session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([{
@@ -1588,21 +1590,6 @@ it('stamps nothing for an update a session load replayed', () => {
   mapUpdate(turn, toolCallUpdate('c1', 'completed'));
   expect(sent.every((one) => one._meta === undefined)).toBe(true);
   expect((turn.parts[0]?.toolCall as Bag)._meta).toBeUndefined();
-});
-
-it('says when a command of the person\'s own ran, and how long it took', async () => {
-  const { agent } = backend();
-  const { session, watch } = start(agent, 'shell');
-  const before = watch.endings().length;
-  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'echoed', output: 'hi\n' }));
-  await until(() => watch.endings().length > before);
-
-  const sent = forCall(watch, 't1:command');
-  const ready = sent.find((one) => one.type === 'chat/toolCallReady');
-  const complete = sent.find((one) => one.type === 'chat/toolCallComplete');
-  expect(typeof metaOf(ready)['ahpd.startedAt']).toBe('string');
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-  expect(timed(complete)).toBe(true);
 });
 
 it('reports the folder a session is in as a URI a host reads back as that folder', () => {

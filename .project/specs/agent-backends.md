@@ -253,6 +253,13 @@ AND `Start.toolsServer` opens an MCP endpoint for the host tools, when the host 
 AND `Start.terminalOutputs` keeps an output under a key of the backend, when the session store keeps a folder for the session.
 The reason: a session that asked for a machine must not run the agent's commands on the host. A machine path is not a folder the host has - decision [an-acp-agents-terminal-in-a-machine-runs-in-the-machine](../decisions/an-acp-agents-terminal-in-a-machine-runs-in-the-machine.md).
 
+### `ask_user` reaches every backend but Claude
+
+WHEN the host contributes its `ask_user` tool
+THEN a pi or ACP session is offered it, and a call puts the questions on the chat and waits for the person's answer
+AND a cofold session is offered the host's `ask_user` in place of cofold's own tool of that name
+AND a Claude session is not offered it, because this backend keeps its own question tool for now
+The reason: a request the host holds is settled by the host, and only it can send `chat/inputRequested` for the chat the session runs in. Leaving Claude its own tool is a deferred change, in the plan `host/20261103-1620-an-agent-asks-the-person`.
 ### A backend takes the host's shell, or keeps its own
 
 WHEN the root config sets `enableCustomTerminalTool`, the host is not Windows, and the host has a terminal store
@@ -281,14 +288,6 @@ WHEN the mode is `sync` or absent
 THEN the call waits for the command and answers with its output, as it always has.
 The reason: the reference host's description promises `mode=async`, and its own tool does not build it.
 A client draws a command that outlives its call as background work.
-
-### `ask_user` reaches every backend but Claude
-
-WHEN the host contributes its `ask_user` tool
-THEN a pi or ACP session is offered it, and a call puts the questions on the chat and waits for the person's answer
-AND a cofold session is offered the host's `ask_user` in place of cofold's own tool of that name
-AND a Claude session is not offered it, because this backend keeps its own question tool for now
-The reason: a request the host holds is settled by the host, and only it can send `chat/inputRequested` for the chat the session runs in. Leaving Claude its own tool is a deferred change, in the plan `host/20261103-1620-an-agent-asks-the-person`.
 
 ### A terminal that a tool result names stays
 

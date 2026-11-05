@@ -277,7 +277,7 @@ it('takes the turn\'s cost from the change in modelUsage, which is cumulative pe
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.5, currency: 'USD' } });
 
   // The next result carries the query's running total, not this turn's spend.
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), result(1.25));
   await settle();
@@ -294,7 +294,7 @@ it('sends no cost for a result that found the books where the last one left them
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.5)]);
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.5, currency: 'USD' } });
 
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   // The same figures again: the query is where it was.
   sdk.push(...fixture('claude-empty-round.jsonl'), result(0.5));
@@ -314,7 +314,7 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.68)]);
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.68, currency: 'USD' } });
 
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   sdk.push({ ...result(0), usage: { input_tokens: 0, output_tokens: 0 } });
   await settle();
@@ -324,7 +324,7 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
 
   // The running total is back on the result behind it, and the turn that spent
   // the money keeps it: only what grew since it was last billed is charged.
-  session.begin('t3', 'and again');
+  session.sendMessage('t3', 'and again');
   await settle();
   sdk.push(result(1.36));
   await settle();
@@ -343,7 +343,7 @@ it('starts the cost baseline again when the CLI resets the conversation', async 
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(1)]);
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 1, currency: 'USD' } });
 
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   // A zeroed result with no reset before it is still no spend: the books are
   // where the last result left them, and the baseline only moves for a model a
@@ -352,7 +352,7 @@ it('starts the cost baseline again when the CLI resets the conversation', async 
   await settle();
   expect(payload(reports(main).at(-1))).not.toHaveProperty(['_meta', 'ahpd.cost']);
 
-  session.begin('t3', 'after the clear');
+  session.sendMessage('t3', 'after the clear');
   await settle();
   // The reset first, then the turn it belongs to, then the result that prices
   // it. Twenty cents is well under the one-dollar baseline, so only a baseline
@@ -371,7 +371,7 @@ it('sends no cost the CLI could only guess at, and still differences the next on
   // The guess is not sent, but it is still on the books: the next result
   // differences from where this one left them, or it would bill those 0.5
   // dollars a second time under a price this time.
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), result(1.25));
   await settle();
@@ -390,7 +390,7 @@ it('lets a guess made in an earlier turn spoil only that turn\'s cost', async ()
   const { main, session } = await replay([...fixture('claude-answered-round.jsonl'), both(0.5, 0.2)]);
   expect((payload(reports(main).at(-1))?._meta as Bag)['ahpd.cost']).toBeUndefined();
 
-  session.begin('t2', 'and again');
+  session.sendMessage('t2', 'and again');
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), both(1.25, 0.2));
   await settle();
@@ -413,7 +413,7 @@ it('writes no key into the usage\'s `_meta` that nothing has been told about', a
 it('falls back to the result\'s own count when the stream carried no partial messages', async () => {
   const frame = { ...result(0.5), usage: { input_tokens: 7, output_tokens: 11, cache_read_input_tokens: 3 } };
   const { main, session } = await replay([]);
-  session.begin('t1', 'no stream');
+  session.sendMessage('t1', 'no stream');
   await settle();
   sdk.push(frame);
   await settle();

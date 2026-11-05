@@ -10,7 +10,7 @@ import type { Terminal } from '../types/terminals.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
-import type { Claiming, Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
+import type { Claiming, Claimed, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
 import type { ChatRecord } from './chatrecord.js';
@@ -38,6 +38,7 @@ import type { Automations } from './automations.js';
 import type { SessionEvents } from './sessionevents.js';
 import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
+import type { QueueDrain } from './queuedrain.js';
 import type { Merged } from './merged.js';
 import type { Canvases } from './canvases.js';
 import type { Asking } from './asking.js';
@@ -51,7 +52,7 @@ import type { Asking } from './asking.js';
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, Merged {
+export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, Merged {
   /** The background tasks a backend reported, by chat. */
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */
@@ -135,8 +136,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions }[];
   /** Live sessions, by their own uri. */
   sessions: Map<string, Held>;
-  /** Every chat of a live session, by its own URI. */
-  byChat: Claiming<{ uri: string; chat: Session }>;
+  /**
+   * Every chat of a live session, by its own URI, with `say`: the road its
+   * backend's actions take, which keeps each turn of the chat, for a turn
+   * this host runs itself.
+   */
+  byChat: Claiming<{ uri: string; chat: Session; say(action: Bag): void }>;
   /** The worker chats this host opened, by URI. */
   subagents: Claiming<LiveSubagent>;
   /** The sessions being charged to an owner, by their own uri. */
@@ -293,8 +298,23 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   lives: Map<string, object>;
   /** A session's token in `lives`, made when it has none. */
   lifeOf: (uri: string) => object;
-  /** The sessions being restarted now, by their own uri. */
-  restarting: Map<string, Promise<void>>;
+  /**
+   * The sessions being restarted now, by their own uri, each settling once its
+   * start has: with the failure's words when the start failed.
+   */
+  restarting: Map<string, Promise<string | undefined>>;
+  /**
+   * The turns a client resumed that run now, by their chat and their id: the
+   * time each ran before and when it ran again, which its stop is said with.
+   */
+  resumedTurns: Map<string, { duration: number; since: number }>;
+  /**
+   * The turns stopped on each chat whose state this host holds, by the chat's
+   * URI: a turn's send asks it before each step of its preparation and before
+   * its prompt goes out, as the reference host keeps each chat's cancelled turns.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L472-L486
+   */
+  cancelledTurns: Map<string, Set<string>>;
   /** What this host has learned about each backend, by the id clients name it by. */
   learned: Map<string, Learned>;
   /** The lead chat of a held session, when it has one. */
@@ -342,48 +362,14 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** A token any connected client lent for a resource, and has not run out. */
   lent: (resource: string) => string | undefined;
   /**
-   * Say one thing on one channel, as though this host did it.
+   * Say one thing on one channel.
    *
-   * With no `origin` it is this host's own action, unless it is the echo of
-   * the dispatch being applied right now (the client's own action, said back)
-   * or the echo a backend owes a client through `owe`: those carry the
-   * client's origin. The few sites that say an echo in a later turn of the
-   * event loop pass the origin themselves.
+   * With `origin`, the action is that client's own, said as it sent it: its
+   * echo. With none, it is this host's own action, whatever produced it.
    */
   dispatch: (channel: string, given: Record<string, unknown>, origin?: Origin | undefined) => void;
-  /**
-   * The dispatch being applied, for work it waits on past this tick: the
-   * function returned runs that work as the same dispatch, so what the work
-   * says is matched as its echo, and a backend that relays it takes it. A
-   * turn's own check, and a machine's catch-up, hand a turn on this way.
-   */
-  later: () => (work: () => void) => void;
-  /**
-   * The dispatch being applied, said as its client sent it, where it is the
-   * one `named` names and nothing has answered it or taken it: the reference
-   * host applies a client's action and emits it at once, and hands it to its
-   * agent after.
-   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
-   */
-  sayUnanswered: (named: Record<string, unknown>) => void;
-  /**
-   * The client's dispatch `action`, said on `channel`, says back: the one
-   * being applied, when `action` is on its channel, of its kind and names
-   * what it names, or one owed on `channel` under the turn or the queued
-   * message `action` names. Matched as an echo's origin is, and let go of only
-   * by the answer. A backend that answers later holds it through
-   * `Start.handed`.
-   */
-  answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
-  /**
-   * Whether the dispatch being applied still has no answer: nothing has said
-   * it back or refused it, and no backend has taken it to answer later.
-   *
-   * What the host reads after handing a client's action to a backend, so an
-   * action the held state accepts and the backend has nothing to say for is
-   * said back by the host, and every client reduces it.
-   */
-  unanswered: () => boolean;
+  /** Whether a client's dispatch was answered already, by its echo or its refusal. */
+  answered: (origin: Origin) => boolean;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *
@@ -519,9 +505,7 @@ export interface ConnectionContext {
    * was building must not leave a relay running behind it.
    */
   alive: boolean;
-  /** `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has passed. */
-  bounded: <T>(wait: Promise<T>, what: string) => Promise<T>;
-  /** A dispatch applied now, as the one this host is applying. */
+  /** A dispatch applied now, under the origin its client sent it with, and what it waits on when it waits. */
   applyNow: (params: Record<string, unknown>, origin: Origin) => Promise<void> | undefined;
   /**
    * The dev containers this connection opened, by the client's own name.

@@ -49,7 +49,6 @@ export interface Owners {
   keysOf(turn: string): string[] | undefined;
   keepKeys(turn: string, keys: readonly string[]): void;
   forgetKeys(turn: string): void;
-  moveKeys(from: string, to: string): void;
   scoping(principal: Principal | undefined): { properties: Bag; defaults: Record<string, string> };
   settle(uri: string, where: string | undefined, config: Record<string, unknown>, principal?: Principal): Promise<void>;
 }
@@ -158,37 +157,23 @@ export function createOwners(ctx: HostContext): Owners {
   /** Let go of a turn's keys, when it ends or is refused after its check. */
   const forgetKeys = (turn: string): void => { turnKeys.delete(turn); };
 
-  /** Move a queued message's keys to the turn it became, which is a new id. */
-  const moveKeys = (from: string, to: string): void => {
-    if (from === to) return;
-    const held = turnKeys.get(from);
-    if (held === undefined) return;
-    turnKeys.delete(from);
-    turnKeys.set(to, held);
-  };
-
-  /** Let go of who sent a turn or a queued message, out of both maps, by its id. */
+  /** Let go of who sent a turn, out of both maps, by its id. */
   const forgetSender = (id: string): void => {
     senders.delete(id);
     sentBy.delete(id);
   };
 
   /**
-   * Let go of the senders a chat's state still names: its running turn and
-   * every message queued behind it. For a chat closed with nothing left to
-   * end them, because a closed backend sends no turn end.
+   * Let go of the sender of a chat's running turn, for a chat closed with
+   * nothing left to end it, because a closed backend sends no turn end. The
+   * senders of its pending messages are the queue drain's, let go with the
+   * chat's state.
    */
   const forgetSendersIn = (chat: Bag): void => {
     const active = chat.activeTurn as Bag | undefined;
     if (typeof active?.id === 'string') {
       forgetSender(active.id);
       forgetKeys(active.id);
-    }
-    const queued = Array.isArray(chat.queuedMessages) ? chat.queuedMessages as Bag[] : [];
-    for (const one of queued) {
-      if (typeof one?.id !== 'string') continue;
-      forgetSender(one.id);
-      forgetKeys(one.id);
     }
   };
 
@@ -324,6 +309,6 @@ export function createOwners(ctx: HostContext): Owners {
   return {
     charged, ownerFor, principals, principalFor, forWhom, senders, senderOf, sentBy,
     forgetSender, forgetSendersIn, charge, checked, scoping, settle,
-    keysOf, keepKeys, forgetKeys, moveKeys,
+    keysOf, keepKeys, forgetKeys,
   };
 }

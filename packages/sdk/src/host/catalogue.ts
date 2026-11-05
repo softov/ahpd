@@ -232,15 +232,18 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * Whether a chat, or any worker chat beneath it, is running a turn.
    *
-   * Asked of a chat's backend, which is the one doing the work, and of a
-   * worker's held state, which is the whole of what a worker is. Walked to the
-   * bottom because a worker's own call can open another one, and a move
-   * carries all of them: a chat whose worker is mid-turn is a chat with
-   * something in flight.
+   * Asked of a chat's backend, which is the one doing the work, of the chat's
+   * held state, which holds a turn from its start, and of a worker's held
+   * state, which is the whole of what a worker is. Walked to the bottom
+   * because a worker's own call can open another one, and a move carries all
+   * of them: a chat whose worker is mid-turn is a chat with something in
+   * flight.
    */
   const running = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
     if (lead !== undefined && (lead.status() & Status.InProgress) !== 0) return true;
+    // A turn this host said the start of, which runs before its backend is handed it.
+    if (lead !== undefined && ctx.stateOf(uri)?.activeTurn !== undefined) return true;
     const seen = new Set([uri]);
     const queue = [uri];
     while (queue.length > 0) {
@@ -1480,19 +1483,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * What a chat's action moved on its session, said on the session.
+   * What a chat's action moved on its session.
    *
    * The chat's row in the session's `chats` takes the fields of the chat's
    * state that changed, as `session/chatUpdated` - only those, and never its
-   * `resource`. The session's `activity` takes the activity of the chat that
-   * now decides it, as `session/activityChanged`. And the catalogue row moves
-   * with both. Each is said only when the session's state is held: a session
-   * nothing holds opens with what its chats say then.
+   * `resource`. The session's held `activity` takes the activity of the chat
+   * that now decides it, in place, as the reference host folds its chats into
+   * the session's state with no action of its own. And the catalogue row
+   * moves with both. Each is done only when the session's state is held: a
+   * session nothing holds opens with what its chats say then.
    *
    * A row's `activity` the chat cleared stays as it was: the action merges what
    * it carries, and the protocol's summary has no value that clears it. The
    * chat's own state and the session's `activity` say it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3237-L3299
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3280-L3334
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
    */
   const chatMoved = (chat: string): void => {
@@ -1528,8 +1532,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         if (Object.keys(changes).length > 0) ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes });
       }
       const activity = activityOf(held);
-      if (activity !== state.activity) {
-        ctx.dispatch(session, { type: 'session/activityChanged', ...(activity === undefined ? {} : { activity }) });
+      const open = ctx.heldStates.get(session);
+      if (open !== undefined && activity !== open.state.activity) {
+        const { activity: _was, ...rest } = open.state;
+        open.state = activity === undefined ? rest : { ...rest, activity };
       }
     }
     summaryMoved(session);

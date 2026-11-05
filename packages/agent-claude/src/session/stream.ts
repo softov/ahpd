@@ -39,6 +39,8 @@ export interface Stream {
   pastLines: Map<string, StringOrMarkdown>;
   /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
   contributorOf: (toolName: string) => Contributor | undefined;
+  /** Every file an edit call began changing, recorded as it is now: a stop closes the CLI that would have ended the call. */
+  editsStopped: () => void;
 }
 
 /** A call's contributor, in the protocol's two kinds. */
@@ -230,10 +232,14 @@ export function createStream(ctx: SessionContext): Stream {
         // a client that waited for the arguments to know it was a shell
         // command would draw a generic box and then redraw it.
         const meta = toolMetaOf(name);
+        // A client's own tool by the name it announced, as VS Code's Claude
+        // takes the client server's prefix off; the CLI keeps its own name.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+        const shown = ctx.clientToolOf(name)?.name ?? name;
         const call: Bag = {
           toolCallId: id,
-          toolName: name,
-          displayName: name,
+          toolName: shown,
+          displayName: shown,
           status: 'streaming',
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
@@ -245,8 +251,8 @@ export function createStream(ctx: SessionContext): Stream {
           type: 'chat/toolCallStart',
           turnId: turn.id,
           toolCallId: id,
-          toolName: name,
-          displayName: name,
+          toolName: shown,
+          displayName: shown,
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
@@ -388,10 +394,12 @@ export function createStream(ctx: SessionContext): Stream {
         };
         const kindOf = toolMetaOf(name);
         const meta = kindOf === undefined && Object.keys(described).length === 0 ? undefined : { ...kindOf, ...described };
+        // A client's own tool by the name it announced.
+        const shown = ctx.clientToolOf(name)?.name ?? name;
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
-          toolName: name,
-          displayName: name,
+          toolName: shown,
+          displayName: shown,
           status: 'running',
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
@@ -443,8 +451,8 @@ export function createStream(ctx: SessionContext): Stream {
             type: 'chat/toolCallStart',
             turnId: turn.id,
             toolCallId: id,
-            toolName: name,
-            displayName: name,
+            toolName: shown,
+            displayName: shown,
             ...(contributor ? { contributor } : {}),
             ...(meta ? { _meta: meta } : {}),
           });
@@ -684,5 +692,9 @@ export function createStream(ctx: SessionContext): Stream {
     }
   };
 
-  return { streamed, assistant, results, rounds, pastLines, contributorOf };
+  const editsStopped = (): void => {
+    for (const id of [...editing.keys()]) edited(id);
+  };
+
+  return { streamed, assistant, results, rounds, pastLines, contributorOf, editsStopped };
 }

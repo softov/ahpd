@@ -101,17 +101,14 @@ export function echo(options: EchoOptions): Agent {
     let closed = false;
     /** What it is doing, or nothing while it is idle. */
     let activity: string | undefined;
-    /** Messages waiting for the running turn to end. The host's, not a client's. */
-    const queued: Bag[] = [];
     /**
-     * The turns said while another ran, each echoed once the one in front of
+     * The turns handed while another ran, each echoed once the one in front of
      * it is done.
      *
-     * Said at once, so each takes the place of the one before it in every
-     * client's state, as the protocol's reducer replaces the active turn: a
-     * backend handed a turn while one runs takes it rather than refusing it,
-     * and runs the turns it is handed one at a time. The turn it replaced runs
-     * on, and is in no history.
+     * The host said each start, so each took the place of the one before it in
+     * every client's state, as the protocol's reducer replaces the active turn:
+     * a backend handed a turn while one runs takes it, and runs the turns it is
+     * handed one at a time. The turn it replaced runs on, and is in no history.
      */
     const handed: { turn: Bag; text: string }[] = [];
     /** The turns a later one took the place of. */
@@ -153,24 +150,19 @@ export function echo(options: EchoOptions): Agent {
     };
 
     /**
-     * Start a turn, whoever asked for it.
+     * Echo a turn the host handed.
      *
-     * `queuedMessageId` names the waiting message it came from; a client's
-     * reducer takes it out of the queue on that word, which is what empties
-     * the queue as its turns start.
-     *
-     * One handed while another runs is said now and echoed once that one is
-     * done; `said` is such a turn, echoed now as it was said.
+     * One handed while another runs waits and is echoed once that one is done;
+     * `waited` is such a turn, echoed now.
      */
     const beginTurn = (
       turnId: string,
       text: string,
-      queuedMessageId?: string,
       from?: MessageFrom,
       attachments?: MessageAttachment[],
-      said?: Bag,
+      waited?: Bag,
     ): void => {
-      if (said === undefined && title === 'Echo session' && text) {
+      if (waited === undefined && title === 'Echo session' && text) {
         title = text.slice(0, 60);
         // Said, because a client that opened the session holds the old one.
         start.emit('session', { type: 'session/titleChanged', title });
@@ -187,24 +179,14 @@ export function echo(options: EchoOptions): Agent {
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
-      const turn: Bag = said ?? { id: turnId, startedAt, message, responseParts: [] };
-      if (said === undefined && (active !== undefined || handed.length > 0)) {
+      const turn: Bag = waited ?? { id: turnId, startedAt, message, responseParts: [] };
+      if (waited === undefined && (active !== undefined || handed.length > 0)) {
         replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
         handed.push({ turn, text });
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
         touch();
         return;
       }
       active = turn;
-      if (said === undefined) {
-        start.emit('chat', {
-          type: 'chat/turnStarted',
-          turnId,
-          startedAt,
-          message,
-          ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-        });
-      }
       doing('Echoing');
 
       const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: '' };
@@ -235,30 +217,16 @@ export function echo(options: EchoOptions): Agent {
         touch();
         remember();
         start.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
-        startNext();
+        sendNext();
       })();
       touch();
     };
 
-    /** The head of the queue, once there is nothing running. */
-    const startNext = (): void => {
+    /** The next turn handed while another ran, echoed once nothing runs. */
+    const sendNext = (): void => {
       if (active || closed) return;
-      // A turn said while another ran goes first, as it was said.
       const first = handed.shift();
-      if (first !== undefined) {
-        beginTurn(String(first.turn.id), first.text, undefined, undefined, undefined, first.turn);
-        return;
-      }
-      const next = queued.shift();
-      if (!next) return;
-      const message = (next.message ?? {}) as Bag;
-      beginTurn(
-        crypto.randomUUID(),
-        String(message.text ?? ''),
-        String(next.id),
-        next.from as MessageFrom | undefined,
-        message.attachments as MessageAttachment[] | undefined,
-      );
+      if (first !== undefined) beginTurn(String(first.turn.id), first.text, undefined, undefined, first.turn);
     };
 
     return {
@@ -302,92 +270,32 @@ export function echo(options: EchoOptions): Agent {
         status: status(),
         modifiedAt: modified,
         turns,
-        // The last turn said, which may be one still waiting its turn.
-        ...((handed.at(-1)?.turn ?? active) ? { activeTurn: handed.at(-1)?.turn ?? active } : {}),
+        ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
         ...(draft !== undefined ? { draft } : {}),
-        queuedMessages: [...queued],
       }),
 
       /**
-       * The client says a turn has begun; making it true is this method.
+       * The host said a turn has begun before it handed the turn here; making
+       * it true is this method.
        *
-       * Note the order every backend has to keep: the turn is said back first,
-       * then a part is opened, and only then does text stream into it. A
-       * `chat/delta` naming a part nobody opened appends to nothing, and a
-       * part naming a turn no client has is dropped.
+       * Note the order every backend has to keep: a part is opened before text
+       * streams into it. A `chat/delta` naming a part nobody opened appends to
+       * nothing, and a part naming a turn no client has is dropped.
        */
-      begin: (turnId, text, _model, from, attachments) => beginTurn(turnId, text, undefined, from, attachments),
+      sendMessage: (turnId, text, from, attachments) => beginTurn(turnId, text, from, attachments),
 
-      /**
-       * Wait, then be the next turn.
-       *
-       * Idle now means this is not a queue at all: it is announced and then
-       * started at once, which a client sees as an entry that appears and
-       * leaves rather than one that was never there.
-       */
-      queue: (id, text, _model, from, attachments) => {
-        const message: Bag = {
-          text,
-          ...(from?.origin !== undefined ? { origin: from.origin } : {}),
-          ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
-          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-        };
-        const entry: Bag = { id, message, ...(from !== undefined ? { from } : {}) };
-        const at = queued.findIndex((held) => held.id === id);
-        if (at >= 0) queued[at] = entry;
-        else queued.push(entry);
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
-        touch();
-        startNext();
-      },
+      // An echo runs on no model and as no agent, so a pick of either is kept
+      // by nothing.
+      changeModel: () => {},
+      changeAgent: () => {},
 
-      // Held by the session, so two people on one chat see each other's.
-      setDraft: (next) => {
-        if (JSON.stringify(next) === JSON.stringify(draft)) return;
-        draft = next;
-        // The key is left off to clear it, which is what the action's
-        // `undefined` means and the only way JSON can say it.
-        start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-      },
+      // The draft the host said, held for the chat's state.
+      setDraft: (next) => { draft = next; },
 
-      /*
-       * A client taking a message back, or reordering what waits, starts the
-       * head once nothing runs, as VS Code's host drains a queue a stop left
-       * waiting.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-       */
-      unqueue: (id) => {
-        const at = queued.findIndex((held) => held.id === id);
-        if (at < 0) return;
-        queued.splice(at, 1);
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
-        touch();
-        startNext();
-      },
-
-      reorder: (order) => {
-        const byId = new Map(queued.map((held) => [String(held.id), held]));
-        const seen = new Set<string>();
-        const moved: Bag[] = [];
-        for (const id of order) {
-          const held = byId.get(id);
-          if (!held || seen.has(id)) continue;
-          seen.add(id);
-          moved.push(held);
-        }
-        // Anything the order did not name keeps its place behind what it did.
-        for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-        queued.length = 0;
-        queued.push(...moved);
-        start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-        touch();
-        startNext();
-      },
-
-      cancel: (turnId) => {
-        // The chat's turn is the last one said; the turns it took the place of
-        // stop with it, in no history.
+      abort: () => {
+        // The chat's turn is the last one handed; the turns it took the place
+        // of stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
         if (!turn) return;
         handed.length = 0;
@@ -410,7 +318,7 @@ export function echo(options: EchoOptions): Agent {
         remember();
         start.emit('chat', {
           type: 'chat/turnCancelled',
-          turnId: turnId || String(turn.id),
+          turnId: String(turn.id),
           duration: turn.duration,
         });
       },

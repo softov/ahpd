@@ -2,12 +2,11 @@
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
-import type { CommandTerminal } from './session.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
-import type { TerminalStore } from './terminals.js';
+import type { CommandTerminal, TerminalStore } from './terminals.js';
 import type { Shells } from './shells.js';
 import type { ChatBackgroundTasks } from './background.js';
 import type { ChangesetSource } from './changes.js';

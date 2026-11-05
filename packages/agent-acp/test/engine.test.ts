@@ -214,8 +214,8 @@ it('opens one backend per record, with the record\'s own id, name and server', a
   expect([first.agent.provider, first.agent.displayName]).toEqual(['acp-one', 'One']);
   expect([second.agent.provider, second.agent.displayName]).toEqual(['acp-two', 'Two']);
 
-  first.session.begin('t1', 'hello');
-  second.session.begin('t1', 'hello');
+  first.session.sendMessage('t1', 'hello');
+  second.session.sendMessage('t1', 'hello');
   await until(() => endings(first.actions).length === 1 && endings(second.actions).length === 1);
   expect(endings(first.actions)).toEqual(['chat/turnComplete']);
   expect(endings(second.actions)).toEqual(['chat/turnComplete']);
@@ -234,7 +234,7 @@ it('applies an edit at the next turn, spawning another server on the conversatio
   let held: Bag = { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: firstLog } };
   const { session, actions } = opened(engine, 'acp-live', () => held, folder);
 
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await until(() => endings(actions).length === 1);
   expect(endings(actions)).toEqual(['chat/turnComplete']);
   const before = statSync(firstLog).size;
@@ -243,7 +243,7 @@ it('applies an edit at the next turn, spawning another server on the conversatio
   // nothing here is answered by the first server: the next one is built from
   // what the record says now.
   held = { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: secondLog } };
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await until(() => endings(actions).length === 2);
   expect(endings(actions)).toEqual(['chat/turnComplete', 'chat/turnComplete']);
 

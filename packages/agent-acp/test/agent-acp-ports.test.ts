@@ -202,7 +202,7 @@ const begin = (
 ): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -308,7 +308,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   const begin = (turnId: string, text: string): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
   // A call the server reports, a call the server asks about first, and a
@@ -355,7 +355,7 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   const begin = (turnId: string, text: string): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
   const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };

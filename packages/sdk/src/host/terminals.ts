@@ -1,11 +1,13 @@
 import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
+import { commandTurnKey } from './chatactions.js';
 import { localPath } from '../resources/fileuri.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
-import { CLOSING, need } from './common.js';
+import { BANG, CLOSING, need } from './common.js';
 import { textOf } from './outputs.js';
+import { callTimes } from '../utils/timing.js';
 import type { Bag } from '../types/common.js';
-import type { Claim, OutputTerminal, OutputTerminals, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
-import type { CommandTerminal, Ran } from '../types/session.js';
+import type { Session } from '../types/session.js';
+import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, Ran, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
 import type { OnWire } from '../types/wire.js';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -14,12 +16,12 @@ import type { ConnectionContext, HostContext } from './context.js';
  * The host's own terminals.
  *
  * The store this host keeps, what the root channel lists from it, the `!`
- * command a turn may run, and the factory a backend is handed on `Start` so it
- * can open one itself.
+ * command a turn runs as its local command, and the factory a backend is
+ * handed on `Start` so it can open one itself.
  */
 export interface Terminals {
-  /** One command, in a terminal of its own, and what it did; `opened` hears the terminal as it opens. */
-  commanded(command: string, cwd: string, claim: Claim, opened?: (terminal: CommandTerminal) => void): Promise<Ran>;
+  /** A `!` command, run as the turn `turnId` of `chat`, a chat of `session`, and that turn ended. */
+  bang(session: Session, chat: string, turnId: string, command: string): void;
   /** Every terminal, as the root channel lists them. */
   terminalInfo(): OnWire<TerminalInfo>[];
   /** The terminal factory a backend is handed on `Start`. */
@@ -32,6 +34,11 @@ export interface Terminals {
    * with the terminal once it exits is its own, which is `onAction`'s.
    */
   heldShell(shells: TerminalStore, asked: HeldShellOptions): Terminal;
+  /**
+   * A client's action on a terminal of the host's own, once this host has
+   * said it, handed to whoever opened the terminal as its own actions are.
+   */
+  terminalSaid(uri: string, action: Bag): void;
   /** The output terminals a backend may open, handed on `Start`. */
   heldOutputs(sessionUri: string): OutputTerminals;
 }
@@ -121,7 +128,7 @@ const ptyOf = (terminal: Terminal): { isPty?: boolean } => {
 };
 
 export function createTerminals(ctx: HostContext): Terminals {
-  const { options, terminals, dispatch, log, fire, dirOfFile, refreshWatched } = ctx;
+  const { options, terminals, byChat, dispatch, log, fire, dirOfFile, refreshWatched } = ctx;
 
   /**
    * The output terminals: in the host's map, off the root list.
@@ -142,6 +149,18 @@ export function createTerminals(ctx: HostContext): Terminals {
    * caller's, through `onAction`; a terminal whose output is kept when the
    * session goes is the caller's `kept`.
    */
+  /** What each held terminal's opener hears, by the terminal's URI. */
+  const openers = new Map<string, { terminal: Terminal; onAction: (action: Bag) => void }>();
+  const terminalSaid = (uri: string, action: Bag): void => {
+    const opener = openers.get(uri);
+    if (opener === undefined) return;
+    if (terminals.get(uri) !== opener.terminal) {
+      openers.delete(uri);
+      return;
+    }
+    opener.onAction(action);
+  };
+
   const heldShell = (shells: TerminalStore, asked: HeldShellOptions): Terminal => {
     if (ctx.closed) throw new Error(CLOSING);
     const terminal = shells.create({
@@ -166,6 +185,7 @@ export function createTerminals(ctx: HostContext): Terminals {
       },
     });
     terminals.set(asked.uri, terminal);
+    if (asked.onAction !== undefined) openers.set(asked.uri, { terminal, onAction: asked.onAction });
     return terminal;
   };
 
@@ -185,7 +205,7 @@ export function createTerminals(ctx: HostContext): Terminals {
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L29-L39
    *
    * `opened` hears the terminal once it is a channel a client can subscribe
-   * to, which is when the call names it.
+   * to, which is when the call names it. Rejects where the command cannot run.
    */
   const commanded = async (
     command: string,
@@ -194,8 +214,8 @@ export function createTerminals(ctx: HostContext): Terminals {
     opened?: (terminal: CommandTerminal) => void,
   ): Promise<Ran> => {
     const shells = options.terminals;
-    if (!shells) return { success: false, said: 'There is no shell here to run it in', output: '' };
-    if (ctx.closed) return { success: false, said: CLOSING, output: '' };
+    if (!shells) throw new Error('There is no shell here to run it in');
+    if (ctx.closed) throw new Error(CLOSING);
     // The call this command answers, which every `!` command's claim names.
     const call = claim.kind === 'session' && claim.toolCallId !== undefined
       ? { session: claim.session, chat: claim.chat, key: claim.toolCallId }
@@ -235,19 +255,82 @@ export function createTerminals(ctx: HostContext): Terminals {
           // Kept before the call completes, so the terminal it names answers
           // from the moment a client can read the name.
           if (call !== undefined) ctx.keepExited(call.chat, call.key, call.session, state, terminal.exitCode());
-          resolve({
-            success: code === 0,
-            said: code === 0 ? 'Ran the command' : `The command exited with code ${String(code)}`,
-            output: printed,
-            terminal: uri,
-            ...ptyOf(terminal),
-            code,
-          });
+          resolve({ output: printed, terminal: uri, ...ptyOf(terminal), code });
         },
       });
       log(`ran ${command} in ${uri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
       opened?.({ uri, ...ptyOf(terminal) });
+    });
+  };
+
+  /*
+   * A `!` command, run as its turn's local command whatever backend the chat
+   * has: a `terminal` call shown as `Terminal`, running at once since the person
+   * typed it, its terminal named as soon as it opens, and completed with how
+   * the command ended, a non-zero exit with no error and a command that could
+   * not run with its error; then the turn completes whatever the command did,
+   * which starts the chat's queue, as the reference host's local command ends
+   * its turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L158
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L222
+   *
+   * Said on the chat's own road, which keeps every turn of the chat: its
+   * start again, which the chat holds and which is not said twice, then the
+   * call and the turn's end, which keeps it as a local turn and lets its
+   * sender go. A worker's chat has no road of its own, so its command is said
+   * as this host's actions, kept as a local turn here and its sender let go.
+   */
+  const bang = (session: Session, chat: string, turnId: string, command: string): void => {
+    const road = byChat.get(chat);
+    const say = (action: Bag): void => {
+      if (road === undefined) dispatch(chat, action);
+      else road.say(action);
+    };
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    const startedAt = typeof turn?.startedAt === 'string' ? turn.startedAt : new Date().toISOString();
+    ctx.commandTurns.set(commandTurnKey(chat, turnId), false);
+    if (road !== undefined) say({ type: 'chat/turnStarted', turnId, startedAt, message: turn?.message ?? { text: `${BANG}${command}`, origin: { kind: 'user' } } });
+    const toolCallId = crypto.randomUUID();
+    const began = Date.now();
+    say({ type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal', displayName: 'Terminal', intention: command });
+    say({ type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, toolInput: command, confirmed: 'not-needed', _meta: callTimes(began) });
+    // The block a client opens the command's terminal from, with `isPty` where the terminal's state says it.
+    const terminalOf = (terminal: CommandTerminal): Bag => ({
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    });
+    const first = session.workingDirectories()[0];
+    const where = first === undefined ? options.path : localPath(first);
+    void commanded(command, where, { kind: 'session', session: session.uri, chat, turnId, toolCallId }, (opened) => {
+      say({ type: 'chat/toolCallContentChanged', turnId, toolCallId, content: [terminalOf(opened)] });
+    }).then(
+      (ran): Bag => ({
+        success: ran.code === 0,
+        pastTenseMessage: ran.code === 0 ? 'Ran command' : `Command exited with code ${String(ran.code)}`,
+        // The terminal again, with how the command ended, and then the text it printed.
+        content: [
+          {
+            ...terminalOf({ uri: ran.terminal, ...(ran.isPty === undefined ? {} : { isPty: ran.isPty }) }),
+            result: { exitCode: ran.code, ...(ran.output === '' ? {} : { preview: ran.output }) },
+          },
+          ...(ran.output === '' ? [] : [{ type: 'text', text: ran.output }]),
+        ],
+      }),
+      (error: unknown): Bag => ({
+        success: false,
+        pastTenseMessage: 'Failed to run command',
+        error: { message: error instanceof Error ? error.message : String(error) },
+      }),
+    ).then((result) => {
+      const ended = Date.now();
+      say({ type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: callTimes(began, ended) });
+      say({ type: 'chat/turnComplete', turnId, duration: Math.max(0, ended - began) });
+      if (road !== undefined) return;
+      ctx.keepLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
+      ctx.forgetSender(turnId);
     });
   };
 
@@ -346,7 +429,11 @@ export function createTerminals(ctx: HostContext): Terminals {
         },
         waitForExit: () => terminal.waitForExit(),
         write: (data) => { terminal.write(data); },
-        resize: (cols, rows) => { terminal.resize(cols, rows); },
+        // The backend's own resize, which is this host's to say.
+        resize: (cols, rows) => {
+          terminal.resize(cols, rows);
+          dispatch(uri, { type: 'terminal/resized', cols, rows });
+        },
         // Ends the process and leaves the row, the way `commanded` does: the
         // channel may still be what something points at.
         kill: () => { terminal.close(); },
@@ -419,22 +506,10 @@ export function createTerminals(ctx: HostContext): Terminals {
         resize: (nextCols, nextRows) => {
           cols = nextCols;
           rows = nextRows;
-          dispatch(uri, { type: 'terminal/resized', cols, rows });
         },
-        clear: () => {
-          content = '';
-          dispatch(uri, { type: 'terminal/cleared' });
-        },
-        setTitle: (next) => {
-          if (title === next) return false;
-          title = next;
-          dispatch(uri, { type: 'terminal/titleChanged', title });
-          return true;
-        },
-        setClaim: (next) => {
-          claim = next;
-          dispatch(uri, { type: 'terminal/claimed', claim });
-        },
+        clear: () => { content = ''; },
+        setTitle: (next) => { title = next; },
+        setClaim: (next) => { claim = next; },
         close: () => {
           finish();
           outputs.delete(uri);
@@ -486,7 +561,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     },
   });
 
-  return { commanded, terminalInfo, heldTerminals, heldShell, heldOutputs };
+  return { bang, terminalInfo, heldTerminals, heldShell, terminalSaid, heldOutputs };
 }
 
 /**

@@ -109,7 +109,7 @@ export function createWakes(ctx: HostContext): Wakes {
     const release = ctx.hold(name);
     try {
       const woken = await ctx.wake(name, chat);
-      const state = woken.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+      const state = (ctx.stateOf(woken.chat.chatUri) ?? woken.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
       const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
         || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
       /*
@@ -135,11 +135,16 @@ export function createWakes(ctx: HostContext): Wakes {
        * nobody had sent it.
        */
       const acting = sender;
-      if (acting !== undefined) senders.set(turnId, acting);
-      const refused = await ctx.beginOrRun(woken.chat, provider, turnId, prompt, undefined, from, undefined, busy ? turnId : undefined);
-      if (refused !== undefined) {
-        if (acting !== undefined) senders.delete(turnId);
-        throw new Error(refused);
+      // A chat that is busy takes it as a queued message of this host's, which
+      // the queue drain starts once the chat runs nothing.
+      if (busy) ctx.enqueue(woken.chat.chatUri, turnId, prompt, from, { owner: acting });
+      else {
+        if (acting !== undefined) senders.set(turnId, acting);
+        const refused = await ctx.beginOrRun(woken.chat, provider, turnId, prompt, undefined, from);
+        if (refused !== undefined) {
+          if (acting !== undefined) senders.delete(turnId);
+          throw new Error(refused);
+        }
       }
     } finally {
       release();

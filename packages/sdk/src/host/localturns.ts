@@ -78,6 +78,9 @@ export interface LocalTurns {
    * A transcript's turns with the chat's local turns put back after their
    * anchors. `joined` names the turn each transcript id a read put inside
    * another was put in, which is where a local turn anchored to it goes.
+   * Without it the turns are a live chat's, named by this host's turn ids, and
+   * an anchor the backend recorded under its own name goes after the turn that
+   * name was recorded for.
    */
   withLocalTurns<T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[];
   /**
@@ -367,12 +370,13 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
   const withLocalTurns = <T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[] => {
     const kept = keptIn(session, chat);
     if (kept.length === 0) return [...turns];
+    const named = joined ?? new Map([...recordedAs.get(chat) ?? []].map(([turnId, recorded]) => [recorded, turnId]));
     const seqOf = new Map(kept.map((one) => [one.turnId, one.seq]));
     const held = new Set(turns.map((turn) => str(bag(turn).id)));
     // The local turns to put in, by anchor, each anchor's in `seq` order.
     const waiting = new Map<string | undefined, Kept[]>();
     for (const one of kept.filter((each) => !held.has(each.turnId)).sort((a, b) => a.seq - b.seq)) {
-      const anchor = one.anchor === undefined ? undefined : joined?.get(one.anchor) ?? one.anchor;
+      const anchor = one.anchor === undefined ? undefined : named.get(one.anchor) ?? one.anchor;
       waiting.set(anchor, [...(waiting.get(anchor) ?? []), one]);
     }
     const merged: T[] = [];

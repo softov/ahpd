@@ -7,9 +7,8 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf, uriOf } from '@ahpd/sdk';
-import type { Bag, HostTool, Ran, Session, Start } from '@ahpd/sdk';
+import type { Bag, HostTool } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { gitChanges } from '../../sdk/src/sessions/changes.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -142,7 +141,7 @@ afterEach(async () => {
 const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -752,20 +751,21 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
 
 /*
  * A steering message to this backend is refused, a turn running or not: it
- * advertises no `steer`, and the reference host refuses steering to a provider
- * that cannot take it (agentService.ts L13513-L13516 at a4e689ae).
+ * has no `sendSteeringMessage`, and the reference host refuses steering to a
+ * provider that cannot take it, in its words (agentService.ts L13526-L13529
+ * at 6b68d3fe).
  */
 it('refuses a steering message with nothing running, as it cannot steer', async () => {
   const { client, peer: p, chatUri } = await talking();
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now', origin: { kind: 'user' } } } },
   });
   await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 8));
 
   const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 8);
   expect(answers.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
-    .toEqual(['This backend cannot take a message mid-turn']);
+    .toEqual(['The session provider does not support steering messages.']);
   expect(types(p, chatUri)).not.toContain('chat/turnStarted');
 });
 
@@ -798,8 +798,7 @@ it("runs a !command in the host's shell rather than asking the server", async ()
   await until(() => ended(p, chatUri));
 
   // The host's shell, not the ACP server: one tool call named `terminal`,
-  // completed with what the shell printed. Before `ran` existed here the host
-  // refused the turn, because the bridge had no way to hold it.
+  // completed with what the shell printed, as the host's local command.
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({ toolName: 'terminal' });
   const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
@@ -821,67 +820,30 @@ it("runs a !command in the host's shell rather than asking the server", async ()
 /*
  * A command sent as a turn while a turn runs is taken, as a question is: said
  * at once, it takes the running turn's place as the reducer replaces the active
- * turn, and runs once the turn in front of it is over. A stop of it stops the
- * turn in front of it too, and it never runs.
+ * turn, and the host runs it at once as its local command, with the turn in
+ * front of it still waiting on its server, as the reference host runs its
+ * local commands ahead of the admission a question waits on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
  */
-it('takes a !command sent as a turn during a turn, said at once, and a stop of it stops both', async () => {
+it('runs a !command sent as a turn during a turn at once, in that turn\'s place', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hold it');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-took' } } },
+    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo acp-took' } } },
   });
-  await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 6));
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
   const took = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6);
   expect(took.map((e) => (e as Note & { rejectionReason?: string }).rejectionReason)).toEqual([undefined]);
   expect(took[0]?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.turnId === 't2');
+  expect(JSON.stringify(completed?.action.result)).toContain('acp-took');
+  // The turn it took the place of is in no history.
   const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-    snapshot: { state: { activeTurn?: { id: string }; turns: { id: string }[] } };
+    snapshot: { state: { turns: { id: string }[] } };
   }).snapshot.state;
-  expect(held.activeTurn?.id).toBe('t2');
-  expect(held.turns.map((turn) => turn.id)).not.toContain('t1');
-
-  client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
-  });
-  await until(() => types(p, uri).includes('session/inputNeededRemoved'));
-  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't2'));
-  // The turn t2 took the place of ends in no client's state, and t2's command never runs.
-  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled' && e.action.turnId === 't1')).toBe(false);
-  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart' && e.action.turnId === 't2')).toBe(false);
-});
-
-/*
- * A command running as the chat's turn that a turn sent after it took the
- * place of ends in no history, failed or not, as the reducer keeps none of the
- * turn it replaced, and the turn that took its place runs once it is over.
- */
-it('keeps no history of a !command turn a turn sent after it took the place of', async () => {
-  const actions: Bag[] = [];
-  const session: Session = acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' }).create({
-    uri: 'ahp-session:/replaced',
-    chatUri: 'ahp-chat:/replaced',
-    settings: {},
-    schema: () => ({ type: 'object', properties: {} }),
-    emit: (_channel, action) => { actions.push(action); },
-    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
-    trusted: () => true,
-  } satisfies Start);
-  let done: (ran: Ran) => void = () => {};
-  session.ran?.('t1', 'make', () => new Promise<Ran>((resolve) => { done = resolve; }));
-  await until(() => actions.some((one) => one.type === 'chat/toolCallStart' && one.turnId === 't1'));
-  session.begin('t2', 'hello');
-  done({ success: false, said: 'Exited 2', output: '', code: 2 });
-  try {
-    await until(() => actions.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't2'));
-    const turns = ((session.chatState() as Bag).turns ?? []) as Bag[];
-    expect(turns.map((turn) => turn.id)).toEqual(['t2']);
-  }
-  finally {
-    await session.close();
-  }
+  expect(held.turns.map((turn) => turn.id)).toEqual(['t2']);
 });
 
 /*
@@ -894,7 +856,7 @@ it('runs a !command queued behind a turn once that turn ends', async () => {
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo acp-queued' } } },
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { origin: { kind: 'user' }, text: '!echo acp-queued' } } },
   });
   await until(() => types(p, chatUri).includes('chat/pendingMessageSet'));
   const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
@@ -919,7 +881,7 @@ it('runs a !command queued behind a turn once that turn ends', async () => {
 const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
   });
 
 /** The queued message each turn started from, in the order the turns started. */

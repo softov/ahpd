@@ -109,7 +109,7 @@ const runTurn = async (
   text: string,
 ): Promise<void> => {
   opened.view.notes.length = 0;
-  opened.session.begin(turnId, text);
+  opened.session.sendMessage(turnId, text);
   await until(() => finished(opened.view));
 };
 
@@ -367,7 +367,7 @@ const say = async (
   through.notes.length = 0;
   await through.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
   await until(() => told(through.notes, chatUri).some((action) =>
     action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error'));

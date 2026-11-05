@@ -7,7 +7,7 @@ import { checker } from '../../../tools/wire.mjs';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { Status } from '../src/sessions/catalog.js';
 import {
-  resetSdk, actions, emit, sdk, settle, running, peer, hello,
+  resetSdk, actions, emit, sdk, sessionQueries, settle, running, peer, hello,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
 
@@ -20,7 +20,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -62,7 +62,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running({ terminalAutoApproveDefaults: 'none' });
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
       });
       await settle();
       const decision = sdk.canUseTool?.('Bash', { command: 'ls' }, {
@@ -77,7 +77,7 @@ describe('driving a turn', () => {
       const needed = frames.find((n) => (n.params as { action: Record<string, unknown> }).action.type === 'session/inputNeededSet');
       const answer = (action: Record<string, unknown>) => client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'c9', ...action } },
+        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c9', ...action } },
       });
       return { p, chatUri, decision, ready, needed, answer };
     };
@@ -132,7 +132,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -173,7 +173,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -244,7 +244,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     const questions = [
@@ -314,7 +314,7 @@ describe('driving a turn', () => {
       };
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
       });
       await settle();
       const decision = sdk.canUseTool?.('AskUserQuestion', { questions });
@@ -406,7 +406,7 @@ describe('driving a turn', () => {
     const { client, chatUri } = await running({ terminalAutoApproveDefaults: 'none' });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     const decision = sdk.canUseTool?.('Bash', { command: 'sleep 100' }, { toolUseID: 'toolu_sleep', signal: new AbortController().signal, suggestions: [] });
@@ -414,18 +414,15 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
     });
     // A cancel that only interrupts leaves the subprocess waiting on a
     // promise nobody will ever settle.
     expect(await decision).toMatchObject({ behavior: 'deny' });
-    // The CLI reports the call's result once it has recorded the answer, and
-    // the interrupt follows it.
-    await emit({
-      type: 'user', parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sleep', is_error: true, content: 'The turn was stopped' }] },
-    });
-    expect(sdk.interrupted).toBe(1);
+    // And the stop closes the CLI, as the reference stop aborts its query.
+    await settle();
+    expect(sdk.interrupted).toBe(0);
+    expect(sessionQueries()[0]?.closed).toBe(true);
   });
 });
 
@@ -435,7 +432,7 @@ describe('a message typed while a turn is running', () => {
     const started = await running();
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
     });
     await settle();
     return started;
@@ -444,7 +441,7 @@ describe('a message typed while a turn is running', () => {
   const queue = (client: Awaited<ReturnType<typeof busy>>['client'], channel: string, id: string, text: string) => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -493,18 +490,30 @@ describe('a message typed while a turn is running', () => {
     expect(sdk.said).toEqual(['first']);
   });
 
-  it('refuses to take back a message the chat never queued', async () => {
+  /*
+   * A removal of a message the chat never queued is said as the client sent
+   * it, and the reducer leaves the chat as it was, as the reference host
+   * applies any removal it does not refuse (agentService.ts L13522-L13536 at
+   * 6b68d3fe).
+   */
+  it('says a take-back of a message the chat never queued, which changes nothing', async () => {
     const { client, peer: p, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
+      params: { channel: chatUri, clientSeq: 4, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('nobody');
+    const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved');
+    expect(said.map((e) => [e.action.id, e.rejectionReason])).toEqual([['nobody', undefined]]);
   });
 
-  it('refuses to take back a queued message as a steering one', async () => {
+  /*
+   * A removal naming a steering message the chat does not hold is said as the
+   * client sent it, and the reducer leaves the queued message under that id
+   * where it is, as the reference host applies any removal it does not refuse
+   * (agentService.ts L13520-L13537 at 6b68d3fe).
+   */
+  it('says a removal of a queued message as a steering one, and leaves the message queued', async () => {
     const { client, peer: p, chatUri } = await busy();
     queue(client, chatUri, 'q1', 'second');
     await settle();
@@ -513,8 +522,8 @@ describe('a message typed while a turn is running', () => {
       params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 'q1' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('q1 is not a steering message');
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageRemoved' && e.action.id === 'q1')).toBe(true);
     // Still queued, so it still becomes the next turn.
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
     expect(sdk.said).toEqual(['first', 'second']);
@@ -541,7 +550,7 @@ describe('a message typed while a turn is running', () => {
     const { client, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'now' } } },
     });
     await settle();
     /*
@@ -562,7 +571,7 @@ describe('a message typed while a turn is running', () => {
     const { client, peer: p, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'now' } } },
     });
     await settle();
     const said = actions(p, chatUri).map((one) => one.action)
@@ -589,7 +598,7 @@ describe('a message typed while a turn is running', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'now' } } },
     });
     await settle();
     expect(actions(p, chatUri).filter((one) => one.rejectionReason !== undefined)).toEqual([]);
@@ -628,14 +637,14 @@ describe('what a chat says about itself', () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     client.handle({
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually, stop' } },
+        action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'actually, stop' } },
       },
     });
     await settle();
@@ -712,7 +721,7 @@ describe('a message that carries attachments', () => {
   it('sends a turn with a pasted image to the CLI as an image block', async () => {
     const { client, chatUri } = await withFiles();
     await send(client, chatUri, {
-      type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is this', attachments: [png()] },
+      type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'what is this', attachments: [png()] },
     });
     await until(() => sdk.blocks.length > 0);
 
@@ -726,11 +735,11 @@ describe('a message that carries attachments', () => {
 
   it('starts a queued message with its image when the running turn ends', async () => {
     const { client, chatUri } = await withFiles();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } });
     await until(() => sdk.said.length > 0);
 
     await send(client, chatUri, {
-      type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'second', attachments: [png()] },
+      type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'second', attachments: [png()] },
     });
     await settle();
     // Waiting behind the turn, so nothing of it has reached the CLI.
@@ -746,11 +755,11 @@ describe('a message that carries attachments', () => {
 
   it('sends a steering message\'s pasted text into the turn that is running', async () => {
     const { client, chatUri } = await withFiles();
-    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } });
     await until(() => sdk.said.length > 0);
 
     await send(client, chatUri, {
-      type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually', attachments: [txt()] },
+      type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'actually', attachments: [txt()] },
     });
     await until(() => sdk.blocks.length > 0);
 

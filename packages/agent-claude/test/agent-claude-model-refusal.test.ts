@@ -8,10 +8,9 @@ import type { Bag } from '@ahpd/sdk';
  * A turn that names a model the CLI will not take.
  *
  * `setModel` is the only thing that knows whether the CLI has the model, and
- * the switch is the one call a turn makes before its prompt goes out. Fired
- * and forgotten it answers two questions at once - it moves the session onto
- * the named model and then, when it refuses, leaves the turn labelled with a
- * model that never ran it and answered by whichever one it was on before.
+ * the switch is awaited before the turn's prompt goes out: a model it takes is
+ * the one the turn is credited to, and a refusal is logged while the turn runs
+ * on, and is credited to, the model the session has.
  */
 
 const sdk = vi.hoisted(() => {
@@ -116,67 +115,82 @@ async function open() {
   })();
   /** The kinds of the actions the chat received, in order. */
   const chat = (): string[] => said.filter((one) => String(one.type).startsWith('chat/')).map((one) => String(one.type));
-  /** The turn-started message for one turn. */
-  const message = (turnId: string): Bag => (said.find((one) => one.type === 'chat/turnStarted' && one.turnId === turnId)?.message ?? {}) as Bag;
-  /** What the failure part says, for one turn. */
-  const failure = (turnId: string): string => String(((said.find((one) => one.type === 'chat/error' && one.turnId === turnId)?.part as Bag)?.error as Bag).message);
-  return { session, said, prompts, chat, message, failure };
+  /** The message of one turn, as the session holds the turn. */
+  const message = (turnId: string): Bag => {
+    const held = session.chatState() as { turns?: Bag[]; activeTurn?: Bag };
+    return ([...(held.turns ?? []), ...(held.activeTurn === undefined ? [] : [held.activeTurn])]
+      .find((turn) => turn.id === turnId)?.message ?? {}) as Bag;
+  };
+  return { session, said, prompts, chat, message };
 }
 
-it('fails the turn on a model the CLI refuses, sends nothing, and stays on the model it had', async () => {
-  const { session, prompts, chat, message, failure } = await open();
+/*
+ * A model the CLI will not take is logged and the turn runs on the model the
+ * session has, as the reference logs a model that would not change and sends
+ * the prompt all the same; the turn handed behind it is a send of its own,
+ * sent once the CLI has answered the one in front of it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L351-L360
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L408-L436
+ */
+it('runs a turn on the model it has when the CLI refuses the one it named, and sends the turn handed behind it after it', async () => {
+  const { session, prompts, chat, message } = await open();
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   sdk.refuses['claude-2.1'] = "Model 'claude-2.1' not found";
 
-  session.begin('t1', 'first', { id: 'opus' });
+  session.changeModel({ id: 'opus' });
+  session.sendMessage('t1', 'first');
   await settle();
   sdk.push(ended());
   await settle();
   expect(prompts).toEqual(['first']);
 
-  session.begin('t2', 'second', { id: 'claude-2.1' });
+  session.changeModel({ id: 'claude-2.1' });
+  session.sendMessage('t2', 'second');
+  session.sendMessage('t3', 'third');
   await settle();
 
-  // Started as it was begun, before the switch, and then failed.
-  expect(chat().filter((one) => one === 'chat/turnStarted' || one === 'chat/error').slice(-2)).toEqual(['chat/turnStarted', 'chat/error']);
-  expect(failure('t2')).toBe("The harness would not take model claude-2.1: Model 'claude-2.1' not found");
-  // Nothing reached the CLI; the turn names the model its client asked for, as it was sent.
-  expect(prompts).toEqual(['first']);
-  expect(message('t2').model).toEqual({ id: 'claude-2.1' });
+  // Sent on the model the session has, the refusal logged, and nothing ended in error.
+  expect(prompts).toEqual(['first', 'second']);
+  expect(message('t2').model).toEqual({ id: 'opus' });
+  expect(chat()).not.toContain('chat/error');
+  expect(warned.mock.calls.some(([line]) => String(line).includes("The harness would not take model claude-2.1: Model 'claude-2.1' not found"))).toBe(true);
 
-  session.begin('t3', 'third');
+  sdk.push(ended());
   await settle();
+  expect(prompts).toEqual(['first', 'second', 'third']);
   expect(message('t3').model).toEqual({ id: 'opus' });
+  warned.mockRestore();
 });
 
 it('runs on a model the CLI takes, and says which one, as before', async () => {
   const { session, prompts, chat, message } = await open();
 
-  session.begin('t1', 'first', { id: 'opus' });
+  session.changeModel({ id: 'opus' });
+  session.sendMessage('t1', 'first');
   await settle();
 
   expect(sdk.asked).toEqual(['opus']);
   expect(message('t1').model).toEqual({ id: 'opus' });
   expect(prompts).toEqual(['first']);
-  expect(chat().filter((one) => one === 'chat/turnStarted' || one === 'chat/error')).toEqual(['chat/turnStarted']);
+  // The host said the turn's start; the session says nothing of it, and no error.
+  expect(chat().filter((one) => one === 'chat/turnStarted' || one === 'chat/error')).toEqual([]);
 });
 
-it('holds the queue behind a turn that is switching models, and sends the prompts in order', async () => {
+it('holds a turn handed behind a turn that is switching models, and sends the prompts in order', async () => {
   const { session, prompts } = await open();
   // Held until the case lets it go, rather than for a time: a count of ticks
   // on Windows can outlast any short wait.
   let release = (): void => {};
   sdk.takes.slow = new Promise<void>((resolve) => { release = resolve; });
 
-  session.begin('t1', 'first', { id: 'slow' });
-  session.queue('q1', 'second');
+  session.changeModel({ id: 'slow' });
+  session.sendMessage('t1', 'first');
+  session.sendMessage('t2', 'second');
   await settle(5);
 
-  // The turn is the chat's while it switches, said as it was begun, and the
-  // message behind it waits: nothing of either has reached the CLI, and the
-  // second is still a queued message.
+  // The turn is busy before its prompt is out, so the turn handed behind it
+  // waits: nothing of either turn has reached the CLI.
   expect(prompts).toEqual([]);
-  expect(session.chatState().activeTurn).toMatchObject({ id: 't1' });
-  expect(session.chatState().queuedMessages).toMatchObject([{ id: 'q1' }]);
 
   release();
   await settle(60);

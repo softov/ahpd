@@ -16,7 +16,7 @@ export type { Bag } from './common.js';
 export type { OnWire, WireTurn } from './wire.js';
 export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
-export type { Emit, Handed, SessionOptions, Session, Ran, CommandTerminal, RunCommand, Chosen, ConfigTaken, MessageFrom, MessageAttachment, SubagentChat, SubagentRequest, HarnessPlanEntry, HarnessPlanChange, PlanUpdate, TurnOptions } from './session.js';
+export type { Emit, SessionOptions, Session, Chosen, ConfigTaken, MessageFrom, MessageAttachment, SteeringMessage, SubagentChat, SubagentRequest, HarnessPlanEntry, HarnessPlanChange, PlanUpdate, TurnOptions } from './session.js';
 export type { HostOptions, Connection, ConnectedClient, ClientChange, ClientRegistry, Credential, Host, Diagnostics, HostTool, SessionlessToolCall, ToolCall, ToolCaller, AskedQuestion, AskedOption, AskedAnswers, RootConfigPort, RootConfigAnswer, JoinedNode, NodeChange, NodeRegistry } from './host.js';
 export type { AnnouncedPlugin, CapturedPlugin, ClientPlugins, HeldCopies, SyncedPlugin, TemplatePlugin } from './clientplugins.js';
 export type { Alert, GrantEntry, InstallAnswer, ChannelHandle, ChannelSubscriber, ChatPreamble, OpenedChat, Loaded, LoaderContext, Plugin, PluginChannel, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginMethod, PluginPeer, PluginSpec, PluginStarts, Contribution, PortContribution, PortKey, PortOf, PublishOptions, Route, ServedChannel, ServedMethod, SessionRequest, TriggerTypeDefinition } from './plugin.js';
@@ -38,7 +38,7 @@ export type { Entry, Metadata, Read, ResourceChange, ResourceProvider, ResourceS
 export type { BroughtBack, ComputerPort, HandedAgent, HandedRecord, MachineSource, NestedSpawn, Spawn, SpawnOptions } from './computers.js';
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';
 export type { SessionConfigAnswerer, SessionConfigAsk } from './completions.js';
-export type { Claim, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals, OutputTerminal, OutputTerminals, TerminalOutputs, ShellIntegration, ShellIntegrationAnswer, Screen, ScreenOptions, SpawnScreen } from './terminals.js';
+export type { Claim, CommandTerminal, Ran, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals, OutputTerminal, OutputTerminals, TerminalOutputs, ShellIntegration, ShellIntegrationAnswer, Screen, ScreenOptions, SpawnScreen } from './terminals.js';
 export type { HeldShell, ManagedShell, ShellClaim, ShellCommandResult, ShellCommandStatus, Shells, ShellType } from './shells.js';
 export type { BackgroundTask, BackgroundTaskKind, BackgroundTasks, ChatBackgroundTasks } from './background.js';
 export type { GitDir, Worktree, Worktrees } from './worktrees.js';

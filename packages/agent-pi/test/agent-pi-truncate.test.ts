@@ -106,7 +106,7 @@ it('accepts a truncation through the host and rewinds the restarted session', as
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   const told = (type: string): boolean => notes
     .filter((one) => one.method === 'action')
@@ -120,7 +120,7 @@ it('accepts a truncation through the host and rewinds the restarted session', as
   // The host restarts the session, and pi opens lazily on the turn after it.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await until(() => pi.asked.some((one) => one.kind === 'rewind'));
   expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-1');
@@ -152,7 +152,7 @@ it('runs the turn after pi refused the rewind, and logs the refusal', async () =
   const session = piSession({}, start, pi.open);
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => sent.some((one) => one.action.type === 'chat/turnComplete'));
   expect(sent.filter((one) => one.action.type === 'chat/error')).toEqual([]);
   expect(pi.opens).toHaveLength(1);

@@ -86,10 +86,11 @@ yours reports some.
 These are the ones that fail silently rather than loudly, so they are worth
 reading before writing a backend. Each cost this repository a bug.
 
-- **Say the turn back.** `chat/turnStarted` arrives from the client and you
-  emit it again. Nothing in a client applies what it sent itself, so a
-  backend that reduced it privately goes on to emit response parts for a turn
-  no client has - and the whole answer lands nowhere until somebody reopens
+- **The host says a turn handed to you.** `chat/turnStarted` arrives from the
+  client and the host says it before `sendMessage` hands you the turn, so you
+  say nothing of its start. A turn your session starts of its own accord is
+  yours to say before its first part: nothing in a client applies a turn
+  nobody said, so response parts for it land nowhere until somebody reopens
   the session.
 - **A part exists before it streams.** `chat/responsePart` creates it,
   `chat/delta` appends to it. A delta naming a part nobody opened appends to

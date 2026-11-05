@@ -345,8 +345,8 @@ A backend that runs a subagent inside one of its tool calls asks the host for a 
 
 A worker's chat is read-only, but a client may still answer what the worker asked there and stop it.
 A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
-A backend without `stopWorker` gets `cancel` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
-The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it cancel the lead turn instead.
+A backend without `stopWorker` gets `abort` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
+The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it abort the lead turn instead.
 A stop once the worker has ended is refused, as on any chat with no turn running.
 
 ### The MCP servers a session is offered
@@ -2382,10 +2382,10 @@ A diff with no `oldText` is a file the agent created, which the changeset says b
 A diff of a path outside the session's own directories is shown and not recorded, because it is something the agent says it did somewhere this session was never given.
 Every file the agent writes through `fs/write_text_file` is captured the same way, once before the write and once after it, and the before is read before the write truncates the file.
 
-A `!command` in the composer is the host's shell turn, not the server's: the
-bridge implements `ran`, so the daemon spawns the command in one of its own
-terminals, opens a `terminal` tool call around it and closes the turn with what
-it printed. Nothing about the command reaches the ACP server, and the server is
+A `!command` in the composer is the host's local command, not the server's: the
+daemon spawns the command in one of its own terminals, opens a `terminal` tool
+call around it and closes the turn with what it printed, as it does for every
+backend. Nothing about the command reaches the ACP server, and the server is
 never asked to stop for it - one already mid-prompt stays mid-prompt.
 
 A command that is not there fails the turn that asked for it in a sentence naming

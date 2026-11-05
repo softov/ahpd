@@ -910,26 +910,18 @@ export function createTerminal(
       screen?.resize(nextCols, nextRows);
       cols = nextCols;
       rows = nextRows;
-      tell({ type: 'terminal/resized', cols, rows });
     },
 
     // The scrollback and nothing else. `cols`, `rows`, `title` and `claim` are
     // untouched, which is what the reference suite checks for.
     clear: () => {
-      tell({ type: 'terminal/cleared' });
+      content = [];
+      size = 0;
     },
 
-    setTitle: (next) => {
-      if (next === title) return false;
-      title = next;
-      tell({ type: 'terminal/titleChanged', title });
-      return true;
-    },
+    setTitle: (next) => { title = next; },
 
-    setClaim: (next) => {
-      claim = next;
-      tell({ type: 'terminal/claimed', claim });
-    },
+    setClaim: (next) => { claim = next; },
 
     close: () => {
       if (terminal !== undefined) {

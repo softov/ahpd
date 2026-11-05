@@ -184,7 +184,8 @@ const readOf = (answer: ClientCallAnswer): string => {
 
 /** What the agent a turn runs on offers the other areas. */
 export interface TurnAgent {
-  agentOf: (values: Record<string, unknown>) => CofoldAgent;
+  /** The agent a turn runs on, with `turn`, what the host contributed for that turn's send, in its system prompt. */
+  agentOf: (values: Record<string, unknown>, turn?: readonly string[]) => CofoldAgent;
   settleEdit: (callId: string) => void;
   releaseCalls: (why: string) => void;
   /** The requests a client can still answer: the person's, and the clients'. */
@@ -298,11 +299,12 @@ export const createTurnAgent = (
    *
    * The session's own prompt, then what the host wants the model told beside
    * it: the instruction behind each host tool, which is what makes a tool
-   * nothing asks for worth calling.
+   * nothing asks for worth calling, and what the host contributed for this
+   * turn's send.
    */
-  const instructionsOf = (values: Record<string, unknown>): string => {
+  const instructionsOf = (values: Record<string, unknown>, turn: readonly string[]): string => {
     const own = str(values.instructions) ?? options.instructions ?? harness.instructions ?? DEFAULT_INSTRUCTIONS;
-    const fromHost = (start.instructions ?? []).filter((one) => one.trim() !== '');
+    const fromHost = [...(start.instructions ?? []), ...turn].filter((one) => one.trim() !== '');
     return [own, ...fromHost].join('\n\n');
   };
 
@@ -317,7 +319,7 @@ export const createTurnAgent = (
    * it writes - this host's tools are the daemon's and a client's, so their
    * names are not a list this backend can keep.
    */
-  const agentOf = (values: Record<string, unknown>): CofoldAgent => {
+  const agentOf = (values: Record<string, unknown>, turn: readonly string[] = []): CofoldAgent => {
     /*
      * The names the host's own tools answer to.
      *
@@ -356,7 +358,7 @@ export const createTurnAgent = (
     const memoryDir = memoryDirOf(options, where);
     return createAgent({
       id: AGENT_ID,
-      instructions: instructionsOf(values),
+      instructions: instructionsOf(values, turn),
       model: modelOf(options, values, start.credentials ?? {}, harness, ctx.held),
       context: { maxTokens, autoCompactTokens },
       tools: [

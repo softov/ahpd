@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import { machinePathOf } from '../src/machines/machine.js';
 import { nestedAgent } from '../src/sessions/nested.js';
 import { Status } from '../src/sessions/catalog.js';
 import { fileSessions } from '../src/sessions/sessions.js';
+import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { BackgroundTask } from '../src/types/background.js';
@@ -250,17 +251,16 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
 
   // Sent before the inner session exists, so it is the gate that is under test
   // as much as the turn.
-  session.begin('t1', 'hello world');
+  session.sendMessage('t1', 'hello world');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
   const types = seen.filter(({ channel }) => channel === 'chat').map(({ action }) => action.type);
-  expect(types).toContain('chat/turnStarted');
+  // The start is the outer host's to say, so the inner host's echo of it is
+  // not carried out a second time.
+  expect(types).not.toContain('chat/turnStarted');
   expect(types).toContain('chat/responsePart');
   expect(types).toContain('chat/turnComplete');
-  const began = seen.find(({ action }) => action.type === 'chat/turnStarted')?.action;
-  expect(began?.turnId).toBe('t1');
-  expect(began?.message?.text).toBe('hello world');
   // The streamed text, as the inner backend wrote it: same chunks, same turn.
   const delta = seen.filter(({ action }) => action.type === 'chat/delta').map(({ action }) => String(action.content)).join('');
   expect(delta).toBe('hello world');
@@ -307,15 +307,17 @@ const scriptedAgent = (
       workingDirectories: () => [uriOf(REPO_ROOT)],
       sessionState: () => ({ resource: session.uri, provider: PROVIDER, title: 'Scripted', status: 1, lifecycle: 'ready', chats: [], workingDirectories: [uriOf(REPO_ROOT)] }),
       chatState: () => ({ resource: session.chatUri, title: 'Scripted', status: 1, modifiedAt: new Date().toISOString(), turns: [] }),
-      begin: (turnId: string, text: string) => {
+      sendMessage: (turnId: string, text: string) => {
         session.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text } });
         onBegin(session, turnId, text);
       },
+      changeModel: () => {},
+      changeAgent: () => {},
       confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
         told.confirmed.push({ id: toolCallId, approved, ...(optionId === undefined ? {} : { option: optionId }) });
       },
       answer: (requestId: string, accepted: boolean, answers: Bag) => { told.answered.push({ id: requestId, accepted, answers }); return true; },
-      cancel: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
+      abort: () => {}, setDraft: () => {},
       setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}),
       // A backend that can background a startup answers by emitting, so this
@@ -348,7 +350,7 @@ it('a tool call that asks for confirmation is confirmed from outside', async () 
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/toolCallReady'));
   // What the client outside reads is the inner session's own ask.
   expect(seen.find(({ action }) => action.type === 'chat/toolCallReady')?.action.toolCallId).toBe('call-1');
@@ -376,7 +378,7 @@ it('a chat waiting on a confirmation inside says it waits on somebody', async ()
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/toolCallReady'));
   await until(() => session.status() !== Status.InProgress);
   expect(session.status()).toBe(Status.InputNeeded);
@@ -399,7 +401,7 @@ it('relays the inner host\'s row for the lead chat and its canvases, under the o
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'do it');
+  session.sendMessage('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   await settleInner();
   const outer = canvasResource('ahp-chat:/outer', 'board');
@@ -456,7 +458,7 @@ it('names a terminal of the host inside by the outer host\'s copy, which carries
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), outputTerminals } as unknown as Start);
 
-  session.begin('t1', 'build it');
+  session.sendMessage('t1', 'build it');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   await until(() => copies[0]?.exit !== undefined);
   expect(inside).not.toBe('');
@@ -486,7 +488,7 @@ it('a chat\'s background work goes out on the outer chat, and comes back off it'
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'run it in the background');
+  session.sendMessage('t1', 'run it in the background');
   await until(() => seen.some(({ action }) => action.type === 'chat/backgroundWorkSet'));
   /*
    * A background action names no chat of its own, so what says which chat it
@@ -519,7 +521,7 @@ it('a question the inner agent asks is answered from outside', async () => {
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
 
-  session.begin('t1', 'ask me');
+  session.sendMessage('t1', 'ask me');
   await until(() => seen.some(({ action }) => action.type === 'chat/inputRequested'));
   expect(seen.find(({ action }) => action.type === 'chat/inputRequested')?.action.request.id).toBe('req-1');
   // A draft answer is taken while the request is open, and refused for one that is not.
@@ -542,14 +544,14 @@ it('steer, resume, config and the MCP controls answer what the inner session hol
   const inner = innerHost(backend());
   const { seen, emit } = recorder();
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   const written = inner.messages.length;
 
   // Nothing is running, so there is nothing to steer and nothing is sent.
-  expect(session.steer?.('s1', 'faster')).toBe(false);
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'faster' })).toBe(false);
   // The last turn completed, so there is nothing to run again.
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t1')).toThrow();
   // A key the inner schema does not have is refused in a sentence.
   expect(typeof await session.setConfig?.('nonsense', 1)).toBe('string');
   // Ids the inner state does not hold are refused.
@@ -581,7 +583,7 @@ it('a sign-in the inner session asks for is awaited outside and reaches the inne
   const inner = innerHost(agent);
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'use the server');
+  session.sendMessage('t1', 'use the server');
   await until(() => (session.awaiting?.() ?? []).length > 0);
   expect(session.awaiting?.()).toEqual([resource]);
   expect(await session.authenticated?.(resource, 'token-1')).toBe(true);
@@ -605,7 +607,7 @@ it('a sign-in aimed at one server reaches that server inside, and no other', asy
   const inner = innerHost(agent);
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'use the server');
+  session.sendMessage('t1', 'use the server');
   await until(() => (session.awaiting?.() ?? []).length > 0);
   expect(await session.authenticated?.(resource, 'token-2', 'mcp:other')).toBe(true);
   // The host inside was told which server: the token is that one's alone.
@@ -620,7 +622,7 @@ it('a background request is handed to the host inside, and its answer comes back
   const inner = innerHost(agent);
   const { seen, emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   /*
@@ -664,7 +666,7 @@ it('close disposes the inner session before the process is signalled', async () 
   (inner.proc as unknown as { kill: (signal?: string) => boolean }).kill = (signal = 'SIGTERM') => { told.order.push(`kill:${signal}`); return true; };
   const { emit } = recorder();
   const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => inner.messages.some((message) => message.method === 'dispatchAction'));
   session.close();
   await until(() => told.order.some((step) => step.startsWith('kill:')));
@@ -729,7 +731,7 @@ it('a restart goes on when the host inside it stopped will not go', async () => 
     timeoutMs: 500,
     log: (line) => lines.push(line),
   }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => inner.messages.some((message) => message.method === 'dispatchAction'));
 
   const waited = await Promise.race([
@@ -742,9 +744,9 @@ it('a restart goes on when the host inside it stopped will not go', async () => 
 }, 30_000);
 
 /*
- * A client of the host outside dispatches the turn, and the host inside says
- * it back: the turn the proxy carries out is that client's own, under the
- * clientSeq it sent, however late the host inside answers.
+ * A client of the host outside dispatches the turn, which is carried inside,
+ * and the echo there answers it out here as that client's own, under the
+ * clientSeq it sent.
  */
 it('gives a turn on a nested session the origin of the client outside that sent it', async () => {
   const inner = innerHost(backend());
@@ -757,7 +759,7 @@ it('gives a turn on a nested session the origin of the client outside that sent 
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/outer') } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/outer'), clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello world' } } },
+    params: { channel: chatUriFor('ahp-session:/outer'), clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello world' } } },
   });
   const said = (type: string): Bag | undefined =>
     peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === type)?.params;
@@ -791,9 +793,9 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
 };
 
 /*
- * Every action a client sends a nested session comes back from the host inside,
- * after the dispatch outside was applied. Each is that client's own echo, under
- * the clientSeq it sent, however late the host inside says it.
+ * An action a client sends a nested session's chat is carried inside as it was
+ * sent, and the echo there answers it out here as that client's own, under the
+ * clientSeq it sent.
  */
 it('gives a draft on a nested session the origin of the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -806,7 +808,7 @@ it('gives a draft on a nested session the origin of the client outside that sent
 
 it('gives a message queued on a nested session the origin of the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
-  await dispatch(5, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'and then this' } });
+  await dispatch(5, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'and then this' } });
   await until(() => told('chat/pendingMessageSet').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
   expect(told('chat/pendingMessageSet')[0]?.origin).toEqual({ clientId: 'window', clientSeq: 5 });
@@ -814,9 +816,9 @@ it('gives a message queued on a nested session the origin of the client outside 
 });
 
 /*
- * A background request on a nested session is the host inside's to answer,
- * whatever its backend makes of it, and that answer reaches the client outside
- * under the clientSeq it sent.
+ * A background request on a nested session is carried to the host inside,
+ * whose backend makes of it what it does, and its echo there answers it out
+ * here under the clientSeq its client sent.
  */
 it('answers a background request on a nested session to the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -829,20 +831,18 @@ it('answers a background request on a nested session to the client outside that 
 });
 
 /*
- * A client's read and archive of a nested session's lead chat go to the host
+ * A client's read of a nested session's lead chat is carried to the host
  * inside, which runs the chat and answers the client, and the chat's bits out
- * here are the ones that host says: the host running a session is the one
- * producer of its state, and a relay forwards a client's messages to it. So a
- * turn's start and end move the bit once, inside, and the archive of the lead
- * chat is refused there.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
+ * here follow what that host says of them: a turn's start and end move the bit
+ * once, inside. An archive of the lead chat is refused out here, as any
+ * session's default chat's is, and reaches nothing inside.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
  */
-it('carries a read and an archive of the lead chat to the host inside, whose bits the chat holds', async () => {
+it('carries a read of the lead chat to the host inside, which answers it, and refuses an archive of it', async () => {
   const inner = innerHost(backend());
   const { host, client, dispatch, told } = await outside(inner);
   const chat = chatUriFor('ahp-session:/outer');
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
   await until(() => told('chat/turnComplete').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
   await settleInner();
@@ -860,7 +860,8 @@ it('carries a read and an archive of the lead chat to the host inside, whose bit
 
   await dispatch(3, { type: 'chat/isArchivedChanged', isArchived: true });
   await until(() => told('chat/isArchivedChanged').some((one) => one.origin?.clientSeq === 3));
-  expect(carried('chat/isArchivedChanged')).toHaveLength(1);
+  await settleInner();
+  expect(carried('chat/isArchivedChanged')).toEqual([]);
   expect(told('chat/isArchivedChanged').map((one) => one.rejectionReason))
     .toEqual(['Only a known independently manageable non-default chat can be archived.']);
   await host.close();
@@ -902,71 +903,9 @@ it('carries a read and an archive of the session to the host inside, whose bits 
 });
 
 /*
- * The host inside refusing what the host outside handed it is a refusal of the
- * client outside that sent it, with the inside's reason, and the chat stays as
- * it was. The echo backend takes no message mid-turn.
- */
-it('refuses to the client outside an action the host inside refused, and changes nothing', async () => {
-  const { host, dispatch, told } = await outside(innerHost(backend(40)));
-  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'a long enough answer to steer' } });
-  await until(() => told('chat/responsePart').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
-  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'shorter' } });
-  await until(() => told('chat/pendingMessageSet').length > 0 || told('chat/turnComplete').length > 0);
-  const steering = told('chat/pendingMessageSet');
-  expect(steering).toHaveLength(1);
-  expect(steering[0]?.origin).toEqual({ clientId: 'window', clientSeq: 7 });
-  expect(steering[0]?.rejectionReason).toBe('This backend cannot take a message mid-turn');
-  await host.close();
-}, 30_000);
-
-/*
- * A steering message a client outside takes back is carried inside as the
- * steering message the inner chat holds, and the host inside's answer reaches
- * the client outside under the clientSeq it sent. The backend inside holds the
- * message until it is taken back, which its `withdraw` does while the turn runs.
- */
-it('takes back a steering message on a nested session through the host inside', async () => {
-  const { agent } = scriptedAgent(() => {});
-  let held: Bag | undefined;
-  const holding = {
-    ...agent,
-    create: (session: Start) => {
-      const made = agent.create(session) as unknown as Bag & { chatState: () => Bag };
-      return {
-        ...made,
-        chatState: () => ({ ...made.chatState(), ...(held === undefined ? {} : { steeringMessage: held }) }),
-        steer: (id: string, text: string) => {
-          held = { id, message: { text } };
-          session.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } });
-          return true;
-        },
-        withdraw: (id: string) => {
-          if (held?.id !== id) return;
-          held = undefined;
-          session.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-        },
-      };
-    },
-  } as unknown as Agent;
-  const { host, dispatch, told } = await outside(innerHost(holding));
-  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on' } });
-  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
-  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'shorter' } });
-  await until(() => told('chat/pendingMessageSet').length > 0);
-  await dispatch(8, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
-  await until(() => told('chat/pendingMessageRemoved').length > 0);
-  expect(told('chat/pendingMessageRemoved').map((one) => [one.action, one.origin, one.rejectionReason]))
-    .toEqual([[{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }, { clientId: 'window', clientSeq: 8 }, undefined]]);
-  expect(held).toBeUndefined();
-  await host.close();
-}, 30_000);
-
-/*
- * A switch the host outside says itself once the session took it, said to its
- * clients once. The session hands the switch to the host inside, whose echo
- * moves the session's mirror and goes no further.
+ * A switch the host outside says itself, to its clients once. The session
+ * hands the switch to the host inside, whose echo moves the session's mirror
+ * and goes no further.
  */
 it('says a customization switch on a nested session to the clients outside once', async () => {
   const plugin = { type: 'plugin', id: 'plugin-a', name: 'a' };
@@ -979,7 +918,7 @@ it('says a customization switch on a nested session to the clients outside once'
   } as unknown as Agent;
   const { host, dispatch, told } = await outside(innerHost(switching));
   // The switch is the session's once the session inside has published the plugin.
-  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on' } });
+  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } });
   await until(() => told('session/customizationsChanged').some((one) => JSON.stringify(one.action).includes('plugin-a'))
     || told('session/creationFailed').length > 0);
   await dispatch(9, { type: 'session/customizationToggled', id: 'plugin-a', enablement: [{ kind: 'session', enabled: false }] }, 'ahp-session:/outer');
@@ -993,25 +932,74 @@ it('says a customization switch on a nested session to the clients outside once'
 }, 30_000);
 
 /*
- * A turn reaches the session in a machine once the host outside has set the
- * machine where its branch is, after the dispatch outside was applied, and the
- * host inside refusing it is still that client's refusal.
+ * A turn the host inside will not run is ended out here as that host ends it,
+ * in its words: a turn it refuses after its echo ends in `chat/error`, as the
+ * reference host's admission ends one. The session ending later fails no turn
+ * a second time.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
  */
-it('refuses to the client outside a turn the host inside refused', async () => {
+it('ends a turn the host inside would not run as the host inside ends it', async () => {
   const inner = innerHost(backend());
   inner.host.refuseTurns('The host inside is stopping');
   const { host, dispatch, told } = await outside(inner);
-  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
-  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
+  await until(() => told('chat/error').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
-  const started = told('chat/turnStarted');
-  expect(started).toHaveLength(1);
-  expect(started[0]?.origin).toEqual({ clientId: 'window', clientSeq: 8 });
-  expect(started[0]?.rejectionReason).toBe('The host inside is stopping');
-  // Nothing ran under the turn, so the session ending fails no turn.
+  expect(told('chat/turnStarted').map((one) => [one.origin, one.rejectionReason])).toEqual([[{ clientId: 'window', clientSeq: 8 }, undefined]]);
+  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([
+    ['t1', { errorType: 'rejected', message: 'The host inside is stopping' }],
+  ]);
   inner.crash();
   await until(() => told('session/creationFailed').length > 0);
-  expect(told('chat/error')).toEqual([]);
+  expect(told('chat/error')).toHaveLength(1);
+  await host.close();
+});
+
+/*
+ * A client's start is carried inside as the client sent it, its message whole:
+ * what it attached and the agent it picked, as a relay forwards a frame.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
+ */
+it('carries a message\'s attachments and agent inside, as the client sent them', async () => {
+  const inner = innerHost(backend());
+  const { host, dispatch, told } = await outside(inner);
+  const message = {
+    origin: { kind: 'user' },
+    text: 'read this',
+    attachments: [{ type: 'simple', label: 'the first paragraph', modelRepresentation: 'It was a dark and stormy night.' }],
+    agent: { uri: 'agent://reviewer' },
+  };
+  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message });
+  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await settleInner();
+  const carried = inner.messages
+    .filter((one) => one.method === 'dispatchAction' && one.params?.action?.type === 'chat/turnStarted')
+    .map((one) => one.params.action.message);
+  expect(carried).toEqual([message]);
+  await host.close();
+});
+
+/*
+ * A stop sent right after a start goes inside behind it as the client sent it,
+ * with the client's own time, and the host inside applies it at once: nothing
+ * out here waits on the start's answer before carrying the stop.
+ */
+it('carries a stop sent right after a start inside behind it, as the client sent it', async () => {
+  const inner = innerHost(backend(30));
+  const { host, dispatch, told } = await outside(inner);
+  void dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
+  void dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 7 });
+  await until(() => told('chat/turnCancelled').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  expect(told('chat/turnCancelled').map((one) => [one.origin, one.rejectionReason, one.action.duration]))
+    .toEqual([[{ clientId: 'window', clientSeq: 2 }, undefined, 7]]);
+  await settleInner();
+  const carried = inner.messages
+    .filter((one) => one.method === 'dispatchAction')
+    .map((one) => [one.params.action.type, one.params.action.duration]);
+  expect(carried).toEqual([['chat/turnStarted', undefined], ['chat/turnCancelled', 7]]);
+  expect(told('chat/turnComplete')).toEqual([]);
   await host.close();
 });
 
@@ -1021,11 +1009,16 @@ it('cancel stops the inner turn', async () => {
   const agent = nestedAgent(backend(30), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 });
   const session = agent.create(start(emit));
 
-  session.begin('t1', 'one two three four five six seven eight nine ten');
+  session.sendMessage('t1', 'one two three four five six seven eight nine ten');
   await until(() => seen.some(({ action }) => action.type === 'chat/delta'));
-  session.cancel('t1');
-  await until(() => seen.some(({ action }) => action.type === 'chat/turnCancelled'));
-  expect(seen.find(({ action }) => action.type === 'chat/turnCancelled')?.action.turnId).toBe('t1');
+  void session.abort();
+  // The stop goes to the host inside, which ends the turn there; the host
+  // outside says its client's stop itself.
+  const stop = (): Bag | undefined => inner.messages
+    .map((one) => (one.params as Bag | undefined)?.action as Bag | undefined)
+    .find((action) => action?.type === 'chat/turnCancelled');
+  await until(() => stop() !== undefined);
+  expect(stop()?.turnId).toBe('t1');
   // A cancelled turn never reports itself complete, whether or not the inner
   // backend is still streaming.
   await new Promise((resolve) => { setTimeout(resolve, 200); });
@@ -1038,7 +1031,7 @@ it('killing the inner host ends the outer session with what it last said', async
   const { seen, emit } = recorder();
   const agent = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 });
   const session = agent.create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   inner.say('ahpd: the machine has gone away');
@@ -1054,14 +1047,14 @@ it('a session whose inner host ended says why, and a later turn goes nowhere', a
   const inner = innerHost(backend());
   const { seen, emit } = recorder();
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   expect(session.ended?.()).toBeUndefined();
   inner.crash(3);
   await until(() => seen.some(({ action }) => action.type === 'session/creationFailed'));
   const said = seen.find(({ action }) => action.type === 'session/creationFailed')?.action.error.message;
   const before = seen.length;
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await new Promise((resolve) => { setTimeout(resolve, 50); });
   expect(seen.length).toBe(before);
   expect(session.ended?.()).toBe(said);
@@ -1598,7 +1591,7 @@ it('a nested session listed after a restart resumes the inner session by id from
   const [row] = await rowsOf(second.client);
   const uri = String(row?.resource);
   await second.client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
-  await second.client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } } });
+  await second.client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } } });
   await until(() => port.asked().some(({ method }) => method === 'dispatchAction'), 1000);
   // The inner session is subscribed under the outer id and not created again.
   expect(port.read()).toEqual([PROVIDER]);
@@ -1662,7 +1655,7 @@ it('a nested session moved to this host before its first turn shows its history'
   // Its first turn, and its only one: said here, to the backend on this host.
   await first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => first.peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete'), 1000);
   await first.host.close();
@@ -1799,13 +1792,14 @@ it('a nested session whose folders change starts the host inside again, and disp
   port.done();
 });
 
-it('a truncate of a nested session is refused, and disposes nothing inside the machine', async () => {
+it('a truncate of a nested session is said, and disposes nothing inside the machine', async () => {
   const port = scriptedPort([PROVIDER], { turns: true });
   const dir = join(port.dir, 'sessions');
   /*
    * The proxy answers no `endPoint`, so this host cannot name the point in the
-   * machine's own conversation to cut back to, and the action is refused. What
-   * it must not do on the way to that answer is close the session as a removal:
+   * machine's own conversation to cut back to, and the cut is said all the
+   * same while the machine keeps its history. What it must not do on the way
+   * to that answer is close the session as a removal:
    * the turn it read back is the machine's, and a dispose there takes the whole
    * conversation with it.
    */
@@ -1827,9 +1821,9 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   await until(() => port.read().length > 0, 1000);
   /*
    * And the turn, which this host reads off the snapshot the machine answers
-   * with. Waiting for it is what makes the refusal below the one this case is
-   * about: a truncate that arrives before the session is up is refused for
-   * having no such turn, which says nothing about what a rewind would do.
+   * with. Waiting for it is what makes the cut the one this case is about: a
+   * truncate that arrives before the session is up is refused for having no
+   * such turn, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
@@ -1842,12 +1836,68 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
     method: 'dispatchAction',
     params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/truncated', turnId: 't1' } },
   });
-  const refused = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 1000);
-  expect(String(refused()?.rejectionReason)).toMatch(/rewind/);
+  const said = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action'
+    && (params?.action as Bag | undefined)?.type === 'chat/truncated')?.params;
+  await until(() => said() !== undefined, 1000);
+  expect(said()?.rejectionReason).toBeUndefined();
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
+});
+
+/*
+ * A `!` command typed into a session in a machine is carried to the host
+ * inside, which runs it as its own local command in the machine the session
+ * works in, as the reference host runs a local command ahead of admitting a
+ * turn; this host opens no terminal of its own for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+ */
+it('a command typed into a nested session runs in the host inside, and in no terminal out here', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-nested-bang-'));
+  /*
+   * The folder as the machine names it, which a real machine mounts. The host
+   * inside here runs on this same runner, so on Windows the `/c/...` path it is
+   * handed is made where that host reads it, on the current drive.
+   */
+  const mounted = resolve(machinePathOf(dir));
+  mkdirSync(mounted, { recursive: true });
+  const inner = innerHost(backend(), { terminals: shellTerminals() });
+  const opened: string[] = [];
+  const host = createHost({
+    path: REPO_ROOT,
+    agents: [{ ...backend(), runsNested: true }],
+    agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
+    terminals: { create: (options) => { opened.push(options.uri); return shellTerminals().create(options); } },
+    computers: { how: async () => ({ command: 'true', args: [] }), connect: async () => ({ host: inner.proc }) },
+  });
+  const peer = trusting();
+  const client = host.accept(peer);
+  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
+  const uri = 'ahp-session:/banged';
+  const chat = chatUriFor(uri);
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, workingDirectories: [uriOf(dir)], config: { computer: 'computer://box' } } });
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo inside', origin: { kind: 'user' } } } },
+  });
+  const said = (): Bag[] => peer.seen
+    .filter(({ method, params }) => method === 'action' && params.channel === chat)
+    .map(({ params }) => params.action as Bag);
+  try {
+    await until(() => said().some((one) => one.type === 'chat/turnComplete' && one.turnId === 't1'), 1000);
+    const done = said().find((one) => one.type === 'chat/toolCallComplete');
+    expect(done).toMatchObject({ turnId: 't1', result: { success: true, pastTenseMessage: 'Ran command' } });
+    expect(JSON.stringify(done?.result)).toContain('inside');
+    expect(opened).toEqual([]);
+  }
+  finally {
+    // The host inside goes as a process does once it is stopped, which is what the close waits on.
+    inner.crash(0, 'SIGTERM');
+    await host.close();
+    rmSync(dir, { recursive: true, force: true });
+    if (mounted !== dir) rmSync(mounted, { recursive: true, force: true });
+  }
 });
 
 it('a nested chat a client removes is disposed inside the machine', async () => {
@@ -1900,7 +1950,7 @@ it('a nested session whose machine is gone is listed, and its resume ends with a
   expect(rows.map((one) => one.resource)).toEqual(['ahp-session:/kept']);
   const uri = String(rows[0]?.resource);
   await second.client.handle({ method: 'subscribe', params: { channel: uri } });
-  await second.client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } } });
+  await second.client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } } });
   const failed = (): Bag | undefined => second.peer.seen.find(({ params }) => params?.action?.type === 'session/creationFailed')?.params;
   await until(() => failed() !== undefined, 1000);
   expect(String(failed()?.action.error.message)).toMatch(/There is no computer called computer:\/\/box/);
@@ -2074,7 +2124,7 @@ it('an inner subagent chat is opened outside through the subagent seam, and its 
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
-  session.begin('t1', 'go');
+  session.sendMessage('t1', 'go');
   await until(() => outside.ended.length > 0);
   expect(outside.asked).toEqual([{ toolCallId: 'call-1', request: { title: 'Explore', prompt: 'look around' } }]);
   // The worker's own turn is the one the seam opened, so nothing starts another.
@@ -2109,7 +2159,7 @@ it('a worker chat the outer seam cannot open is logged, and the session runs on'
       log: (line: string) => { lines.push(line); },
     })
       .create({ ...start(emit), subagent: () => { throw new Error('the outer chat is gone'); } } as unknown as Start);
-    session.begin('t1', 'go');
+    session.sendMessage('t1', 'go');
     await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
     // A rejection nobody holds is raised on a later turn of the loop than the
     // one that made it, so the case lets the tick pass before reading.
@@ -2130,7 +2180,7 @@ it('a link to an inner subagent chat in the lead chat names the outer chat', asy
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
     .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
-  session.begin('t1', 'go');
+  session.sendMessage('t1', 'go');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   const links = JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
   expect(links.length).toBeGreaterThan(0);
@@ -2152,7 +2202,7 @@ it('the catalogue rows of an inner subagent chat reach a client outside under th
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
-  await client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } } });
+  await client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete' && params?.channel === chatUriFor(uri)));
   const worker = subagentChatUri(uri, 'call-1');
   const added = peer.seen.find(({ params }) => params?.action?.type === 'session/chatAdded')?.params.action;
@@ -2205,7 +2255,7 @@ const throughHost = async (inside: Partial<HostOptions>, outside: Partial<HostOp
 /*
  * A nested session's changesets are the host inside's, the one producer of
  * the session's state: listed as it lists them, each served out here from it,
- * and reviewed there.
+ * and reviewed there once a client's review is said out here.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
  */
 it('lists a nested session\'s changesets as the host inside does, and serves and reviews each from there', async () => {
@@ -2237,7 +2287,7 @@ it('lists a nested session\'s changesets as the host inside does, and serves and
     method: 'dispatchAction',
     params: { channel: changeset, clientSeq: 7, action: { type: 'changeset/filesReviewChanged', files: [file.id], reviewed: true } },
   });
-  await until(() => peer.seen.some(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged'));
+  await until(() => reviews.length > 0 && peer.seen.some(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged'));
   expect(reviews).toEqual([{ files: [file.id], reviewed: true }]);
   const echo = peer.seen.find(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged');
   expect(echo?.params.origin).toEqual({ clientId: 'window', clientSeq: 7 });

@@ -119,7 +119,8 @@ beforeEach(() => { sdk.reset(); });
 
 it('starts the query on the agent the message picked, and resumes into that one', async () => {
   const { session } = await open();
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await settle();
 
   // Two queries, not one: the CLI was already up when the pick arrived, and the
@@ -132,28 +133,33 @@ it('starts the query on the agent the message picked, and resumes into that one'
 
 it('does not restart a CLI for a message that picked the agent already running', async () => {
   const { session } = await open();
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await settle();
   // Ended, because a second turn on a chat is refused while one runs rather
   // than begun on top of it.
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   await settle(40);
-  session.begin('t2', 'and this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t2', 'and this');
   await settle();
   expect(sdk.built).toHaveLength(2);
 });
 
 it('goes back to the default agent for a message that picked none, on the same conversation', async () => {
   const { session } = await open();
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await settle();
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   await settle(40);
-  session.begin('t2', 'now just answer', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t2', 'now just answer');
   await settle();
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   await settle(40);
-  session.begin('t3', 'actually, no plan', undefined);
+  session.changeAgent(undefined);
+  session.sendMessage('t3', 'actually, no plan');
   await settle();
 
   expect(sdk.built).toHaveLength(3);
@@ -163,15 +169,17 @@ it('goes back to the default agent for a message that picked none, on the same c
   expect(sdk.open).toBe(1);
 });
 
-it('runs a queued message on the agent that message picked, when its turn comes', async () => {
+it('runs a turn handed while another runs on the agent picked for it, when its turn comes', async () => {
   const { session } = await open();
-  session.begin('t1', 'first', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'first');
   await settle();
-  session.queue('q1', 'and then this', undefined, { agent: { uri: 'claude-internal:/agent/Explore' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Explore' });
+  session.sendMessage('t2', 'and then this');
   await settle();
 
-  // Queued, so nothing has moved: the pick belongs to the message, not to the
-  // turn that is running.
+  // Handed behind the running turn, so nothing has moved: the pick belongs to
+  // the turn it was handed for, not to the turn that is running.
   expect(sdk.built).toHaveLength(2);
   sdk.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   await settle(40);

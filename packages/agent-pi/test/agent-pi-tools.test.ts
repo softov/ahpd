@@ -87,7 +87,7 @@ it('hands the host tools to pi as custom tools', async () => {
       { definition: { name: 'open_file', title: 'Open file' }, run: async () => 'ok' },
     ],
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['open_file']);
 });
@@ -105,7 +105,7 @@ it('waits on the client that owns a tool, and lets only that client answer', asy
     tools: [{ definition: { name: 'editor__open', title: 'Open' }, owner: 'editor' }],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const tool = offered(pi, 'editor__open');
   expect(session.toolCallOwner?.('c1')).toBeUndefined();
@@ -133,7 +133,7 @@ it('fails a client tool call with the answer, and when its client is gone', asyn
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const tool = offered(pi, 'editor__open');
   await driveCall(pi, 'c1', 'editor__open', {});
@@ -155,13 +155,13 @@ it('releases a waiting client call when the turn is cancelled', async () => {
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const tool = offered(pi, 'editor__open');
   await driveCall(pi, 'c1', 'editor__open', {});
   const waiting = tool.execute('c1', {} as never, undefined, undefined, undefined as never);
   await settled();
-  session.cancel('t1');
+  session.abort();
   await expect(waiting).rejects.toThrow('The turn was stopped');
 });
 
@@ -175,7 +175,7 @@ it('raises the call on the session, and takes the entry down with the answer', a
   // Held, because a client's call belongs to a turn and the fake settles one
   // as soon as it is asked to run.
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'editor__open', { path: '/a.txt' });
 
@@ -205,7 +205,7 @@ it('keeps the answer a client gives between the ready and the run', async () => 
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'editor__open', {});
   // The client answers before pi gets as far as running the tool.
@@ -226,7 +226,7 @@ it('settles a call only from the client the tool belongs to', async () => {
     tools: [bound('a'), bound('b')],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'a__openFile', {});
   expect(needed(session)).toHaveLength(1);
@@ -247,7 +247,7 @@ it('fails a call nobody answers, in the time the host allows', async () => {
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
     clientToolTimeoutMs: 30,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'editor__open', {});
 
@@ -270,7 +270,7 @@ it('asks a client for a call only once the person has allowed it', async () => {
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const waiting = driveCall(pi, 'c1', 'editor__save', {});
   await settled();
@@ -294,7 +294,7 @@ it('hands the model the client image as an image, and its other files as a line'
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'editor__open', {});
 
@@ -321,11 +321,11 @@ it('replaces the tools on the next turn, rebuilding pi on the same session file'
   const { session, pi } = opened({
     tools: [{ definition: { name: 'one' }, run: async () => 'ok' }],
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens).toHaveLength(1);
   expect(await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }])).toBe(true);
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(pi.opens).toHaveLength(2);
   expect(pi.opens[1]?.resume).toBe('pi-session-1');
@@ -335,10 +335,10 @@ it('replaces the tools on the next turn, rebuilding pi on the same session file'
 it('does not rebuild pi when the tools did not change', async () => {
   const tool = { definition: { name: 'one' }, run: async () => 'ok' };
   const { session, pi } = opened({ tools: [tool] } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(await session.setTools?.([tool])).toBe(true);
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(pi.opens).toHaveLength(1);
 });
@@ -346,7 +346,7 @@ it('does not rebuild pi when the tools did not change', async () => {
 it('changes the tools before pi opens', async () => {
   const { session, pi } = opened();
   expect(await session.setTools?.([{ definition: { name: 'one' }, run: async () => 'ok' }])).toBe(true);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['one']);
 });
@@ -356,14 +356,14 @@ it('takes a tool change made during a turn on the turn after it', async () => {
     tools: [{ definition: { name: 'one' }, run: async () => 'ok' }],
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }]);
   // The running turn already handed pi its tools and is not touched.
   expect(pi.opens).toHaveLength(1);
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(pi.opens).toHaveLength(2);
   expect((pi.opens[1]?.tools ?? []).map((one) => one.name)).toEqual(['two']);
@@ -371,14 +371,14 @@ it('takes a tool change made during a turn on the turn after it', async () => {
 
 it('hands the host instructions to pi, and drops the empty ones', async () => {
   const { session, pi } = opened({ instructions: ['one', ' ', 'two'] } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.instructions).toEqual(['one', 'two']);
 });
 
 it('passes no instructions for a session that named none', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.instructions).toBeUndefined();
 });
@@ -405,7 +405,7 @@ it('takes a setTools made while the first open is still pending', async () => {
     return pi.open(options);
   }) as OpenPi);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // The open the turn waits on was handed the list before this.
   expect(await session.setTools?.([{ definition: { name: 'late' }, run: async () => 'ok' }])).toBe(true);
@@ -418,7 +418,7 @@ it('judges a running turn with the tools it was built with', async () => {
   const bound: BoundTool = { definition: { name: 'editor__open' }, owner: 'editor' };
   const { session, pi, sent } = opened({ tools: [bound] } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // The client's tool goes away while the turn is running.
   await session.setTools?.([]);
@@ -440,7 +440,7 @@ it('judges a running turn with the effects it was built with', async () => {
     settings: { permissionMode: 'default' },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await session.setTools?.([]);
   // It was a writing tool when the turn was built, so it still asks.
@@ -469,11 +469,11 @@ it('rebuilds pi on the same session and the model it was on', async () => {
     tools: [{ definition: { name: 'one' }, run: async () => 'ok' }],
     instructions: ['be nice'],
   } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const before = pi.asked.filter((one) => one.kind === 'choose').length;
   await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }]);
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(pi.opens).toHaveLength(2);
   const second = pi.opens[1]!;
@@ -504,16 +504,16 @@ it('lets the next turn open again after a rebuild fails', async () => {
     {},
     open,
   );
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await session.setTools?.([{ definition: { name: 'two' }, run: async () => 'ok' }]);
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   const failure = [...sent].reverse().find((one) => one.action.type === 'chat/error')?.action;
   expect(((failure?.part as Bag).error as Bag).message).toBe('the rebuild could not start');
 
   // Nothing is live, so the next turn opens again rather than reusing the failure.
-  session.begin('t3', 'third');
+  session.sendMessage('t3', 'third');
   await settled();
   expect(opens).toBe(3);
 });

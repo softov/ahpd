@@ -189,7 +189,7 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
       });
       await settle();
       const said = await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0);
@@ -250,7 +250,7 @@ describe('tools the host contributes', () => {
       await window.handle({ method: 'subscribe', params: { channel: chat } });
       window.handle({
         method: 'dispatchAction',
-        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'start the port' } } },
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'start the port' } } },
       });
       await settle();
       const said = await call('create_session', {
@@ -347,7 +347,7 @@ describe('tools the host contributes', () => {
       // A turn in the first session, said and answered.
       client.handle({
         method: 'dispatchAction',
-        params: { channel: mine, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is in this directory' } } },
+        params: { channel: mine, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'what is in this directory' } } },
       });
       await settle();
       const first = sessionQueries()[0];
@@ -391,7 +391,7 @@ describe('tools the host contributes', () => {
       expect(await call('set_workspace', { workspaceFolder: '/tmp', isolation: false })).toContain('must run from an active chat turn');
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work in /tmp' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
       });
       await settle();
       const said = await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false });
@@ -443,7 +443,7 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'subscribe', params: { channel: chat } });
       client.handle({
         method: 'dispatchAction',
-        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work in the hashed folder' } } },
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in the hashed folder' } } },
       });
       await settle();
       const worktree = await call('set_workspace', { workspaceFolder: 'file:///home/softov/a%23b', isolation: true });
@@ -549,7 +549,7 @@ describe('tools the host contributes', () => {
     // A turn sent by her gives the person the host knows behind that owner.
     await plenty.client.handle({ method: 'dispatchAction', params: {
       channel: chatUriFor('ahp-session:/who'),
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'who am I' } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'who am I' } },
     } });
     await settle();
     expect(await plenty.person()).toBe('ana');
@@ -987,7 +987,7 @@ describe('the MCP servers a session is offered', () => {
       /** A turn, which is the moment a chat is handed the set its session has. */
       send: (turnId: string, text = 'hi') => watch.handle({
         method: 'dispatchAction',
-        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
       }),
       /** The plugin, as the client holding it announces it. */
       announce: (extra: Record<string, unknown> = {}) => holder.handle({
@@ -1262,7 +1262,7 @@ describe('tools a client contributes', () => {
     const { client, peer: p, uri, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1315,7 +1315,7 @@ describe('tools a client contributes', () => {
     const { client, peer: p, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     /*
@@ -1343,7 +1343,7 @@ describe('tools a client contributes', () => {
     const { client, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1385,7 +1385,7 @@ describe('tools a client contributes', () => {
     await other.handle({ method: 'subscribe', params: { channel: chatUri } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1436,7 +1436,7 @@ describe('tools a client contributes', () => {
     await other.handle({ method: 'subscribe', params: { channel: chatUri } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1481,7 +1481,7 @@ describe('tools a client contributes', () => {
     const { client, uri, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1527,7 +1527,7 @@ describe('tools a client contributes', () => {
   const calling = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
     await emit({
@@ -1709,7 +1709,7 @@ describe('tools a client contributes', () => {
     const { client, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it twice' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it twice' } } },
     });
     await settle();
     /*
@@ -1742,7 +1742,7 @@ describe('tools a client contributes', () => {
     const { client, chatUri } = await providing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it twice' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it twice' } } },
     });
     await settle();
     /*
@@ -1822,7 +1822,7 @@ describe('tools a client contributes', () => {
   const intoTurn = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
   };
@@ -1989,7 +1989,7 @@ describe('tools a client contributes', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
     });
     await settle();
 
@@ -2552,7 +2552,7 @@ describe('a customization switched for every session or a folder', () => {
         /** A turn, which is the moment a chat is handed the set its session has. */
         turn: (turnId: string) => watch.handle({ method: 'dispatchAction', params: {
           channel: chat,
-          action: { type: 'chat/turnStarted', turnId, message: { text: 'hi' } },
+          action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } },
         } }),
       };
     };
@@ -2967,21 +2967,24 @@ describe('a customization switched for one session', () => {
     expect((await two.plugin())?.enablement).toBeUndefined();
   });
 
-  it('refuses a skill of the plugin out loud, with the list sent again', async () => {
+  /*
+   * A switch of a skill is said, and the session holds it as the protocol's
+   * reducer took it; the backend is asked, and the log says it has no switch.
+   * VS Code's host records a client's enablement for plugins and servers, so a
+   * skill's is the state's alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L204-L227
+   */
+  it('says a switch of a skill of the plugin the backend cannot make live, which the session holds', async () => {
     const { said, told, open } = await switchable();
     const one = await open('one');
 
     await one.toggle('skill:agents-md', false);
     await settle();
 
-    // The backend has no switch for a skill, and says so by refusing it: a
-    // control that reports success and changes nothing is worse than one that
-    // says it cannot.
     expect(said.some((line) => line.includes('skill:agents-md has no runtime switch'))).toBe(true);
     expect(told).toEqual([['skill:agents-md', false]]);
-    // And nothing was kept, so the skill stays as the backend reports it.
     const plugin = await one.plugin();
-    expect((plugin?.children as Record<string, unknown>[])[0]?.enablement).toBeUndefined();
+    expect((plugin?.children as Record<string, unknown>[])[0]?.enabled).toBe(false);
   });
 });
 
@@ -2995,8 +2998,12 @@ describe('a customization switched for one session', () => {
 describe('a harness list handed to the host', () => {
   const ana: Principal = { id: 'ana', roles: [], can: () => true };
 
-  /** The example backend, with the start it was handed kept so a test can speak through it. */
-  const speaking = (untitled = false) => {
+  /**
+   * The example backend, with the start it was handed kept so a test can speak
+   * through it, and a plugin that hears each list, holding it for ever when
+   * `holds` is set.
+   */
+  const speaking = (untitled = false, holds = false) => {
     const base = echo({ path: '/home/softov', pace: 60 });
     const heard: HostEvent[] = [];
     let update: Start['planUpdate'];
@@ -3018,7 +3025,10 @@ describe('a harness list handed to the host', () => {
       configDir: '/home/softov', log: () => {}, say: () => {},
     });
     const { host: plugin, contribution } = pluginHost('probe', context());
-    plugin.on('plan_update', (event) => { heard.push(event); });
+    plugin.on('plan_update', (event) => {
+      heard.push(event);
+      return holds ? new Promise<void>(() => {}) : undefined;
+    });
     const { options } = foldHostOptions({
       path: '/home/softov',
       agents: [agent],
@@ -3051,11 +3061,37 @@ describe('a harness list handed to the host', () => {
     const chat = chatUriFor('ahp-session:/list');
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'plan it' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'plan it' } } },
     });
     await settle();
     return { heard, say, chat: backendChat() };
   };
+
+  /*
+   * A turn's end is said as its backend says it, whatever plugin is still
+   * hearing the list behind it, as VS Code's host says an agent's end of a
+   * turn when the agent says it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
+   */
+  it('says a turn\'s end as the backend says it, while a plugin still holds the list behind it', async () => {
+    const { host, say } = speaking(false, true);
+    const p = peer();
+    const client = host.accept(p, ana);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
+    const chat = chatUriFor('ahp-session:/list');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'plan it' } } },
+    });
+    await settle();
+    say({ turn: 't1', tool: 'TodoWrite', entries: [{ text: 'Read the plan', status: 'in_progress' }] });
+    const ended = (): boolean => p.notes.some((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'chat/turnComplete');
+    for (let i = 0; i < 150 && !ended(); i++) await new Promise((done) => { setTimeout(done, 10); });
+    expect(ended()).toBe(true);
+  });
 
   it('hands a whole list with the session and the sender of the turn', async () => {
     const { heard, say, chat } = await opened();

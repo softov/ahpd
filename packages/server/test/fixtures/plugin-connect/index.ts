@@ -67,7 +67,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (event.client === CLIENT || idOf(event.session) !== idOf(SESSION)) return;
     conn.notify('dispatchAction', {
       channel: CHAT,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } },
     });
   });
 

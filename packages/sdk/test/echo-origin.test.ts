@@ -77,8 +77,8 @@ const waiting = (agent: Agent): Agent => ({
     const session = agent.create(start) as Session;
     return {
       ...session,
-      begin: (...args: Parameters<Session['begin']>) => { void Promise.resolve().then(() => { session.begin(...args); }); },
-      cancel: (turnId: string) => { void Promise.resolve().then(() => { session.cancel(turnId); }); },
+      sendMessage: (...args: Parameters<Session['sendMessage']>) => { void Promise.resolve().then(() => { session.sendMessage(...args); }); },
+      abort: () => { void Promise.resolve().then(() => session.abort()); },
     };
   },
 });
@@ -105,7 +105,7 @@ const gated = (agent: Agent) => {
       ...agent,
       create: (start: Start): Session => {
         const session = agent.create(start) as Session;
-        return { ...session, begin: (...args: Parameters<Session['begin']>) => { held.push(() => { session.begin(...args); }); } };
+        return { ...session, sendMessage: (...args: Parameters<Session['sendMessage']>) => { held.push(() => { session.sendMessage(...args); }); } };
       },
     },
     release: () => { for (const begin of held.splice(0)) begin(); },
@@ -115,7 +115,7 @@ const gated = (agent: Agent) => {
 it('gives the echo the origin of the dispatch, and the actions it causes none', async () => {
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }));
   p.heard.length = 0;
-  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   // The turn renames the session, says what it is doing and answers, all
@@ -128,10 +128,27 @@ it('gives the echo the origin of the dispatch, and the actions it causes none', 
   await host.close();
 });
 
-it('gives a turn its origin when the backend says it began after an await', async () => {
+/*
+ * A turn's start time and a message's origin a client left out are this
+ * host's, filled in the echo: every reducer reads them, the protocol requires
+ * both, and the server's echo wins where the two differ.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+ */
+it('fills the start time and the origin a client\'s start left out, and the turn ends', async () => {
+  const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }));
+  p.heard.length = 0;
+  await dispatch(5, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
+  const echoed = p.heard.find((one) => one.origin?.clientSeq === 5)?.action;
+  expect(Number.isNaN(Date.parse(String(echoed?.startedAt)))).toBe(false);
+  expect((echoed?.message as Bag | undefined)?.origin).toEqual({ kind: 'user' });
+  await host.close();
+});
+
+it('gives a turn its origin when its backend begins it after an await', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 0 })));
   p.heard.length = 0;
-  await dispatch(7, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(7, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   const started = p.heard.find((one) => one.action.type === 'chat/turnStarted');
@@ -154,10 +171,10 @@ it('gives each chat its own turn\'s origin when two chats start a turn of the sa
   await client.handle({ method: 'subscribe', params: { channel: otherChat } });
   p.heard.length = 0;
 
-  await dispatch(3, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await dispatch(3, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one' } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'two' } } },
+    params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'two' } } },
   });
   release();
   await until(() => p.heard.some((one) => one.channel === CHAT && one.action.type === 'chat/turnStarted'), 'the first start');
@@ -177,7 +194,7 @@ it('gives a turn its origin when the machine it runs in is set to the host first
   const computers = { how: async () => undefined, follow: async (id: string) => { followed.push(id); } };
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 0 }), { computers } as Partial<HostOptions>, { computer: 'computer://box' });
   p.heard.length = 0;
-  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
+  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
 
   expect(followed).toEqual(['box']);
@@ -186,13 +203,221 @@ it('gives a turn its origin when the machine it runs in is set to the host first
   await host.close();
 });
 
-it('gives a stop its origin when the backend says it once the turn has let go', async () => {
+/*
+ * A turn is said, then prepared: a machine is set where the host's branch is
+ * before its prompt goes out, and a turn stopped meanwhile never reaches the
+ * backend, as VS Code's host checks for a cancel before it sends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
+ */
+it('sends nothing for a turn stopped while its machine is set where the host\'s branch is', async () => {
+  let followed: () => void = () => {};
+  const computers = { how: async () => undefined, follow: () => new Promise<void>((done) => { followed = done; }) };
+  const begun: string[] = [];
+  const base = echo({ path: dir, pace: 0 });
+  const counting: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return { ...session, sendMessage: (...args: Parameters<Session['sendMessage']>) => { begun.push(args[0]); session.sendMessage(...args); } };
+    },
+  };
+  const { host, p, client, dispatch } = await serving(counting, { computers } as Partial<HostOptions>, { computer: 'computer://box' });
+  p.heard.length = 0;
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
+  await settle();
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  followed();
+  await settle();
+
+  expect(begun).toEqual([]);
+  expect(p.heard.filter((one) => one.channel === CHAT).map((one) => [one.action.type, one.origin?.clientSeq])).toEqual([
+    ['chat/turnStarted', 1],
+    ['chat/turnCancelled', 2],
+  ]);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { turns: { id: string; state: string }[] } };
+  }).snapshot.state;
+  expect(held.turns.map((one) => [one.id, one.state])).toEqual([['t1', 'cancelled']]);
+  await host.close();
+});
+
+/*
+ * A turn on a session filed away is said, and ended in the words VS Code's
+ * host ends one on an archived session with.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ */
+it('ends a turn on an archived session in an error, as read-only', async () => {
+  const { host, p, client, dispatch } = await serving(echo({ path: dir, pace: 0 }));
+  await client.handle({ method: 'dispatchAction', params: { channel: SESSION, clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+  await settle();
+  p.heard.length = 0;
+  await dispatch(2, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+
+  const said = p.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1');
+  expect(said.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', 2, undefined],
+    ['chat/error', undefined, undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'archived' } });
+  await host.close();
+});
+
+/**
+ * The echo backend with what the host hands it written down in order, and
+ * each of the turn's three calls able to fail.
+ */
+const handing = (fails: { model?: boolean; agent?: boolean; send?: boolean } = {}) => {
+  const calls: string[] = [];
+  const base = echo({ path: dir, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        changeModel: (model) => {
+          calls.push(`model ${model.id}`);
+          if (fails.model === true) return Promise.reject(new Error('no such model here'));
+          return session.changeModel(model);
+        },
+        changeAgent: (picked) => {
+          calls.push(`agent ${picked?.uri ?? 'its own'}`);
+          if (fails.agent === true) return Promise.reject(new Error('no such agent here'));
+          return session.changeAgent(picked);
+        },
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          calls.push(`send ${args[0]}`);
+          if (fails.send === true) return Promise.reject(new Error('the prompt did not go out'));
+          return session.sendMessage(...args);
+        },
+        abort: () => {
+          calls.push('abort');
+          return session.abort();
+        },
+      };
+    },
+  };
+  return { agent, calls };
+};
+
+/** A client's start naming a model and an agent. */
+const picking = (turnId: string): Bag => ({
+  type: 'chat/turnStarted',
+  turnId,
+  startedAt: new Date().toISOString(),
+  message: { origin: { kind: 'user' }, text: 'one two', model: { id: 'fast' }, agent: { uri: 'agent:/planner' } },
+});
+
+/*
+ * A turn's model and agent are handed before its prompt, as VS Code's host
+ * changes its agent's model and agent before the send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2240
+ */
+it('hands a turn\'s model and agent to its backend before its prompt', async () => {
+  const { agent, calls } = handing();
+  const { host, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => calls.includes('send t1'), 'the send');
+  expect(calls).toEqual(['model fast', 'agent agent:/planner', 'send t1']);
+  await host.close();
+});
+
+/*
+ * A model the backend will not take fails the turn before its prompt goes out,
+ * in VS Code's words for a failed model selection.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2570
+ */
+it('ends a turn in a modelSelectionFailed error when its backend will not take the model', async () => {
+  const { agent, calls } = handing({ model: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+  expect(calls).not.toContain('send t1');
+  expect(p.heard.find((one) => one.action.type === 'chat/error')?.action.part)
+    .toMatchObject({ error: { errorType: 'modelSelectionFailed', message: 'no such model here' } });
+  await host.close();
+});
+
+/*
+ * An agent the backend will not take is logged, and the turn is sent all the
+ * same, as VS Code's host sends it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2236-L2238
+ */
+it('sends a turn whose agent its backend will not take', async () => {
+  const { agent, calls } = handing({ agent: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => calls.includes('send t1'), 'the send');
+  expect(p.heard.some((one) => one.action.type === 'chat/error')).toBe(false);
+  await host.close();
+});
+
+/*
+ * A send that fails ends its turn in VS Code's words for one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends a turn in a sendFailed error when its backend\'s send fails', async () => {
+  const { agent } = handing({ send: true });
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, picking('t1'));
+  await until(() => p.heard.some((one) => one.action.type === 'chat/error'), 'the error');
+  expect(p.heard.find((one) => one.action.type === 'chat/error')?.action.part)
+    .toMatchObject({ error: { errorType: 'sendFailed', message: 'the prompt did not go out' } });
+  await host.close();
+});
+
+/*
+ * A stop of the chat's running turn aborts what its backend runs, as VS
+ * Code's host aborts its agent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+ */
+it('aborts its backend at a stop of the turn the chat runs', async () => {
+  const { agent, calls } = handing();
+  const { host, dispatch } = await serving({ ...agent, create: (start: Start) => ({ ...agent.create(start) as Session, sendMessage: () => undefined }) });
+  await dispatch(1, picking('t1'));
+  await settle();
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  await settle();
+  expect(calls).toContain('abort');
+  await host.close();
+});
+
+/*
+ * A turn this host begins itself, a chat's first message among them, is said
+ * as the host's before its backend is sent it, as VS Code's host starts a
+ * turn of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L64-L68
+ */
+it('says the start of a turn it begins itself, with its backend saying none', async () => {
+  const base = echo({ path: dir, pace: 0 });
+  const sent: string[] = [];
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => ({ ...base.create(start) as Session, sendMessage: (turnId: string) => { sent.push(turnId); } }),
+  };
+  const { host, client } = await serving(agent);
+  await client.handle({
+    method: 'createChat',
+    params: { channel: SESSION, chat: 'ahp-chat:/second', initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+  });
+  await until(() => sent.length > 0, 'the send');
+  const held = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/second' } }) as {
+    snapshot: { state: { activeTurn?: { id: string; message: { text: string } } } };
+  }).snapshot.state;
+  expect(held.activeTurn?.id).toBe(sent[0]);
+  expect(held.activeTurn?.message.text).toBe('hello');
+  await host.close();
+});
+
+it('gives a stop its origin when its backend lets the turn go after an await', async () => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 50 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
-  await dispatch(9, { type: 'chat/turnCancelled', turnId: 't1' });
+  await dispatch(9, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
 
   const stopped = p.heard.find((one) => one.action.type === 'chat/turnCancelled');
@@ -212,7 +437,7 @@ it.each([
   ['no turn id', {}],
 ])('says a stop naming %s as sent, with its origin, and stops nothing', async (_, named) => {
   const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 20 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
@@ -228,252 +453,72 @@ it.each([
 });
 
 /**
- * The window back on a second connection, watching the chat, while the turn it
- * started on the first has not begun in its backend: its stop names that turn.
+ * The echo backend, its chat's latest turn one a model call failed, which is
+ * the only kind the protocol lets a client resume, and its `resume` answering
+ * `runs`. The host checks the turn before it asks the backend anything.
  */
-const reconnected = async (host: ReturnType<typeof createHost>) => {
-  const q = listening();
-  const back = host.accept(q);
-  await back.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
-  await back.handle({ method: 'subscribe', params: { channel: CHAT } });
-  const dispatch = (clientSeq: number, action: Bag) =>
-    back.handle({ method: 'dispatchAction', params: { channel: CHAT, clientSeq, action } });
-  return { q, dispatch };
-};
-
-/*
- * A turn's start is said when the host hands it on, so a stop of a turn its
- * backend has not begun stops it at once, and the backend is told. The
- * reference host applies a client's start at once and drops a send whose turn
- * was cancelled before the agent had it.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2302-L2305
- */
-it('stops a turn its backend has not begun, its start said when it was handed on, and tells the backend', async () => {
-  const { agent, release } = gated(echo({ path: dir, pace: 20 }));
-  const told: string[] = [];
-  const stopping: Agent = {
-    ...agent,
-    create: (start: Start): Session => {
-      const session = agent.create(start) as Session;
-      return { ...session, cancel: (turnId: string) => { told.push(turnId); session.cancel(turnId); } };
-    },
-  };
-  const { host, client, dispatch } = await serving(stopping);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
-  client.close();
-  const { q, dispatch: again } = await reconnected(host);
-
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  await settle();
-  release();
-  await until(() => told.length > 0 || q.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn\'s end');
-  await settle();
-
-  // The turn was said before the window came back, and ends at the stop, in every client's state.
-  const said = q.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1'
-    && ['chat/turnStarted', 'chat/turnCancelled', 'chat/turnComplete'].includes(String(one.action.type)))
-    .map((one) => [one.action.type, one.origin]);
-  expect(said).toEqual([
-    ['chat/turnCancelled', { clientId: 'window', clientSeq: 2 }],
-  ]);
-  expect(told).toEqual(['t1']);
-  await host.close();
-});
-
-/*
- * A backend that takes a start to answer later, as a relay does, leaves the
- * turn out of the chat until it answers: a stop sent meanwhile names no turn
- * the chat holds and is said as sent, and the start is refused as the backend
- * refuses it.
- */
-it('says a stop of a start its backend took and has not answered as sent, and the start as refused', async () => {
-  const base = echo({ path: dir, pace: 0 });
-  const refusals: (() => void)[] = [];
-  const refusing: Agent = {
-    ...base,
-    create: (start: Start): Session => {
-      const session = base.create(start) as Session;
-      return {
-        ...session,
-        begin: (turnId: string) => {
-          const held = start.handed?.({ type: 'chat/turnStarted', turnId });
-          refusals.push(() => { held?.refuse('Not now'); });
-        },
-      };
-    },
-  };
-  const { host, client, dispatch } = await serving(refusing);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
-  client.close();
-  const { q, dispatch: again } = await reconnected(host);
-
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  await until(() => q.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
-  for (const refuse of refusals.splice(0)) refuse();
-  await until(() => q.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the refusal');
-
-  const said = q.heard.filter((one) => one.channel === CHAT && one.action.turnId === 't1')
-    .map((one) => ({ action: one.action, origin: one.origin, refused: one.rejectionReason }));
-  expect(said).toEqual([
-    { action: { type: 'chat/turnCancelled', turnId: 't1' }, origin: { clientId: 'window', clientSeq: 2 }, refused: undefined },
-    { action: expect.objectContaining({ type: 'chat/turnStarted', turnId: 't1' }), origin: { clientId: 'window', clientSeq: 1 }, refused: 'Not now' },
-  ]);
-  await host.close();
-});
-
-/*
- * A turn's start is said when the host hands it to its backend, before a
- * backend that begins it later has begun it, as the reference host applies a
- * client's start and emits it at once.
- * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
- */
-it('says a turn\'s start when it is handed on, before its backend has begun it', async () => {
-  const { agent, release } = gated(echo({ path: dir, pace: 0 }));
-  const { host, p, dispatch } = await serving(agent);
-  p.heard.length = 0;
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two' } });
-  await settle();
-  expect(p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => [one.action.turnId, one.origin]))
-    .toEqual([['t1', { clientId: 'window', clientSeq: 1 }]]);
-  release();
-  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
-  // The backend's own start of the turn, once it begins it, is not said again.
-  expect(p.heard.filter((one) => one.action.type === 'chat/turnStarted')).toHaveLength(1);
-  await host.close();
-});
-
-/*
- * A stop sent on the connection that started the turn comes before a turn
- * another window sends after it, however long the backend takes to begin the
- * first: the reference host applies each client's action when it comes, so
- * in the order the first turn, its stop, the second turn, the stop ends the
- * first, which is cancelled in the history.
- * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
- */
-it('stops the turn a stop on its own connection names before a turn another window sent after the stop', async () => {
-  const { agent, release } = gated(echo({ path: dir, pace: 20 }));
-  const { host, p, dispatch } = await serving(agent);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
-  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  const r = listening();
-  const other = host.accept(r);
-  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
-  await other.handle({ method: 'subscribe', params: { channel: CHAT } });
-  await other.handle({
-    method: 'dispatchAction',
-    params: { channel: CHAT, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'seven eight' } } },
-  });
-  await settle();
-  release();
-  await settle();
-  release();
-  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't2'), 'the second turn\'s end');
-
-  const said = p.heard.filter((one) => one.channel === CHAT && ['chat/turnStarted', 'chat/turnCancelled'].includes(String(one.action.type)))
-    .map((one) => [one.action.type, one.action.turnId, one.origin]);
-  expect(said).toEqual([
-    ['chat/turnStarted', 't1', { clientId: 'window', clientSeq: 1 }],
-    ['chat/turnCancelled', 't1', { clientId: 'window', clientSeq: 2 }],
-    ['chat/turnStarted', 't2', { clientId: 'other', clientSeq: 1 }],
-  ]);
-  const held = await other.handle({ method: 'subscribe', params: { channel: CHAT } }) as { snapshot: { state: Bag } };
-  expect((held.snapshot.state.turns as Bag[]).map((turn) => [turn.id, turn.state])).toEqual([['t1', 'cancelled'], ['t2', 'complete']]);
-  await host.close();
-});
-
-/*
- * A turn another window sends after a stop sent on a second connection comes
- * after the stop. The reference host applies a client's action when it comes
- * and matches a stop to the active turn then, so in the order the first turn,
- * its stop, the second turn, the stop ends the first, which is cancelled in
- * the history.
- * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480
- * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
- */
-it('stops the turn a stop on a second connection names before a turn another window sent after the stop', async () => {
-  const { agent, release } = gated(echo({ path: dir, pace: 20 }));
-  const told: string[] = [];
-  const stopping: Agent = {
-    ...agent,
-    create: (start: Start): Session => {
-      const session = agent.create(start) as Session;
-      return { ...session, cancel: (turnId: string) => { told.push(turnId); session.cancel(turnId); } };
-    },
-  };
-  const { host, client, dispatch } = await serving(stopping);
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
-  client.close();
-  const { q, dispatch: again } = await reconnected(host);
-  await again(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  const r = listening();
-  const other = host.accept(r);
-  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
-  await other.handle({ method: 'subscribe', params: { channel: CHAT } });
-  await other.handle({
-    method: 'dispatchAction',
-    params: { channel: CHAT, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'seven eight' } } },
-  });
-  await settle();
-  release();
-  await until(() => q.heard.some((one) => one.action.type === 'chat/turnCancelled' && one.action.turnId === 't1'), 'the stop');
-  await settle();
-  release();
-  await until(() => q.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't2'), 'the second turn\'s end');
-
-  // The first turn was said before the window came back.
-  const said = q.heard.filter((one) => one.channel === CHAT && ['chat/turnStarted', 'chat/turnCancelled'].includes(String(one.action.type)))
-    .map((one) => [one.action.type, one.action.turnId, one.origin]);
-  expect(said).toEqual([
-    ['chat/turnCancelled', 't1', { clientId: 'window', clientSeq: 2 }],
-    ['chat/turnStarted', 't2', { clientId: 'other', clientSeq: 1 }],
-  ]);
-  expect(told).toEqual(['t1']);
-  const held = await other.handle({ method: 'subscribe', params: { channel: CHAT } }) as { snapshot: { state: Bag } };
-  expect((held.snapshot.state.turns as Bag[]).map((turn) => [turn.id, turn.state])).toEqual([['t1', 'cancelled'], ['t2', 'complete']]);
-  await host.close();
-});
-
-it('gives a resume its origin when the backend says it reopened the turn', async () => {
-  /*
-   * A backend that reopens the turn and says so while the dispatch is being
-   * applied, as pi does. The chat's latest turn is one a model call failed,
-   * which is the only kind the protocol lets a client resume - the host
-   * checks that before it asks the backend anything.
-   */
-  const resuming = (agent: Agent): Agent => ({
-    ...agent,
-    create: (start: Start): Session => {
-      const session = agent.create(start) as Session;
-      return {
-        ...session,
-        chatState: () => ({
-          ...session.chatState(),
-          turns: [{
-            id: 't1',
-            startedAt: new Date().toISOString(),
-            message: { text: 'one', origin: { kind: 'user' } },
-            responseParts: [{
-              kind: 'error',
-              error: { errorType: 'turnFailed', message: 'the model call failed' },
-              resumable: true,
-            }],
-            state: 'error',
-            duration: 5,
+const resuming = (agent: Agent, runs: boolean): Agent => ({
+  ...agent,
+  create: (start: Start): Session => {
+    const session = agent.create(start) as Session;
+    return {
+      ...session,
+      chatState: () => ({
+        ...session.chatState(),
+        turns: [{
+          id: 't1',
+          startedAt: new Date().toISOString(),
+          message: { text: 'one', origin: { kind: 'user' } },
+          responseParts: [{
+            kind: 'error',
+            error: { errorType: 'turnFailed', message: 'the model call failed' },
+            resumable: true,
           }],
-        }) as ReturnType<Session['chatState']>,
-        resume: (turnId: string) => {
-          start.emit('chat', { type: 'chat/turnResume', turnId });
-          return true;
-        },
-      };
-    },
-  });
-  const { host, p, dispatch } = await serving(resuming(echo({ path: dir, pace: 0 })));
+          state: 'error',
+          duration: 5,
+        }],
+      }) as ReturnType<Session['chatState']>,
+      resumeTurn: () => {
+        if (!runs) throw new Error('nothing to run again');
+      },
+    };
+  },
+});
+
+it('says a resume as sent, with its origin, before its backend runs the turn again', async () => {
+  const { host, p, dispatch } = await serving(resuming(echo({ path: dir, pace: 0 }), true));
   p.heard.length = 0;
   await dispatch(9, { type: 'chat/turnResume', turnId: 't1' });
   await settle();
   const resumed = p.heard.filter((one) => one.action.type === 'chat/turnResume');
-  expect(resumed.map((one) => one.origin)).toEqual([{ clientId: 'window', clientSeq: 9 }]);
+  expect(resumed.map((one) => [one.action, one.origin])).toEqual([[{ type: 'chat/turnResume', turnId: 't1' }, { clientId: 'window', clientSeq: 9 }]]);
+  await host.close();
+});
+
+/*
+ * A resume the backend cannot run ends the turn it reopened again, in an error
+ * that can be resumed, with the time it ran before: the reference host ends a
+ * resume its agent rejects in the same way.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1860
+ */
+it('ends a resumed turn in an error that can be resumed when its backend cannot run it', async () => {
+  const { host, p, client, dispatch } = await serving(resuming(echo({ path: dir, pace: 0 }), false));
+  p.heard.length = 0;
+  await dispatch(9, { type: 'chat/turnResume', turnId: 't1' });
+  await settle();
+  const said = p.heard.filter((one) => one.channel === CHAT).map((one) => [one.action.type, one.origin, one.rejectionReason]);
+  expect(said).toEqual([
+    ['chat/turnResume', { clientId: 'window', clientSeq: 9 }, undefined],
+    ['chat/error', undefined, undefined],
+  ]);
+  const ended = p.heard.find((one) => one.action.type === 'chat/error')?.action as Bag;
+  expect(ended).toMatchObject({ turnId: 't1', part: { kind: 'error', resumable: true } });
+  expect(ended.duration).toBeGreaterThanOrEqual(5);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { activeTurn?: unknown; turns: { id: string; state: string }[] } };
+  }).snapshot.state;
+  expect(held.activeTurn).toBeUndefined();
+  expect(held.turns.map((one) => [one.id, one.state])).toEqual([['t1', 'error']]);
   await host.close();
 });
 
@@ -490,11 +535,11 @@ it('says a stop when it is taken, and nothing of the turn its backend ends after
   const base = echo({ path: dir, pace: 5 });
   const finishing: Agent = {
     ...base,
-    create: (start: Start): Session => ({ ...(base.create(start) as Session), cancel: () => {} }),
+    create: (start: Start): Session => ({ ...(base.create(start) as Session), abort: () => {} }),
   };
   const { host, p, client, dispatch } = await serving(finishing);
   p.heard.length = 0;
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the start');
   await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 3 });
   const stopped = p.heard.filter((one) => one.action.type === 'chat/turnCancelled');
@@ -512,12 +557,12 @@ it('says a stop when it is taken, and nothing of the turn its backend ends after
 });
 
 /*
- * A dispatch the backend answered and then failed on is answered once. A
+ * A dispatch said and then failed on by its backend is answered once. A
  * refusal after its echo would have the client revert a change every other
  * client holds.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
  */
-it('answers a draft its backend says and then fails on once, with its echo', async () => {
+it('answers a draft once, with its echo, when its backend fails on it', async () => {
   const base = echo({ path: dir, pace: 0 });
   const failing: Agent = {
     ...base,
@@ -577,12 +622,13 @@ it('answers a rename sent on a chat\'s channel on that channel', async () => {
 });
 
 /*
- * The answer a backend says is the client's own action: a denial carries the
- * reason, the words and the suggestion the client gave, whatever the backend
- * rebuilt it as. The reference host emits the client's action itself.
- * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ * The answer is the client's own action: a denial carries the reason, the
+ * words and the suggestion the client gave, and what its backend says of the
+ * decision after it moves no call the denial settled. The reference host
+ * emits the client's action itself.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
  */
-it('echoes a denial with everything the client sent, over the backend\'s own word for it', async () => {
+it('says a denial with everything the client sent, before its backend\'s own word for it', async () => {
   const base = echo({ path: dir, pace: 50 });
   const asking: Agent = {
     ...base,
@@ -590,8 +636,8 @@ it('echoes a denial with everything the client sent, over the backend\'s own wor
       const session = base.create(start) as Session;
       return {
         ...session,
-        begin: (...args: Parameters<Session['begin']>) => {
-          session.begin(...args);
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          session.sendMessage(...args);
           const turnId = args[0];
           start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'call-1', toolName: 'bash', displayName: 'Bash' });
           start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'call-1', invocationMessage: 'Run ls', toolInput: 'ls' });
@@ -624,22 +670,116 @@ it('echoes a denial with everything the client sent, over the backend\'s own wor
 
 /*
  * A client holds its actions pending in the order it sent them and matches
- * each answer at the head of that list, so an action sent after one a backend
- * answers later is answered after it.
+ * each answer at the head of that list, so the answers go out in that order,
+ * each said as it is taken, whatever its backend has yet to begin.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
  */
 it('answers a draft sent after a turn start after that start', async () => {
   const { agent, release } = gated(echo({ path: dir, pace: 0 }));
   const { host, p, dispatch } = await serving(agent);
   p.heard.length = 0;
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one' } });
   await dispatch(2, { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' } } });
   await settle();
-  // The start is said when it is handed on, before the backend has begun the turn.
   expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
   release();
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
-  expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
+  await host.close();
+});
+
+/*
+ * A client's start is said as the client sent it, and the backend's own
+ * account of the turn's start is not said beside it: the reference host emits
+ * the client's action itself, and nothing a provider holds of it is laid over
+ * it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('answers a client\'s start with its own action exactly as sent, whatever its backend says of the turn', async () => {
+  const base = echo({ path: dir, pace: 0 });
+  const rebuilding: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          start.emit('chat', {
+            type: 'chat/turnStarted',
+            turnId: args[0],
+            startedAt: '2001-01-01T00:00:00.000Z',
+            _meta: { rebuilt: true },
+            message: { text: args[1], origin: { kind: 'agent' }, model: { id: 'filled-in' } },
+          });
+          session.sendMessage(...args);
+        },
+      };
+    },
+  };
+  const { host, p, client, dispatch } = await serving(rebuilding);
+  p.heard.length = 0;
+  const sent = { type: 'chat/turnStarted', turnId: 't1', startedAt: '2026-11-03T20:00:00.000Z', message: { text: 'one two', origin: { kind: 'user' } } };
+  await dispatch(5, sent);
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
+
+  const started = p.heard.filter((one) => one.action.type === 'chat/turnStarted');
+  expect(started.map((one) => [one.channel, one.action, one.origin])).toEqual([[CHAT, sent, { clientId: 'window', clientSeq: 5 }]]);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { turns: { id: string; startedAt: string; message: Bag }[] } };
+  }).snapshot.state;
+  expect(held.turns.map((one) => [one.id, one.startedAt, one.message])).toEqual([['t1', sent.startedAt, sent.message]]);
+  await host.close();
+});
+
+/**
+ * The echo backend, saying what it is doing whenever it is handed a draft, a
+ * chat's read bit or a client tool's result, and opening a call of the
+ * client's own tool in every turn it begins.
+ */
+const busy = (agent: Agent): Agent => ({
+  ...agent,
+  create: (start: Start): Session => {
+    const session = agent.create(start) as Session;
+    const doing = (activity: string): void => { start.emit('chat', { type: 'chat/activityChanged', activity }); };
+    return {
+      ...session,
+      sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+        session.sendMessage(...args);
+        start.emit('chat', {
+          type: 'chat/toolCallStart', turnId: args[0], toolCallId: 'call-1', toolName: 'look', displayName: 'Look',
+          contributor: { kind: 'client', clientId: 'window' },
+        });
+        start.emit('chat', { type: 'chat/toolCallReady', turnId: args[0], toolCallId: 'call-1', invocationMessage: 'Look', toolInput: '{}', confirmed: 'not-needed' });
+      },
+      setDraft: (next) => { doing('reading the draft'); session.setDraft(next); },
+      flag: () => { doing('marking the chat'); },
+      completeToolCall: () => { doing('taking the result'); return true; },
+    };
+  },
+});
+
+/*
+ * A client's action is said first, and what its backend says once it is
+ * handed the action comes after: the reference host emits the client's
+ * action, then runs the side effect that reaches its agent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+ */
+it.each([
+  ['a draft', { type: 'chat/draftChanged', draft: { text: 'half a thought', origin: { kind: 'user' } } }],
+  ['a read bit', { type: 'chat/isReadChanged', isRead: false }],
+  ['a tool result', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true, pastTenseMessage: 'Looked', content: [{ type: 'text', text: 'seen' }] } }],
+])('says %s before what its backend says of it', async (_, action) => {
+  const { host, p, dispatch } = await serving(busy(echo({ path: dir, pace: 50 })));
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/toolCallReady'), 'the call');
+  p.heard.length = 0;
+  await dispatch(2, action);
+  await settle();
+
+  const said = p.heard.filter((one) => one.channel === CHAT && (one.origin?.clientSeq === 2 || one.action.type === 'chat/activityChanged'));
+  expect(said.slice(0, 2).map((one) => [one.action.type, one.origin?.clientSeq])).toEqual([
+    [action.type, 2],
+    ['chat/activityChanged', undefined],
+  ]);
   await host.close();
 });
 
@@ -698,10 +838,10 @@ it('answers a config change naming only a fixed key that did not move', async ()
  */
 it('starts the echo example\'s head once a client takes a message back from a stopped turn\'s queue', async () => {
   const { host, p, dispatch } = await serving(echo({ path: dir, pace: 20 }));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
-  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second' } });
-  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third' } });
+  await dispatch(2, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'waiting', message: { text: 'second', origin: { kind: 'user' } } });
+  await dispatch(3, { type: 'chat/pendingMessageSet', kind: 'queued', id: 'later', message: { text: 'third', origin: { kind: 'user' } } });
   await dispatch(4, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await settle();
   const startedFrom = (): unknown[] => p.heard.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);

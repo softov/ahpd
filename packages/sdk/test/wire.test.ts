@@ -402,7 +402,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // one at all: the protocol carries a model per message, not per session, so
   // what the session is on is an extension on its state.
   dispatch(chatUri, {
-    type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', model: { id: 'claude-opus-5' } },
+    type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' }, model: { id: 'claude-opus-5' } },
   });
   await settle();
   await said(

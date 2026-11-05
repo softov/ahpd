@@ -1,6 +1,6 @@
 /** One agent session: its lifecycle, its turns, and what it is waiting for. */
 
-import type { MessageAttachment } from '@microsoft/agent-host-protocol';
+import type { ActionOrigin, MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { FileEdit } from './changes.js';
 import type { BoundTool } from './agent.js';
@@ -16,28 +16,11 @@ export type { MessageAttachment };
  * and `terminal` a terminal's own - the emitter knows which of its channels it
  * is talking about and the host knows what each is called.
  *
- * `handed` says the action answers a client's action the host handed this
- * backend earlier (`Start.handed`), and it goes out as that client's echo,
- * carrying the client's origin.
+ * What a backend emits is the host's own action, said with no client's origin,
+ * as the reference host says what its agents report.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
  */
-export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag, handed?: Handed) => void;
-
-/**
- * A client's action, held by the backend the host handed it to.
- *
- * The protocol has the client that sent an action hold it as pending until
- * the host answers it, with the action carrying its origin or with a rejection
- * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md).
- * A backend answers most actions while the host is handing them over, and the
- * host gives that answer the origin itself. A backend that answers later, once
- * something else has answered it (the proxy, once the host inside a machine
- * has), keeps this from `Start.handed` and answers through it: an action
- * emitted with it is the echo, and `refuse` is the rejection.
- */
-export interface Handed {
-  /** Refuse the action to the client that sent it, with `reason`. */
-  refuse: (reason: string) => void;
-}
+export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
 
 /**
  * A channel of a session that its backend serves under this host's name for
@@ -51,7 +34,7 @@ export interface Handed {
 export interface SessionChannel {
   /** The channel's state now. */
   snapshot(): Promise<Bag>;
-  /** A client's action on the channel, answered through `Start.handed` as any action a backend holds. */
+  /** A client's action on the channel, carried to the backend once the host has said it. */
   dispatch(action: Bag): void;
   /** A command a client sent about the channel, with its params as sent, answered by the backend. */
   request(method: string, params: Bag): Promise<unknown>;
@@ -222,12 +205,6 @@ export interface SessionOptions {
   /** Where state actions go. */
   emit: Emit;
   /**
-   * The client's action the host handed this session, for an action it
-   * answers or refuses after the host has stopped applying it
-   * (`Start.handed`).
-   */
-  handed?: (action: Bag) => Handed | undefined;
-  /**
    * Environment for the agent's own process.
    *
    * Merged over `process.env` by the session, never handed to the SDK alone:
@@ -380,51 +357,34 @@ export interface SessionOptions {
   onHandshake?(): void;
 }
 
-/**
- * The terminal a host-run command runs in, as soon as it is open.
- *
- * `isPty` is the terminal's own, as its state says it: a client reads it to
- * decide whether the output holds VT sequences. Absent where the state says
- * nothing.
- */
-export interface CommandTerminal {
-  /** The channel a client subscribes to. */
-  uri: string;
-  /** Whether a pseudoterminal runs the command. */
-  isPty?: boolean;
-}
-
-/** What a host-run command did, once it has finished doing it. */
-export interface Ran {
-  /** Whether it exited cleanly. */
-  success: boolean;
-  /** One line about how it went, in the past tense, for the finished call. */
-  said: string;
-  /** Everything it printed. Empty when it printed nothing. */
-  output: string;
-  /** The terminal it ran in, so a client can watch it while it runs. */
-  terminal?: string;
-  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
-  isPty?: boolean;
-  /** What it exited with, where the runtime reported one. */
-  code?: number;
-}
-
-/**
- * The host's half of a `!` command, as `Session.ran` is handed it: run the
- * command for the tool call `toolCallId`, tell `opened` the terminal as soon as
- * it opens, and answer with what the command did.
- */
-export type RunCommand = (toolCallId: string, opened?: (terminal: CommandTerminal) => void) => Promise<Ran>;
-
 /** Who a message came from, when not the person at the keyboard. */
 export interface MessageFrom {
   /** `Message.origin`. The user's when absent. */
   origin?: { kind: 'user' | 'agent' | 'tool' | 'automation' | 'systemNotification' };
   /** `Message._meta`, carried whole. */
   _meta?: Bag;
-  /** `Message.agent`, the protocol's `AgentSelection`: the agent this message picked. */
+  /**
+   * `Message.agent`, the protocol's `AgentSelection`: the agent this message
+   * picked, on a steering message. A send's is handed with `changeAgent`
+   * before it.
+   */
   agent?: { uri: string };
+}
+
+/**
+ * A steering message, as the host hands it to a backend: the protocol's
+ * `PendingMessage`, its message read into the words, the files and the sender
+ * a backend takes.
+ */
+export interface SteeringMessage {
+  /** The pending message's id, the client's. */
+  id: string;
+  /** What it says. */
+  text: string;
+  /** Its own attachments, as `sendMessage` takes them. */
+  attachments?: MessageAttachment[];
+  /** Who sent it, when not the person at the keyboard. */
+  from?: MessageFrom;
 }
 
 /**
@@ -446,8 +406,8 @@ export interface TurnOptions {
 }
 
 /**
- * A backend's answer to one config value: `true` for taken as asked, or the
- * refusal in the backend's words.
+ * A backend's answer to one config value: `true` for taken as asked, or its
+ * own words for a value it could not take.
  */
 export type ConfigTaken = true | string;
 
@@ -585,82 +545,70 @@ export interface Session {
   channel?(uri: string): SessionChannel | undefined;
 
   /**
-   * Run one command as a turn of this chat's, without asking the agent.
+   * Carry a client's action on this session's chat or session channel to the
+   * host that runs the session, as the client sent it.
    *
-   * What the composer's `!` prefix means: the person typed a command rather
-   * than a question, and the answer is a shell's. The turn is still the
-   * chat's - a host that emitted one this session did not know about would
-   * serve a snapshot without it the moment anybody re-subscribed - so the
-   * session opens it, reports the tool call, and closes it when `run`
-   * settles.
+   * A backend that answers it is the proxy of a session another host runs,
+   * reached as a relay reaches one: this host says nothing of the action and
+   * hands the session nothing else for it, and the host running the session
+   * applies the action and echoes it. The echo comes back through
+   * `Start.answer` under `origin`, which answers the client that sent it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137
    *
-   * `run` is the host's half: it is handed the id of the tool call this turn
-   * is about and answers with what happened. The terminal is the host's
-   * because the shell is - a session has no port to spawn one through. `run`
-   * calls `opened` with the terminal as soon as it is open, which is when the
-   * call names it, so a client watches the output arrive rather than only
-   * reading it afterwards, as the reference host's `!` command does:
-   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
-   *
-   * Optional. `terminalCommandPrefix` is advertised per host rather than per
-   * backend, because the protocol's capability is the host's - so a backend
-   * that leaves this out is one whose `!command` turn the host refuses, with
-   * the reason, rather than one it silently turns into a question.
-   *
-   * `queuedAs` is the queued message this command is, when it came through
-   * `chat/pendingMessageSet` rather than as a turn: it waits behind the
-   * running turn and anything already queued, the same id twice edits what
-   * is waiting, and the turn that runs it names it as `queuedMessageId` so a
-   * client takes it out of its queue - whether that turn starts now or later.
-   *
-   * `kind` is that message's, as `queue` takes it: a `steering` command waits
-   * as a steering message does, ahead of everything queued, and runs as a
-   * command, as the reference host runs a `!` command its drain admits.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L30-L44
+   * A turn's start is admitted here first, its policy and its machine, and
+   * carried once this host admits it. With no `origin` the action is this
+   * host's own, said here already and carried as it is: a message it queues
+   * for the chat, which the host there runs.
    */
-  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string, kind?: 'queued' | 'steering'): void;
+  relay?(channel: 'session' | 'chat', action: Bag, origin?: ActionOrigin): void;
 
   /**
-   * Put a message into the turn that is already running.
+   * Hand one steering message to the turn that is running.
    *
    * Steering, in the protocol's word: somebody correcting an agent halfway
    * rather than waiting for it to finish doing the thing they are trying to
-   * stop. Answers whether there was a turn to steer - a chat with nothing
-   * running has nothing to inject into, and the caller says so rather than
-   * quietly turning it into an ordinary message.
+   * stop. The answer is one of three, as the reference host's agents answer:
+   * `true` when the backend took it; `false` when it cannot yet, a turn still
+   * preparing its prompt among them, so the host keeps it pending and hands it
+   * again on the turn's next action; and a promise of `false` when the turn it
+   * was meant for ended first, handing it back unsent, so the host steers the
+   * turn that runs then with it, or runs it as the next turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
    *
-   * `attachments` are the message's own, as `begin` takes them: the files the
-   * host wrote for whatever the client pasted, which is what the correction is
-   * about as often as the words are.
-   *
-   * `from` is the message's sender, as `begin` takes it: the turn a backend
-   * begins with the steered text keeps the origin and `_meta` of the message
-   * that was steered. Absent, the message is the user's.
+   * `message.attachments` are the message's own, as `sendMessage` takes them:
+   * the files the host wrote for whatever the client pasted, which is what the
+   * correction is about as often as the words are. `message.from` is its
+   * sender, so a turn a backend runs with the steered text keeps the origin
+   * and `_meta` of the message that was steered. Absent, the message is the
+   * user's.
    *
    * Optional. A backend that cannot take a message mid-turn leaves it out,
-   * and this host refuses steering for that backend with that as the reason.
+   * and this host refuses steering for that backend in the reference host's
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13526-L13529
    */
-  steer?(id: string, text: string, attachments?: MessageAttachment[], from?: MessageFrom): boolean;
-  /**
-   * Let go of every steering message the chat holds that its agent has not
-   * taken in, handed to it or waiting, saying each one gone with
-   * `chat/pendingMessageRemoved`, and start nothing.
-   *
-   * What a turn that ends cancelled leaves: the host calls this once the
-   * backend has had the stop. The reference host takes every pending steering
-   * entry out at a cancel, those handed off and not yet consumed included,
-   * without draining what is queued. A backend that runs its chat on another
-   * host leaves it to that host, which lets go at its own stop.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
-   *
-   * Optional. For a backend without it, the host takes the steering message
-   * the chat shows out itself.
-   */
-  clearSteering?(): void;
+  sendSteeringMessage?(message: SteeringMessage): boolean | Promise<boolean>;
 
   /**
-   * Start a turn with what was said, optionally naming a model.
+   * Take back a steering message handed with `sendSteeringMessage` that a
+   * client removed before the model read it. One the model read stays in its
+   * turn. Without it, the host refuses a removal of steering while a turn
+   * runs, as the reference host does.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
+   */
+  withdrawSteeringMessage?(id: string): void;
+
+  /**
+   * Send what was said as the turn `turnId`, whose start the host has said:
+   * the client's own, or the host's for a turn it begins itself. The backend
+   * says no start of it.
+   *
+   * The turn's model and agent are handed before it, with `changeModel` and
+   * `changeAgent`, as the reference host hands an agent's before its send.
+   * Settles once the prompt is the agent's; a rejection is a send that
+   * failed, and the host ends the turn in a `sendFailed` error with its
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1303-L1311
    *
    * `from` is the message's provenance when it was not typed by a person:
    * `origin` (`{ kind: 'agent' }` for a message another session's agent
@@ -676,49 +624,62 @@ export interface Session {
    * `options` is what the turn is given beside the message, read here because
    * this is where the turn begins.
    *
-   * The turn's start is said in this call, before anything the backend waits
-   * on to begin it, as the reference host applies a client's start at once and
-   * its agent prepares the turn after; a start said later is said by the host
-   * as the client sent it, and the backend's own start of the turn is not said
-   * again. A stop of a turn the backend has not begun yet reaches `cancel`, and
-   * the turn begins nothing.
-   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
-   *
-   * A turn handed while another runs takes that one's place: its start is said
-   * at once, so every client holds it as the chat's turn, as the protocol's
-   * reducer replaces the active turn, and it runs once the work in front of it
-   * is done. The turn it replaced runs on, its actions name it, and it is in no
-   * history; a stop of the turn that took its place stops that work and drops
-   * the turns waiting behind it. The reference host hands a client's start to
-   * its agent at once, and its agents run each in turn.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8720-L8750
+   * A turn handed while another runs is a send of its own, which the backend
+   * runs once the work in front of it is done, as the reference host hands a
+   * client's start to its agent at once and its agents run each in turn. The
+   * turn it replaced in every client's state runs on, its actions name it,
+   * and it is in no history.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
    */
-  begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
+  sendMessage(turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void | Promise<void>;
+
+  /**
+   * The model a client picked for this chat's next send. A model the backend
+   * takes is the chat's for the turns after it too, and the chat keeps the one
+   * it has when the backend will not take another.
+   *
+   * The host hands a turn's model before its send when the chat's backend
+   * offers it, and logs one it does not. A rejection fails the turn being
+   * prepared, in a `modelSelectionFailed` error.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
+   */
+  changeModel(model: Chosen): void | Promise<void>;
+
+  /**
+   * The agent this chat's turns run as from its next send, or the backend's
+   * own when absent: the protocol's `AgentSelection` a message carries.
+   *
+   * Handed before every send. A rejection is logged, and the turn is sent all
+   * the same, as the reference host sends it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2236-L2238
+   */
+  changeAgent(agent: { uri: string } | undefined): void | Promise<void>;
+
   /**
    * Run the latest turn again, without adding a message.
    *
    * What `chat/turnResume` asks for: the turn errored, its message and its
    * parts are intact, and the client wants the same prompt tried again rather
-   * than typed again. Answers whether there was such a turn to resume.
+   * than typed again. Rejects when the backend holds no such turn to run, and
+   * the host ends the turn again in an error that can be resumed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1313-L1314
    *
    * Optional. A backend that cannot re-run a turn leaves it out, and the host
    * refuses the action with that as the reason.
    */
-  resume?(turnId: string): boolean;
+  resumeTurn?(turnId: string): void | Promise<void>;
 
   /**
-   * Stop the running turn, named by its id, and answer anything it was
-   * blocked on.
+   * Stop what this chat runs: the turn in flight and everything the backend
+   * holds of it, with anything it was blocked on answered.
    *
-   * The host calls this when a client's stop names the turn the chat runs,
-   * with that turn's id, once it has said the client's stop to every client
-   * of the chat: the turn has ended in their state, and what the backend says
-   * of it afterwards is not said again. A stop naming any other turn, or none,
-   * reaches no backend.
+   * The host calls this when a client's stop names the chat's running turn,
+   * once it has said the stop to every client of the chat: the turn has ended
+   * in their state, and what the backend says of it afterwards is not said
+   * again. A stop naming any other turn, or none, reaches no backend.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1316-L1317
    */
-  cancel(turnId: string): void;
+  abort(): void | Promise<void>;
 
   /**
    * Stop one worker, named by the tool call that spawned it, and leave the
@@ -730,86 +691,25 @@ export interface Session {
   stopWorker?(toolCallId: string): void;
 
   /**
-   * Hold a message, and make it the next turn when the running one ends.
-   *
-   * The queue is the session's, not a client's: a client that held a message
-   * would be the only thing that could ever send it, and nothing in a client
-   * watches for a turn to end. The same `id` twice edits what is waiting.
-   *
-   * `attachments` are the message's own, as `begin` takes them, and are held
-   * with it: a picture pasted into a message that waits its turn is still a
-   * picture when the turn comes.
-   *
-   * `options` is what the turn is given beside the message, held with it and
-   * read when the turn comes - which is later than this call, so the words
-   * are the ones true then rather than the ones true now.
-   *
-   * `kind` is the pending message's, `queued` when absent. A `steering` one is
-   * a steering message no turn was running to take, handed only to a backend
-   * with `steer`: it runs ahead of every queued message, behind the steering
-   * messages already waiting, as the reference host runs steering that came
-   * too late to steer a turn, in the order its queue holds them. The chat
-   * shows the steering message set last, as the protocol's reducer holds one.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L899-L903
-   */
-  queue(
-    id: string,
-    text: string,
-    model?: Chosen,
-    from?: MessageFrom,
-    attachments?: MessageAttachment[],
-    options?: TurnOptions,
-    kind?: 'queued' | 'steering',
-  ): void;
-  /**
-   * Take one back, while it is still waiting, and say it gone with
-   * `chat/pendingMessageRemoved`.
-   *
-   * A queued message, or a steering message while the chat holds no running
-   * turn: one the agent has not been handed, has handed back, or holds for a
-   * turn that is over, which the backend takes back as far as it can. A
-   * steering message while a turn runs goes to `withdraw` instead.
-   * https://github.com/microsoft/agent-host-protocol/blob/ff7d6a1c7b4f5e47925d3ce1c3bcf685266a6d49/docs/specification/chat-channel.md#steering-messages
-   */
-  unqueue(id: string): void;
-  /**
-   * Take back the steering message the running turn was handed, and say it
-   * gone with `chat/pendingMessageRemoved`.
-   *
-   * Optional. The reference host lets a client remove steering handed to its
-   * provider only where the provider can withdraw it, and refuses the removal
-   * otherwise before the provider hears of it. So a backend that cannot take a
-   * steering message back from its agent leaves this out, and the host refuses
-   * the removal while the chat holds a running turn, in the reference's words.
-   * A backend that runs its chat on another host carries the removal there,
-   * where that host decides.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13517-L13524
-   */
-  withdraw?(id: string): void;
-  /**
-   * What somebody is part-way through typing.
-   *
-   * Held by the session so two people on one chat see each other's - a client
-   * that kept its own would need nothing from a host for this.
+   * What somebody is part-way through typing, which the host has said to every
+   * client of the chat: held for the chat's state the session answers, and
+   * said by nothing here.
    */
   setDraft(draft: Bag | undefined): void;
-  /** Reorder what is waiting. Anything not named keeps its place behind what is. */
-  reorder(order: string[]): void;
   /**
    * A client's read or archived bit for the chat, or for the session the chat
-   * leads, carried to the host that runs it, which answers the client.
+   * leads, once this host has said and kept it, carried to the host that
+   * runs it.
    *
    * A backend that runs its chat on another host takes it, as the proxy of a
-   * session in a machine does: that host is the one producer of the session's
-   * and the chat's state, and its `session/isReadChanged`,
+   * session in a machine does, and the `session/isReadChanged`,
    * `session/isArchivedChanged`, `chat/isReadChanged` and
-   * `chat/isArchivedChanged` are the bits here. True when the backend carried
-   * it. A backend that leaves it out has its bits kept by this host.
+   * `chat/isArchivedChanged` that host says are the bits here too: it runs
+   * the session, so its session's read bit follows its chats there. A backend
+   * that leaves it out has its bits kept by this host alone.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
    */
-  flag?(bit: 'read' | 'archived', on: boolean, of: 'chat' | 'session'): boolean;
+  flag?(bit: 'read' | 'archived', on: boolean, of: 'chat' | 'session'): void;
 
   /**
    * Answer a tool call the agent is waiting on.
@@ -914,24 +814,21 @@ export interface Session {
   setAnswer?(requestId: string, questionId: string, answer: Bag | undefined): boolean;
 
   /**
-   * Take one config value, or say why not.
+   * Take one config value a client set, once the host has said it.
    *
-   * Every key a client sets goes through here, including the ones a backend
+   * Every key a client sets comes here, including the ones a backend
    * advertises in its own schema: the host reads that schema for how a key
    * behaves - whether it can move on a running session, whether it belongs to
    * the session or to one chat - and knows nothing about what any key means.
+   * The host checks a change against the schema and says it, as the reference
+   * host says a client's config change in the client's own keys and then
+   * applies it to its agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13661
    *
-   * `true` when it was taken as it was asked. A string is the refusal, in the
-   * backend's own words, and it is a string rather than `false` because only
-   * the backend knows which of the two things went wrong: a key it does not
-   * serve, or a value it will not take for a key it does. A host that answered
-   * both with one sentence would be telling a client its control does not
-   * exist when the truth is that the value was wrong.
-   *
-   * What every client is told is the key and value the client sent, as the
-   * reference host says a client's config action in the client's own keys.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L587-L599
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+   * `true` when it was taken as it was asked. A string is the backend's own
+   * words for a value it could not take, a key it does not serve or a value
+   * it will not take for a key it does, which the host logs: the change
+   * stands as every client was told it.
    */
   setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */
@@ -1002,7 +899,8 @@ export interface Session {
    *
    * A session whose agent has gone for good - a host inside a machine that
    * died - answers it, and the host refuses every later client action on its
-   * session and chat channels with it, a new turn included.
+   * session and chat channels with it, and ends a new turn on them in an
+   * error with it.
    *
    * Optional. A backend that is either running or closed leaves it out.
    */

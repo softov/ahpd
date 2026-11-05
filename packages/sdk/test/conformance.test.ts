@@ -345,13 +345,12 @@ it('reduces a cancelled turn without throwing on its duration', async () => {
     { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
     { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Half' } } },
   );
-  dispatch(client, chatUri, { type: 'chat/turnCancelled', turnId: 't1' });
+  dispatch(client, chatUri, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
   await settle();
 
-  // `duration` is required and clamped with `Math.max(0, duration)`, so an
-  // absent one is NaN rather than a missing number and the reducer throws
-  // building a timestamp out of it - which stops that client reading the
-  // channel at all, over a turn somebody merely cancelled.
+  // `duration` is required and clamped with `Math.max(0, duration)`: VS Code's
+  // client sends the time the turn ran, and the reducer builds the chat's
+  // timestamp out of it, so the turn ends cancelled in the state.
   const chat = held(p, opened)[chatUri] as Chat;
   expect(chat.turns[0]?.state).toBe('cancelled');
   expect(chat.activeTurn).toBeUndefined();

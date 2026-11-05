@@ -10,6 +10,7 @@ import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
+import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { botChatAgent, CHAT_PROVIDER, turns } from '../src/chat.js';
@@ -74,8 +75,10 @@ const actions = (notes: Notes, channel: string): Bag[] => notes
  * this file wants: who may read a bot, and so who may start a chat with one, is
  * the provider's business and is checked there. Nothing below is a question
  * about a grant.
+ *
+ * `more` is what a case adds to the host, such as the shells a command runs in.
  */
-function made() {
+function made(more: Partial<HostOptions> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-chat-'));
   loose.push(root);
   /** Where a bot's own folder goes, which is the plugin's `root` option. */
@@ -110,6 +113,7 @@ function made() {
     resources: fileResources(),
     sessions,
     records,
+    ...more,
   };
   const { options } = foldHostOptions(base, [contribution]);
   const host = createHost(options);
@@ -162,13 +166,13 @@ async function talkTo(client: Client): Promise<void> {
 /** A client says something in the chat. */
 const said = (client: Client, turnId: string, text: string): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 /** A client holds a message for later. */
 const queued = (client: Client, id: string, text: string): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+  params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
 });
 
 /** A client takes one back. */
@@ -354,7 +358,8 @@ it('tells whoever answers the chat the words and the chat they were said in, and
       action: {
         type: 'chat/turnStarted',
         turnId: 't1',
-        message: { text: 'read this', model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments },
+        startedAt: new Date().toISOString(),
+        message: { text: 'read this', origin: { kind: 'user' }, model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments },
       },
     },
   });
@@ -403,9 +408,34 @@ it('tells the chat\'s holder which turn a client stopped', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   expect(stops).toEqual([[HELD, 't1']]);
+});
+
+/*
+ * A `!` command typed into a chat with a bot is the host's local command, as
+ * the reference host runs one ahead of its admission whatever agent the chat
+ * has: run in a terminal, its call and its turn completed by the host, and
+ * whoever answers the chat never told of it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/localCommand/localCommandContribution.ts#L14-L41
+ */
+it('runs a command typed into the chat in a terminal, and tells nobody who answers it', async () => {
+  const { host } = made({ terminals: shellTerminals() });
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const heard: ChatMessage[] = [];
+  turns(HELD).onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', '!echo from-the-bot-chat');
+  const over = (): boolean => actions(notes, CHAT).some((one) => one['type'] === 'chat/turnComplete' && one['turnId'] === 't1');
+  for (let i = 0; i < 200 && !over(); i++) await new Promise((resolve) => { setTimeout(resolve, 25); });
+  expect(over()).toBe(true);
+  const done = actions(notes, CHAT).find((one) => one['type'] === 'chat/toolCallComplete');
+  expect(done).toMatchObject({ turnId: 't1', result: { success: true, pastTenseMessage: 'Ran command' } });
+  expect(JSON.stringify(done?.['result'])).toContain('from-the-bot-chat');
+  expect(heard).toEqual([]);
 });
 
 it('ends a turn with a notice, and with a cancellation', async () => {
@@ -434,7 +464,7 @@ it('ends a turn with a notice, and with a cancellation', async () => {
   await said(client, 't2', 'again');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't2' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
   });
   expect(actions(notes, CHAT).map((one) => one['type'])).toContain('chat/turnCancelled');
   const state = await stateOf(client);
@@ -465,7 +495,7 @@ it('steers a message into the open turn, which goes on', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   const life = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/turn'));
@@ -511,7 +541,7 @@ it('answers a steer to the client that sent it', async () => {
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, clientSeq: 9, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, clientSeq: 9, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   // The client holds its message until an action with its own origin answers it.
@@ -546,6 +576,11 @@ it('keeps the sender of a steered message on the message', async () => {
   expect(set).toMatchObject({ message: { text: 'stop that', ...outside } });
 });
 
+/** A few ticks: the host's queue drain starts the next turn once the turn in front has ended. */
+const drained = async (): Promise<void> => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
 it('keeps a queued message behind the steered turn', async () => {
   const { host } = made();
   const notes: Notes = [];
@@ -559,7 +594,7 @@ it('keeps a queued message behind the steered turn', async () => {
   await queued(client, 'q1', 'and then this');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
   });
 
   // The steered turn is the open one, and what was waiting is still waiting.
@@ -570,6 +605,7 @@ it('keeps a queued message behind the steered turn', async () => {
 
   // It starts when the steered turn ends, and not before.
   chat.reply('done');
+  await drained();
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
@@ -594,7 +630,7 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   await queued(client, 'q1', 'and then this');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   const stopped = await stateOf(client);
   expect(stopped['activeTurn']).toBeUndefined();
@@ -623,7 +659,7 @@ it('starts the head once a client reorders a stopped turn\'s queue', async () =>
   await queued(client, 'q2', 'one more');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   expect((await stateOf(client))['activeTurn']).toBeUndefined();
 
@@ -746,6 +782,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(lines(configDir, 'one')).toHaveLength(1);
 
   chat.reply('one');
+  await drained();
 
   // Started: the entry left the queue, and its message is the turn that began -
   // under a turn id of the chat's own, with the entry it was named on it.
@@ -758,10 +795,8 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
-  // And the client is told both ways a queued entry ends: taken out of its
-  // queue, and named on the turn it became.
-  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved'))
-    .toMatchObject([{ kind: 'queued', id: 'q1' }]);
+  // And the client is told the queued entry ended by the turn it became, which
+  // names it, as the host's queue drain starts it.
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
@@ -792,8 +827,10 @@ it('starts what waited in the order the queue was left in', async () => {
   expect((await stateOf(client))['queuedMessages']).toMatchObject([{ id: 'q2' }, { id: 'q1' }]);
 
   chat.reply('one');
+  await drained();
   expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'second asked' } });
   chat.reply('two');
+  await drained();
   // And the one behind that, which is the rest of what the order said - the
   // queue emptying one turn at a time rather than all at once.
   const last = await stateOf(client);
@@ -867,11 +904,18 @@ it('takes a second message while the answer is still coming, said in the first o
   expect((done['turns'] as Bag[]).map((turn) => turn['id'])).toEqual(['t2']);
 });
 
-it('says a begin at once in the open turn\'s place, and hands it on once the open turn is answered', async () => {
+/*
+ * A turn sent while another is open is handed on once the open turn is
+ * answered, as the reference agent runs each send after the one before it.
+ * The host said each start, so the chat says none, and the turn it took the
+ * place of is in no history.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
+ */
+it('hands a turn sent while another is open on once the open turn is answered, saying no start of either', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);
   // The bot, written the way a person writes one. No session is started here:
-  // what is tested below is a road into a turn no client's message takes.
+  // what is tested below is the backend the host hands its turns to.
   await client.handle({
     method: 'resourceWrite',
     params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
@@ -894,14 +938,12 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   // Somebody answers this chat, which is what leaves the first turn open.
   const heard: string[] = [];
   turns(solo).onMessage = (message) => { heard.push(message.turnId); };
-  session.begin('t1', 'hello');
-  session.begin('t2', 'and then this');
+  session.sendMessage('t1', 'hello');
+  session.sendMessage('t2', 'and then this');
 
-  // Said at once, in the open turn's place, as the reducer replaces the active
-  // turn; the open turn is still the one being answered.
-  expect(session.chatState().activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
+  // The open turn is the one being answered.
+  expect(session.chatState().activeTurn).toMatchObject({ id: 't1', message: { text: 'hello' } });
   expect(session.chatState().turns).toEqual([]);
-  expect(session.chatState().queuedMessages).toEqual([]);
   expect(heard).toEqual(['t1']);
 
   // Handed on once the open turn is answered, under the id the client named,
@@ -912,8 +954,6 @@ it('says a begin at once in the open turn\'s place, and hands it on once the ope
   expect(next.activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
   expect(heard).toEqual(['t1', 't2']);
   expect(sent.map((one) => [one['type'], one['turnId']])).toEqual([
-    ['chat/turnStarted', 't1'],
-    ['chat/turnStarted', 't2'],
     ['chat/responsePart', 't1'],
     ['chat/turnComplete', 't1'],
   ]);
@@ -1111,7 +1151,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   await said(client, 't1', 'hello');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and this' } } },
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and this', origin: { kind: 'user' } } } },
   });
 
   // The steered turn is the open one, waiting on the back session's chat by one call.
@@ -1222,7 +1262,7 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
   await client.handle({ method: 'subscribe', params: { channel: backChat } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', message: { text: 'typed on the back session' } } },
+    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'typed on the back session' } } },
   });
   const backState = async (): Promise<Bag> => (await client.handle({ method: 'subscribe', params: { channel: backChat } }) as {
     snapshot: { state: Bag };
@@ -1272,7 +1312,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   // A client's message as the protocol declares one, with its origin.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', origin: { kind: 'user' } } } },
+    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
   chat.reply('done');
 
@@ -1320,7 +1360,7 @@ it('tells a resumed chat\'s messages to the agent\'s listener, as it does a new 
     resume: 'again',
   } as Start);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
 
   expect(heard).toEqual([{ session: 'bot-chat:/again', chat: 'ahp-chat:/again', turnId: 't1', text: 'hello' }]);
   expect(turns('bot-chat:/again').onMessage).toBeDefined();

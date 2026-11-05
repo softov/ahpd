@@ -8,9 +8,7 @@ import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
-import type { Bag, Ran } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
@@ -95,7 +93,7 @@ async function talking(
 const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -136,7 +134,7 @@ it('keeps the origin a client sent with the message, on the wire and in the cata
   const sent = { text: 'who am i', origin: { kind: 'user' }, _meta: { probe: 'origin' } };
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: sent } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: sent } },
   });
   await until(() => ended(p, chatUri));
 
@@ -156,7 +154,7 @@ it('carries the model a turn runs on, on the message', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'open_router/x' } } },
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'open_router/x' } } },
     },
   });
   await until(() => ended(p, chatUri));
@@ -227,7 +225,7 @@ it('runs a turn on the model the turn names, with no model in the session config
       method: 'dispatchAction',
       params: {
         channel: chatUriFor('ahp-session:/picked'),
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
       },
     });
     await until(() => ended(p, chatUriFor('ahp-session:/picked')));
@@ -383,6 +381,34 @@ it('keeps two turns in one cofold session and finishes both', async () => {
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('remember the number 41');
 });
 
+/*
+ * What the host has to say on a turn goes into that turn's run, in the system
+ * prompt its agent is built with, as the reference agents put the instructions
+ * their host contributes for a send into that turn's prompt.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+ */
+it('puts the send\'s instructions in that turn\'s system prompt, and only that turn\'s', async () => {
+  const model = createFakeModel({ script: [{ text: 'one' }, { text: 'two' }], stream: true });
+  const agent = cofoldAgent({ adapter: model, memory: true });
+  const ended: string[] = [];
+  const session = agent.create({
+    uri: 'ahp-session:/told',
+    chatUri: chatUriFor('ahp-session:/told'),
+    settings: agent.defaults(),
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-told-')),
+    schema: () => agent.schema(),
+    emit: (_channel, action) => { if (action.type === 'chat/turnComplete') ended.push(String(action.turnId)); },
+    clientToolTimeoutMs: 600_000,
+  });
+  session.sendMessage('t1', 'hi', undefined, undefined, { instructions: () => ['Report back to the chat this came from.'] });
+  await until(() => ended.length === 1);
+  session.sendMessage('t2', 'again');
+  await until(() => ended.length === 2);
+  expect(model.requests[0]?.instructions).toContain('Report back to the chat this came from.');
+  expect(model.requests[1]?.instructions).not.toContain('Report back to the chat this came from.');
+  await session.close();
+});
+
 /** A model that streams one delta and then waits, so a cancel lands mid-turn. */
 function heldModel(): ModelAdapter {
   let ids = 0;
@@ -476,7 +502,7 @@ it('says a turn sent after a stop at once, and runs it once the stopped run has 
   // is said meanwhile.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'second' } } },
   });
   await until(() => answer(p, chatUri, 7) !== undefined);
   expect(asked.some((prompt) => prompt.includes('second'))).toBe(false);
@@ -502,7 +528,7 @@ it('takes up a message queued after a stop at once, and runs it once the stopped
 
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   // Taken up as the chat's turn before the stopped run lets go.
   await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q1'));
@@ -526,7 +552,7 @@ it('runs an idle steering message ahead of what a stopped turn left queued', asy
   await until(() => types(p, chatUri).includes('chat/delta'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   client.handle({
     method: 'dispatchAction',
@@ -556,7 +582,7 @@ const fold = (p: ReturnType<typeof peer>, chatUri: string): ChatState => actions
 const steer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string, text: string): void => {
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } } },
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -655,6 +681,64 @@ it('runs a steering message the run never took in as a turn of its own, named by
   expect(fold(p, chatUri).steeringMessage).toBeUndefined();
 });
 
+/**
+ * A model whose first answer is held until `release`, and whose next run calls
+ * the host's `lookup` before it answers, so that run has a step after its first.
+ */
+function gatedThenLooking(): { model: ModelAdapter; release: () => void; asked: string[] } {
+  const held = createFakeModel({ script: [{ text: 'answer 1' }], stream: true });
+  const looking = createFakeModel({ script: [{ toolCalls: [{ name: 'lookup', input: {} }] }, { text: 'done' }], stream: true });
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const asked: string[] = [];
+  const model: ModelAdapter = {
+    ...looking,
+    id: 'gated-then-looking',
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      asked.push(JSON.stringify(request.messages));
+      if (asked.length > 1) { yield* looking.stream!(request); return; }
+      yield { type: 'text.delta', text: 'working' };
+      await gate;
+      yield* held.stream!(request);
+    },
+  };
+  return { model, release, asked };
+}
+
+/*
+ * A steering message a run handed back, because it settled before a step read
+ * it, steers the turn the chat runs then, as the reference host steers the
+ * current turn with steering handed back unsent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L230-L243
+ */
+it('steers the turn that runs next with a steering message the run before it handed back', async () => {
+  const tool: HostTool = {
+    definition: {
+      name: 'lookup',
+      title: 'Look something up',
+      description: 'Looks a word up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    run: () => 'found x',
+  };
+  const { model, release, asked } = gatedThenLooking();
+  const { client, peer: p, chatUri } = await talking(model, [tool]);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  steer(client, chatUri, 4, 's1', 'one more thing');
+  await until(() => answer(p, chatUri, 4) !== undefined);
+  begin(client, chatUri, 't2', 'second');
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2'));
+  release();
+  await until(() => actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete' && e.action.turnId === 't2'));
+
+  // Read in the second turn's run, and taken out once it was, with no turn of its own.
+  expect(asked.slice(1).some((one) => one.includes('one more thing'))).toBe(true);
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId)).toEqual(['t1', 't2']);
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved').map((e) => e.action.id)).toEqual(['s1']);
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+});
+
 /** A client taking back a steering message, under the number the client gave it. */
 const unsteer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string): void => {
   client.handle({
@@ -688,7 +772,14 @@ it('takes the steering message a stopped run handed back out with the stop, and 
   expect(asked.join('\n')).not.toContain('one more thing');
 });
 
-it('refuses to take back a steering message the run holds, and the run still reads it', async () => {
+/*
+ * A steering message a client takes back is withdrawn from the backend that
+ * holds it, as the reference host has its provider withdraw one, and every
+ * client lets go of it at once. cofold's run has no command that gives a steer
+ * back, so the run still reads it, and says nothing more of it when it does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L165-L173
+ */
+it('takes back a steering message the run holds, which the run still reads', async () => {
   const waiting: (() => void)[] = [];
   const tool: HostTool = {
     definition: {
@@ -711,57 +802,15 @@ it('refuses to take back a steering message the run holds, and the run still rea
 
   unsteer(client, chatUri, 10, 's1');
   await until(() => answer(p, chatUri, 10) !== undefined);
-  // cofold's run holds it, and the run has no command that gives it back.
-  expect(answer(p, chatUri, 10)?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(answer(p, chatUri, 10)?.rejectionReason).toBeUndefined();
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
-  expect(opened.snapshot.state.steeringMessage).toMatchObject({ id: 's1' });
+  expect(opened.snapshot.state.steeringMessage).toBeUndefined();
 
   waiting[0]?.();
   await until(() => ended(p, chatUri));
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
-  // Taken in by the run, so out of every client's chat.
-  const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
-  expect(after.snapshot.state.steeringMessage).toBeUndefined();
-});
-
-/*
- * At a stop every steering message the run has not read goes: the one the run
- * holds, dropped when it gives it back, and one waiting to be a turn of its
- * own; nothing starts behind the stopped turn, as the reference host clears
- * every pending steering entry at a cancel without draining the queue.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
- */
-it('lets go of every steering message the run has not read at a stop, and starts nothing', async () => {
-  const { model, release } = gatedModel();
-  const notes: Bag[] = [];
-  const session = cofoldAgent({ adapter: model, memory: true }).create({
-    uri: 'ahp-session:/stop-steer',
-    chatUri: 'ahp-chat:/stop-steer',
-    settings: {},
-    schema: () => ({ type: 'object', properties: {} }),
-    emit: (_channel, action) => { notes.push(action); },
-    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
-  });
-  session.begin('t1', 'first');
-  await until(() => notes.some((one) => one.type === 'chat/delta'));
-  expect(session.steer?.('s1', 'look elsewhere')).toBe(true);
-  session.queue('i1', 'one more thing', undefined, undefined, undefined, undefined, 'steering');
-  session.queue('q1', 'later');
-  session.cancel('t1');
-  session.clearSteering?.();
-  release();
-  try {
-    // The run over, with the steer it held given back or read.
-    await until(() => (session.chatState() as Bag).activeTurn === undefined);
-    expect(notes.filter((one) => one.type === 'chat/pendingMessageRemoved').map((one) => one.id).sort()).toEqual(['i1', 's1']);
-    expect(notes.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual(['t1']);
-    const held = session.chatState() as Bag;
-    expect(held.steeringMessage).toBeUndefined();
-    expect((held.queuedMessages as Bag[]).map((one) => one.id)).toEqual(['q1']);
-  }
-  finally {
-    await session.close();
-  }
+  // The client's removal is the one said.
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved')).toHaveLength(1);
 });
 
 it('names the cofold session id from the AHP URI in one place', () => {
@@ -832,35 +881,6 @@ it('leaves out a tool whose schema cofold refuses, and offers the rest', () => {
   expect(cofoldTools([refused, plain]).map((one) => one.name)).toEqual(['plain']);
 });
 
-/*
- * A command running as the chat's turn that a turn sent after it took the
- * place of ends in no history, as the reducer keeps none of the turn it
- * replaced, and the turn that took its place runs once it is over.
- */
-it('keeps no history of a !command turn a turn sent after it took the place of', async () => {
-  const notes: Bag[] = [];
-  const session = cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'after it' }], stream: true }), memory: true }).create({
-    uri: 'ahp-session:/replaced',
-    chatUri: 'ahp-chat:/replaced',
-    settings: {},
-    schema: () => ({ type: 'object', properties: {} }),
-    emit: (_channel, action) => { notes.push(action); },
-    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
-  });
-  let done: (ran: Ran) => void = () => {};
-  session.ran?.('t1', 'make', () => new Promise<Ran>((resolve) => { done = resolve; }));
-  await until(() => notes.some((one) => one.type === 'chat/toolCallStart' && one.turnId === 't1'));
-  session.begin('t2', 'hello');
-  done({ success: true, said: 'Ran make', output: '', code: 0 });
-  try {
-    await until(() => notes.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't2'));
-    expect((((session.chatState() as Bag).turns ?? []) as Bag[]).map((turn) => turn.id)).toEqual(['t2']);
-  }
-  finally {
-    await session.close();
-  }
-});
-
 it('runs a !command in a shell rather than asking a model', async () => {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-bang-'));
   const host = createHost({
@@ -885,8 +905,7 @@ it('runs a !command in a shell rather than asking a model', async () => {
   await until(() => ended(p, chatUri), 4000);
 
   // The host's shell, not the model: one tool call named `terminal`, completed
-  // with what the shell printed. Before `ran` existed here this turn was handed
-  // to cofold as the prompt `!echo cofold-ran-it`.
+  // with what the shell printed, as the host's local command.
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({ toolName: 'terminal' });
   // The command as typed, not the JSON-quoted string, so the terminal row shows
@@ -932,7 +951,7 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   const changed = (): Note['action'] | undefined => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
   await until(() => changed() !== undefined);
@@ -1107,7 +1126,7 @@ function failingOnCue(): { model: ModelAdapter; fail: () => void } {
 const queue = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, id: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text, origin: { kind: 'user' } } } },
   });
 
 /** The queued message each turn started from, in the order the turns started. */
@@ -1284,7 +1303,7 @@ it('holds a message queued during a resume that fails, and starts it once a resu
   });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two', origin: { kind: 'user' } } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/error').length === 2);
   const started = (): unknown[] => actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.queuedMessageId);
@@ -1339,18 +1358,18 @@ it('answers no for a resume the session cannot make', async () => {
   });
 
   // Not the newest turn.
-  expect(open([done('t1'), failed('t2', true)]).resume?.('t1')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', true)]).resumeTurn?.('t1')).toThrow();
   // The newest turn, but it did not fail.
-  expect(open([done('t1')]).resume?.('t1')).toBe(false);
+  expect(() => open([done('t1')]).resumeTurn?.('t1')).toThrow();
   // The newest turn failed, and its error does not offer a resume.
-  expect(open([done('t1'), failed('t2', false)]).resume?.('t2')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', false)]).resumeTurn?.('t2')).toThrow();
   // It offers one, but only to a process that watched the turn before it run:
   // this one was read back off a seed, so there is no point to cut to.
-  expect(open([done('t1'), failed('t2', true)]).resume?.('t2')).toBe(false);
+  expect(() => open([done('t1'), failed('t2', true)]).resumeTurn?.('t2')).toThrow();
   // Closed.
   const closed = open([failed('t1', true)]);
   await closed.close();
-  expect(closed.resume?.('t1')).toBe(false);
+  expect(() => closed.resumeTurn?.('t1')).toThrow();
 
   // A turn still running has nothing to reopen yet.
   const busy = cofoldAgent({ adapter: heldModel(), memory: true }).create({
@@ -1362,8 +1381,8 @@ it('answers no for a resume the session cannot make', async () => {
     emit: () => {},
     clientToolTimeoutMs: 600_000,
   });
-  busy.begin('t1', 'hi');
-  expect(busy.resume?.('t1')).toBe(false);
+  busy.sendMessage('t1', 'hi');
+  expect(() => busy.resumeTurn?.('t1')).toThrow();
   await busy.close();
 });
 
@@ -1405,7 +1424,7 @@ it('starts a queued turn only after the one before it has ended', async () => {
   begin(client, chatUri, 't1', 'one');
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two', origin: { kind: 'user' } } } },
   });
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
   const said = actions(p, chatUri).map((e) => String(e.action.type));

@@ -5,6 +5,32 @@ import type { OnWire } from './wire.js';
 import type { Bag } from './common.js';
 import type { Emit } from './session.js';
 
+/**
+ * The terminal a `!` command runs in, as soon as it is open.
+ *
+ * `isPty` is the terminal's own, as its state says it: a client reads it to
+ * decide whether the output holds VT sequences. Absent where the state says
+ * nothing.
+ */
+export interface CommandTerminal {
+  /** The channel a client subscribes to. */
+  uri: string;
+  /** Whether a pseudoterminal runs the command. */
+  isPty?: boolean;
+}
+
+/** What a `!` command did, once it has run to its exit. */
+export interface Ran {
+  /** Everything it printed. Empty when it printed nothing. */
+  output: string;
+  /** The terminal it ran in. */
+  terminal: string;
+  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
+  isPty?: boolean;
+  /** What it exited with. */
+  code: number;
+}
+
 /** Who currently holds a terminal: a connected client, or a session. */
 /**
  * Who is holding a terminal, in the protocol's own type.
@@ -142,9 +168,15 @@ export interface Terminal {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
    */
   write(data: string): void;
+  /*
+   * The four below take a change a client's action asked for, which the host
+   * says on the terminal's channel itself, as the reference host's terminal
+   * manager applies a client's terminal action the state manager has said.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L223-L246
+   */
   /**
-   * Record a new size and say it. A pseudoterminal behind the terminal is
-   * told, and sends SIGWINCH itself.
+   * Take a new size. A pseudoterminal behind the terminal is told, and sends
+   * SIGWINCH itself.
    */
   resize(cols: number, rows: number): void;
   /**
@@ -156,8 +188,8 @@ export interface Terminal {
    * been discarded.
    */
   clear(): void;
-  /** Rename it, `true` when the title moved and `false` when it was the title already. */
-  setTitle(title: string): boolean;
+  /** Rename it. */
+  setTitle(title: string): void;
   /** Hand it to somebody else. */
   setClaim(claim: Claim): void;
   /** Kill the process and let go. */

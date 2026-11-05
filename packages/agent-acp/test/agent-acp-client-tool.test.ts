@@ -321,7 +321,7 @@ type Client = Awaited<ReturnType<typeof talking>>['client'];
 const begin = (client: Client, chatUri: string, turnId: string, text: string): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 

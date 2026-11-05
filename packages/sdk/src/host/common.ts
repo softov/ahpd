@@ -36,6 +36,17 @@ export const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat
 export const BANG = '!';
 
 /**
+ * The command a message's text runs, trimmed, or nothing for text that is
+ * not a `!` command, as the reference host parses one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostBangCommand.ts#L11-L26
+ */
+export const bangCommand = (text: string): string | undefined => {
+  if (!text.startsWith(BANG)) return undefined;
+  const command = text.slice(BANG.length).trim();
+  return command === '' ? undefined : command;
+};
+
+/**
  * The config properties this host owns, rather than the backend.
  *
  * The protocol's schema is deliberately generic - a backend advertises

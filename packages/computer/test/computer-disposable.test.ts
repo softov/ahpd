@@ -353,13 +353,14 @@ it('makes the machine when a disposable profile is picked before the first turn'
   const box = held(state).machines[0]?.name as string;
   expect(held(state).machines[0]?.labels).toMatchObject({ 'ahpd.disposable': 'claude', 'ahpd.agents': 'echo' });
 
-  // What the client is told is the machine the session actually has, not the
-  // source it picked: a chip holding the source would name nothing.
+  // The client's pick is said as it sent it, and then the machine the
+  // session actually has, which is what the client holds last: a chip holding
+  // the source would name nothing.
   const told = actions(p, 'ahp-session:/one')
     .filter((action) => action.type === 'session/configChanged')
-    .map((action) => (action.config as Record<string, unknown>).computer);
-  expect(told).toContain(`computer://${box}`);
-  expect(told).not.toContain('disposable:claude');
+    .map((action) => (action.config as Record<string, unknown>).computer)
+    .filter((one) => one !== undefined);
+  expect(told.at(-1)).toBe(`computer://${box}`);
 
   // It is a real user, so the delay does not run while the session is in it.
   await vi.advanceTimersByTimeAsync(10000);
@@ -666,7 +667,7 @@ it('holds the machine while a session resumed from the list runs in it', async (
   await before.client.handle({ method: 'subscribe', params: { channel: chat } });
   await before.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
   });
   await until(() => actions(before.peer, chat).some((one) => one.type === 'chat/turnComplete'));
 
@@ -682,7 +683,7 @@ it('holds the machine while a session resumed from the list runs in it', async (
   await after.client.handle({ method: 'subscribe', params: { channel: chat } });
   await after.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await wait(200);
   await settle();
@@ -1186,7 +1187,7 @@ it('takes the session an alone machine was made for back into it after a restart
   await here.client.handle({ method: 'subscribe', params: { channel: chat } });
   await here.client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'again' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await until(() => actions(here.peer, chat).some((one) => one.type === 'chat/turnComplete'));
 

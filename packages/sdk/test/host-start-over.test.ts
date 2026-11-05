@@ -77,7 +77,7 @@ const answered = async (seen: Seen, deletes = true) => {
   await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
   const chat = String(((await client.handle({ method: 'subscribe', params: { channel: LIVE } }) as { snapshot: { state: Bag } }).snapshot.state).defaultChat);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
-  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
   await settle();
   return { client, p, chat };
 };
@@ -117,23 +117,24 @@ describe('a chat truncated whole', () => {
     const seen: Seen = { starts: [], steps: [] };
     const { client, chat } = await answered(seen);
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/truncated' } } });
-    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } } });
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } } });
     await settle(30);
     expect(seen.steps).toEqual(['stopped stopping', 'deleted live']);
     expect(await turnsOf(client, chat)).toEqual(['t2']);
   });
 
-  it('is refused for a backend that cannot delete, and nothing restarts', async () => {
+  it('is said for a backend that cannot delete, which keeps its history, and nothing restarts', async () => {
     const seen: Seen = { starts: [], steps: [] };
     const { client, p, chat } = await answered(seen, false);
     const starts = seen.starts.length;
 
     await emptied(client, chat);
 
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('not a conversation entire');
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated')).toBe(true);
     expect(seen.steps).toEqual([]);
     expect(seen.starts.length).toBe(starts);
-    expect(await turnsOf(client, chat)).toEqual(['t1']);
+    expect(await turnsOf(client, chat)).toEqual([]);
   });
 
   it('starts the Claude CLI again under the same id, once its transcript is gone', async () => {
@@ -148,7 +149,7 @@ describe('a chat truncated whole', () => {
     const chat = String(((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }) as { snapshot: { state: Bag } }).snapshot.state).defaultChat);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     expect(sessionQueries().at(-1)?.options.sessionId).toBe(id);
-    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } } });
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
     await settle();
     await emit({ type: 'system', subtype: 'init', session_id: id });
     await emit({ type: 'assistant', uuid: 'reply-1', session_id: id, message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
@@ -167,15 +168,17 @@ describe('a chat truncated whole', () => {
     expect(await turnsOf(client, chat)).toEqual([]);
   });
 
-  it('comes back on the conversation it had when the delete fails, and says why', async () => {
+  it('comes back on the conversation it had when the delete fails', async () => {
     const seen: Seen = { starts: [], steps: [], failing: new Error('the store is read-only') };
     const { client, p, chat } = await answered(seen);
 
     await emptied(client, chat);
 
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('the store is read-only');
-    // The refusal is the only word of it: no client was told to clear anything.
-    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated' && e.rejectionReason === undefined)).toBe(false);
+    // Said before the delete, as the reference host says a truncation before
+    // its provider cuts anything; the delete that failed is the host's log.
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated')).toBe(true);
+    expect(seen.steps).toEqual(['stopped stopping', 'deleted live']);
     const back = seen.starts.at(-1);
     expect(back?.resume).toBe('live');
     expect(((back?.seed ?? []) as Bag[]).map((turn) => turn.id)).toEqual(['t1']);

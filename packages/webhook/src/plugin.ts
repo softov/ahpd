@@ -172,7 +172,17 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
       const { conn, sender } = await open();
       // The host echoes a taken turn only to the subscribers of its chat.
       await conn.request('subscribe', { channel: chat });
-      return await sender.dispatch(chat, { type: 'chat/turnStarted', turnId: turn, message: { text } });
+      /*
+       * Sent as VS Code's client sends a turn: the time it starts and a
+       * person's message, which the host says as it came.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
+       */
+      return await sender.dispatch(chat, {
+        type: 'chat/turnStarted',
+        turnId: turn,
+        startedAt: new Date().toISOString(),
+        message: { text, origin: { kind: 'user' } },
+      });
     },
     forget: (chat, turn) => { ends.forget(chat, turn); },
     ended: async (chat, turn) => {

@@ -102,14 +102,14 @@ const image = (type = 'image/png'): Bag => ({
 
 it('prompts a message with no attachments with the plain text it always was', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'what is this');
+  session.sendMessage('t1', 'what is this');
   await until(() => prompts(pi).length === 1);
   expect(prompts(pi)).toEqual([{ kind: 'prompt', text: 'what is this', images: [] }]);
 });
 
 it('sends a pasted image as pi\'s own image, and one too large by path', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'look', undefined, undefined, [
+  session.sendMessage('t1', 'look', undefined, [
     written(smallImage, 'small.png', 'image/png'),
     written(largeImage, 'large.png', 'image/png'),
   ]);
@@ -126,7 +126,7 @@ it('sends a pasted image as pi\'s own image, and one too large by path', async (
 
 it('inlines a pasted text up to 64 KiB and names what is larger', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'read this', undefined, undefined, [
+  session.sendMessage('t1', 'read this', undefined, [
     written(note, 'note.txt', 'text/plain'),
     written(longText, 'long.txt', 'text/plain'),
   ]);
@@ -145,7 +145,7 @@ it('inlines a pasted text up to 64 KiB and names what is larger', async () => {
 
 it('inlines a text of exactly the limit, which is the largest one that fits', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'read this', undefined, undefined, [written(pasted, 'pasted.txt', 'text/plain')]);
+  session.sendMessage('t1', 'read this', undefined, [written(pasted, 'pasted.txt', 'text/plain')]);
   await until(() => prompts(pi).length === 1);
   expect(prompts(pi)).toEqual([{
     kind: 'prompt',
@@ -156,7 +156,7 @@ it('inlines a text of exactly the limit, which is the largest one that fits', as
 
 it('names a file somebody picked, which is one they work in rather than paste', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'look at this', undefined, undefined, [existing(picked, 'picked.txt', 'text/plain')]);
+  session.sendMessage('t1', 'look at this', undefined, [existing(picked, 'picked.txt', 'text/plain')]);
   await until(() => prompts(pi).length === 1);
   // Small and textual, and still named: only a file this host wrote is the
   // message's own, and a copy of somebody's buffer is not what they attached.
@@ -170,7 +170,7 @@ it('names a file somebody picked, which is one they work in rather than paste', 
 it('names an image by path when the model takes none', async () => {
   const { session, pi } = opened();
   pi.noImages();
-  session.begin('t1', 'look', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
+  session.sendMessage('t1', 'look', undefined, [written(smallImage, 'small.png', 'image/png')]);
   await until(() => prompts(pi).length === 1);
 
   // Never sent to a model that would refuse it: the turn fails on a picture
@@ -185,22 +185,23 @@ it('names an image by path when the model takes none', async () => {
 it('steers the running turn with its pasted image', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await until(() => prompts(pi).length === 1);
-  expect(session.steer?.('t1', 'actually', [written(smallImage, 'small.png', 'image/png')])).toBe(true);
+  // Answered once pi has read it, which the hand-off waits on.
+  expect(session.sendSteeringMessage?.({ id: 't1', text: 'actually', attachments: [written(smallImage, 'small.png', 'image/png')] })).toBeInstanceOf(Promise);
   await until(() => pi.asked.some((one) => one.kind === 'steer'));
 
   expect(pi.asked.find((one) => one.kind === 'steer'))
     .toEqual({ kind: 'steer', text: 'actually', images: [image()] });
 });
 
-it('sends a queued message with its image when its turn comes', async () => {
+it('sends a turn handed while another runs with its image when its turn comes', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await until(() => prompts(pi).length === 1);
-  session.queue('q1', 'second', undefined, undefined, [written(smallImage, 'small.png', 'image/png')]);
-  // Waiting, so only the first turn has reached pi.
+  session.sendMessage('t2', 'second', undefined, [written(smallImage, 'small.png', 'image/png')]);
+  // Waiting for the turn in front of it, so only the first turn has reached pi.
   expect(prompts(pi).map((one) => one.text)).toEqual(['first']);
 
   pi.raise({ type: 'agent_settled', aborted: false });
@@ -211,24 +212,10 @@ it('sends a queued message with its image when its turn comes', async () => {
   ]);
 });
 
-it('keeps a queued message\'s attachments where a client reads them waiting', async () => {
-  const { session, pi } = opened();
-  pi.hold();
-  session.begin('t1', 'first');
-  await until(() => prompts(pi).length === 1);
-  const one = written(smallImage, 'small.png', 'image/png');
-  session.queue('q1', 'second', undefined, undefined, [one]);
-
-  // What `chat/pendingMessageSet` echoed, which is the chip a client draws
-  // while the message waits.
-  const held = (session.chatState().queuedMessages as Bag[])[0] as Bag;
-  expect((held.message as Bag).attachments).toEqual([one]);
-});
-
 it('keeps a turn\'s attachments on the message the turn was accepted with', async () => {
-  const { session, pi, last } = opened();
+  const { session, pi } = opened();
   const one = written(smallImage, 'small.png', 'image/png');
-  session.begin('t1', 'look', undefined, undefined, [one]);
-  await until(() => prompts(pi).length === 1);
-  expect((last('chat/turnStarted')?.message as Bag).attachments).toEqual([one]);
+  session.sendMessage('t1', 'look', undefined, [one]);
+  await until(() => prompts(pi).length === 1 && (session.chatState().turns as Bag[]).length === 1);
+  expect(((session.chatState().turns as Bag[])[0]?.message as Bag).attachments).toEqual([one]);
 });

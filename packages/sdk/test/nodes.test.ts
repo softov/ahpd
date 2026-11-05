@@ -256,7 +256,7 @@ const inNode = async (hub: Hub) => {
     seq += 1;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await until(() => said('chat/turnComplete').length > before);
   };
@@ -323,7 +323,7 @@ it('a session in a joined node runs in the host the node serves, at the node\'s 
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello node' } } },
+    params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello node' } } },
   });
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete' && params?.channel === chat));
   expect(peer.seen.some(({ params }) => params?.action?.type === 'session/creationFailed')).toBe(false);
@@ -417,7 +417,7 @@ it('a hub started again resumes the session against the node store that kept it'
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'after the restart' } } },
+    params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'after the restart' } } },
   });
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete'));
   const read = await client.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: Bag } };

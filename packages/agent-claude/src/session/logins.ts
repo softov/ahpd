@@ -319,11 +319,8 @@ export function createLogins(ctx: SessionContext): Logins {
 
   /**
    * Run the failed turn again on `login`, with the steering messages it sent
-   * the CLI it replaces behind its prompt.
-   *
-   * A steering message the CLI took in is in the conversation too; the others
-   * go to the new CLI, and are answered in a turn of their own, as a failed
-   * turn's are.
+   * the CLI it replaces behind its prompt, where they are answered in the turn.
+   * A turn that cannot start over fails with them.
    */
   const moveOn = async (login: Login): Promise<void> => {
     const held = move;
@@ -344,10 +341,10 @@ export function createLogins(ctx: SessionContext): Logins {
       await ctx.again(steers);
       return;
     }
-    // A failed turn, which leaves the queue behind it waiting.
+    // A failed turn, whose steering messages fail with it, since a steering
+    // message is answered only in the turn it steered.
     const why = `The conversation could not start over on another login: ${restarted.failed}`;
     ctx.failTurn(held.said === '' ? why : `${held.said}\n${why}`);
-    await ctx.again(steers.filter((owed) => owed.cli !== 'started'));
   };
 
   const answered = (): void => {

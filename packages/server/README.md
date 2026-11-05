@@ -136,7 +136,7 @@ Every verb and every flag is one declaration under [`src/commands`](https://gith
 | `--delta-window-ms <ms>` | How long a streamed delta waits for the next one before it is sent. Default `75`; `0` sends every delta as it arrives |
 | `--automations <where>` | `file`, the default, keeps them beside the config and fires their schedules. `memory` keeps them until the process ends and fires nothing |
 | `--unowned-automations <scope>` | `every`, the default, or `none`: what an automation that names no owner wakes on |
-| `--sessions <where>` | Where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `file`, the default, keeps them beside the config. `memory` forgets them when the process ends |
+| `--sessions <where>` | Where the read and archived bits, a session's settings and whose each session is go. `file`, the default, keeps them beside the config. `memory` forgets them when the process ends |
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, and adds to the config file's list |
 | `--no-plugins` | Leave the configuration file's list out, so only the `--plugin` ones load |

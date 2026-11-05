@@ -186,18 +186,18 @@ describe('a task a backend reports', () => {
     expect(workActions(p)).toHaveLength(1);
   });
 
-  it('drops a background action a backend emitted, and logs one line', async () => {
-    const { p, seam, given, said } = await opened();
+  /*
+   * A backend's own background action is this host's action, said as it came,
+   * as VS Code's host says what its agent reports.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
+   */
+  it('says a background action a backend emitted as it came', async () => {
+    const { p, seam, given } = await opened();
     expect(seam()).toBeDefined();
-    given().emit('chat', {
-      type: 'chat/backgroundWorkSet',
-      work: { kind: 'shell', id: 'drawn-by-the-backend', label: 'x', startedAt: task().startedAt, command: 'x' },
-    });
+    const work = { kind: 'shell', id: 'drawn-by-the-backend', label: 'x', startedAt: task().startedAt, command: 'x' };
+    given().emit('chat', { type: 'chat/backgroundWorkSet', work });
     await settle();
 
-    // The host is the one builder: a row from anywhere else is a client with
-    // two, and the one a late subscriber never sees.
-    expect(workActions(p)).toEqual([]);
-    expect(said.filter((line) => line.startsWith('dropped chat/backgroundWorkSet'))).toHaveLength(1);
+    expect(workActions(p).map((one) => [one.action, one.origin])).toEqual([[{ type: 'chat/backgroundWorkSet', work }, undefined]]);
   });
 });

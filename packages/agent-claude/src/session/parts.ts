@@ -36,7 +36,7 @@ export interface Parts {
   /** Say the session is no longer waiting on one request. */
   inputNeededRemoved: (id: string) => void;
   /** The turn a conversation is on, opened if it has none, with the id and the message given. */
-  openTurn: (scope?: Scope, opening?: { id: string; message: Bag; queuedMessageId?: string }) => Bag;
+  openTurn: (scope?: Scope) => Bag;
   /** Announce a prose part. */
   addPart: (scope: Scope, part: Bag) => void;
   /** Hold a tool call for the snapshot, without announcing it. */
@@ -224,7 +224,7 @@ export function createParts(ctx: SessionContext): Parts {
 
   // ------------------------------------------------------------- translation
 
-  const openTurn = (scope: Scope = ctx.mainScope, opening?: { id: string; message: Bag; queuedMessageId?: string }): Bag => {
+  const openTurn = (scope: Scope = ctx.mainScope): Bag => {
     if (scope.turn) return scope.turn;
     /*
      * The summary a background task's end left for the turn it wakes.
@@ -239,24 +239,18 @@ export function createParts(ctx: SessionContext): Parts {
     const notice = scope === ctx.mainScope ? ctx.pendingSummary : undefined;
     if (scope === ctx.mainScope) ctx.pendingSummary = undefined;
     // A turn the client did not begin: the agent spoke first, which happens on
-    // a resumed session. Better an id of our own than a turn with none. Or it
-    // answers the steering messages a turn that ended left with the CLI, and
-    // opens with the first of them, under the uuid it went to the CLI with,
-    // which is where the CLI writes it.
+    // a resumed session. Better an id of our own than a turn with none.
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
     // Leaving the key off put a turn on the wire that did not satisfy its own
     // type, which nothing here would have noticed.
     const opened = {
-      id: opening?.id ?? `turn-${Date.now()}`,
+      id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
-      // A notice is the system's, a turn nobody opened is the agent's own,
-      // and everything else says who sent it. `Message.origin` is required and
-      // used to be left off entirely.
-      message: opening !== undefined
-        ? opening.message as WireTurn<ActiveTurn>['message']
-        : notice !== undefined
-          ? { text: notice, origin: { kind: 'systemNotification' } }
-          : { text: '', origin: { kind: 'agent' } },
+      // A notice is the system's, and a turn nobody opened is the agent's own.
+      // `Message.origin` is required.
+      message: notice !== undefined
+        ? { text: notice, origin: { kind: 'systemNotification' } }
+        : { text: '', origin: { kind: 'agent' } },
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
@@ -273,7 +267,6 @@ export function createParts(ctx: SessionContext): Parts {
       turnId: opened.id,
       startedAt: opened.startedAt,
       message: opened.message,
-      ...(opening?.queuedMessageId === undefined ? {} : { queuedMessageId: opening.queuedMessageId }),
     });
     return opened;
   };

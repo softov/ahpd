@@ -175,7 +175,7 @@ async function serving(counts: Counts, automations?: AutomationStore, more: Part
     seq += 1;
     return client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId: `t${String(seq)}`, message: { text } } },
+      params: { channel: chat, clientSeq: seq, action: { type: 'chat/turnStarted', turnId: `t${String(seq)}`, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -467,10 +467,10 @@ it('answers a stop on a sleeping session with the client\'s own action, without 
   await read(one.chat);
   p.notes.length = 0;
 
-  await client.handle({ method: 'dispatchAction', params: { channel: one.chat, clientSeq: 60, action: { type: 'chat/turnCancelled', turnId: '' } } });
+  await client.handle({ method: 'dispatchAction', params: { channel: one.chat, clientSeq: 60, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } } });
   await settle(20);
   expect(p.notes.filter((note) => note.method === 'action').map((note) => [note.action, note.origin, note.rejectionReason]))
-    .toEqual([[{ type: 'chat/turnCancelled', turnId: '' }, { clientId: 'window', clientSeq: 60 }, undefined]]);
+    .toEqual([[{ type: 'chat/turnCancelled', turnId: '', duration: 0 }, { clientId: 'window', clientSeq: 60 }, undefined]]);
   expect(counts.starts).toEqual([undefined]);
   expect(await awake()).toBe(0);
 });

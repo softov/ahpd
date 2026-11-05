@@ -65,7 +65,7 @@ describe('turning', () => {
 
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five' } } },
+      params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five' } } },
     });
     // The first word streamed is inside the turn, whatever the pace.
     expect(await heard(seen, 'chat/delta')).toEqual([HELD]);

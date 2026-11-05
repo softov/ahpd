@@ -58,7 +58,7 @@ it('misses nothing dispatched while its snapshot was being taken', async () => {
   const subscribing = client.handle({ method: 'subscribe', params: { channel: chatUri } });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await subscribing;
   await settle();
@@ -77,7 +77,7 @@ it('says each of them once', async () => {
   const subscribing = client.handle({ method: 'subscribe', params: { channel: chatUri } });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await subscribing;
   await settle();
@@ -95,7 +95,7 @@ it('replays a response part as it was, not as it became', async () => {
   const subscribing = client.handle({ method: 'subscribe', params: { channel: chatUri } });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await subscribing;
   await settle();
@@ -130,7 +130,7 @@ it('hands back a snapshot that does not move under the client', async () => {
 
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await settle();
 

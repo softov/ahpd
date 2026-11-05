@@ -213,29 +213,17 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * About one turn, not about the session for the rest of its life. It reads
    * into `Status.Error`, the status a chat's state opens with, as the turn's
    * `chat/error` leaves it in every client's. Starting a turn supersedes it:
-   * what went wrong last time is not what is happening now. A `!` command
-   * that failed is a call that failed, in a turn that completed, and sets
-   * nothing here.
+   * what went wrong last time is not what is happening now.
    */
   failed: string | undefined;
   /**
-   * Whether the last turn was stopped here and its result has not come yet.
-   *
-   * An interrupt ends with a result of its own - `error_during_execution`,
-   * `is_error: true` - after `cancel` has already ended the turn as cancelled.
-   * Read as a failure, it drew every stopped session as failed.
+   * The CLI a stop closed, or whose stream ended without a result, while the
+   * next send has not yet started one that resumes the conversation, as the
+   * reference marks its pipeline for a rebind. Its reader ends without failing
+   * the session. Nothing while the CLI answering is the one reading.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
    */
-  interrupted: boolean;
-  /**
-   * The calls a stop answered itself and the CLI has not reported yet, while
-   * the stop's interrupt waits for them.
-   *
-   * The CLI keeps an answer only once it has recorded the call's result, and
-   * an interrupt that reaches it before that has it write its own text for
-   * the call instead: "The user doesn't want to proceed with this tool use".
-   * Nothing while no stop is waiting.
-   */
-  stopAnswers: Set<string> | undefined;
+  rebind: unknown;
   /**
    * The model the turn now running actually answered on, as its own frames
    * reported it.
@@ -291,18 +279,6 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * rest with it.
    */
   owed: Map<string, Owed>;
-  /**
-   * A start of the queue a client's change to it asked for while nothing ran
-   * and the CLI still owed an answer, made once that answer comes.
-   *
-   * A stopped turn's prompt is owed until its result, and a message queued,
-   * taken back or reordered meanwhile starts the head of the queue when it
-   * comes, as the reference host's drain takes the head once a client changes
-   * the queue while idle.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
-   */
-  deferred: boolean;
   /** The prompt the CLI's current answer is for, from the last frame that named it. */
   answering: string | undefined;
   /**

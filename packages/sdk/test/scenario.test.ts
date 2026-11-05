@@ -19,7 +19,7 @@ const CHAT = chatUriFor(SESSION);
 /** Say something, as a client dispatching a turn does. */
 const say = (id: string, text: string): { method: string; params: Record<string, unknown> } => ({
   method: 'dispatchAction',
-  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: id, message: { text } } },
+  params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: id, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 /** A host with one echo session, and one client watching both its channels. */

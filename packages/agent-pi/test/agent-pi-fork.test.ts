@@ -103,7 +103,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   const told = (type: string): boolean => notes
     .filter((one) => one.method === 'action')
@@ -117,7 +117,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
   // The new session opens pi lazily, on the turn after it.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await until(() => pi.opens.some((one) => one.forkAt !== undefined));
   // The source conversation and the point the turn ended at, which is what a
@@ -177,7 +177,7 @@ it('refuses a session asked to fork and rewind at once, writing nothing', async 
   } as Start;
   const session = piSession({ sessionDir }, start, open);
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await until(() => sent.some((one) => one.action.type === 'chat/error'));
   const failure = sent.find((one) => one.action.type === 'chat/error')?.action;
   expect(((failure?.part as Bag).error as Bag).message).toContain('cannot fork and rewind at once');

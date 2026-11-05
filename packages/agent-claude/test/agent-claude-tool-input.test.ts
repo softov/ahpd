@@ -501,26 +501,6 @@ it('says no times for a call a person denied', async () => {
   sdk.hold = Promise.resolve();
 });
 
-it('says when a command of the person\'s own ran', async () => {
-  const sent: Bag[] = [];
-  const session = createSession({
-    uri: 'ahp-session:/input',
-    chatUri: 'ahp-chat:/input',
-    cwd: mkdtempSync(join(tmpdir(), 'ahpd-input-')),
-    emit: (_channel, action) => { sent.push(action as Bag); },
-  });
-  session.ran?.('t1', 'ls -la', async (toolCallId: string) => ({
-    success: true, said: 'Listed files', output: 'a b c', terminal: `ahp-terminal:/${toolCallId}`,
-  }));
-  await settle();
-  const ready = actionOf(sent, 'chat/toolCallReady', 't1:command');
-  const complete = actionOf(sent, 'chat/toolCallComplete', 't1:command');
-  expect(timed(complete)).toBe(true);
-  expect(metaOf(complete).toolKind).toBe('terminal');
-  expect(metaOf(ready)['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
-});
-
 it('never writes a bare timing key on a tool call', async () => {
   const { sent } = await live([...opened, result('toolu_bash', 'u2')]);
   for (const action of sent) {
@@ -869,12 +849,6 @@ it('holds each call as the protocol declares a tool call part, however the call 
   // Asked about before the stream said anything of it.
   const first = await live([], () => { void sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_first' }); });
   expect(partKeys(heldTurns(first.session))).toEqual([declared]);
-
-  // A person's own shell command.
-  const shell = await live([]);
-  shell.session.ran?.('t-shell', 'ls', async () => ({ success: true, said: 'Ran ls', output: 'a b c', code: 0 }));
-  await settle();
-  expect(partKeys(heldTurns(shell.session))).toEqual([declared]);
 
   // And read back after a restart.
   const back = (await partsOf([])).filter((part) => part.kind === 'toolCall');

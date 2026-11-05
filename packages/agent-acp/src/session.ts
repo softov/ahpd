@@ -10,8 +10,8 @@
  * Rules the protocol requires of anything emitting chat actions, kept here the
  * way the other backends keep them:
  *
- * - `chat/turnStarted` comes first, then a response part is opened, and only
- *   then may a delta stream into it.
+ * - A turn's start is the host's, said before the turn is sent here; a
+ *   response part is opened before a delta streams into it.
  * - The running turn is `active` and is not in `turns`; it moves there when it
  *   completes.
  * - A turn carries both sides: `message.text` is what was said and
@@ -25,14 +25,13 @@
 
 import { resolve, sep } from 'node:path';
 import { activityOf, statusOf, uriOf } from '@ahpd/sdk';
-import type { Bag, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
 import { createConfig } from './session/config.js';
 import type { SessionContext } from './session/context.js';
 import { createHandlers } from './session/handlers.js';
 import { createOpening } from './session/opening.js';
-import { createQueue } from './session/queue.js';
 import { createTurn } from './session/turn.js';
 import type { AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from './types.js';
 
@@ -150,7 +149,6 @@ export function acpSession(
     failed: undefined,
     title: UNTITLED,
     renamed: false,
-    queued: [],
     record: undefined,
     watchedTurn: undefined,
     permissions: new Map(),
@@ -158,14 +156,16 @@ export function acpSession(
     elicitations: new Map(),
   } as unknown as SessionContext;
 
-  const { settings, turns, seeds, replay, queued, permissions, terminals } = ctx;
+  const { settings, turns, seeds, replay, permissions, terminals } = ctx;
 
   Object.assign(ctx, createConfig(ctx));
   Object.assign(ctx, createHandlers(ctx));
   Object.assign(ctx, createOpening(ctx));
   Object.assign(ctx, createTurn(ctx));
-  Object.assign(ctx, createQueue(ctx));
   Object.assign(ctx, createClientCalls(ctx));
+
+  /** The model a client picked, taken by the next send: the server keeps a model it took. */
+  let chosen: Chosen | undefined;
 
   return {
     uri: start.uri,
@@ -260,25 +260,32 @@ export function acpSession(
       status: ctx.status(),
       modifiedAt: modified,
       turns,
-      // The last turn said, which may be one still waiting for the server.
-      ...((ctx.waiting.at(-1)?.said ?? ctx.active) !== undefined ? { activeTurn: ctx.waiting.at(-1)?.said ?? ctx.active } : {}),
+      ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    // The host's five, and not its sixth: the queue's own sixth is the queued
-    // message's id, and the host's is the turn's options.
-    begin: (turnId, text, model, from, attachments) => ctx.begin(turnId, text, model, from, attachments),
+    // The model is the one picked for this send.
+    sendMessage: (turnId, text, from, attachments, turnOptions) => {
+      const model = chosen;
+      chosen = undefined;
+      ctx.begin(turnId, text, model, from, attachments, turnOptions);
+    },
 
-    ran: ctx.ran,
+    changeModel: (model) => { chosen = model; },
+    // An ACP server is asked as the agent it is, so an agent picked is kept by
+    // nothing.
+    changeAgent: () => {},
 
     /**
-     * Stop the running turn.
+     * Stop the running turn, and drop the turns handed behind it, as the
+     * reference stop aborts the agent's work in flight and drops what waits
+     * behind it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
      *
      * The ACP cancel notification is what a server stops on, and the `cancelled`
-     * stop reason it answers the prompt with is what emits `chat/turnCancelled`
-     * exactly once. This must not send one of its own, or a client sees two.
+     * stop reason it answers the prompt with is what reports the turn's end,
+     * once. A turn still preparing ends before its prompt is sent.
      *
      * The permissions and the questions are answered before it goes, because a
      * server told to stop while it is blocked on one of this client's is a
@@ -288,24 +295,9 @@ export function acpSession(
      * And so are the calls out with clients, for the same reason: a client is
      * asked for one, the agent is blocked on the request it made for that call,
      * and neither is any longer anything this turn will finish.
-     *
-     * A turn said while the server ran another ends here, as it has no prompt
-     * of its own yet: the turns waiting with it go, and the prompt in front of
-     * it is cancelled, as the reference stop aborts the agent's work in flight
-     * and drops the turns waiting behind it.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
      */
-    cancel: (turnId) => {
-      const shown = ctx.waiting.at(-1)?.said;
-      if (shown !== undefined && String(shown.id) === turnId) {
-        ctx.waiting.length = 0;
-        shown.state = 'cancelled';
-        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
-        turns.push(shown);
-        emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
-        touch();
-      }
-      else if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+    abort: () => {
+      ctx.waiting.length = 0;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();
@@ -318,12 +310,6 @@ export function acpSession(
         void connection.cancel(ctx.acpSessionId).catch(() => {});
       }
     },
-
-    queue: ctx.queue,
-
-    unqueue: ctx.unqueue,
-
-    reorder: ctx.reorder,
 
     /*
      * The tools this session may offer, which the host replaces whole whenever
@@ -347,12 +333,8 @@ export function acpSession(
      */
     ...ctx.calls.methods,
 
-    // Held by the session, so two people on one chat see each other's.
-    setDraft: (next) => {
-      if (JSON.stringify(next) === JSON.stringify(draft)) return;
-      draft = next;
-      emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
+    // The draft the host said, held for the chat's state.
+    setDraft: (next) => { draft = next; },
 
     confirm: ctx.confirm,
 

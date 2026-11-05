@@ -140,7 +140,7 @@ it('sends a turn begun after a client announced its tools once the CLI has them'
   const { session } = await open();
   // As the host does: the tools go to the session, and nothing waits for them.
   void session.setTools?.([offered('post_message')]);
-  session.begin('t1', 'post it in the room');
+  session.sendMessage('t1', 'post it in the room');
   await settle();
   await answerAll();
 
@@ -151,7 +151,7 @@ it('takes two announcements in the order they came, before the turn after them',
   const { session } = await open();
   void session.setTools?.([offered('post_message')]);
   void session.setTools?.([offered('post_message'), offered('create_poll')]);
-  session.begin('t1', 'post it and ask');
+  session.sendMessage('t1', 'post it and ask');
   await settle();
   await answerAll();
 
@@ -160,7 +160,7 @@ it('takes two announcements in the order they came, before the turn after them',
 
 it('sends a turn at once when no tools are on their way', async () => {
   const { session } = await open();
-  session.begin('t1', 'just answer');
+  session.sendMessage('t1', 'just answer');
   await settle();
 
   expect(sdk.read).toEqual([{ text: 'just answer', tools: 0 }]);

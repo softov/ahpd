@@ -9,7 +9,7 @@
  * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L55-L302
  */
 
-import type { CommandTerminal } from './session.js';
+import type { CommandTerminal } from './terminals.js';
 
 /** The kinds of shell the reference's tool set has a name for. */
 export type ShellType = 'bash' | 'powershell';

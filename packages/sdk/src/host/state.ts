@@ -1,7 +1,6 @@
 import type { Agent } from '../types/agent.js';
 import type { Account } from '../types/probe.js';
 import type { Bag } from '../types/common.js';
-import type { Peer } from '../types/rpc.js';
 import type { Session } from '../types/session.js';
 
 /**
@@ -136,22 +135,6 @@ export interface Learned {
 export interface Origin {
   clientId: string;
   clientSeq: number;
-}
-
-/**
- * A client's dispatch, as an answer to it needs it: the client that sent it,
- * the channel it meant, the action, and the origin its echo carries.
- */
-export interface Dispatched {
-  peer: Peer;
-  channel: string;
-  action: Record<string, unknown>;
-  origin: Origin;
-  /**
-   * Set once a backend has taken the dispatch through `Start.handed`, to say
-   * its answer later.
-   */
-  taken?: true;
 }
 
 /** What a name this host holds is. */

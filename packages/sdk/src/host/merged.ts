@@ -203,11 +203,10 @@ export function createMerged(ctx: HostContext): Merged {
     if (ctx.closed || fresh === undefined || archived(row.resource) || busy(row.resource) || !idleFor(fresh, days)) return false;
     // The time first, so `shelve` knows the archive is the host's own.
     kept.setAutoArchivedAt?.(idOf(row.resource), new Date(now()).toISOString());
-    // A session whose lead chat runs on another host is archived there, and the bit comes back as that host says it.
+    sessionFlag(ctx, row.resource, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true });
+    // A session whose lead chat runs on another host is archived there too.
     const held = ctx.sessions.get(row.resource);
-    if (held === undefined || ctx.leadOf(held)?.flag?.('archived', true, 'session') !== true) {
-      sessionFlag(ctx, row.resource, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true });
-    }
+    if (held !== undefined) ctx.leadOf(held)?.flag?.('archived', true, 'session');
     log(`archived ${row.resource}: its pull requests are merged (${related.filter((one) => one.state === 'merged').map((one) => one.url).join(', ')})`);
     return true;
   };

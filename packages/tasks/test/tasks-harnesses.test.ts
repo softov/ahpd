@@ -117,7 +117,7 @@ describe('pi and cofold are offered the task tools', () => {
       emit,
       tools: boundFor(tools, 'ana', 'ahp-session:/cofold'),
     } as unknown as Start);
-    session.begin('t1', 'hello');
+    session.sendMessage('t1', 'hello');
     await when(() => finished);
     const offered = (model.requests[0]?.tools ?? []).map((one) => one.name);
     expect(offered).toEqual(expect.arrayContaining(NAMES));

@@ -101,7 +101,7 @@ it('says a model context window and output limit when pi knows them', () => {
 
 it('offers each model the context window pi reports', async () => {
   const { session } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(session.models().map((one) => one.id))
     .toEqual(['anthropic/claude-opus-5', 'openai/gpt-5']);
@@ -113,21 +113,26 @@ it('tells the host once pi has listed its models, and only once', async () => {
   ({ session } = opened({
     onHandshake: () => { heard.push((session?.models() ?? []).map((one) => one.id)); },
   } as Partial<Start>));
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(heard).toEqual([['anthropic/claude-opus-5', 'openai/gpt-5']]);
 });
 
 // The session -------------------------------------------------------------
 
-it('opens a turn with no part, before anything streams into it', async () => {
+/*
+ * The host said the turn's start before it handed the turn here, as the
+ * reference host says a client's action itself, so pi's session says none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2737-L2752
+ */
+it('holds a turn the host handed it with no part, and says no start of it', async () => {
   const { session, types } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const chat = types('chat');
-  expect(chat[0]).toBe('chat/turnStarted');
+  expect(chat).not.toContain('chat/turnStarted');
   // pi wrote nothing, so the turn holds nothing.
   expect(chat).not.toContain('chat/responsePart');
   expect(chat).toContain('chat/turnComplete');
@@ -141,7 +146,7 @@ it('names a turn by the entry pi wrote its prompt under, read after the entry th
   const { session, pi } = opened({ onTurnRecorded: (turnId, entryId) => { recorded.push([turnId, entryId]); } });
   pi.setLeaf('entry-before');
   pi.setPrompted('entry-prompt');
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked).toContainEqual({ kind: 'promptAfter', entryId: 'entry-before' });
   expect(recorded).toEqual([['t1', 'entry-prompt']]);
@@ -155,7 +160,7 @@ it('names a turn by its prompt\'s entry when the session closes while the turn r
   pi.hold();
   pi.setLeaf('entry-before');
   pi.setPrompted('entry-prompt');
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(recorded).toEqual([]);
   session.close();
@@ -165,7 +170,7 @@ it('names a turn by its prompt\'s entry when the session closes while the turn r
 it('names no turn whose prompt pi has no entry for', async () => {
   const recorded: [string, string][] = [];
   const { session } = opened({ onTurnRecorded: (turnId, entryId) => { recorded.push([turnId, entryId]); } });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(recorded).toEqual([]);
 });
@@ -173,12 +178,12 @@ it('names no turn whose prompt pi has no entry for', async () => {
 it('skips a call the model was still writing when the turn stopped, in the snapshot too', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const events = streamed([{ type: 'toolCall', id: 'c1', name: 'write', arguments: {} }]);
   // The call's start and nothing after: the turn stops mid-arguments.
   for (const event of events.slice(0, 2)) pi.raise(event);
-  session.cancel('t1');
+  session.abort();
   await settled();
   const turns = session.chatState().turns as Bag[];
   const row = callIn(turns[0]?.responseParts as Bag[], 'c1');
@@ -188,7 +193,7 @@ it('skips a call the model was still writing when the turn stopped, in the snaps
 it('ends the turn on pi settling, not on the prompt returning', async () => {
   const { session, pi, types } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(types('chat')).not.toContain('chat/turnComplete');
   // A run pi will retry is not a turn that ended.
@@ -207,7 +212,7 @@ it('announces an edit before and after, for the absolute path, on the running tu
     onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'edit', { path: 'src/a.ts', oldText: 'a', newText: 'b' });
   await driveCall(pi, 'c2', 'read', { path: 'src/b.ts' });
@@ -229,7 +234,7 @@ it('settles a write that never ended when the turn does', async () => {
     onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
   } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const elsewhere = join(root, 'elsewhere', 'c.ts');
   await driveCall(pi, 'c1', 'write', { path: elsewhere, content: 'c' });
@@ -250,19 +255,19 @@ it('settles an open edit on its own turn when the prompt throws, and leaks nothi
     pi.raise({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'edit', args: { path: 'a.ts' } });
     throw new Error('provider went away');
   };
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const path = join(root, 'a.ts');
   expect(edits).toEqual([['t1', path, 'before'], ['t1', path, 'after']]);
   pi.backend.prompt = prompt;
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   expect(edits).toHaveLength(2);
 });
 
 it('moves the finished turn out of active and into the transcript', async () => {
   const { session } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const state = session.chatState();
   expect(state.activeTurn).toBeUndefined();
@@ -292,7 +297,7 @@ function ending() {
 
 it('is idle by the time it says a turn completed', async () => {
   const { session, at } = ending();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(at.get('chat/turnComplete')).toBe(Status.Idle);
 });
@@ -300,9 +305,9 @@ it('is idle by the time it says a turn completed', async () => {
 it('is idle by the time it says a turn was cancelled', async () => {
   const { session, pi, at } = ending();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
-  session.cancel('t1');
+  session.abort();
   await settled();
   expect(at.get('chat/turnCancelled')).toBe(Status.Idle);
 });
@@ -310,7 +315,7 @@ it('is idle by the time it says a turn was cancelled', async () => {
 it('has failed by the time it says a turn failed', async () => {
   const { session, pi, at } = ending();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({
     type: 'message_end',
@@ -323,7 +328,8 @@ it('has failed by the time it says a turn failed', async () => {
 
 it('passes the chosen model and its thinking level through to pi', async () => {
   const { session, pi, types } = opened();
-  session.begin('t1', 'hello', { id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
+  session.changeModel({ id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'choose'))
     .toEqual({ kind: 'choose', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
@@ -333,23 +339,24 @@ it('passes the chosen model and its thinking level through to pi', async () => {
 
 it('fails a turn that names a model pi does not have', async () => {
   const { session, pi, last, types } = opened();
-  session.begin('t1', 'hello', { id: 'openrouter/nobody' });
+  session.changeModel({ id: 'openrouter/nobody' });
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(((last('chat/error')?.part as Bag).error as Bag).message)
     .toBe('pi has no model openrouter/nobody');
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(false);
   // The model is where it was, so the next turn runs on it rather than on the
   // one this turn asked for.
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
-  expect((last('chat/turnStarted')?.message as Bag).model)
-    .toEqual({ id: 'anthropic/claude-opus-5' });
+  const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't2');
+  expect((turn?.message as Bag).model).toEqual({ id: 'anthropic/claude-opus-5' });
   expect(types('chat')).toContain('chat/turnComplete');
 });
 
 it('opens a session on a configured model pi does not have', async () => {
   const { session, pi, types } = opened({}, { model: 'openrouter/nobody' });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openrouter/nobody' });
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
@@ -358,56 +365,75 @@ it('opens a session on a configured model pi does not have', async () => {
 
 it('runs a new session on the model the options name', async () => {
   const { session, pi } = opened({}, { model: 'openai/gpt-5' });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openai/gpt-5' });
 });
 
 it('keeps a resumed session on the model its own file recorded', async () => {
   const { session, pi } = opened({ resume: 'pi-session-1' } as Partial<Start>, { model: 'openai/gpt-5' });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'choose')).toBeUndefined();
 });
 
 it('lets a turn choose over the configured model', async () => {
   const { session, pi } = opened({}, { model: 'openai/gpt-5' });
-  session.begin('t1', 'hello', { id: 'anthropic/claude-opus-5' });
+  session.changeModel({ id: 'anthropic/claude-opus-5' });
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.filter((one) => one.kind === 'choose').map((one) => one.id))
     .toEqual(['openai/gpt-5', 'anthropic/claude-opus-5']);
 });
 
 it('carries the model a turn runs on its message', async () => {
-  const { session, last } = opened({}, { model: 'openai/gpt-5' });
-  session.begin('t1', 'hello', { id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } });
+  const { session } = opened({}, { model: 'openai/gpt-5' });
+  session.changeModel({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } });
+  session.sendMessage('t1', 'hello');
   await settled();
-  const wanted = { id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } };
-  expect((last('chat/turnStarted')?.message as Bag).model).toEqual(wanted);
   const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't1');
-  expect((turn?.message as Bag).model).toEqual(wanted);
+  expect((turn?.message as Bag).model).toEqual({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } });
 });
 
 it('carries the configured model when the turn names none', async () => {
-  const { session, last } = opened({}, { model: 'openai/gpt-5' });
-  session.begin('t1', 'hello');
+  const { session } = opened({}, { model: 'openai/gpt-5' });
+  session.sendMessage('t1', 'hello');
   await settled();
-  expect(((last('chat/turnStarted')?.message as Bag).model as Bag).id).toBe('openai/gpt-5');
+  const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't1');
+  expect(((turn?.message as Bag).model as Bag).id).toBe('openai/gpt-5');
 });
 
 it('leaves the model off a turn that has none', async () => {
-  const { session, last } = opened();
-  session.begin('t1', 'hello');
+  const { session } = opened();
+  session.sendMessage('t1', 'hello');
   await settled();
-  expect((last('chat/turnStarted')?.message as Bag).model).toBeUndefined();
+  const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't1');
+  expect((turn?.message as Bag).model).toBeUndefined();
 });
 
-it('steers the running turn rather than queueing behind it', async () => {
+/*
+ * What the host has to say on a turn goes into that turn's prompt, ahead of
+ * the words, as the reference agents put the instructions their host
+ * contributes for a send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+ */
+it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said', async () => {
+  const { session, pi } = opened();
+  session.sendMessage('t1', 'hello', undefined, undefined, { instructions: () => ['Report back to the chat this came from.', ' '] });
+  await settled();
+  session.sendMessage('t2', 'again');
+  await settled();
+  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text))
+    .toEqual(['Report back to the chat this came from.\n\nhello', 'again']);
+});
+
+it('steers the running turn with pi\'s own steer', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
-  expect(session.steer?.('t1', 'actually, stop')).toBe(true);
+  // Answered once pi has read it, which the hand-off waits on.
+  expect(session.sendSteeringMessage?.({ id: 't1', text: 'actually, stop' })).toBeInstanceOf(Promise);
   // The message is built before it is steered, which reads its attachments
   // off disk, so the steer reaches pi a turn of the event loop later.
   await settled();
@@ -416,30 +442,58 @@ it('steers the running turn rather than queueing behind it', async () => {
 
 it('has nothing to steer when no turn is running, and says so', () => {
   const { session } = opened();
-  expect(session.steer?.('t1', 'hello')).toBe(false);
+  expect(session.sendSteeringMessage?.({ id: 't1', text: 'hello' })).toBe(false);
 });
 
-it('says a steering message as it takes it, holds it, and takes it out once pi has read it', async () => {
+/*
+ * The host said the steering message the client set, so pi's session says no
+ * set of its own; the hand-off answers once pi has read it, and its removal is
+ * said then, as the reference agents answer a steering message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
+ */
+it('answers a steering message once pi has read it, and takes it out then', async () => {
   const { session, pi, sent } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
-  expect(session.steer?.('s1', 'actually, stop')).toBe(true);
-  // Said before the call returns, so the host answers the client that sent it.
-  expect(sent.at(-1)?.action).toMatchObject({
-    type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually, stop' },
-  });
-  expect((session.chatState() as Bag).steeringMessage).toMatchObject({ id: 's1', message: { text: 'actually, stop' } });
+  let taken: boolean | undefined;
+  void (session.sendSteeringMessage?.({ id: 's1', text: 'actually, stop' }) as Promise<boolean>).then((answer) => { taken = answer; });
+  expect(sent.some((one) => one.action.type === 'chat/pendingMessageSet')).toBe(false);
 
   await settled();
   // pi says its steering queue as it takes the message, and again once the
   // turn has read it.
   pi.raise({ type: 'queue_update', steering: ['actually, stop'], followUp: [] });
+  await settled();
   expect(sent.some((one) => one.action.type === 'chat/pendingMessageRemoved')).toBe(false);
+  expect(taken).toBeUndefined();
   pi.raise({ type: 'queue_update', steering: [], followUp: [] });
+  await settled();
   expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
     .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
-  expect((session.chatState() as Bag).steeringMessage).toBeUndefined();
+  expect(taken).toBe(true);
+});
+
+/*
+ * A steering message the turn ended before reading goes back to the host, as
+ * the reference agent hands one back unsent, for the host to steer the turn
+ * that runs then or run it next; pi is told to let go of it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
+ */
+it('hands a steering message back when the turn ends before pi reads it', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  let taken: boolean | undefined;
+  void (session.sendSteeringMessage?.({ id: 's1', text: 'actually, stop' }) as Promise<boolean>).then((answer) => { taken = answer; });
+  await settled();
+  pi.raise({ type: 'queue_update', steering: ['actually, stop'], followUp: [] });
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+  expect(taken).toBe(false);
+  expect(pi.asked.some((one) => one.kind === 'clearSteering')).toBe(true);
+  expect(sent.some((one) => one.action.type === 'chat/pendingMessageRemoved')).toBe(false);
 });
 
 /*
@@ -447,17 +501,17 @@ it('says a steering message as it takes it, holds it, and takes it out once pi h
  * runs on in pi, so every client holds it running: the message comes out of
  * the chat and the reason goes to the log, as the reference drops a steering
  * message it cannot hand its agent.
- * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
  */
 it('keeps the turn running when pi will not take a steer, and takes the message out', async () => {
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const { session, pi, sent } = opened();
     pi.hold();
-    session.begin('t1', 'hello');
+    session.sendMessage('t1', 'hello');
     await settled();
     pi.failSteer(new Error('pi is compacting'));
-    expect(session.steer?.('s1', 'actually, stop')).toBe(true);
+    await expect(session.sendSteeringMessage?.({ id: 's1', text: 'actually, stop' })).resolves.toBe(true);
     await settled();
     expect(sent.some((one) => one.action.type === 'chat/error')).toBe(false);
     expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
@@ -471,78 +525,80 @@ it('keeps the turn running when pi will not take a steer, and takes the message 
 });
 
 /*
- * A turn handed while one runs takes its place at once, as the reducer replaces
- * the active turn, and pi runs it once the turn in front of it is over: the
- * reference host hands a client's start to its agent at once, and its agents
- * run each in turn.
+ * A turn handed while one runs is a send of its own, which pi runs once the
+ * turn in front of it is over, as the reference agent runs each send after the
+ * one before it. The host said its start, so it took the running turn's place
+ * in every client's state, and the turn it replaced runs on into no history.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
  */
-it('says a second turn at once in the first one\'s place, and runs it when the first turn ends', async () => {
+it('runs a second turn handed while the first runs once the first ends, the first in no history', async () => {
   const { session, pi, types } = opened();
   pi.hold();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settled();
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await settled();
-  expect(types('chat')).not.toContain('chat/pendingMessageSet');
-  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
+  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t1');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
 
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
-  // Said once, and the turn it took the place of is in no history.
-  expect(types('chat').filter((type) => type === 'chat/turnStarted')).toHaveLength(2);
+  expect(types('chat')).not.toContain('chat/turnStarted');
   expect((session.chatState().turns as { id: string }[]).map((turn) => turn.id)).not.toContain('t1');
   expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
 });
 
 /*
- * A stop is said to every client when it is taken, and pi lets the turn go
- * after. A turn sent between the two is said at once to a chat every client
- * holds idle, and runs once pi is free, as the reference host hands a client's
- * turn to its agent while an abort may still be under way.
+ * A stop ends the turn in every client's state when the host takes it, and pi
+ * lets the turn go after. A turn sent between the two runs once pi is free, as
+ * the reference host hands a client's turn to its agent while an abort may
+ * still be under way; the stopped turn ends in the history as stopped.
  */
-it('says a turn sent while pi lets a stopped turn go at once, and runs it once pi is free', async () => {
+it('runs a turn sent while pi lets a stopped turn go once pi is free', async () => {
   const { session, pi, types } = opened();
   pi.hold();
   pi.holdStops();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settled();
-  session.cancel('t1');
+  session.abort();
   await settled();
-  session.begin('t2', 'second');
+  session.sendMessage('t2', 'second');
   await settled();
-  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
 
   pi.raise({ type: 'agent_settled', aborted: true });
   await settled();
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
-  expect(types('chat').filter((type) => type === 'chat/turnStarted')).toHaveLength(2);
+  expect(types('chat')).not.toContain('chat/turnStarted');
   expect((session.chatState().turns as { id: string; state?: string }[]).map((turn) => [turn.id, turn.state])).toEqual([['t1', 'cancelled']]);
+  expect((session.chatState().activeTurn as { id?: string } | undefined)?.id).toBe('t2');
 });
 
-it('takes up a message queued while pi lets a stopped turn go at once, and runs it once pi is free', async () => {
-  const { session, pi, last } = opened();
+/*
+ * A stop drops the turns handed behind the one it stops, as the reference
+ * stop aborts the agent's work in flight and drops what waits behind it: the
+ * host ended them in every client's state, and pi neither runs nor ends them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
+ */
+it('drops a turn handed behind the one a stop ends, saying nothing of it', async () => {
+  const { session, pi, sent } = opened();
   pi.hold();
-  pi.holdStops();
-  session.begin('t1', 'first');
+  session.sendMessage('t1', 'first');
   await settled();
-  session.cancel('t1');
+  session.sendMessage('t2', 'second');
   await settled();
-  session.queue('q1', 'later');
+  session.abort();
   await settled();
-  expect(last('chat/turnStarted')?.queuedMessageId).toBe('q1');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first']);
-
-  pi.raise({ type: 'agent_settled', aborted: true });
-  await settled();
-  expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'later']);
+  expect(sent.filter((one) => one.action.turnId === 't2')).toEqual([]);
+  expect(session.chatState().turns).toEqual([]);
+  expect(session.chatState().activeTurn).toBeUndefined();
 });
 
 it('takes pi its own name for the conversation as the title', async () => {
   const { session, pi, last } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({ type: 'session_info_changed', name: 'Refactor the parser' });
   expect(last('session/titleChanged')?.title).toBe('Refactor the parser');
@@ -551,14 +607,14 @@ it('takes pi its own name for the conversation as the title', async () => {
 
 it('names an unnamed session after the first thing said in it', async () => {
   const { session } = opened();
-  session.begin('t1', 'Fix the tunnel forwarder\nand its test');
+  session.sendMessage('t1', 'Fix the tunnel forwarder\nand its test');
   await settled();
   expect(session.title()).toBe('Fix the tunnel forwarder');
 });
 
 it('renames pi too, so the title survives outside this host', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   session.setTitle?.('Something else');
   expect(pi.asked.find((one) => one.kind === 'rename')?.title).toBe('Something else');
@@ -566,7 +622,7 @@ it('renames pi too, so the title survives outside this host', async () => {
 
 it('keeps a person\'s name when pi offers one afterwards', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // A person's rename, which the host announces and this only keeps: a name
   // somebody chose is not pi's to replace, the way ACP's `renamed` guard says.
@@ -584,14 +640,14 @@ it('opens pi under the chat\'s own name, so a second chat is a conversation of i
    */
   const CHAT = '99999999-8888-7777-6666-555555555555';
   const { session, pi } = opened({ chatId: CHAT });
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.opens[0]?.id).toBe(CHAT);
 });
 
 it('reports the level pi moved to as a value in force, which a client reduces', async () => {
   const { session, pi, last } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({ type: 'thinking_level_changed', level: 'high' as never });
   // Through the protocol's reducer, which merges the action's `config` into
@@ -606,7 +662,7 @@ it('reports the level pi moved to as a value in force, which a client reduces', 
 
 it('truncates by moving pi own leaf, which is what a rewind is', async () => {
   const { session, pi } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
 });
@@ -614,7 +670,7 @@ it('truncates by moving pi own leaf, which is what a rewind is', async () => {
 it('answers where a watched turn ended, and nothing for one it never saw end', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // Still running, so there is no point to name yet.
   expect(session.endPoint?.('t1')).toBeUndefined();
@@ -628,7 +684,7 @@ it('answers where a watched turn ended, and nothing for one it never saw end', a
 it('names where a watched turn ended as the point a fork copies through', async () => {
   const { session, pi } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   // Still running, so there is no point to name yet.
   expect(session.forkPoint?.('t1')).toBeUndefined();
@@ -644,14 +700,6 @@ it('names where a watched turn ended as the point a fork copies through', async 
   expect(session.forkPoint?.('never-watched')).toBeUndefined();
 });
 
-it('names no point for a !command turn, which is not pi running', async () => {
-  const { session } = opened();
-  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
-  await settled();
-  expect(session.forkPoint?.('t1')).toBeUndefined();
-  expect(session.endPoint?.('t1')).toBeUndefined();
-});
-
 /*
  * A cut pi refuses is logged, and the turn runs on pi's leaf: the reference
  * host logs an agent's cut that failed (agentSideEffects.ts L1982-L1986 at
@@ -661,7 +709,7 @@ it('runs the turn when pi refuses to move the leaf back, and logs the refusal', 
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   pi.refuseRewind();
   const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
   expect(last('chat/error')).toBeUndefined();
@@ -673,7 +721,7 @@ it('runs the turn when pi refuses to move the leaf back, and logs the refusal', 
 it('fails the turn on the last assistant message ending in error', async () => {
   const { session, pi, last } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({
     type: 'message_end',
@@ -689,7 +737,7 @@ it('fails the turn on the last assistant message ending in error', async () => {
 it('does not fail a turn pi retried and then answered', async () => {
   const { session, pi, types } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({
     type: 'message_end',
@@ -708,10 +756,10 @@ it('does not fail a turn pi retried and then answered', async () => {
 it('keeps a cancelled turn cancelled when its last message was aborted', async () => {
   const { session, pi, types } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({ type: 'message_end', message: { role: 'assistant', stopReason: 'aborted' } } as never);
-  session.cancel('t1');
+  session.abort();
   await settled();
   expect(types('chat')).toContain('chat/turnCancelled');
   expect(types('chat')).not.toContain('chat/error');
@@ -720,7 +768,7 @@ it('keeps a cancelled turn cancelled when its last message was aborted', async (
 it('sends what the turn used, before it ends, and keeps it on the transcript', async () => {
   const { session, pi, types, last } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({
     type: 'message_end',
@@ -750,177 +798,15 @@ it('sends what the turn used, before it ends, and keeps it on the transcript', a
 
 it('sends no usage for a turn that had no assistant message', async () => {
   const { session, types } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   expect(types('chat')).not.toContain('chat/usage');
-});
-
-it('sends no usage for a !command turn, which is not pi running', async () => {
-  const { session, types } = opened();
-  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
-  await settled();
-  expect(types('chat')).not.toContain('chat/usage');
-});
-
-/*
- * Steering that came too late to steer a turn runs next, ahead of queued
- * messages, in the order it came, and the chat shows the steering message set
- * last, as the protocol's reducer holds one (queueDrainContribution.ts
- * L266-L267, agentSessionMessage.ts L17-L22 at a4e689ae).
- */
-it('runs two waiting steering messages in the order they were sent, ahead of what is queued', async () => {
-  const { session, pi, sent } = opened();
-  pi.hold();
-  session.begin('t1', 'hello');
-  await settled();
-  session.queue('waiting', 'second');
-  session.queue('s1', 'first steer', undefined, undefined, undefined, undefined, 'steering');
-  session.queue('s2', 'second steer', undefined, undefined, undefined, undefined, 'steering');
-  await settled();
-  pi.raise({ type: 'agent_settled', aborted: false });
-  await settled();
-
-  const started = sent.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.queuedMessageId);
-  expect(started).toEqual([undefined, 's1']);
-  expect((session.chatState().steeringMessage as Bag | undefined)?.id).toBe('s2');
-  expect((session.chatState().queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
-});
-
-/*
- * A queued message with nothing running starts at once, as a turn naming it:
- * "the server SHOULD immediately consume it", and the reference host starts
- * an accepted queued message while its chat is idle, as `chat/turnStarted`
- * with `queuedMessageId` and nothing said before it (queueDrainContribution.ts
- * L117-L119, L283-L292 at a4e689ae).
- */
-it('starts a message queued with nothing running at once, as a turn naming it', async () => {
-  const { session, sent, pi } = opened();
-  session.queue('q1', 'only');
-  await settled();
-  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
-  expect(said.map((one) => one.type).slice(0, 2)).toEqual(['chat/pendingMessageSet', 'chat/turnStarted']);
-  expect(said.find((one) => one.type === 'chat/turnStarted')?.queuedMessageId).toBe('q1');
-  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
-  expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('only');
-});
-
-/*
- * A stopped turn starts nothing behind it: the reference host leaves queued
- * messages queued, and a message set while idle starts the first of them
- * (agentSideEffects.ts L1950-L1954, queueDrainContribution.ts L245-L286 at
- * a4e689ae).
- */
-it('starts nothing behind a stopped turn, and its queue\'s head once a message is queued after it', async () => {
-  const { session, sent, pi } = opened();
-  pi.hold();
-  session.begin('t1', 'hello');
-  await settled();
-  session.queue('waiting', 'second');
-  await settled();
-  session.cancel('t1');
-  await settled();
-  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
-    .filter((one) => one.type === 'chat/turnStarted');
-  expect(session.chatState().activeTurn).toBeUndefined();
-  expect(started()).toHaveLength(1);
-  session.queue('later', 'third');
-  await settled();
-  expect(started().at(-1)?.queuedMessageId).toBe('waiting');
-});
-
-/*
- * A client's reorder while nothing runs runs the reference host's drain, which
- * starts the head of a queue a stop left waiting.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
- */
-it('starts the head once a client reorders a stopped turn\'s queue', async () => {
-  const { session, pi, sent } = opened();
-  pi.hold();
-  session.begin('t1', 'hello');
-  await settled();
-  session.queue('waiting', 'second');
-  session.queue('later', 'third');
-  await settled();
-  session.cancel('t1');
-  await settled();
-  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
-    .filter((one) => one.type === 'chat/turnStarted');
-  expect(started()).toHaveLength(1);
-  session.reorder(['later', 'waiting']);
-  await settled();
-  expect(started().at(-1)?.queuedMessageId).toBe('later');
-});
-
-/*
- * A failed turn starts nothing behind it, as the reference host drains its
- * queue after a success alone, and a client taking a message back while nothing
- * runs starts the head.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
- */
-it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
-  const { session, pi, sent } = opened();
-  pi.hold();
-  // A model pi does not list fails the turn before anything is prompted.
-  session.begin('t1', 'hello', { id: 'nowhere/none' });
-  session.queue('waiting', 'second');
-  session.queue('later', 'third');
-  await settled();
-  const started = (): Bag[] => sent.filter((one) => one.channel === 'chat').map((one) => one.action)
-    .filter((one) => one.type === 'chat/turnStarted');
-  expect(sent.some((one) => one.action.type === 'chat/error')).toBe(true);
-  expect(started().map((one) => one.turnId)).toEqual(['t1']);
-  session.unqueue('waiting');
-  await settled();
-  expect(started().at(-1)?.queuedMessageId).toBe('later');
-});
-
-/*
- * Nothing starts behind a failure a client can resume, a message queued after it
- * included, as the reference host's drain holds the queue there.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L262-L265
- */
-it('starts nothing behind a failure a client can resume, a message queued after it included', async () => {
-  const { session, pi, sent } = opened();
-  pi.hold();
-  session.begin('t1', 'hello');
-  await settled();
-  session.queue('waiting', 'second');
-  await settled();
-  pi.raise({
-    type: 'message_end',
-    message: { role: 'assistant', stopReason: 'error', errorMessage: '429 rate limited' },
-  } as never);
-  pi.raise({ type: 'agent_settled', aborted: false });
-  await settled();
-  session.queue('later', 'third');
-  await settled();
-  session.unqueue('later');
-  await settled();
-  const started = sent.filter((one) => one.action.type === 'chat/turnStarted');
-  expect(started.map((one) => one.action.turnId)).toEqual(['t1']);
-  expect((session.chatState().queuedMessages as Bag[]).map((one) => one.id)).toEqual(['waiting']);
-});
-
-it('starts a queued !command as a turn naming it, with nothing said before it', async () => {
-  const { session, pi, sent } = opened();
-  pi.hold();
-  session.begin('t1', 'hello');
-  await settled();
-  session.ran?.('t2', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }), 'q1');
-  await settled();
-  pi.raise({ type: 'agent_settled', aborted: false });
-  await settled();
-  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
-  const started = said.filter((one) => one.type === 'chat/turnStarted');
-  expect(started.at(-1)?.message).toMatchObject({ text: '!echo hi' });
-  expect(started.at(-1)?.queuedMessageId).toBe('q1');
-  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
 });
 
 it('sends no usage for an error that used no tokens', async () => {
   const { session, pi, types } = opened();
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({
     type: 'message_end',
@@ -952,7 +838,7 @@ it('fails the turn with what went wrong when pi cannot run it', async () => {
   } as Start, (async () => { throw new Error('no model provider is configured'); }) as OpenPi);
   void pi;
 
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const failure = sent.find((one) => one.action.type === 'chat/error')?.action;
   expect(((failure?.part as Bag).error as Bag).message).toBe('no model provider is configured');
@@ -983,7 +869,7 @@ it('claims only the directories the host serves', () => {
 
 it('offers pi models before a session exists, as a session offers them', async () => {
   const { session, pi } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const agent = piAgent({}, [root], pi.backend.models);
   const probed = await agent.probe?.();
@@ -1003,7 +889,7 @@ it('has no transcript for a session with no file and no record', async () => {
 
 it('reads back the turns of a session it did watch', async () => {
   const { session } = opened();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
   const turns = await agent.transcript?.('pi-session-1');
@@ -1126,7 +1012,7 @@ it('seeds from PI_CODING_AGENT_DIR when the daemon has it', () => {
 const failedTurn = async () => {
   const one = opened();
   one.pi.hold();
-  one.session.begin('t1', 'hello');
+  one.session.sendMessage('t1', 'hello');
   await settled();
   for (const event of streamed([{ type: 'text', text: 'Reading.' }])) one.pi.raise(event);
   one.pi.raise({
@@ -1156,21 +1042,26 @@ it('does not mark a turn resumable when pi failed before it had the prompt', asy
     schema: () => ({}),
     emit: (channel, action) => { sent.push({ channel, action }); },
   } as Start, (async () => { throw new Error('no model provider is configured'); }) as OpenPi);
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const part = sent.find((one) => one.action.type === 'chat/error')?.action.part as Bag;
   expect(part.resumable).toBeUndefined();
   expect(((session.chatState().turns as Bag[])[0]!.responseParts as Bag[]).at(-1)).toEqual(part);
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t1')).toThrow();
 });
 
-it('reopens a failed turn on resume, with its parts, and says so first', async () => {
+/*
+ * The host said the client's resume before it asked here, as the reference
+ * host says a client's action itself, so pi's session says none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2737-L2752
+ */
+it('reopens a failed turn on resume, with its parts, and says no resume of it', async () => {
   const { session, pi, sent } = await failedTurn();
   const before = sent.length;
   const parts = ((session.chatState().turns as Bag[])[0]!.responseParts as Bag[]).slice();
   pi.resumeWith(new Promise(() => {}));
-  expect(session.resume?.('t1')).toBe(true);
-  expect(sent[before]?.action).toEqual({ type: 'chat/turnResume', turnId: 't1' });
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
+  expect(sent.slice(before).map((one) => one.action.type)).not.toContain('chat/turnResume');
   const state = session.chatState();
   expect(state.turns).toEqual([]);
   const active = state.activeTurn as Bag;
@@ -1184,7 +1075,7 @@ it('reopens a failed turn on resume, with its parts, and says so first', async (
 
 it('ends a resumed run that answers as complete, with the turn once in turns', async () => {
   const { session, pi, types } = await failedTurn();
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   // What the resumed run writes, raised before the fake's `resume` returns.
   for (const event of streamed([{ type: 'text', text: 'Done.' }])) pi.raise(event);
   await settled();
@@ -1199,7 +1090,7 @@ it('ends a resumed run that answers as complete, with the turn once in turns', a
 
 it('ends a resumed run that fails again with a second error, which is resumable', async () => {
   const { session, pi, last } = await failedTurn();
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   pi.raise({
     type: 'message_end',
     message: { role: 'assistant', stopReason: 'error', errorMessage: '500 overloaded' },
@@ -1210,23 +1101,23 @@ it('ends a resumed run that fails again with a second error, which is resumable'
   expect(turn.state).toBe('error');
   const errors = (turn.responseParts as Bag[]).filter((part) => part.kind === 'error');
   expect(errors.map((part) => (part.error as Bag).message)).toEqual(['429 rate limited', '500 overloaded']);
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
 });
 
 it('fails a resumed turn, not resumable, when pi has no failed reply to continue from', async () => {
   const { session, pi, last } = await failedTurn();
   pi.resumeWith(false);
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   await settled();
   const part = last('chat/error')?.part as Bag;
   expect(part.resumable).toBeUndefined();
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t1')).toThrow();
 });
 
 it('keeps a resumed turn resumable when pi throws as it continues', async () => {
   const { session, pi, last } = await failedTurn();
   pi.resumeWith(new Error('connection reset'));
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   await settled();
   expect(last('chat/error')?.part).toMatchObject({ error: { message: 'connection reset' }, resumable: true });
 });
@@ -1234,30 +1125,30 @@ it('keeps a resumed turn resumable when pi throws as it continues', async () => 
 it('refuses a resume that names no failed, resumable latest turn', async () => {
   const { session, pi } = await failedTurn();
   // Not the latest turn's id.
-  expect(session.resume?.('t0')).toBe(false);
+  expect(() => session.resumeTurn?.('t0')).toThrow();
   // A turn is running.
   pi.hold();
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t1')).toThrow();
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
   // The latest turn completed.
-  expect(session.resume?.('t2')).toBe(false);
-  expect(session.resume?.('t1')).toBe(false);
+  expect(() => session.resumeTurn?.('t2')).toThrow();
+  expect(() => session.resumeTurn?.('t1')).toThrow();
   // A closed session.
   const closed = await failedTurn();
   closed.session.close();
-  expect(closed.session.resume?.('t1')).toBe(false);
+  expect(() => closed.session.resumeTurn?.('t1')).toThrow();
   expect(pi.asked.some((one) => one.kind === 'resume')).toBe(false);
 });
 
 it('ends a resumed run cancelled when it is stopped', async () => {
   const { session, pi, types } = await failedTurn();
   pi.resumeWith(new Promise(() => {}));
-  expect(session.resume?.('t1')).toBe(true);
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
   await settled();
-  session.cancel('t1');
+  session.abort();
   await settled();
   expect(types('chat').slice(-1)).toEqual(['chat/turnCancelled']);
   expect((session.chatState().turns as Bag[])[0]?.state).toBe('cancelled');

@@ -129,7 +129,7 @@ it('sends a span for the turn, once the turn has ended', async () => {
   const chat = chatUriFor('ahp-session:/t');
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await new Promise((resolve) => { setTimeout(resolve, 60); });
 
@@ -152,7 +152,7 @@ it('counts turns cumulatively, so a collector that arrives late reads a total', 
   const chat = chatUriFor('ahp-session:/m');
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await new Promise((resolve) => { setTimeout(resolve, 60); });
 

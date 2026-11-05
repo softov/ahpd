@@ -144,10 +144,14 @@ describe('choosing a model', () => {
     expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
     const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
-    // A PowerShell script is nothing to a bash tool, and a malformed list is refused rather than written.
+    // A PowerShell script is nothing to a bash tool, and a malformed list is
+    // said as the client sent it, as the reference host checks no value's
+    // type, but the backend does not take it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L150
     expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
     expect((await before('make')).hookSpecificOutput).toBeUndefined();
-    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
+    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'zsh', script: 'x' }]);
+    expect((await before('make')).hookSpecificOutput).toBeUndefined();
     // Cleared, and the file with it.
     expect(await set([])).toEqual([]);
     expect(existsSync(path)).toBe(false);
@@ -216,7 +220,7 @@ describe('choosing a model', () => {
     expect(await sdk.canUseTool?.('Bash', {}, { toolUseID: 'c1' })).toMatchObject({ behavior: 'deny' });
   });
 
-  it('refuses a permissions value that is not one, and takes one that is', async () => {
+  it('says a permissions value as the client sent it, and takes one that is one', async () => {
     const { client, peer: p, uri } = await running();
     const set = async (value: unknown) => {
       client.handle({
@@ -228,11 +232,12 @@ describe('choosing a model', () => {
         rejectionReason?: string; action?: { config?: Record<string, unknown> };
       };
     };
-    // A client sending a string where the schema says an object should hear
-    // that the value was not taken, rather than have it quietly ignored.
-    expect(await set('all')).toMatchObject({ rejectionReason: expect.stringContaining('permissions') });
-    // And the good one is echoed rather than refused - asserted here so this
-    // cannot pass in a world where every value is turned away.
+    // The reference host checks a value against its property's list and
+    // nothing else, so a string where the schema says an object is said, and
+    // the backend's refusal of it is this host's log.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L150
+    expect((await set('all')).rejectionReason).toBeUndefined();
+    // And the good one is echoed with its value.
     const took = await set({ allow: ['Read'], deny: [] });
     expect(took.rejectionReason).toBeUndefined();
     expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });
@@ -262,7 +267,7 @@ describe('choosing a model', () => {
         // `ModelSelection`, which is an object. This test used to send a bare
         // string and the host used to read one, so the two agreed with each
         // other and with nothing a client sends.
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'haiku' } } },
       },
     });
     await settle();
@@ -282,7 +287,7 @@ describe('choosing a model', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'haiku' } } },
       },
     });
     await settle();
@@ -437,7 +442,7 @@ describe('a session\'s config across a restart', () => {
     const client = await hostOnFile();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options;
@@ -624,7 +629,7 @@ describe('a session\'s config across a restart', () => {
     const { client, said } = await staleHost({ permissionMode: 'nope', permissions: { allow: ['Bash'] } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     const options = sessionQueries().at(-1)?.options;
@@ -657,7 +662,7 @@ describe('a session\'s config across a restart', () => {
     const { client } = await staleHost(config, preset);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options as { settings?: Record<string, unknown> } | undefined;

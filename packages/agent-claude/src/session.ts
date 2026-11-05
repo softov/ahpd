@@ -75,8 +75,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     activity: activityOf(emit),
     startedAt: 0,
     failed: undefined as string | undefined,
-    interrupted: false,
-    stopAnswers: undefined as Set<string> | undefined,
+    rebind: undefined as unknown,
     ran: undefined as string | undefined,
     streaming: undefined as string | undefined,
     wake: undefined as (() => void) | undefined,
@@ -84,7 +83,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
     peers: [...(options.additional ?? [])] as string[],
     steering: undefined as Bag | undefined,
     owed: new Map<string, Owed>(),
-    deferred: false,
     answering: undefined as string | undefined,
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
     running: undefined as string | undefined,
@@ -270,14 +268,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // when the field is absent, and assuming it is not the same as being
       // told. Every chat here is one somebody can type into.
       interactivity: 'full',
-      // A steering message no turn was running to take waits ahead of the
-      // queue, and is still a steering message while it waits: the one set
-      // last, as the protocol's reducer holds the latest.
-      ...(ctx.steering !== undefined
-        ? { steeringMessage: ctx.steering }
-        : ctx.queued.filter((held) => held.shown === true)
-          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
-      queuedMessages: ctx.queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
     /**

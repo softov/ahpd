@@ -141,7 +141,7 @@ const begin = (
 ): void => {
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
 };
 
@@ -293,7 +293,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   for (const [turnId, text] of [['t1', 'write one'], ['t2', 'write two']]) {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length >= (turnId === 't1' ? 1 : 2));
   }
@@ -755,7 +755,7 @@ it('lands a steer sent during a pause after the answer', async () => {
   // and keeps reading, so the message is held rather than refused.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 'steer-1', message: { text: 'make it short' } } },
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 'steer-1', message: { origin: { kind: 'user' }, text: 'make it short' } } },
   });
   await settle();
 
@@ -814,7 +814,7 @@ it('stops a paused run, settles its entry and ends the turn cancelled', async ()
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => ended(p, chatUri));
 

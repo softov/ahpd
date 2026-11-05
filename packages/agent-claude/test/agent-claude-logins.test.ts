@@ -185,8 +185,8 @@ const ofTurn = (chat: Bag[], type: string, turnId: string): Bag[] =>
   chat.filter((action) => action.type === type && action.turnId === turnId);
 
 /** Run one turn to its answer. */
-const turn = async (session: { begin: (id: string, text: string) => void }, id: string, text: string): Promise<void> => {
-  session.begin(id, text);
+const turn = async (session: { sendMessage: (id: string, text: string) => unknown }, id: string, text: string): Promise<void> => {
+  session.sendMessage(id, text);
   await settle();
   sdk.push(...answered(id));
   await settle();
@@ -219,7 +219,7 @@ describe("a turn's login", () => {
   it('refuses a turn whose record names logins and has none open, and names each one', async () => {
     const { session, chat } = open({ logins: ['gone', 'away'] }, twoLogins());
     await settle();
-    session.begin('t1', 'one');
+    session.sendMessage('t1', 'one');
     await settle();
     const failed = ofTurn(chat, 'chat/error', 't1');
     expect(failed).toHaveLength(1);
@@ -290,7 +290,7 @@ describe("a turn's login", () => {
     expect(sdk.queries).toHaveLength(1);
 
     close();
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(sdk.queries).toHaveLength(2);
     expect(tokenOf()).toBe('token-work');
@@ -301,7 +301,7 @@ describe("a turn's login", () => {
     await settle();
 
     opened(logins, 'personal', 'token-personal');
-    session.begin('t4', 'four');
+    session.sendMessage('t4', 'four');
     await settle();
     expect(sdk.queries).toHaveLength(3);
     expect(tokenOf()).toBe('token-personal');
@@ -316,7 +316,7 @@ describe("a turn's login", () => {
 
     // A put closes the connector and opens it again with the new token.
     opened(logins, 'work', 'token-work-again');
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     expect(sdk.queries).toHaveLength(2);
     expect(tokenOf()).toBe('token-work-again');
@@ -331,7 +331,7 @@ describe("a turn's login", () => {
     await turn(session, 't1', 'one');
 
     values = { logins: ['work'] };
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     expect(sdk.queries).toHaveLength(2);
     expect(tokenOf()).toBe('token-work');
@@ -339,7 +339,7 @@ describe("a turn's login", () => {
     await settle();
 
     values = { logins: [] };
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(sdk.queries).toHaveLength(3);
     expect(tokenOf()).toBeUndefined();
@@ -417,7 +417,7 @@ const answeredOnce = async (logins: Logins, names = ['work', 'personal'], extra:
 describe('a failed login', () => {
   it('moves a turn a 429 failed before any part to the next login, cut back to the turn before it', async () => {
     const { session, chat } = await answeredOnce(twoLogins());
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     const first = sdk.said.at(-1);
     sdk.push(...failure('rate_limit'));
@@ -438,7 +438,7 @@ describe('a failed login', () => {
 
     // A failure that names no retry time is not remembered: the next turn
     // starts on the first login again.
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(sdk.queries).toHaveLength(3);
     expect(tokenOf()).toBe('token-work');
@@ -452,7 +452,7 @@ describe('a failed login', () => {
     ] as const) {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
-      session.begin('t2', 'two');
+      session.sendMessage('t2', 'two');
       await settle();
       sdk.push(...failure(error, said));
       await settle();
@@ -469,7 +469,7 @@ describe('a failed login', () => {
     opened(logins, 'personal', 'token-personal');
     const reset = Math.floor(clock.now / 1000) + 3600;
     const { session } = await answeredOnce(logins);
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('rate_limit', SPENT, reset));
     await settle();
@@ -487,7 +487,7 @@ describe('a failed login', () => {
 
     // Once the reset passes, a turn starts on the first login again.
     clock.now = reset * 1000 + 1;
-    session.begin('t4', 'four');
+    session.sendMessage('t4', 'four');
     await settle();
     expect(tokenOf()).toBe('token-work');
     expect(sdk.said.at(-1)).toMatchObject({ content: 'four' });
@@ -502,7 +502,7 @@ describe('a failed login', () => {
     logins.onCall = (id, outcome) => { calls.push({ id, outcome }); };
     const reset = Math.floor(clock.now / 1000) + 3600;
     const { session } = await answeredOnce(logins);
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('rate_limit', SPENT, reset));
     await settle();
@@ -519,7 +519,7 @@ describe('a failed login', () => {
   it('brings a resting login back at once when a put opens it again', async () => {
     const logins = twoLogins();
     const { session } = await answeredOnce(logins);
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('rate_limit', SPENT, inAnHour()));
     await settle();
@@ -528,7 +528,7 @@ describe('a failed login', () => {
     await settle();
 
     opened(logins, 'work', 'token-work-again');
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(tokenOf()).toBe('token-work-again');
   });
@@ -538,10 +538,10 @@ describe('a failed login', () => {
     const { session, chat } = await answeredOnce(twoLogins(), ['work', 'personal'], {
       onTurnRecorded: (turnId: string, transcriptId: string) => { recorded.push([turnId, transcriptId]); },
     });
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     const first = sdk.said.at(-1);
-    expect(session.steer?.('s1', 'and three')).toBe(true);
+    expect(session.sendSteeringMessage?.({ id: 's1', text: 'and three' })).toBe(true);
     await settle();
     const held = sdk.said.at(-1);
     expect(held).toMatchObject({ content: 'and three', query: 0 });
@@ -566,7 +566,8 @@ describe('a failed login', () => {
     sdk.push(...answeredFor(String(steered?.uuid), 'answer three'));
     await settle();
     expect(ofTurn(chat, 'chat/turnComplete', 't2')).toHaveLength(1);
-    expect(chat.filter((action) => action.type === 'chat/turnStarted').map((action) => action.turnId)).toEqual(['t1', 't2']);
+    // The host says each turn's start, and the session none.
+    expect(chat.filter((action) => action.type === 'chat/turnStarted')).toEqual([]);
     const t2 = JSON.stringify(chat.filter((action) => action.turnId === 't2'));
     expect(t2).toContain('answer two');
     expect(t2).toContain('answer three');
@@ -574,14 +575,14 @@ describe('a failed login', () => {
 
   it('sends a steering message whose attachments were still being read at the move to the next login once', async () => {
     const { session } = await answeredOnce(twoLogins());
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     const note = join(mkdtempSync(join(tmpdir(), 'ahpd-logins-note-')), 'note.txt');
     writeFileSync(note, 'one\n');
     let release = (): void => {};
     blocks.gate = new Promise<void>((resolve) => { release = resolve; });
     const attachment = { type: 'resource', uri: `file://${note}`, label: 'note.txt', contentType: 'text/plain' } as unknown as MessageAttachment;
-    expect(session.steer?.('s1', 'and three', [attachment])).toBe(true);
+    expect(session.sendSteeringMessage?.({ id: 's1', text: 'and three', attachments: [attachment] })).toBe(true);
     await settle();
     // Not sent yet: its attachment is still being read as the move comes.
     expect(sdk.said.map((one) => one.content)).toEqual(['one', 'two']);
@@ -597,52 +598,9 @@ describe('a failed login', () => {
     expect(sdk.said.filter((one) => one.query === 0)).toHaveLength(2);
   });
 
-  it('runs a turn opened for a steering message again on the next login, with the message as its prompt', async () => {
-    const recorded: [string, string][] = [];
-    const { session, chat } = await answeredOnce(twoLogins(), ['work', 'personal'], {
-      onTurnRecorded: (turnId: string, transcriptId: string) => { recorded.push([turnId, transcriptId]); },
-    });
-    session.begin('t2', 'two');
-    await settle();
-    const prompt = String(sdk.said.at(-1)?.uuid);
-    sdk.push({
-      type: 'assistant', parent_tool_use_id: null, uuid: 'part-t2', session_id: 'cli-1', user_message_uuid: prompt,
-      message: { id: 'msg-t2', role: 'assistant', model: 'claude-x', content: [{ type: 'text', text: 'partly' }] },
-    });
-    await settle();
-    expect(session.steer?.('s1', 'and three')).toBe(true);
-    await settle();
-    const held = String(sdk.said.at(-1)?.uuid);
-    sdk.push({ type: 'command_lifecycle', command_uuid: held, state: 'queued', session_id: 'cli-1' });
-    await settle();
-    // Stopped with the message held, which opens the message's own turn.
-    session.cancel('t2');
-    await settle();
-    expect(chat.filter((action) => action.type === 'chat/turnStarted').at(-1)).toMatchObject({ turnId: held, queuedMessageId: 's1' });
-    sdk.push({ type: 'result', subtype: 'success', is_error: false, session_id: 'cli-1', duration_ms: 5, user_message_uuids: [prompt] });
-    // The CLI's attempt at the message, refused.
-    sdk.push(...failure('rate_limit', SPENT, inAnHour())
-      .map((frame) => (frame.type === 'assistant' ? { ...frame, user_message_uuid: held } : frame)));
-    await settle();
-
-    // The message goes again as the turn's prompt, cut back to the end of the turn before it.
-    const sent = sdk.said.filter((one) => one.query === 1);
-    expect(sent.map((one) => one.content)).toEqual(['and three']);
-    expect(sent[0]?.uuid).not.toBe(held);
-    expect(sdk.queries.at(-1)?.options.resumeSessionAt).toBe('part-t2');
-    // The turn is written under the uuid it went again under, which the host is told.
-    expect(recorded).toContainEqual([held, sent[0]?.uuid]);
-
-    sdk.push(...answeredFor(String(sent[0]?.uuid), 'answer three'));
-    await settle();
-    expect(ofTurn(chat, 'chat/turnComplete', held)).toHaveLength(1);
-    expect(JSON.stringify(chat.filter((action) => action.turnId === held))).toContain('answer three');
-    expect(shown(chat)).toBe(false);
-  });
-
   it('ends a turn that failed after it showed a part with the failure, and runs nothing again', async () => {
     const { session, chat } = await answeredOnce(twoLogins());
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(
       { type: 'assistant', parent_tool_use_id: null, uuid: 'part-t2', session_id: 'cli-1', message: { id: 'msg-part', role: 'assistant', model: 'claude-x', content: [{ type: 'text', text: 'half an answer' }] } },
@@ -655,7 +613,7 @@ describe('a failed login', () => {
     expect(shown(chat)).toBe(true);
 
     // The reset it named keeps the login out, so the next turn starts on the next one.
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(sdk.queries).toHaveLength(2);
     expect(tokenOf()).toBe('token-personal');
@@ -667,7 +625,7 @@ describe('a failed login', () => {
     const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });
     await settle();
     expect(sdk.queries.at(-1)?.options.sessionId).toBe(id);
-    session.begin('t1', 'one');
+    session.sendMessage('t1', 'one');
     await settle();
     sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
     await until(() => sdk.queries.length === 2);
@@ -689,7 +647,7 @@ describe('a failed login', () => {
     const id = randomUUID();
     const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });
     await settle();
-    session.begin('t1', 'one');
+    session.sendMessage('t1', 'one');
     await settle();
     sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
     await until(() => sdk.queries.length === 2);
@@ -701,7 +659,7 @@ describe('a failed login', () => {
 
     // The CLI stopped for the delete ended while the delete ran, and the session
     // is not one whose CLI went away: the next turn runs.
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     expect(ofTurn(chat, 'chat/error', 't2')).toEqual([]);
     expect(sdk.said.at(-1)).toMatchObject({ content: 'two' });
@@ -719,7 +677,7 @@ describe('a failed login', () => {
       sdk.undeletable.add(id);
       const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });
       await settle();
-      session.begin('t1', 'one');
+      session.sendMessage('t1', 'one');
       await settle();
       sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
       await until(() => sdk.queries.length === 2);
@@ -738,7 +696,7 @@ describe('a failed login', () => {
 
       // The failure named no retry time, so the next turn starts on the first
       // login again, in the conversation as it came back.
-      session.begin('t2', 'two');
+      session.sendMessage('t2', 'two');
       await settle();
       expect(ofTurn(chat, 'chat/error', 't2')).toEqual([]);
       expect(tokenOf()).toBe('token-work');
@@ -751,7 +709,13 @@ describe('a failed login', () => {
     }
   });
 
-  it('sends a steering message the failed attempt held to the CLI after it, when the turn ends with the failure', async () => {
+  /*
+   * A steering message is answered only in the turn it steered, as the
+   * reference steering entry takes the in-flight send's turn: a turn that ends
+   * with the failure takes the message it held with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
+   */
+  it('sends no steering message the failed attempt held to the CLI after it, when the turn ends with the failure', async () => {
     const id = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d';
     const before = process.env.CLAUDE_CONFIG_DIR;
     const home = mkdtempSync(join(tmpdir(), 'ahpd-logins-home-'));
@@ -762,27 +726,18 @@ describe('a failed login', () => {
       sdk.undeletable.add(id);
       const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });
       await settle();
-      session.begin('t1', 'one');
+      session.sendMessage('t1', 'one');
       await settle();
-      expect(session.steer?.('s1', 'and two')).toBe(true);
+      expect(session.sendSteeringMessage?.({ id: 's1', text: 'and two' })).toBe(true);
       await settle();
-      const held = sdk.said.at(-1);
       sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
-      await until(() => sdk.said.some((one) => one.query === 1));
-
-      // The prompt is in the conversation already; the message is not, and goes on its own.
-      expect(ofTurn(chat, 'chat/error', 't1')).toHaveLength(1);
-      const sent = sdk.said.filter((one) => one.query === 1);
-      expect(sent.map((one) => one.content)).toEqual(['and two']);
-      expect(sent[0]?.uuid).not.toBe(held?.uuid);
-
-      // Answered, it is a turn of its own, as a failed turn's steering message is.
-      sdk.push(...answeredFor(String(sent[0]?.uuid), 'answer two').map((frame) => ({ ...frame, session_id: id })));
+      await until(() => sdk.queries.length === 2);
       await settle();
-      expect(chat.filter((action) => action.type === 'chat/turnStarted').at(-1)).toMatchObject({
-        turnId: sent[0]?.uuid, queuedMessageId: 's1', message: { text: 'and two' },
-      });
-      expect(ofTurn(chat, 'chat/turnComplete', String(sent[0]?.uuid))).toHaveLength(1);
+
+      // The turn ends with the failure, and the CLI after it is sent nothing of it.
+      expect(ofTurn(chat, 'chat/error', 't1')).toHaveLength(1);
+      expect(sdk.said.filter((one) => one.query === 1)).toEqual([]);
+      expect(chat.filter((action) => action.type === 'chat/turnStarted')).toEqual([]);
     }
     finally {
       if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
@@ -795,7 +750,7 @@ describe('a failed login', () => {
     const seed = [{ id: 'r1', message: { text: 'earlier', origin: { kind: 'user' } }, responseParts: [], state: 'complete' }];
     const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { resume: 'cli-1', seed });
     await settle();
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('rate_limit', SPENT, inAnHour()));
     await settle();
@@ -803,7 +758,7 @@ describe('a failed login', () => {
     expect(ofTurn(chat, 'chat/error', 't2')).toHaveLength(1);
     expect(sdk.deleted).toEqual([]);
 
-    session.begin('t3', 'three');
+    session.sendMessage('t3', 'three');
     await settle();
     expect(sdk.queries).toHaveLength(2);
     expect(tokenOf()).toBe('token-personal');
@@ -815,7 +770,7 @@ describe('a failed login', () => {
     opened(logins, 'home', 'token-home');
     const { session, chat } = await answeredOnce(logins, ['work', 'personal', 'home']);
     const soon = Math.floor(Date.now() / 1000) + 600;
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('rate_limit', SPENT, soon + 3600));
     await settle();
@@ -841,7 +796,7 @@ describe('a failed login', () => {
     const soon = Date.now() + 600_000;
     logins.rest('work', 'token-work', soon + 3_600_000);
     logins.rest('personal', 'token-personal', soon);
-    session.begin('t1', 'one');
+    session.sendMessage('t1', 'one');
     await settle();
     const failed = ofTurn(chat, 'chat/error', 't1');
     expect(failed).toHaveLength(1);
@@ -852,7 +807,7 @@ describe('a failed login', () => {
   it('ends a turn whose credential was refused naming the login, and tries no other login', async () => {
     const { session, chat } = await answeredOnce(twoLogins());
     const denied = 'Failed to authenticate. API Error: 401 OAuth access token is invalid.';
-    session.begin('t2', 'two');
+    session.sendMessage('t2', 'two');
     await settle();
     sdk.push(...failure('authentication_failed', denied));
     await settle();
@@ -872,7 +827,7 @@ describe('a failed login', () => {
     for (const error of ['oauth_org_not_allowed', 'verification_required']) {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
-      session.begin('t2', 'two');
+      session.sendMessage('t2', 'two');
       await settle();
       sdk.push(...failure(error, `refused for ${error}`));
       await settle();
@@ -885,7 +840,7 @@ describe('a failed login', () => {
     for (const error of ['billing_error', 'account_on_hold', 'invalid_request', 'model_not_found', 'unknown', 'max_output_tokens', 'cloud_credential_error']) {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
-      session.begin('t2', 'two');
+      session.sendMessage('t2', 'two');
       await settle();
       const said = `the CLI's words for ${error}`;
       sdk.push(...failure(error, said));
@@ -962,7 +917,7 @@ describe('the plugin', () => {
 
     try {
       const denied = 'Failed to authenticate. API Error: 401 OAuth access token is invalid.';
-      session.begin('t2', 'two');
+      session.sendMessage('t2', 'two');
       await settle();
       sdk.push(...failure('authentication_failed', denied));
       await until(() => requests.length >= 4);
@@ -979,7 +934,7 @@ describe('the plugin', () => {
       expect(fetcher).toHaveBeenCalledTimes(1);
 
       // A failure that moves the turn is checked and kept too, on the same connection.
-      session.begin('t3', 'three');
+      session.sendMessage('t3', 'three');
       await settle();
       sdk.push(...failure('rate_limit'));
       await until(() => requests.length >= 6);

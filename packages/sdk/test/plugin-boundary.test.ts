@@ -455,7 +455,7 @@ it('refuses a tool that writes to a turn it was handed', async () => {
   const chat = await chatOf(client, 'probe:/live');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
 

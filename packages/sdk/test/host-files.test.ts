@@ -397,7 +397,7 @@ describe('completing a hash sign', () => {
   const spoken = async (client: Client, chat: string, turnId: string, text: string): Promise<void> => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
     // The CLI naming its conversation, and then the end of the turn: this is
@@ -1087,7 +1087,7 @@ describe('a session entering a folder nobody vouched for', () => {
     const move = async (folder: string, isolation = false): Promise<void> => {
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: `work in ${folder}` } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: `work in ${folder}` } } },
       });
       await settle();
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {

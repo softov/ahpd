@@ -149,7 +149,7 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   const { client, peer: p } = await running();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'find the ticket' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find the ticket' } } },
   });
   await settle();
   await said({
@@ -194,7 +194,7 @@ it('says nothing about a call that had already finished', async () => {
   const { client, peer: p } = await running();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'find it' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find it' } } },
   });
   await settle();
   await said(
@@ -216,7 +216,7 @@ it('leaves the harness\'s own tools alone, because no server is behind them', as
   const { client, peer: p } = await running();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'read it' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'read it' } } },
   });
   await settle();
   await said({

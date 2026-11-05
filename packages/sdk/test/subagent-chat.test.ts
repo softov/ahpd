@@ -100,7 +100,9 @@ function spawning(late = false): Agent {
           resource: start.chatUri, title, status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [], usage: undefined };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           /*
@@ -187,11 +189,8 @@ function spawning(late = false): Agent {
             finish();
           })();
         },
-        cancel: () => {},
-        queue: () => {},
-        unqueue: () => {},
+        abort: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         setCustomizationEnabled: async () => false,
@@ -234,7 +233,7 @@ async function running(late = false, hold = false) {
   const inner = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_inner')}`;
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn one' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn one' } } },
   });
   await settle();
   const added = on(uri).some((one) => one.type === 'session/chatAdded' && (one.summary as Bag).resource === worker);
@@ -279,7 +278,12 @@ it('announces a worker chat, opens its turn and links it from the call', async (
   expect((nested[0]?.content as Bag[])[0]).toMatchObject({ type: 'subagent', resource: inner });
 });
 
-it('answers a subscribe to the worker with its own state, and refuses a turn on it', async () => {
+/*
+ * A turn on a worker's read-only chat is said, and ended in the words VS
+ * Code's host ends a turn on a read-only chat with.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ */
+it('answers a subscribe to the worker with its own state, and ends a turn on it as read-only', async () => {
   const { ask, client, worker } = await running();
 
   const answer = await ask('subscribe', { channel: worker }) as { snapshot: { resource: string; state: Bag } };
@@ -292,13 +296,17 @@ it('answers a subscribe to the worker with its own state, and refuses a turn on 
 
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: worker, action: { type: 'chat/turnStarted', turnId: 'nope', message: { text: 'hello' } } },
+    params: { channel: worker, action: { type: 'chat/turnStarted', turnId: 'nope', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
-  const refused = wire.filter((one) => one.method === 'action' && one.params.channel === worker
-    && typeof one.params.rejectionReason === 'string');
-  expect(refused).toHaveLength(1);
-  expect(String(refused[0]?.params.rejectionReason)).toContain('read-only');
+  const said = wire.filter((one) => one.method === 'action' && one.params.channel === worker)
+    .map((one) => ({ action: one.params.action as Bag, rejectionReason: one.params.rejectionReason }))
+    .filter((one) => one.action.turnId === 'nope');
+  expect(said.map((one) => [one.action.type, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'readOnly', message: 'This chat is read-only.' } });
 });
 
 it('names the worker chat that spawned a nested one as its parent', async () => {
@@ -414,7 +422,9 @@ function askingInWorker(stoppable = false): Agent {
           resource: start.chatUri, title: 'Fake session', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           start.emit('chat', {
@@ -453,18 +463,15 @@ function askingInWorker(stoppable = false): Agent {
             start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: id, invocationMessage: 'Run it', toolInput: 'true' });
           }
         },
-        cancel: (turnId) => {
-          told.push({ what: 'cancel', id: turnId });
+        abort: () => {
           const turn = active;
+          told.push({ what: 'cancel', id: String(turn?.id ?? '') });
           if (!turn) return;
           active = undefined;
           turns.push({ ...turn, state: 'cancelled', duration: 1 });
-          start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id), duration: 1 });
+          start.emit('chat', { type: 'chat/turnCancelled', turnId: String(turn.id), duration: 1 });
         },
-        queue: () => {},
-        unqueue: () => {},
         setDraft: (draft) => { told.push({ what: 'draft', id: '', value: draft }); },
-        reorder: () => {},
         confirm: (toolCallId, approved, optionId) => { told.push({ what: 'confirm', id: toolCallId, value: approved, option: optionId }); return true; },
         answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); return true; },
         ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
@@ -495,7 +502,7 @@ async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   await ask('subscribe', { channel: as });
   const lead = `ahp-chat://default/${Buffer.from(as, 'utf8').toString('base64url')}`;
   await ask('subscribe', { channel: lead });
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run a subagent' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } } });
   await settle();
   const worker = `ahp-chat://subagent/${Buffer.from(as, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
   await ask('subscribe', { channel: worker });
@@ -619,7 +626,7 @@ it('says the session\'s URIs inside an action as the host holds them, to every c
   }
   await creator('dispatchAction', {
     channel: chatOf('ahp-session:/ask'),
-    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run a subagent' } },
+    action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } },
   });
   await settle();
 
@@ -692,7 +699,7 @@ const saidBack = (chat: string): { turnId: unknown; clientSeq: unknown; rejectio
 it('stops a worker that runs on after its lead turn, and says a stop back once it has ended, stopping nothing', async () => {
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
   const running = String(opened.snapshot.state.activeTurn?.id);
   await settle();
@@ -700,7 +707,7 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
     .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
     .map((one) => String(one.params.rejectionReason));
 
-  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: running } });
+  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: running, duration: 0 } });
   await settle();
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'stop', id: 'toolu_bg' }]);
@@ -708,7 +715,7 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
   finishWorker();
   await settle();
   told.length = 0;
-  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: running } });
+  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: running, duration: 0 } });
   await settle();
   expect(refusals()).toEqual([]);
   expect(saidBack(worker).filter((one) => one.clientSeq === 2)).toEqual([{ turnId: running, clientSeq: 2, rejectionReason: undefined }]);
@@ -718,11 +725,11 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
 it('stops nothing when a stop on a running worker\'s chat names another turn, and says it back', async () => {
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await ask('subscribe', { channel: worker });
   await settle();
 
-  await ask('dispatchAction', { channel: worker, clientSeq: 3, action: { type: 'chat/turnCancelled', turnId: 'not-the-workers' } });
+  await ask('dispatchAction', { channel: worker, clientSeq: 3, action: { type: 'chat/turnCancelled', turnId: 'not-the-workers', duration: 0 } });
   await settle();
   expect(saidBack(worker)).toEqual([{ turnId: 'not-the-workers', clientSeq: 3, rejectionReason: undefined }]);
   expect(told).toEqual([]);
@@ -781,7 +788,9 @@ function busy(stoppable = false): Agent {
           resource: start.chatUri, title: 'Busy', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
           turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
           if (text !== 'spawn' && text !== 'ask') return;
@@ -811,11 +820,8 @@ function busy(stoppable = false): Agent {
             worker.end('complete');
           };
         },
-        cancel: () => {},
-        queue: () => {},
-        unqueue: () => {},
+        abort: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
@@ -871,7 +877,7 @@ const chatOn = (row: Bag, chat: string): number | undefined =>
 it('reads a session as running while its worker runs after the lead turn, and the worker on its own row', async () => {
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   const running = held(row());
   expect(activity(running.status)).toBe(8);
@@ -886,7 +892,7 @@ it('reads a session as running while its worker runs after the lead turn, and th
 
 it('reads a session as waiting while its worker asks, though the lead is running', async () => {
   const { ask, lead, row, activity } = await busyHost();
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'ask' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'ask' } } });
   await settle();
   expect(activity(held(row()).status)).toBe(24);
 });
@@ -896,7 +902,7 @@ it('reads a session as running while a second chat runs and its default chat is 
   const second = 'ahp-chat:/busy-second';
   await ask('createChat', { channel: uri, chat: second });
   await ask('subscribe', { channel: second });
-  await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'work' } } });
+  await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work' } } });
   await settle();
   const moved = held(row());
   expect(activity(moved.status)).toBe(8);
@@ -912,7 +918,7 @@ const readOn = async (ask: ReturnType<typeof asking>, channel: string): Promise<
 it('marks a worker chat unread when it ends, and leaves the session read', async () => {
   const { ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   // The lead turn has ended, which marked the session unread; read it again.
   await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
@@ -938,7 +944,7 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
 it('leaves the session read when a worker chat is marked unread', async () => {
   const { ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
-  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
   await settle();

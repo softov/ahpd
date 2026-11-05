@@ -47,7 +47,7 @@ describe('a chat asked for by the name a client computed', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: alias, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: alias, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
 
@@ -448,7 +448,7 @@ describe('a session asked for by the name a client computed', () => {
       method: 'dispatchAction',
       params: {
         channel: derived(ROW),
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } },
       },
     });
     await settle(6);
@@ -468,7 +468,7 @@ describe('a session asked for by the name a client computed', () => {
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
+      params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } } },
     });
     await settle(6);
 
@@ -612,7 +612,7 @@ describe('a session asked for by the name its creator used', () => {
     await creator.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } });
     creator.handle({
       method: 'dispatchAction',
-      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'clean the build' } } },
+      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'clean the build' } } },
     });
     await settle();
     const decision = sdk.canUseTool?.('Bash', { command: 'rm -rf build' }, { toolUseID: 'c1' });
@@ -671,7 +671,7 @@ describe('a session asked for by the name its creator used', () => {
     const text = `${held}/changeset/session is what changed`;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', message: { text } } },
+      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
     void sdk.canUseTool?.('Bash', { command: 'rm -rf build' }, { toolUseID: 'c1' });

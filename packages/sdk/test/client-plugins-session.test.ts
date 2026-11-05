@@ -212,7 +212,7 @@ async function turn(
 ): Promise<void> {
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: id, message: { text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: id, startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
   await settle();
 }

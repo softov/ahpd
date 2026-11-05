@@ -140,9 +140,11 @@ function metered(scripts: Script[]): Agent {
       const session = base.create(start);
       const say = (action: Bag): void => { start.emit('chat', action); };
       let running: string | undefined;
+      let model: { id: string } | undefined;
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        changeModel: (picked) => { model = picked; },
+        sendMessage: (turnId, text, from) => {
           const script = waiting.shift() ?? { end: 'complete' as const };
           if (script.unstated !== true) {
             say({
@@ -178,8 +180,9 @@ function metered(scripts: Script[]): Agent {
           }
           say({ type: 'chat/turnComplete', turnId, duration: 1 });
         },
-        cancel: (turnId) => {
-          if (running !== turnId) return;
+        abort: () => {
+          const turnId = running;
+          if (turnId === undefined) return;
           running = undefined;
           say({ type: 'chat/turnCancelled', turnId, duration: 1 });
         },
@@ -188,7 +191,7 @@ function metered(scripts: Script[]): Agent {
          *
          * This fake starts a turn without the example backend underneath it
          * knowing - it says `chat/turnStarted` itself and never calls that
-         * backend's `begin` - so the state under it reports no `activeTurn`.
+         * backend's `sendMessage` - so the state under it reports no `activeTurn`.
          * The host reads `activeTurn` to tell a stop that stops something from
          * one that changes nothing, which is a question this fake has to be
          * able to answer.
@@ -264,9 +267,9 @@ const open = (client: Client): Promise<unknown> => client.handle({
   method: 'createSession', params: { channel: uri, provider: 'meter', config: {} },
 });
 
-const ask = (client: Client, text = 'go', turn = 't1'): Promise<unknown> => client.handle({
+const ask = (client: Client, text = 'go', turn = 't1', startedAt = new Date().toISOString()): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, message: { text } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt, message: { text, origin: { kind: 'user' } } } },
 });
 
 /** Watch the chat, which is what makes its actions arrive on this connection. */
@@ -275,7 +278,7 @@ const watch = (client: Client): Promise<unknown> =>
 
 const stop = (client: Client, turn = 't1'): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: turn } },
+  params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: turn, duration: 0 } },
 });
 
 /** Claude Code's final report, cost in `_meta['ahpd.cost']`. */
@@ -295,7 +298,8 @@ it('writes one record for a turn that completed, saying what its last report sai
   ], usage, directory());
   await settle();
   await open(client);
-  await ask(client);
+  // The client's start is the one said, so its time is when the turn began.
+  await ask(client, 'go', 't1', '2026-10-04T10:00:00.000Z');
   await settle();
 
   expect(usage.entries).toHaveLength(1);
@@ -363,7 +367,7 @@ it('names the model the turn asked for when no report said which one ran', async
   // The turn names the model as a client would pick it from a session's list.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go', model: { id: 'deepseek-chat' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go', model: { id: 'deepseek-chat' } } } },
   });
   await settle();
 

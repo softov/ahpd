@@ -123,7 +123,8 @@ beforeEach(() => { sdk.reset(); });
 
 it('hands a prompt sent while a new CLI starts to that CLI', async () => {
   const { session } = await open();
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await settle();
   // The new CLI reads its input only now, as one does once its initialize is out.
   sdk.readLater();
@@ -135,7 +136,8 @@ it('hands a prompt sent while a new CLI starts to that CLI', async () => {
 
 it('ends the reader of the CLI it replaced without handing it anything', async () => {
   const { session } = await open();
-  session.begin('t1', 'plan this', undefined, { agent: { uri: 'claude-internal:/agent/Plan' } });
+  session.changeAgent({ uri: 'claude-internal:/agent/Plan' });
+  session.sendMessage('t1', 'plan this');
   await settle();
 
   expect(sdk.queries[0]?.done).toBe(true);

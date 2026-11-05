@@ -20,7 +20,7 @@
 
 import type { ModelInfo, Store } from '@cofold/agents';
 import { activityOf, bag, idOf, reason, str, uriOf } from '@ahpd/sdk';
-import type { Bag, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
 import { harnessConfig } from './config.js';
@@ -172,11 +172,6 @@ export function cofoldSession(
    * cut at it: a point nobody can name is worse than none.
    */
   const points = new Map<string, string>();
-  /** Messages waiting for the running turn to end. The host's, not a client's. */
-  const queued: Bag[] = [];
-  const untaken: SessionContext['untaken'] = [];
-  /** The steering messages handed to the run whose submit has not settled. */
-  const submitting = new Set<string>();
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
@@ -203,7 +198,6 @@ export function cofoldSession(
     editing,
     pending,
     points,
-    queued,
     settings,
     touch,
     refreshOptions,
@@ -220,18 +214,15 @@ export function cofoldSession(
     modified: new Date().toISOString(),
     closed: false,
     opening: undefined,
-    stopping: new Set<string>(),
     refused: undefined,
     steering: undefined,
-    untaken,
     activity: activityOf(start.emit),
   } as SessionContext;
 
   const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
   Object.assign(ctx, turnAgent);
 
-  const { methods: queueMethods, ...turnOffers } = createTurns(ctx);
-  Object.assign(ctx, turnOffers);
+  Object.assign(ctx, createTurns(ctx));
   Object.assign(ctx, createRuns(ctx));
   const { methods: answerMethods, ...pauses } = createPauses(ctx);
   Object.assign(ctx, pauses);
@@ -256,6 +247,9 @@ export function cofoldSession(
       settledOpening();
     });
   }
+
+  /** The model a client picked, taken by the next send: cofold keeps a model it took. */
+  let chosen: Chosen | undefined;
 
   return {
     uri: start.uri,
@@ -328,24 +322,20 @@ export function cofoldSession(
       status: ctx.status(),
       modifiedAt: ctx.modified,
       turns,
-      // The last turn said, which may be one still waiting for a run.
-      ...((ctx.waiting.at(-1)?.said ?? ctx.active) !== undefined ? { activeTurn: ctx.waiting.at(-1)?.said ?? ctx.active } : {}),
+      ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
       ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
-      // A steering message no turn was running to take waits ahead of the
-      // queue, and is still a steering message while it waits: the one set
-      // last, as the protocol's reducer holds the latest.
-      ...(ctx.steering !== undefined
-        ? { steeringMessage: ctx.steering }
-        : queued.filter((held) => held.shown === true)
-          .map((held) => ({ steeringMessage: { id: held.id, message: held.message } }))[0] ?? {}),
-      // The protocol's `PendingMessage` is `{ id, message }` and nothing else,
-      // so the model a queued turn will run on stays in this session.
-      queuedMessages: queued.filter((held) => held.steering !== true).map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from, attachments) =>
-      ctx.beginTurn(turnId, text, model, from, undefined, attachments),
+    sendMessage: (turnId, text, from, attachments, turnOptions) => {
+      const model = chosen;
+      chosen = undefined;
+      ctx.beginTurn(turnId, text, model, from, attachments, turnOptions);
+    },
+
+    changeModel: (model) => { chosen = model; },
+    // cofold runs one agent, its own, so an agent picked is kept by nothing.
+    changeAgent: () => {},
 
     /**
      * Run the latest turn again, without adding a message.
@@ -354,37 +344,23 @@ export function cofoldSession(
      * reopened as it was and its prompt runs again under the same id, after
      * the store is cut back to the turn before it.
      */
-    resume: (turnId) => ctx.resumeTurn(turnId),
-
-    ...queueMethods,
+    resumeTurn: (turnId) => {
+      if (!ctx.resumeTurn(turnId)) throw new Error(`${turnId} is not a turn this backend can run again`);
+    },
 
     /**
-     * Stop the running turn.
+     * Stop the running turn, and drop everything held of the turns behind it.
      *
      * The cancel reaches cofold's `RunHandle.cancel`, and the run's own
-     * `run.finished` (a cancelled outcome) is what emits `chat/turnCancelled`
-     * exactly once. This must not send one of its own, or a client sees two.
-     *
-     * A turn said while a run held another ends here, as it has no run of its
-     * own yet: the turns waiting with it go, and the run in front of it is
-     * stopped, as the reference stop aborts the agent's work in flight and
-     * drops the turns waiting behind it.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8081-L8095
+     * `run.finished` (a cancelled outcome) is what reports the turn's end, once.
+     * The turns handed behind it go with the steering the run was handed, as
+     * the reference stop aborts the agent's work in flight and drops what waits
+     * behind it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1946-L1954
      */
-    cancel: (turnId) => {
-      const shown = ctx.waiting.at(-1)?.said;
-      if (shown !== undefined && String(shown.id) === turnId) {
-        ctx.waiting.length = 0;
-        shown.state = 'cancelled';
-        shown.duration = Math.max(0, Date.now() - Date.parse(String(shown.startedAt)));
-        turns.push(shown);
-        start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: shown.duration });
-        ctx.touch();
-      }
-      else if (ctx.active === undefined || turnId !== String(ctx.active.id)) {
-        if (ctx.opening !== undefined) ctx.stopping.add(turnId);
-        return;
-      }
+    abort: () => {
+      ctx.waiting.length = 0;
+      ctx.steering = undefined;
       if (ctx.active === undefined || ctx.cancelRequested) return;
       ctx.cancelRequested = true;
       ctx.stop('the client stopped the turn');
@@ -394,17 +370,18 @@ export function cofoldSession(
      * Put a message into the running turn.
      *
      * cofold's own word for it is a steer: a message appended to the
-     * transcript before the next model step. Answers whether there was a turn
-     * to steer, because a chat with nothing running has nothing to inject
-     * into.
+     * transcript before the next model step. Answered as the reference agents
+     * answer a steering message: `false` while the turn's run has not started
+     * or has settled, which has the host hand it again on the turn's next
+     * action, and a promise that answers `true` once the model's transcript
+     * holds it, when its removal is said, or `false` when the run settled
+     * before a step read it, handing it back for the host to steer the turn
+     * that runs then or to run next.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1955
      *
-     * Said and held as the chat's steering message before cofold has it, so
-     * the client that sent it is answered inside its dispatch. cofold's submit
-     * settles once the message is in the transcript, which is when it is taken
-     * out. A submit the run rejects, because it settled before a step read the
-     * message, leaves it in `untaken`, a turn of its own once the chat is idle;
-     * a stop lets go of it, through `clearSteering`.
-     * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
+     * A run waiting on a person still takes a steer, which it reads after the
+     * answer; a run that settled takes none, so a message a settled run gave
+     * back goes to the run that comes next.
      *
      * A correction with something attached is read the way a turn's own message
      * is, on the model the running turn was built on - the turn is the one that
@@ -412,74 +389,56 @@ export function cofoldSession(
      * text and then the parts, and the first part is always that text, so only
      * what follows it is handed over.
      */
-    steer: (id, text, attachments, from) => {
+    sendSteeringMessage: ({ id, text, attachments, from }) => {
       const live = ctx.handle;
-      if (live === undefined) return false;
+      const status = live?.status();
+      if (live === undefined || (status !== 'running' && status !== 'awaiting')) return false;
       const message: Bag = {
         text,
         origin: from?.origin ?? { kind: 'user' },
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
       ctx.steering = { id, message };
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
-      ctx.touch();
-      submitting.add(id);
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
         : partsFor(text, attachments, ctx.takesImages())
           .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
-      void submitted.then(
+      return submitted.then(
         () => {
-          submitting.delete(id);
           // Read by the model, so it stays the run's whatever a client asked;
           // one a client took back is gone from every client already.
-          if (ctx.withdrawn.delete(id)) return;
+          if (ctx.withdrawn.delete(id)) return true;
           if (ctx.steering?.id === id) ctx.steering = undefined;
           start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
           ctx.touch();
+          return true;
         },
         () => {
-          submitting.delete(id);
-          // Taken back by a client, or let go of at a stop, so it never runs.
-          if (ctx.withdrawn.delete(id)) return;
-          ctx.untaken.push({
-            id,
-            text,
-            ...(from !== undefined ? { from } : {}),
-            ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-          });
-          if (!ctx.cancelRequested) ctx.startNext();
+          ctx.withdrawn.delete(id);
+          if (ctx.steering?.id === id) ctx.steering = undefined;
+          return false;
         },
       );
-      return true;
     },
 
     /*
-     * Every steering message the run has not read, let go of once a turn ends
-     * cancelled, and nothing started: those the run still holds, dropped when
-     * it gives them back, those it gave back to be turns of their own, and
-     * those waiting in the queue to be.
+     * A steering message a client took back after the host handed it here:
+     * one cofold's submit still holds is answered nowhere when the run gives it
+     * back, since `RunHandle.submit` takes approve, deny, answer, steer and
+     * cancel and none of them takes a steer back. One the model read stays in
+     * its turn. The host has said the removal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1950-L1955
      */
-    clearSteering: () => {
-      const gone = [...submitting];
-      for (const id of submitting) ctx.withdrawn.add(id);
-      submitting.clear();
-      gone.push(...ctx.untaken.splice(0).map((left) => left.id));
-      for (const held of queued.filter((one) => one.steering === true)) {
-        queued.splice(queued.indexOf(held), 1);
-        gone.push(String(held.id));
+    withdrawSteeringMessage: (id) => {
+      if (ctx.steering?.id === id) {
+        ctx.withdrawn.add(id);
+        ctx.steering = undefined;
       }
-      ctx.steering = undefined;
-      for (const id of gone) start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-      if (gone.length > 0) ctx.touch();
+      ctx.touch();
     },
 
-    // Held by the session, so two people on one chat see each other's.
-    setDraft: (next) => {
-      if (JSON.stringify(next) === JSON.stringify(draft)) return;
-      draft = next;
-      start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
-    },
+    // The draft the host said, held for the chat's state.
+    setDraft: (next) => { draft = next; },
 
     ...answerMethods,
 

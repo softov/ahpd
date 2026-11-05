@@ -257,7 +257,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           return;
         }
         marks.set(id, after);
-        dispatch(channel, action);
+        dispatch(channel, action, origin);
       };
       if (sessions.has(owning) || owners.has(owning)) {
         mark();
@@ -273,7 +273,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return conn.bounded(past(id), 'reading the catalogue').then(() => {
+      return past(id).then(() => {
         if (ctx.connections.has(connection) && ctx.nameOf(id) === owning) mark();
       });
     }
@@ -460,6 +460,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * and a client whose change never happened is told so rather than
        * echoed. `behind` turns the refusal into this one client's
        * `rejectionReason`, and the echo goes out only once it has answered.
+       * The port's file is where the daemon's keys are held, so its write is
+       * the change applied, which comes before it is said, as the reference
+       * host applies a client's action to its state and then emits it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
        */
       const theirs = Object.fromEntries(Object.entries(config).filter(([key]) => daemonKey(key)));
       if (Object.keys(theirs).length === 0 || options.rootConfig === undefined) {
@@ -556,9 +560,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/changesets.md
      */
     if (type === 'changeset/filesReviewChanged') {
-      // A changeset a session's backend serves is reviewed there, and answered from there.
+      // A changeset a session's backend serves is said here, and reviewed there.
       const backendChannel = ctx.relayedChannel(channel);
       if (backendChannel !== undefined) {
+        dispatch(channel, action, origin);
         backendChannel.dispatch(action);
         return;
       }
@@ -801,7 +806,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
-      return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+      return past(idOf(sessionFor(channel))).then(() => {
         if (!connections.has(connection)) return;
         if (knownChat()) return conn.applyNow(params, origin);
         const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
@@ -873,14 +878,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253
        */
       if (JSON.stringify(held.get(named)) === JSON.stringify(activeClient)) {
-        dispatch(channel, { type, activeClient }, origin);
+        dispatch(channel, action, origin);
         return;
       }
       // Re-announcing is how a client refreshes what it contributes, so
       // this replaces rather than merges - a tool taken away has to be
       // able to go.
       held.set(named, activeClient);
-      dispatch(channel, { type, activeClient });
+      dispatch(channel, action, origin);
       // What it says it can run is a change to what the model is offered,
       // which is the whole point of the field: announced and never read,
       // `tools` was a list this host published back at the client that
@@ -901,7 +906,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       if (!knownSession(sessionFor(channel))) {
-        return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+        return past(idOf(sessionFor(channel))).then(() => {
           if (connections.has(connection) && knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
         });
       }
@@ -921,21 +926,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3101-L3103
        */
       const uri = sessionFor(channel);
-      /*
-       * A session whose lead chat runs on another host has its bits there.
-       *
-       * The read or the archive goes to that host, which answers the client
-       * and says the bit as the session's action, kept here as it is said: the
-       * host running a session is the one producer of its state, and a relay
-       * forwards a client's messages to it.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
-       */
-      const held = sessions.get(uri);
-      if (held !== undefined && ctx.leadOf(held)?.flag?.(
-        type === 'session/isReadChanged' ? 'read' : 'archived',
-        type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
-        'session',
-      ) === true) return;
       const flag = (): void => {
         const read = type === 'session/isReadChanged';
         const chats = read ? readAggregate(ctx, uri) : [];
@@ -943,11 +933,17 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           ? action.isRead === true && !(chats.length > 1 && chats.some((one) => !one.read))
           : action.isArchived === true;
         const said = read && on !== (action.isRead === true) ? { ...action, isRead: on } : action;
-        const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said);
-        if (!moved) dispatch(channel, said, origin);
+        const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said, channel === uri ? origin : undefined);
         // Sent on another channel of the session, it is answered on that one:
         // the bit moved on the session's own.
-        else if (ctx.unanswered()) dispatch(channel, said, origin);
+        if (!moved || channel !== uri) dispatch(channel, said, origin);
+        /*
+         * A session whose lead chat runs on another host has its bits there
+         * too: that host runs the session, and says its bits as they move.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+         */
+        const held = sessions.get(uri);
+        if (held !== undefined) ctx.leadOf(held)?.flag?.(read ? 'read' : 'archived', on, 'session');
         const sole = chats.length === 1 ? chats[0] : undefined;
         if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
       };
@@ -965,7 +961,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return conn.bounded(past(idOf(uri)), 'reading the catalogue').then(() => {
+      return past(idOf(uri)).then(() => {
         if (ctx.connections.has(connection) && ctx.nameOf(idOf(uri)) === uri) flag();
       });
     }
@@ -991,18 +987,25 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
          */
         case 'terminal/input':
-          terminal.write(String(action.data ?? ''));
           dispatch(channel, action, origin);
+          terminal.write(String(action.data ?? ''));
           break;
+        /*
+         * A size, a clearing, a title and a claim, taken by the terminal that
+         * holds its state and said as the client sent them, the root's list of
+         * terminals following a title and a claim.
+         */
         case 'terminal/resized':
           terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
+          dispatch(channel, action, origin);
           break;
         case 'terminal/cleared':
           terminal.clear();
+          dispatch(channel, action, origin);
           break;
-        // A title it has already changes nothing, and goes to every client of the terminal.
         case 'terminal/titleChanged':
-          if (!terminal.setTitle(String(action.title ?? ''))) dispatch(channel, action, origin);
+          terminal.setTitle(String(action.title ?? ''));
+          dispatch(channel, action, origin);
           break;
         /*
          * A claim that names nobody is refused, and the terminal's own claim
@@ -1011,8 +1014,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          */
         case 'terminal/claimed': {
           const claimed = claimOf(action.claim);
-          if (claimed) terminal.setClaim(claimed);
-          else no('a claim names a client by its id, or a session and its chat');
+          if (!claimed) {
+            no('a claim names a client by its id, or a session and its chat');
+            break;
+          }
+          terminal.setClaim(claimed);
+          dispatch(channel, action, origin);
+          ctx.terminalSaid(channel, action);
           break;
         }
         default:

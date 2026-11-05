@@ -54,14 +54,14 @@ function recording(dir: string) {
       const kept: Session = {
         ...chat,
         forkPoint: () => 'point',
-        begin: (...args: Parameters<Session['begin']>) => {
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
           begun.push({ chat: start.chatUri, text: args[1] });
           // A turn that asks for a worker opens one, as a backend's own subagent call does.
           if (args[1] === 'spawn a worker') {
             const worker = start.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
             if (worker !== undefined) workers.push(worker.uri);
           }
-          chat.begin(...args);
+          return chat.sendMessage(...args);
         },
       };
       return kept;
@@ -90,7 +90,7 @@ async function opened(preambles: ChatPreamble[]) {
   await client.handle({ method: 'subscribe', params: { channel: lead } });
   await settle();
   const say = async (chat: string, text: string, turnId: string = crypto.randomUUID()): Promise<void> => {
-    await client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } } });
+    await client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } } });
     await settle();
   };
   const createChat = async (params: Record<string, unknown>): Promise<void> => {

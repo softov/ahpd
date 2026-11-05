@@ -73,7 +73,7 @@ it('asks one operation where the table gives one, and both where it gives both',
   expect(await call(opener.client, 'createChat', { channel: 'ahp-session:/one', chat: 'ahp-chat:/one' })).toHaveProperty('result');
 
   const talker = await holding(made, 't', ['session:read', 'chat:send', 'chat:create']);
-  await talker.send('ahp-chat:/one', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  await talker.send('ahp-chat:/one', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
   expect(talker.refused()).toEqual([]);
   expect((await call(talker.client, 'disposeSession', { channel: 'ahp-session:/one' })) as { message: string })
     .toMatchObject({ code: -32009, message: 't may not session:dispose here' });

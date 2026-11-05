@@ -117,7 +117,7 @@ describe('what GitHub knows about the branch', () => {
     requests = [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'merged' }];
     client.handle({
       method: 'dispatchAction',
-      params: { channel: state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });

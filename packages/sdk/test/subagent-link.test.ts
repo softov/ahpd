@@ -89,7 +89,9 @@ function linking(): Agent {
           modifiedAt: new Date().toISOString(), turns,
           ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
         }),
-        begin: (turnId, text) => {
+        changeModel: () => {},
+        changeAgent: () => {},
+        sendMessage: (turnId, text) => {
           const startedAt = new Date().toISOString();
           active = {
             id: turnId, startedAt, message: { text, origin: { kind: 'user' } },
@@ -123,11 +125,8 @@ function linking(): Agent {
             _meta: { toolKind: 'subagent' },
           });
         },
-        cancel: () => {},
-        queue: () => {},
-        unqueue: () => {},
+        abort: () => {},
         setDraft: () => {},
-        reorder: () => {},
         confirm: () => false,
         answer: () => false,
         setCustomizationEnabled: async () => false,
@@ -168,7 +167,7 @@ async function linked() {
   await ask('subscribe', { channel: backChat });
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: mainChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work on it' } } },
+    params: { channel: mainChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work on it' } } },
   });
   await settle();
   return { ask, mainChat, backChat };

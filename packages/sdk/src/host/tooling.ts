@@ -291,8 +291,11 @@ export interface Tooling {
   moving: Map<string, Move>;
   /** Give a chat a title, its held state and its row together, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
-  /** Give a session a title from its own channel, and its sole chat with it, and say so. */
-  renameSession(uri: string, title: string): void;
+  /**
+   * Give a session a title from its own channel, and its sole chat with it, and
+   * say so, unless a client's rename on that channel was `said` already.
+   */
+  renameSession(uri: string, title: string, said?: boolean): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall;
   /**
@@ -1391,14 +1394,17 @@ export function createTooling(ctx: HostContext): Tooling {
    * down onto a sole default chat; with peer chats, the default chat's held
    * state and row keep the title they have.
    * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+   *
+   * `said` when a client's rename on the session's channel was said there
+   * already, as its own action.
    */
-  const renameSession = (uri: string, title: string): void => {
+  const renameSession = (uri: string, title: string, said = false): void => {
     const held = sessions.get(uri);
     const found = held?.chats.get(held.defaultChat);
     if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
     found.setTitle?.(title);
     keepTitle(uri, held.defaultChat, title);
-    dispatch(uri, { type: 'session/titleChanged', title });
+    if (!said) dispatch(uri, { type: 'session/titleChanged', title });
     if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
     summaryMoved(uri);
     operationsMoved(uri);
@@ -1410,9 +1416,9 @@ export function createTooling(ctx: HostContext): Tooling {
    * Every operation here is one a client already has - a command, or an
    * action a client may dispatch - reached from a turn rather than a socket.
    * The catalogue is `allRows()`, which is what `listSessions` answers; a
-   * message is `begin` or `queue` on the chat, which is what `chat/turnStarted`
-   * and `chat/pendingMessageSet` come to; a session is `openSession`, which is
-   * what `createSession` comes to. Nothing is reachable from here that is not
+   * message is a turn this host starts, or a message it queues on the chat,
+   * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
+   * session is `openSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
    * reachable from a client, and the reverse is nearly true.
    */
   /**
@@ -1545,9 +1551,7 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Written before the turn begins and under the id it will carry, because the
    * backend is free to run the whole turn before the call that started it
-   * returns - and a tool inside that turn would find nobody had sent it. A
-   * queued message is moved across to the turn it becomes by the same hand
-   * that moves every queued message's sender.
+   * returns - and a tool inside that turn would find nobody had sent it.
    */
   const remember = (chatUri: string, turnId: string): void => {
     const turn = activeTurnOf(chatUri);
@@ -1663,10 +1667,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      chat.begin(
-        firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-        undefined, turnInstructions(at),
-      );
+      void ctx.startTurn(chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
     }
     if (tree !== undefined) countUp(tree, 'chats');
     return { chat: chatUri };
@@ -1765,19 +1766,20 @@ export function createTooling(ctx: HostContext): Tooling {
         const held = sessions.get(at);
         const found = held === undefined ? undefined : chatMeant(held, chatId);
         if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-        const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+        const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
         const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
           || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
         if (busy) {
-          const waiting = crypto.randomUUID();
-          remember(chatUri, waiting);
-          found.chat.queue(waiting, text, undefined, from, undefined, turnInstructions(at));
+          // The chat's queued message, sent by whoever sent the calling turn.
+          const calling = activeTurnOf(chatUri);
+          ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from,
+            calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) });
           countUp(tree, 'messages');
           return 'queued';
         }
         const started = crypto.randomUUID();
         remember(chatUri, started);
-        found.chat.begin(started, text, undefined, from, undefined, turnInstructions(at));
+        void ctx.startTurn(found.chat, started, text, undefined, from);
         countUp(tree, 'messages');
         return 'sent';
       } finally {
@@ -1849,10 +1851,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      lead.chat.begin(
-        firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-        undefined, turnInstructions(made),
-      );
+      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
       countUp(tree, 'sessions');
       return { session: made, chat: chatUriFor(made) };
     },
@@ -2033,18 +2032,16 @@ export function createTooling(ctx: HostContext): Tooling {
           const held = sessions.get(at);
           const found = held === undefined ? undefined : chatMeant(held, chatId);
           if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-          const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+          const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
           const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
             || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
           if (busy) {
-            const waiting = crypto.randomUUID();
-            sent(waiting);
-            found.chat.queue(waiting, text, undefined, from, undefined, turnInstructions(at));
+            ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from, { owner: sender });
             return 'queued';
           }
           const first = crypto.randomUUID();
           sent(first);
-          found.chat.begin(first, text, undefined, from, undefined, turnInstructions(at));
+          void ctx.startTurn(found.chat, first, text, undefined, from);
           return 'sent';
         } finally {
           release();
@@ -2073,10 +2070,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (lead === undefined) throw new Error(`${made} did not start`);
         const first = crypto.randomUUID();
         sent(first);
-        lead.chat.begin(
-          first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from,
-          undefined, turnInstructions(made),
-        );
+        void ctx.startTurn(lead.chat, first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
         return { session: made, chat: chatUriFor(made) };
       },
       createChat: async (session, asked) => await openChat(session, asked),

@@ -35,8 +35,10 @@ const sdk = vi.hoisted(() => {
     stopped: [] as string[],
     /** How many times the query was interrupted. */
     interrupted: 0,
+    /** How many times a query was closed, which is how a stop ends the turn. */
+    closed: 0,
     /** Start a new feed for the next session. */
-    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; },
+    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; state.closed = 0; },
     /** Queue frames for the current session to read. */
     push(...frames: Record<string, unknown>[]) {
       const feed = state.feed;
@@ -76,7 +78,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
-      close: () => {},
+      close: () => { sdk.closed += 1; },
     };
   },
 }));
@@ -330,7 +332,7 @@ it('cancels a worker that was still waiting for its spawn', async () => {
   ]);
   expect(asked).toEqual([]);
 
-  session.cancel('');
+  session.abort();
   await settle();
 
   // Its chat opens as the turn is stopped rather than five seconds after it,
@@ -463,7 +465,7 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
   const lines = fixture('claude-subagent.jsonl');
   const { workers, session, asked } = await replay('claude-subagent.jsonl', lines.slice(0, 6));
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  session.cancel('');
+  session.abort();
   await settle();
   expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
   // The inner tool's result, which the harness sends after the interrupt.
@@ -473,21 +475,27 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
   expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
 });
 
-it('leaves a background worker from an earlier turn running when a later turn is cancelled', async () => {
+/*
+ * A stop closes the CLI, as the reference stop aborts its query, and a
+ * background worker an earlier turn spawned runs in that CLI, so it ends with
+ * the stop; what the closed CLI says after is read by nobody.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ */
+it('ends a background worker from an earlier turn when a later turn is stopped, with the CLI that runs it', async () => {
   const lines = fixture('claude-subagent-background.jsonl');
   // Through the lead turn's result and the worker's first frame after it, so
   // the worker is open when the next turn begins.
   const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
   const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
   expect(workers.has(call)).toBe(true);
-  session.begin('t2', 'and another thing');
+  session.sendMessage('t2', 'and another thing');
   await settle();
-  session.cancel('t2');
+  session.abort();
   await settle();
-  expect(workers.get(call)?.ended ?? []).toEqual([]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
   sdk.push(...lines.slice(7));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
 });
 
 it('ends a foreground worker on its notification, and its result ends nothing more', async () => {
@@ -564,8 +572,9 @@ it('cancels the lead turn instead when configured to stop the session', async ()
   const { workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6), { workerStop: 'session' });
   session.stopWorker?.(call);
   await settle();
+  // The lead turn's stop closes the CLI, as the reference stop aborts its query.
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
+  expect(sdk.closed).toBe(1);
   expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
 });
 
@@ -576,13 +585,13 @@ it('cancels the lead turn when the worker has no task id yet', async () => {
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
+  expect(sdk.closed).toBe(1);
 });
 
 /** A session with a lead turn open, and the asks and frames a test drives it with. */
 async function leadTurn() {
   const { main, workers, session } = await replay('none', []);
-  session.begin('t1', 'hi');
+  session.sendMessage('t1', 'hi');
   await settle();
   return { main, workers, session };
 }
@@ -626,7 +635,7 @@ it('settles an ask no scope claimed as skipped when the lead turn is cancelled',
   const { session } = await leadTurn();
   const asked = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_orphan', agentID: 'agent-unknown' });
   await settle();
-  session.cancel('t1');
+  session.abort();
   await settle();
   expect(keptCall(session, 'toolu_orphan')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
   expect((session.sessionState().inputNeeded ?? []) as Bag[]).toEqual([]);

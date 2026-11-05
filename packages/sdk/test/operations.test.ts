@@ -352,7 +352,7 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
   });
 
   // Said without being asked: nothing inside the changeset moved, so a turn

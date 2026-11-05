@@ -8,6 +8,7 @@ import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { ROOT } from '../src/host.js';
 import type { Host } from '../src/types/host.js';
+import type { Usage, UsageEntry } from '../src/types/usage.js';
 import { directory, RECORD } from './users-gate-helpers.js';
 import {
   actions, emit, resetSdk, claude, createHost, fileResources, gitBranches, hello, hostTools, peer, sessionQueries, settle, shellTerminals,
@@ -76,7 +77,7 @@ const until = async (check: () => Promise<boolean> | boolean, what = 'it'): Prom
  * A host with the terminal tool on, one session in a folder of its own, and
  * the backend's view of its tools, which is where a call is made from.
  */
-const hosted = async (extra: { time?: Clock; users?: boolean } = {}) => {
+const hosted = async (extra: { time?: Clock; users?: boolean; usage?: Usage } = {}) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ahpd-shell-async-')));
   const kept = memorySessions();
   const host = createHost({
@@ -89,6 +90,7 @@ const hosted = async (extra: { time?: Clock; users?: boolean } = {}) => {
     sessions: kept,
     ...(extra.time === undefined ? {} : { now: extra.time.now, timer: extra.time.timer }),
     ...(extra.users === true ? { users: directory({ ana: ['*:*'] }) } : {}),
+    ...(extra.usage === undefined ? {} : { usage: extra.usage }),
   });
   opened.push(host);
   const p = peer();
@@ -300,7 +302,15 @@ describe.skipIf(!posix)('the end of an async command', () => {
   });
 
   it('wakes the session as the person whose turn started the command', async () => {
-    const on = await hosted({ users: true });
+    const records: UsageEntry[] = [];
+    const usage = {
+      record: async (entry: UsageEntry) => { records.push(entry); },
+      total: async () => ({}),
+      pools: async () => [],
+      records: async () => [],
+      groups: async () => [],
+    } as Usage;
+    const on = await hosted({ users: true, usage });
     await on.client.handle({
       method: 'dispatchAction',
       params: { channel: on.chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't-ana', message: { text: 'start the server' } } },
@@ -314,7 +324,10 @@ describe.skipIf(!posix)('the end of an async command', () => {
       .filter((one) => one.action.type === 'chat/turnStarted')
       .map((one) => one.action);
     const woken = started.find((one) => String(((one.message ?? {}) as { text?: unknown }).text ?? '').startsWith('The background shell command ended'));
-    expect(woken?._meta).toMatchObject({ 'ahpd.sender': 'user:ana' });
+    // Who sent it is this host's own record, which names them on the turn's usage.
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1, usage: { input_tokens: 3, output_tokens: 5 } });
+    await until(() => records.some((one) => one.turn === woken?.turnId), 'the usage record');
+    expect(records.find((one) => one.turn === woken?.turnId)?.owner).toBe('user:ana');
     // The host started it: a system notification, not a message from another chat.
     const message = (woken?.message ?? {}) as { origin?: unknown; _meta?: Record<string, unknown> };
     expect(message.origin).toEqual({ kind: 'systemNotification' });

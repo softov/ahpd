@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Agent, Start } from '../src/types/agent.js';
+import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -40,7 +40,7 @@ const settle = async (times = 40): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-type Note = { channel: string; action: Record<string, unknown>; rejectionReason?: string };
+type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number }; rejectionReason?: string };
 
 const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
   .filter((n) => n.method === 'action')
@@ -104,9 +104,9 @@ function backend(failOn?: number) {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           began.push({ spawn, text });
-          session.begin(turnId, text, model, from);
+          return session.sendMessage(turnId, text, from);
         },
         setConfig: (key, value) => {
           set.push({ key, value });
@@ -145,7 +145,7 @@ const change = (client: Awaited<ReturnType<typeof opened>>['client'], uri: strin
 
 const turn = (client: Awaited<ReturnType<typeof opened>>['client'], chatUri: string, text = 'go') => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
 });
 
 it('starts the session again for a fixed key, and the first turn lands there', async () => {
@@ -165,22 +165,32 @@ it('starts the session again for a fixed key, and the first turn lands there', a
   expect(began).toEqual([{ spawn: 1, text: 'go' }]);
 });
 
-it('answers the turn that waited on a restart with the failure', async () => {
+/*
+ * The restart is the turn's preparation, so a restart that fails ends the turn
+ * said meanwhile in an error in its words, as VS Code's host ends a turn whose
+ * preparation failed.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends the turn that waited on a restart in an error with the failure', async () => {
   const { client, p, uri, chatUri, began } = await opened(undefined, 1);
   void change(client, uri, { fixed: 'two' });
   void turn(client, chatUri);
   await settle();
 
-  // The backend never started, so no turn ran - and the turn that waited is
-  // refused with the reason rather than left waiting on a session that is
-  // not there. The refusal is looked for across the channels because the
-  // host answers a chat under the name it holds it by, not the client's.
+  // The backend never started, so no turn ran, and the turn that waited is
+  // ended with the reason, since the session it was meant for is not there.
+  // It is looked for across the channels because the host answers a chat under
+  // the name it holds it by.
   expect(began).toEqual([]);
-  const refused = p.notes
+  const said = p.notes
     .filter((one) => one.method === 'action')
     .map((one) => one.params as Note)
-    .find((one) => one.rejectionReason === 'the backend would not start');
-  expect(refused).toBeDefined();
+    .filter((one) => one.action.turnId === 't1');
+  expect(said.map((one) => [one.action.type, one.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
 });
 
 it('does not start anything again for a value that did not move', async () => {
@@ -396,7 +406,7 @@ it('applies a config change and a turn sent while the session starts again into 
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => { said.push(`${spawn}: begin ${text}`); session.begin(turnId, text, model, from); },
+        sendMessage: (turnId, text, from) => { said.push(`${spawn}: begin ${text}`); return session.sendMessage(turnId, text, from); },
         setConfig: (key, value) => { said.push(`${spawn}: ${key}=${String(value)}`); return true; },
       };
     },
@@ -458,10 +468,10 @@ const intoMachine = async (throws = false) => {
       const session = base.create(start);
       return {
         ...session,
-        begin: (turnId, text, model, from) => {
+        sendMessage: (turnId, text, from) => {
           said.push(`${spawn}: begin ${text}`);
           if (throws && spawn > 0) throw new Error('the backend fell over');
-          session.begin(turnId, text, model, from);
+          return session.sendMessage(turnId, text, from);
         },
       };
     },
@@ -485,53 +495,188 @@ const intoMachine = async (throws = false) => {
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/boxed' } });
   void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
-  return { p, client, said, machine };
+  return { host, p, client, said, machine };
 };
 
-it('drops a turn that waited on a restart when its connection left', async () => {
+/*
+ * A turn sent while its session is started again is said at once, and handed
+ * to the session that comes up: the restart is the turn's preparation, as VS
+ * Code's host shows a turn running while the work its send needs is done.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2241-L2316
+ */
+it('says a turn sent while its session is started again at once, and begins it once the session is up', async () => {
+  const { p, client, said, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
+  await settle();
+  expect(actions(p, chat).filter((note) => note.action.type === 'chat/turnStarted').map((note) => note.origin?.clientSeq)).toEqual([7]);
+  expect(said).toEqual([]);
+  machine.made('m1');
+  await settle();
+  expect(said).toEqual(['1: begin go']);
+  expect(actions(p, chat).filter((note) => note.action.type === 'chat/turnStarted').map((note) => note.origin?.clientSeq)).toEqual([7]);
+});
+
+/*
+ * A turn stopped while its session is started again is never handed to the
+ * session that comes up, as VS Code's host sends nothing for a turn cancelled
+ * while its send is prepared.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2310
+ */
+it('sends nothing for a turn stopped while its session is started again', async () => {
+  const { p, client, said, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
+  await settle();
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 8, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } } });
+  await settle();
+  expect(actions(p, chat).map((note) => [note.action.type, note.origin?.clientSeq])).toEqual([
+    ['chat/turnStarted', 7],
+    ['chat/turnCancelled', 8],
+  ]);
+  machine.made('m1');
+  await settle();
+  expect(said).toEqual([]);
+});
+
+/*
+ * A change to a key the schema declares is checked by the schema and said, and
+ * a value its backend could not take is the backend's to log, as VS Code's
+ * host says a config change its checks passed and then applies it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13679
+ */
+it('says a change to a key its backend declares, and keeps it when the backend would not take the value', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+    create: (start: Start): Session => ({ ...base.create(start), setConfig: () => 'the backend would not take it' }),
+  };
+  const store = memorySessions();
+  const host = createHost({ path: DIR, agents: [agent], sessions: store });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/kept' } });
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-session:/kept', clientSeq: 3, action: { type: 'session/configChanged', config: { mutable: 'b' } } } });
+  await settle();
+  const answered = actions(p, 'ahp-session:/kept').filter((note) => note.origin?.clientSeq === 3);
+  expect(answered.map((note) => [note.action.type, note.rejectionReason])).toEqual([['session/configChanged', undefined]]);
+  expect(store.config('kept')).toMatchObject({ mutable: 'b' });
+});
+
+/*
+ * A fixed key's change is said before the session starts again, and the
+ * restart is its side effect, as VS Code's host says a config change at once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13661
+ */
+it('says a change that starts the session again before the session is up', async () => {
+  const { p } = await intoMachine();
+  const said = actions(p, 'ahp-session:/boxed').filter((note) => note.action.type === 'session/configChanged' && note.origin !== undefined);
+  expect(said.map((note) => [(note.action.config as Bag).computer, note.rejectionReason])).toEqual([['disposable:box', undefined]]);
+});
+
+/** The action envelopes a peer was sent. */
+const notesOf = (r: ReturnType<typeof peer>): Note[] => r.notes.filter((n) => n.method === 'action').map((n) => n.params as Note);
+
+/*
+ * A client's dispatches wait in one queue, whichever of its connections sent
+ * them, as VS Code's host keys its queue by client id.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12501-L12507
+ */
+it('holds a dispatch behind its client\'s waiting one, sent on another connection of that client', async () => {
+  const { host, client, machine } = await intoMachine();
+  void client.handle({ method: 'dispatchAction', params: { channel: chatUriFor('ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
+  await settle();
+  const q = peer();
+  const again = host.accept(q);
+  await again.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  void again.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', clientSeq: 9, action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
+  await settle();
+  expect(notesOf(q).some((note) => note.action.type === 'root/configChanged')).toBe(false);
+  machine.made('m1');
+  await settle();
+  expect(notesOf(q).filter((note) => note.action.type === 'root/configChanged').map((note) => note.rejectionReason)).toEqual([undefined]);
+});
+
+
+/*
+ * A turn said is the chat's, so it is sent once its session is up whether or
+ * not the connection that sent it is still there, as VS Code's host sends a
+ * turn it said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
+ */
+it('begins a turn that waited on a restart after its connection left', async () => {
   const { client, said, machine } = await intoMachine();
   void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   await settle();
   client.close();
   machine.made('m1');
   await settle();
-  expect(said).toEqual([]);
+  expect(said).toEqual(['1: begin go']);
 });
 
-it('refuses a waiting turn the backend throws on, to the client that sent it', async () => {
+/*
+ * A backend that throws as it is handed the turn ends the turn in an error in
+ * its words, as VS Code's host ends a turn whose send throws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2317-L2336
+ */
+it('ends a waiting turn the backend throws on in an error', async () => {
   const { p, client, said, machine } = await intoMachine(true);
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'first');
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'second');
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  void turn(client, chat, 'first');
   await settle();
   machine.made('m1');
   await settle();
-  expect(said).toContain('1: begin first');
-  const refused = p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note)
-    .filter((note) => note.action.type === 'chat/turnStarted' && note.rejectionReason !== undefined);
-  expect(refused.map((note) => note.rejectionReason)).toContain('the backend fell over');
+  expect(said).toEqual(['1: begin first']);
+  const ended = actions(p, chat).filter((note) => note.action.turnId === 't1');
+  expect(ended.map((note) => [note.action.type, note.rejectionReason])).toEqual([
+    ['chat/turnStarted', undefined],
+    ['chat/error', undefined],
+  ]);
+  expect(ended[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend fell over' } });
 });
 
-it('refuses a dispatch that waited too long on a restart, and goes on with the next', async () => {
-  const { p, client, said } = await intoMachine();
+/*
+ * A dispatch waits on what the host must have before it can apply it for as
+ * long as that takes, and the client's next dispatch waits behind it, as VS
+ * Code's host queues a client's dispatches with no time limit.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
+ */
+it('applies a dispatch that waited on a restart however long it took, and the next behind it', async () => {
+  const { p, client, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
-    void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
     void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
-    await vi.advanceTimersByTimeAsync(59_000);
-    expect(p.notes.filter((n) => n.method === 'action' && (n.params as Note).rejectionReason !== undefined)).toEqual([]);
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(61_000);
   }
   finally { vi.useRealTimers(); }
   await settle();
-  expect(said).toEqual([]);
-  const notes = p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note);
-  const late = notes.find((note) => note.action.type === 'chat/turnStarted' && note.rejectionReason !== undefined);
-  expect(late?.rejectionReason).toContain('took longer than 60s');
-  expect(notes.some((note) => note.action.type === 'root/configChanged' && note.rejectionReason === undefined)).toBe(true);
+  // The answers to the client's own two dispatches, which carry its origin.
+  const notes = (): Note[] => p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note)
+    .filter((note) => note.origin !== undefined && (note.action.type === 'chat/draftChanged' || note.action.type === 'root/configChanged'));
+  expect(notes()).toEqual([]);
+  machine.made('m1');
+  await settle();
+  expect(notes().map((note) => [note.action.type, note.rejectionReason])).toEqual([
+    ['chat/draftChanged', undefined],
+    ['root/configChanged', undefined],
+  ]);
 });
 
-it('refuses a config change that waited too long on the catalogue', async () => {
-  const agent: Agent = { ...echo({ path: DIR, pace: 0 }), list: () => new Promise(() => {}) };
+it('answers a config change that waited on the catalogue however long it took', async () => {
+  let listed: (rows: Listed[]) => void = () => {};
+  const agent: Agent = { ...echo({ path: DIR, pace: 0 }), list: () => new Promise((resolve) => { listed = resolve; }) };
   const store = memorySessions();
   const host = createHost({ path: DIR, agents: [agent], sessions: store });
   const p = peer();
@@ -544,7 +689,10 @@ it('refuses a config change that waited too long on the catalogue', async () => 
   }
   finally { vi.useRealTimers(); }
   await settle();
-  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['reading the catalogue took longer than 60s']);
+  expect(actions(p, 'echo:/nowhere')).toEqual([]);
+  listed([]);
+  await settle();
+  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['echo:/nowhere is not a session here']);
   expect(store.config('nowhere')).toBeUndefined();
 });
 

@@ -69,7 +69,7 @@ describe('a chat attached to a message', () => {
   const started = async (client: Client, chat: string, turnId: string, text: string): Promise<void> => {
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
     await settle();
   };
@@ -93,7 +93,7 @@ describe('a chat attached to a message', () => {
     const before = sdk.blocks.length;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, ...message } } },
     });
     await until(() => sdk.blocks.length > before);
     return (sdk.blocks.at(-1) ?? []) as Bag[];
@@ -213,7 +213,8 @@ describe('a chat attached to a message', () => {
     await gus.send(live, {
       type: 'chat/turnStarted',
       turnId: 't1',
-      message: { text: 'see this', attachments: [attached({ endTurn: 'r1' })] },
+      startedAt: new Date().toISOString(),
+      message: { text: 'see this', origin: { kind: 'user' }, attachments: [attached({ endTurn: 'r1' })] },
     });
     await until(() => sdk.blocks.length > 0);
 
@@ -229,7 +230,24 @@ describe('a chat attached to a message', () => {
     expect(gus.refused()).toEqual([]);
   });
 
-  it('refuses a message pinned to the turn that is still running', async () => {
+  /**
+   * What the client was told of turn `t1` on `live`: each action's type and
+   * refusal, and the words of the error it ended in.
+   */
+  const told = (p: ReturnType<typeof peer>, live: string) => {
+    const said = actions(p, live).filter((one) => one.action.turnId === 't1');
+    return {
+      said: said.map((one) => [one.action.type, one.rejectionReason]),
+      error: (said.find((one) => one.action.type === 'chat/error')?.action.part as Bag | undefined)?.error,
+    };
+  };
+
+  /*
+   * A pin nobody can honour fails the turn's send before the backend is handed
+   * it, as VS Code's host fails a send whose chat attachments it cannot resolve.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2380-L2409
+   */
+  it('ends a turn pinned to the turn that is still running in an error', async () => {
     const { client, p, live } = await opened();
     await started(client, 'ahp-chat:/review', 'r1', 'a question being answered');
 
@@ -237,20 +255,21 @@ describe('a chat attached to a message', () => {
       method: 'dispatchAction',
       params: {
         channel: live,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'see this', attachments: [attached({ endTurn: 'r1' })] } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'see this', attachments: [attached({ endTurn: 'r1' })] } },
       },
     });
     await settle();
 
-    expect(actions(p, live).map((one) => one.rejectionReason).filter((one) => one !== undefined))
-      .toEqual(['Chat attachment endTurn must reference a completed turn: ahp-chat:/review#r1']);
-    // Nothing of the message reached the backend, which is what refusing it
-    // means: an agent that ran the turn would have read a transcript that ends
-    // at a turn with no answer in it yet.
+    expect(told(p, live)).toEqual({
+      said: [['chat/turnStarted', undefined], ['chat/error', undefined]],
+      error: { errorType: 'sendFailed', message: 'Chat attachment endTurn must reference a completed turn: ahp-chat:/review#r1' },
+    });
+    // Nothing of the message reached the backend: an agent that ran the turn
+    // would have read a transcript that ends at a turn with no answer in it yet.
     expect(sdk.blocks).toEqual([]);
   });
 
-  it('refuses a message pinned to a turn this host cannot find', async () => {
+  it('ends a turn pinned to a turn this host cannot find in an error', async () => {
     const { client, p, live } = await opened();
     await spoken(client, 'ahp-chat:/review', 'r1', 'the only question');
 
@@ -258,15 +277,17 @@ describe('a chat attached to a message', () => {
       method: 'dispatchAction',
       params: {
         channel: live,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'see this', attachments: [attached({ endTurn: 'r9' })] } },
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'see this', attachments: [attached({ endTurn: 'r9' })] } },
       },
     });
     await settle();
 
     // The chat is here and the turn is not, so what was attached is not what
     // would be read - the same answer as a turn that is still running.
-    expect(actions(p, live).map((one) => one.rejectionReason).filter((one) => one !== undefined))
-      .toEqual(['Chat attachment endTurn r9 was not found in the retained transcript.']);
+    expect(told(p, live)).toEqual({
+      said: [['chat/turnStarted', undefined], ['chat/error', undefined]],
+      error: { errorType: 'sendFailed', message: 'Chat attachment endTurn r9 was not found in the retained transcript.' },
+    });
   });
 
   it('keeps the chat attachment in the turn the client sees', async () => {

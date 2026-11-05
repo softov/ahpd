@@ -70,7 +70,7 @@ it('serves a backend that arrived as a plugin, through a whole turn', async () =
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello there' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await settle();
 

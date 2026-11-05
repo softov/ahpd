@@ -209,7 +209,7 @@ const hosting = async (setup: Setup = {}) => {
     const before = await turns();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: 0, action: { type: 'chat/turnStarted', turnId: `t${before}`, message: { text: 'hello' } } },
+      params: { channel: chat, clientSeq: 0, action: { type: 'chat/turnStarted', turnId: `t${before}`, startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
     });
     const done = (async () => {
       for (let tries = 0; tries < 400 && await turns() === before; tries++) await pause();

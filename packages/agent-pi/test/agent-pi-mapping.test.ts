@@ -223,7 +223,7 @@ const timed = (action: Bag | undefined): boolean => {
 it('says when a live call started and ended, on its ready and its complete', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'bash', { command: 'ls' });
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
@@ -253,7 +253,7 @@ it('starts an approved call when it was approved, and says none for a denied one
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   const asked = now;
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
@@ -269,7 +269,7 @@ it('starts an approved call when it was approved, and says none for a denied one
     .toBe(new Date(asked).toISOString());
   expect(metaOf(confirmed)['ahpd.startedAt']).toBe(new Date(approved).toISOString());
 
-  session.begin('t2', 'again');
+  session.sendMessage('t2', 'again');
   await settled();
   const refused = driveCall(pi, 'c2', 'bash', { command: 'rm -rf /' });
   await settled();
@@ -282,15 +282,6 @@ it('starts an approved call when it was approved, and says none for a denied one
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
   expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
   clock.mockRestore();
-});
-
-it('says when a command of the person\'s own ran', async () => {
-  const { session, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
-  session.ran?.('t1', 'ls -la', async () => ({ success: true, said: 'Listed files', output: 'a b c' }));
-  await settled();
-  const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 't1:shell')?.action;
-  expect(metaOf(for1('chat/toolCallReady'))['ahpd.startedAt']).toEqual(expect.any(String));
-  expect(timed(for1('chat/toolCallComplete'))).toBe(true);
 });
 
 it('gives a replayed call the times of the entries that ran it', async () => {
@@ -320,7 +311,7 @@ it('gives a replayed call the times of the entries that ran it', async () => {
 it('never writes a bare timing key on a pi tool call', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settled();
   await driveCall(pi, 'c1', 'bash', { command: 'ls' });
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });

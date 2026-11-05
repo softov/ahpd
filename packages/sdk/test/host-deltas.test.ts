@@ -52,7 +52,7 @@ async function opened(over: Partial<HostOptions> = {}) {
   const held = await running(over);
   held.client.handle({
     method: 'dispatchAction',
-    params: { channel: held.uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    params: { channel: held.uri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await emit(
@@ -167,7 +167,7 @@ describe('a streamed delta', () => {
     // it. Not awaited: the request is answered when the turn it began ends.
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle(6);
 
@@ -242,7 +242,7 @@ describe('a streamed delta', () => {
     // Somebody says something, which resumes the session while the read waits.
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle(6);
     await emit(
@@ -293,7 +293,7 @@ describe('a host closing', () => {
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     await emit(

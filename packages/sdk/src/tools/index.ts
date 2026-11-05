@@ -1,8 +1,8 @@
 import type { HostTool } from '../types/host.js';
 import { sessionTools, wakeupTool } from './session.js';
 import { artifactTools } from './artifacts.js';
-import { shellTools } from './shell.js';
 import { askUserTool } from './askuser.js';
+import { shellTools } from './shell.js';
 
 /**
  * The tools this package contributes to every session, as a host's `tools`.
@@ -58,8 +58,8 @@ export const hostTools = (): HostTool[] => [
     },
   },
   wakeupTool(),
+  askUserTool(),
   // The agent terminal tool, withheld by `contributingTo` until the root
   // config turns it on and never under Windows.
   ...shellTools(),
-  askUserTool(),
 ];

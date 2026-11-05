@@ -1,25 +1,30 @@
 import type { ContentBlock, StopReason, Usage } from '@agentclientprotocol/sdk';
-import type { Bag, Chosen, MessageAttachment, MessageFrom } from '@ahpd/sdk';
-import { partsOf } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
+import { partsOf, titleFrom } from '@ahpd/sdk';
 import { closePlan } from '../mapping.js';
 import type { AcpConnection } from '../types.js';
-import { bag, messageOf } from './common.js';
+import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
 
-/** One prompted turn, from its opening to its ending. */
+/** One prompted turn, from its opening to its ending, and the turns handed behind it. */
 export interface Turn {
-  openTurn(turnId: string, text: string, from: MessageFrom | undefined, queuedMessageId: string | undefined, said?: Bag): void;
+  /**
+   * Send a turn the host said: prompted now when the server runs nothing, and
+   * once the turn in front of it is over when it runs another.
+   */
+  begin(
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+    options?: TurnOptions,
+  ): void;
   finish(
     turnId: string,
     ending: 'complete' | 'cancelled' | 'error',
     failure?: { errorType: string; message: string },
   ): void;
-  run(
-    turnId: string,
-    text: string,
-    chosen: Chosen | undefined,
-    attachments: MessageAttachment[] | undefined,
-  ): Promise<void>;
 }
 
 /**
@@ -45,17 +50,24 @@ export function createTurn(ctx: SessionContext): Turn {
   const { emit, provider, start, inside, turns, doing, touch } = ctx;
 
   /**
-   * Open a turn on the wire, before the prompt is sent. `said` is a turn said
-   * while the server ran another, opened now as it was said.
+   * The first message titles a session nobody has named.
+   *
+   * A message of nothing but blanks answers the fallback, which is the title
+   * already held - so nothing moves and nothing is said about it.
    */
-  const openTurn = (
-    turnId: string,
-    text: string,
-    from: MessageFrom | undefined,
-    queuedMessageId: string | undefined,
-    said?: Bag,
-  ): void => {
-    ctx.active = said ?? {
+  const titled = (text: string): void => {
+    if (ctx.title !== UNTITLED || text === '') return;
+    const said = titleFrom(text, UNTITLED);
+    if (said === ctx.title) return;
+    ctx.title = said;
+    if (ctx.record !== undefined) ctx.record.title = said;
+    // Said, because a client that opened the session holds the old one.
+    emit('session', { type: 'session/titleChanged', title: said });
+  };
+
+  /** Hold a turn the host said as the one running, before the prompt is sent. */
+  const openTurn = (turnId: string, text: string, from: MessageFrom | undefined): void => {
+    ctx.active = {
       id: turnId,
       startedAt: new Date().toISOString(),
       message: {
@@ -76,16 +88,39 @@ export function createTurn(ctx: SessionContext): Turn {
       updates: [],
       ...(start.plan === true ? { hostPlan: true } : {}),
     };
-    if (said === undefined) {
-      emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt: ctx.active.startedAt,
-        message: ctx.active.message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
-    }
     doing('Thinking');
+  };
+
+  /**
+   * The first turn handed while another ran, once nothing runs: a session runs
+   * one prompt at a time, as the reference agent runs each send after the one
+   * before it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1814
+   */
+  const sendNext = (): void => {
+    if (ctx.closed || ctx.active !== undefined) return;
+    const next = ctx.waiting.shift();
+    if (next === undefined) return;
+    ctx.cancelRequested = false;
+    ctx.failed = undefined;
+    titled(next.text);
+    openTurn(next.turnId, next.text, next.from);
+    // What the host has to say on this turn, asked now that the turn exists.
+    const instructions = (next.options?.instructions?.() ?? []).filter((one) => one.trim() !== '');
+    void run(next.turnId, next.text, next.model, next.attachments, instructions);
+  };
+
+  /*
+   * A turn handed while the server runs another takes its place in every
+   * client's state, so the one it replaced runs on and ends in no history; a
+   * turn the server still runs after a stop already ended there.
+   */
+  const begin: Turn['begin'] = (turnId, text, model, from, attachments, options) => {
+    if (ctx.closed) return;
+    const shown = ctx.waiting.at(-1)?.turnId ?? (ctx.cancelRequested || ctx.active === undefined ? undefined : String(ctx.active.id));
+    if (shown !== undefined) ctx.replaced.add(shown);
+    ctx.waiting.push({ turnId, text, model, from, attachments, options });
+    sendNext();
   };
 
   /**
@@ -160,14 +195,8 @@ export function createTurn(ctx: SessionContext): Turn {
       });
     }
     touch();
-    /*
-     * Only a turn that completed starts the queue, as the reference host drains
-     * it after a success: somebody stopping a turn is stopping this
-     * conversation, and a failed turn leaves what waits for a client to start.
-     * A turn said while this one ran goes on whatever the ending.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
-     */
-    if (ending === 'complete' || ctx.waiting.length > 0) ctx.startNext();
+    // The turn handed behind this one runs whatever the ending: each send is its own.
+    sendNext();
   };
 
   /**
@@ -266,7 +295,11 @@ export function createTurn(ctx: SessionContext): Turn {
    *
    * The instructions open the first prompt of the session, before anything the
    * person said, because they are what the agent is to keep in mind while it
-   * reads the rest.
+   * reads the rest. What the host has to say on this turn comes next, in this
+   * turn's prompt, as every reference agent puts the instructions its host
+   * contributes for a send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L668
    *
    * The helper decides which of the three an attachment is, and within which
    * limits, so nothing here reads a file: a part is what the message already
@@ -276,12 +309,17 @@ export function createTurn(ctx: SessionContext): Turn {
    * `embeddedContext` does. A file the helper could not inline is named by its
    * path in the text, which the agent opens with its own tools if it has them.
    */
-  const blocksFor = async (text: string, attachments: MessageAttachment[] | undefined): Promise<ContentBlock[]> => {
+  const blocksFor = async (
+    text: string,
+    attachments: MessageAttachment[] | undefined,
+    instructions: string[],
+  ): Promise<ContentBlock[]> => {
     const parts = await partsOf(text, attachments, { images: ctx.takes?.image === true });
     const blocks: ContentBlock[] = [];
     if (!told && start.instructions !== undefined && start.instructions.length > 0) {
       blocks.push({ type: 'text', text: start.instructions.join('\n\n') });
     }
+    if (instructions.length > 0) blocks.push({ type: 'text', text: instructions.join('\n\n') });
     for (const part of parts) {
       if (part.type === 'image') {
         blocks.push({
@@ -313,14 +351,18 @@ export function createTurn(ctx: SessionContext): Turn {
   /**
    * One turn: the prompt is sent, and what comes back ends it.
    *
-   * A cancel that arrived while the server was still being opened ends the
-   * turn without a prompt at all, because there is nothing running to stop.
+   * A stop that arrived while the turn was prepared, the server opened, its
+   * model chosen and the attachments read, ends the turn without a prompt at
+   * all, as the reference host checks for a stop before it hands a turn to its
+   * agent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2307-L2316
    */
   const run = async (
     turnId: string,
     text: string,
     chosen: Chosen | undefined,
     attachments: MessageAttachment[] | undefined,
+    instructions: string[],
   ): Promise<void> => {
     /** The connection this turn opened, which outlives `live` once it dies. */
     let connection: AcpConnection | undefined;
@@ -372,8 +414,14 @@ export function createTurn(ctx: SessionContext): Turn {
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
       await ctx.chooseModel(held, chosen);
+      const blocks = await blocksFor(text, attachments, instructions);
+      if (ctx.active !== turn) return;
+      if (ctx.cancelRequested) {
+        finish(turnId, 'cancelled');
+        return;
+      }
       ctx.mapping.prompted = true;
-      const response = await held.connection.prompt(held.sessionId, await blocksFor(text, attachments));
+      const response = await held.connection.prompt(held.sessionId, blocks);
       told = true;
       saidUsage(response.usage);
       stopReasonFor(turnId, response.stopReason);
@@ -412,5 +460,5 @@ export function createTurn(ctx: SessionContext): Turn {
     }
   };
 
-  return { openTurn, finish, run };
+  return { begin, finish };
 }

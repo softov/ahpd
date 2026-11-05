@@ -173,7 +173,7 @@ const say = async (client: Awaited<ReturnType<typeof joined>>['client'], chat: s
   const before = await turns();
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chat, clientSeq: 0, action: { type: 'chat/turnStarted', turnId, message: { text: 'hello' } } },
+    params: { channel: chat, clientSeq: 0, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
   for (let tries = 0; tries < 200 && await turns() === before; tries++) await new Promise((r) => { setTimeout(r, 10); });
   await client.handle({ method: 'unsubscribe', params: { channel: chat } });
@@ -356,7 +356,7 @@ describe('a session with a working tree of its own', () => {
     // written down about it.
     a.handle({
       method: 'dispatchAction',
-      params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await new Promise((resolve) => { setTimeout(resolve, 60); });
     await a.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -777,7 +777,7 @@ describe('a session with a working tree of its own', () => {
     }).snapshot.state;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: opened.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: opened.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await client.handle({
       method: 'dispatchAction',

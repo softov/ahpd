@@ -252,21 +252,16 @@ const BROKEN = {
   idleSteering: {
     breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."; this host runs one as a turn of its own under its id',
     row: 'A10',
-    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L266-L267 at a4e689ae)',
+    by: 'none, VS Code\'s host: "Steering that arrived too late to steer a turn runs next, ahead of queued messages." (queueDrainContribution.ts L266-L267 at 6b68d3fe)',
+  },
+  idleQueue: {
+    breaks: 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."; this host starts the head of an idle chat\'s queue on any change to its pending messages, with the turn that names it alone',
+    row: 'H1-0025',
+    by: 'none, VS Code\'s host drains an idle chat\'s queue on every change to its pending messages and starts the head (queueDrainContribution.ts L71-L90 and L245-L326 at 6b68d3fe)',
   },
   removalUnserved: {
     breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
     row: 'A11',
-    by: '10',
-  },
-  toggleNoOp: {
-    breaks: 'types/channels-session/actions.ts, session/customizationToggled: "Is a no-op when no customization has the given id."',
-    row: 'C2',
-    by: '10',
-  },
-  startNoOp: {
-    breaks: 'types/channels-session/actions.ts, session/mcpServerStartRequested: "Is a no-op when no matching McpServerCustomization is found."',
-    row: 'C2',
     by: '10',
   },
 } satisfies Record<string, Broken>;
@@ -355,10 +350,12 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '039-set-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '043-remove-steering-message-is-no-op-for-mismatched-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'status', 'steeringMessage'], ...BROKEN.idleSteering }],
+  '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.idleQueue }],
+  '048-remove-a-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
+  '050-remove-queued-message-is-no-op-for-unknown-id': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages', 'steeringMessage'], ...BROKEN.idleSteering }],
-  '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '053-reorders-queued-messages': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], ...BROKEN.idleQueue }],
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
@@ -366,18 +363,14 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
-  '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '226-session-customizationtoggled-is-no-op-for-unknown-child-id': [{ refused: ['does-not-exist has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
-  '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
-  '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],
-  '263-session-customizationtoggled-clears-enablement': [{ refused: ['server-a has no runtime switch'], ...BROKEN.toggleNoOp }],
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
+const DRAINED = 'queueDrainContribution.ts L29 at 6b68d3fe: "Owns pending-message synchronization and decides when a queued turn can be admitted."; a client\'s reorder, L87 and L146, drains the queue of a chat that runs nothing, so its head starts as a turn';
+const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
 
 /**
  * Where a case's answer differs because the host did what the protocol has it
@@ -390,6 +383,9 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
   '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
+  '054-keeps-messages-not-in-order-at-end-in-original-order': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
+  '055-ignores-unknown-ids-in-reorder': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
+  '056-empty-reorder-preserves-all-messages-in-original-order': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: DRAINED }],
   '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
   '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activity'], because: THINKING }],
@@ -408,6 +404,8 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '232-chat-turnsloaded-prepends-older-turns': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],
+  '263-chat-turn-resume-reopens-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
+  '269-chat-turn-resume-completes-one-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
 };
 
 /**
@@ -490,10 +488,6 @@ const REFUSALS: Record<string, {
     said: (action) => `${String(action.turnId)} did not end with an error that can be resumed`,
     source: RESUMED,
     holds: (state, action) => !resumable(state, action.turnId),
-  }, {
-    said: (action) => `${String(action.turnId)} is not a turn that can be resumed`,
-    source: 'host policy, host/chatactions.ts: a turn a backend runs again is one it ran, and the turn the action reopens runs nowhere else',
-    holds: (state, action) => (state.activeTurn === undefined || state.activeTurn === null) && resumable(state, action.turnId),
   }],
   'chat/inputAnswerChanged': [{
     said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
@@ -506,14 +500,8 @@ const REFUSALS: Record<string, {
     holds: (state, action) => !waitingOn(state, action.requestId),
   }],
   'chat/pendingMessageRemoved': [{
-    said: (action) => `${String(action.id)} is not a ${String(action.kind)} message this chat holds`,
-    source: 'chat-channel.md: "chat/pendingMessageRemoved | No pending message with matching id and kind | Server SHOULD reject the action"',
-    holds: (state, action) => (action.kind === 'steering'
-      ? (state.steeringMessage as { id?: unknown } | undefined)?.id !== action.id
-      : !((state.queuedMessages ?? []) as { id?: unknown }[]).some((one) => one.id === action.id)),
-  }, {
     said: () => 'Cannot change a steering message while it is being processed.',
-    source: 'VS Code agentService.ts L13493-L13508: "Steering handed to the provider cannot be edited, and can be removed only if the provider can withdraw it."',
+    source: 'VS Code agentService.ts L13530-L13537 at 6b68d3fe: "Steering handed to the provider cannot be edited, and can be removed only if the provider can withdraw it."',
     holds: (state, action) => state.activeTurn !== undefined && state.activeTurn !== null
       && (state.steeringMessage as { id?: unknown } | undefined)?.id === action.id,
   }],
@@ -535,10 +523,6 @@ const REFUSALS: Record<string, {
     said: (action) => `${Object.keys(action.config as object)[0] ?? ''} is not a config key this backend takes`,
     source: 'types/channels-session/actions.ts, session/configChanged: "Only properties with `sessionMutable: true` in the config schema may be changed."',
   }],
-  'session/mcpServerStopRequested': [{
-    said: (action) => `${String(action.id)} would not stop`,
-    source: 'types/channels-session/actions.ts, session/mcpServerStopRequested: "The host remains authoritative and MAY reject the action"',
-  }],
   'root/nonExistentAction': [{ said: (action) => `${String(action.type)} names nothing here`, source: MAY_NOT_ORIGINATE }],
   'session/nonExistentAction': [{ said: (action) => `${String(action.type)} is not served yet`, source: MAY_NOT_ORIGINATE }],
   'root/configChanged': [{
@@ -554,10 +538,6 @@ const REFUSALS: Record<string, {
     said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
     source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
     holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
-  }, {
-    said: (action) => `${String(action.turnId)} is not a turn this host can rewind to`,
-    source: 'host policy, host/chatactions.ts: a truncation cuts the backend at its own end of the turn, and a backend that never ran the turn has none',
-    holds: (state, action) => ((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
   }],
   'chat/toolCallResultConfirmed': [{
     said: () => 'No tool call here asks for its result to be confirmed',

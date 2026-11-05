@@ -1,13 +1,13 @@
 import { run } from '@cofold/agents';
 import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
-import { bag, holdsTheQueue, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
-import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session } from '@ahpd/sdk';
+import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
-import { ruleName, toolCallPart, toolStartAction } from './tools.js';
+import { ruleName } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
-import type { SessionContext, Waiting } from './context.js';
+import type { SessionContext } from './context.js';
 
 /** The attachments a message a client sent carries, where it carries any. */
 const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
@@ -39,17 +39,18 @@ export const partsFor = async (
     : { type: 'text', text: one.text }));
 };
 
-/** What opening a turn and running the queue offer the other areas. */
+/** What opening a turn and running the turns handed offer the other areas. */
 export interface Turns {
   beginTurn: (
     turnId: string,
     text: string,
     model?: Chosen,
     from?: MessageFrom,
-    queuedMessageId?: string,
     attachments?: MessageAttachment[],
+    options?: TurnOptions,
   ) => void;
-  startNext: () => void;
+  /** Run the first turn handed while another ran, once nothing runs. */
+  sendNext: () => void;
   /**
    * Run the turn that failed again, without its message being said twice.
    *
@@ -67,10 +68,8 @@ export interface Turns {
   takesImages: () => boolean;
 }
 
-export const createTurns = (
-  ctx: SessionContext,
-): Turns & { methods: Pick<Session, 'ran' | 'queue' | 'unqueue' | 'reorder'> } => {
-  const { start, options, harness, sessionId, where, store, settings, turns, queued } = ctx;
+export const createTurns = (ctx: SessionContext): Turns => {
+  const { start, options, harness, sessionId, where, store, settings, turns } = ctx;
 
   /**
    * Whether the model the turn now running was built on takes an image.
@@ -142,78 +141,26 @@ export const createTurns = (
   };
 
   /**
-   * A turn sent while a run holds another, said now as the chat's turn and run
-   * once the turn in front of it is over. The turn it takes the place of, the
-   * running one or one said before it, runs on and ends in no history; a turn
-   * a run still holds after a stop already ended in every client's state.
-   */
-  const hand = (turnId: string, text: string, rest: Omit<Waiting, 'said'>): void => {
-    const shown = ctx.waiting.at(-1)?.said ?? (ctx.cancelRequested ? undefined : ctx.active);
-    if (shown !== undefined) ctx.replaced.add(String(shown.id));
-    const reference = rest.command === undefined ? valuesFor(rest.model).reference : undefined;
-    const said: Bag = {
-      id: turnId,
-      startedAt: new Date().toISOString(),
-      message: {
-        text,
-        ...(rest.from?.origin !== undefined ? { origin: rest.from.origin } : {}),
-        ...(rest.from?._meta !== undefined ? { _meta: rest.from._meta } : {}),
-        ...(rest.attachments !== undefined && rest.attachments.length > 0 ? { attachments: rest.attachments } : {}),
-        ...(reference !== undefined
-          ? { model: { id: reference, ...(rest.model?.config === undefined ? {} : { config: rest.model.config }) } }
-          : {}),
-      },
-      responseParts: [],
-    };
-    ctx.waiting.push({ ...rest, said });
-    start.emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt: said.startedAt,
-      message: said.message,
-      ...(rest.queuedMessageId !== undefined ? { queuedMessageId: rest.queuedMessageId } : {}),
-    });
-    retitle(text);
-    ctx.touch();
-  };
-
-  /**
-   * Open a turn on the wire, before anything runs it.
+   * Open a turn in this session's record, before anything runs it.
    *
-   * `chat/turnStarted` is emitted here, before `run()` is called, because the
-   * host has already dispatched that action and AHP requires the order
-   * turnStarted, then an opened part, then deltas. cofold's own `run.started`
-   * therefore means nothing on the wire and is dropped in `mapping.ts`.
-   *
-   * `queuedMessageId` names the waiting message it came from; a client's
-   * reducer takes it out of the queue on that word.
+   * The host said the turn's start, so nothing is said here; cofold's own
+   * `run.started` means nothing on the wire and is dropped in `mapping.ts`.
    *
    * Answers nothing for a session that is closed or already running a turn.
    * Both a turn with a run behind it and one that has to be failed before it
    * starts share this opening, so a client sees the same turn either way.
-   *
-   * `said` is a turn said while a run held another, opened now as it was said.
    */
   const openTurn = (
     turnId: string,
     text: string,
     model?: Chosen,
     from?: MessageFrom,
-    queuedMessageId?: string,
     attachments?: MessageAttachment[],
-    said?: Bag,
   ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
     if (ctx.closed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     const { values, reference } = valuesFor(model);
-    if (said !== undefined) {
-      ctx.active = said;
-      ctx.doing('Thinking');
-      const mapping = mappingOn(turnId, said.responseParts as Bag[], Date.parse(String(said.startedAt)), reference);
-      ctx.activeMapping = mapping;
-      return { mapping, values, reference };
-    }
     const began = Date.now();
     // No part yet: each is opened when the model starts writing the block it holds.
     ctx.active = {
@@ -236,13 +183,6 @@ export const createTurns = (
       },
       responseParts: [],
     };
-    start.emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt: ctx.active.startedAt,
-      message: ctx.active.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
     /*
      * The first message titles a session nobody has named.
      *
@@ -281,10 +221,11 @@ export const createTurns = (
     values: Record<string, unknown>,
     reference: string | undefined,
     mapping: TurnMapping,
+    instructions: readonly string[] = [],
   ): void => {
     let agent: CofoldAgent;
     try {
-      agent = ctx.agentOf(values);
+      agent = ctx.agentOf(values, instructions);
     }
     catch (error) {
       void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
@@ -350,20 +291,27 @@ export const createTurns = (
     })();
   };
 
-  /** Open a turn and run it: the whole of what a client's new message means. */
+  /**
+   * Open a turn and run it: the whole of what a client's new message means.
+   *
+   * What the host has to say on this turn is asked now that the turn exists,
+   * and goes into the system prompt of its run, as every reference agent puts
+   * the instructions its host contributes for a send into that turn's prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288
+   */
   const startTurn = (
     turnId: string,
     text: string,
     model?: Chosen,
     from?: MessageFrom,
-    queuedMessageId?: string,
     attachments?: MessageAttachment[],
-    said?: Bag,
+    options?: TurnOptions,
   ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments, said);
+    const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
+    const instructions = options?.instructions?.() ?? [];
     if (attachments === undefined || attachments.length === 0) {
-      runTurn(turnId, text, opened.values, opened.reference, opened.mapping);
+      runTurn(turnId, text, opened.values, opened.reference, opened.mapping, instructions);
       return;
     }
     runTurn(
@@ -372,6 +320,7 @@ export const createTurns = (
       opened.values,
       opened.reference,
       opened.mapping,
+      instructions,
     );
   };
 
@@ -433,12 +382,10 @@ export const createTurns = (
     text: string,
     model: Chosen | undefined,
     from: MessageFrom | undefined,
-    queuedMessageId: string | undefined,
     attachments: MessageAttachment[] | undefined,
     why: unknown,
-    said?: Bag,
   ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments, said);
+    const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
     void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
   };
@@ -457,10 +404,7 @@ export const createTurns = (
    * A conversation's first turn has no turn before to cut to, so its session
    * is dropped instead and `run()` makes it again, with the same workspace.
    * Either way the calls the failed turn ran are run again, because the cut
-   * drops them with the prompt.
-   *
-   * `chat/turnResume` is said here, while the client's action is applied, so
-   * it goes out as that action's echo before the new run's first event.
+   * drops them with the prompt. The host said the client's resume.
    */
   const resumeTurn = (turnId: string): boolean => {
     if (ctx.closed || ctx.active !== undefined || ctx.waiting.length > 0 || ctx.opening !== undefined) return false;
@@ -508,7 +452,6 @@ export const createTurns = (
     const began = Date.now();
     const mapping = mappingOn(turnId, kept, began, reference);
     ctx.activeMapping = mapping;
-    start.emit('chat', { type: 'chat/turnResume', turnId });
     ctx.doing('Thinking');
     ctx.touch();
     /*
@@ -551,7 +494,26 @@ export const createTurns = (
   };
 
   /**
-   * Begin a turn, once the resume lookup has settled.
+   * A turn handed, run once the run in front of it is over, as the reference
+   * agent runs each send after the one before it. The turn it takes the place
+   * of in every client's state runs on here and ends in no history.
+   */
+  const beginTurn = (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+    options?: TurnOptions,
+  ): void => {
+    const shown = ctx.waiting.at(-1)?.turnId ?? (ctx.cancelRequested ? undefined : str(ctx.active?.id));
+    if (shown !== undefined) ctx.replaced.add(shown);
+    ctx.waiting.push({ turnId, text, model, from, attachments, options });
+    sendNext();
+  };
+
+  /**
+   * The first turn handed, once the resume lookup has settled and nothing runs.
    *
    * A resumed session may already have an open turn waiting on a person, so a
    * second run would fight the paused one for the session's writer claim and
@@ -564,417 +526,51 @@ export const createTurns = (
    * every turn on the failure path rather than on the ordinary one: the client
    * asked to carry on from a point, and carrying on from somewhere else
    * without saying so is the one answer that is worse than an error.
-   *
-   * A turn that finds another running once the lookup has settled, the one
-   * that opened before it or the paused run the lookup made the chat's turn
-   * again, is said at once and run once that one is over, as any turn handed
-   * while a run holds another is. `said` is such a turn, run now.
    */
-  const beginTurn = (
-    turnId: string,
-    text: string,
-    model?: Chosen,
-    from?: MessageFrom,
-    queuedMessageId?: string,
-    attachments?: MessageAttachment[],
-    said?: Bag,
-  ): void => {
-    const start = (): void => {
-      if (ctx.stopping.delete(turnId)) return;
-      if (said === undefined && (ctx.active !== undefined || ctx.waiting.length > 0)) {
-        hand(turnId, text, { model, from, queuedMessageId, attachments });
-        return;
-      }
-      if (ctx.refused !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, attachments, ctx.refused, said);
-        return;
-      }
-      /*
-       * The record first, so this turn runs on what it says now.
-       *
-       * A record that can no longer be used ends this turn with the sentence,
-       * rather than running on the options of the turn before.
-       */
-      const why = ctx.refreshOptions();
-      if (why !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, attachments, new Error(why), said);
-        return;
-      }
-      startTurn(turnId, text, model, from, queuedMessageId, attachments, said);
-    };
-    if (ctx.refused !== undefined) {
-      start();
+  const sendNext = (): void => {
+    if (ctx.refused === undefined && ctx.opening !== undefined) {
+      void ctx.opening.then(sendNext, sendNext);
       return;
     }
-    const waiting = ctx.opening;
-    if (waiting === undefined) {
-      start();
-      return;
-    }
-    void waiting.then(start, start);
-  };
-
-  /** The head of the queue, once there is nothing running. */
-  const startNext = (): void => {
-    if (ctx.opening !== undefined) {
-      // A paused run decides whether anything may be taken off the queue, so
-      // the queue waits for the same lookup every turn does.
-      void ctx.opening.then(startNext, startNext);
-      return;
-    }
-    if (ctx.closed) return;
-    /*
-     * While a stopped run still winds down, every client holds the chat idle,
-     * so the head of the queue is said as the chat's turn now, and runs once
-     * the run is over.
-     */
-    if (ctx.active !== undefined) {
-      if (!ctx.cancelRequested || ctx.waiting.length > 0) return;
-      const untaken = ctx.untaken.shift();
-      if (untaken !== undefined) {
-        if (ctx.steering?.id === untaken.id) ctx.steering = undefined;
-        hand(crypto.randomUUID(), untaken.text, { from: untaken.from, queuedMessageId: untaken.id, attachments: untaken.attachments });
-        return;
-      }
-      // Steering first, as the drain below takes it.
-      const [head] = queued.splice(Math.max(0, queued.findIndex((one) => one.steering === true)), 1);
-      if (head === undefined) return;
-      const held = bag(head.command);
-      const message = bag(head.message);
-      hand(crypto.randomUUID(), String(message.text ?? ''), {
-        queuedMessageId: String(head.id),
-        ...(typeof held.text === 'string' && typeof held.run === 'function'
-          ? { from: { origin: { kind: 'user' } }, command: { text: held.text, run: held.run as RunCommand } }
-          : {
-            model: head.model as Chosen | undefined,
-            from: head.from as MessageFrom | undefined,
-            attachments: attachmentsOf(message),
-          }),
-      });
-      return;
-    }
-    // A turn said while another ran goes first, as it was said.
-    const first = ctx.waiting.shift();
-    if (first !== undefined) {
-      const turnId = String(first.said.id);
-      if (first.command !== undefined) runCommand(turnId, first.command.text, first.command.run, first.queuedMessageId, first.said);
-      else beginTurn(turnId, String(bag(first.said.message).text ?? ''), first.model, first.from, first.queuedMessageId, first.attachments, first.said);
-      return;
-    }
-    // Nor behind a failure a client can resume, which waits to be resumed.
-    if (holdsTheQueue(turns.at(-1))) return;
-    /*
-     * A steering message the run it was sent into never took in, before the
-     * queue: it was meant for the turn that just ended. Its turn names it in
-     * `queuedMessageId`, as a steering message taken in by a turn of its own
-     * is, which takes it out of every client's state.
-     * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
-     */
-    const left = ctx.untaken.shift();
-    if (left !== undefined) {
-      if (ctx.steering?.id === left.id) ctx.steering = undefined;
-      beginTurn(crypto.randomUUID(), left.text, undefined, left.from, left.id, left.attachments);
-      return;
-    }
-    /*
-     * Then the first steering message waiting, in the order they came, and then
-     * the head: the reference host's drain runs steering that came too late to
-     * steer a turn ahead of queued messages.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-     */
-    const [next] = queued.splice(Math.max(0, queued.findIndex((held) => held.steering === true)), 1);
-    if (next === undefined) return;
-    /*
-     * A command somebody typed is run, not asked.
-     *
-     * `ran` queued it as text so a client could see it waiting, and handing
-     * that text to the run loop is the one thing `!` exists not to do. It runs
-     * under a fresh turn id with the waiting row named, which is how a queued
-     * message of any other kind becomes a turn.
-     */
-    const held = bag(next.command);
-    const typed = str(held.text);
-    if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as RunCommand, str(next.id));
-      return;
-    }
-    const message = bag(next.message);
-    beginTurn(
-      crypto.randomUUID(),
-      String(message.text ?? ''),
-      next.model as Chosen | undefined,
-      next.from as MessageFrom | undefined,
-      String(next.id),
-      attachmentsOf(message),
-    );
-  };
-
-  /**
-   * One shell command as a turn of this chat's.
-   *
-   * The whole of what `!command` means, and one function because it is reached
-   * two ways: immediately from `ran`, and later from `startNext` when the
-   * command was typed while a turn was already running. The host runs it in one
-   * of its own terminals and hands back what happened, so nothing here reaches
-   * cofold's run loop - which is the whole difference from `beginTurn`, and why
-   * a person's shell command never becomes a question to a model.
-   *
-   * `queuedMessageId` names the waiting row it came from, so a client clears it
-   * the way it clears any other.
-   */
-  const runCommand = (
-    turnId: string,
-    command: string,
-    run: RunCommand,
-    queuedMessageId?: string,
-    said?: Bag,
-  ): void => {
     if (ctx.closed || ctx.active !== undefined) return;
-    ctx.cancelRequested = false;
-    ctx.failed = undefined;
-    const began = Date.now();
-    const toolCallId = `${turnId}:command`;
-    // The call as a part, because a client that subscribes after the command
-    // ran reads the snapshot rather than the actions it missed. The command is
-    // its intention, as the reference host starts its own.
-    const part = toolCallPart(toolCallId, 'terminal', 'Terminal', undefined, undefined, command);
-    const call = bag(part.toolCall);
-    // A command said while a run held another runs as it was said.
-    if (said !== undefined) (said.responseParts as Bag[]).push(part);
-    ctx.active = said ?? {
-      id: turnId,
-      startedAt: new Date(began).toISOString(),
-      message: { text: `!${command}`, origin: { kind: 'user' } },
-      responseParts: [part],
-    };
-    if (said === undefined) {
+    const next = ctx.waiting.shift();
+    if (next === undefined) return;
+    const { turnId, text, model, from, attachments, options } = next;
+    // A turn a reopened run took the place of is the chat's again from here.
+    if (next.displaced === true) {
       start.emit('chat', {
-        type: 'chat/turnStarted', turnId, startedAt: ctx.active.startedAt, message: ctx.active.message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt: new Date().toISOString(),
+        message: {
+          text,
+          origin: from?.origin ?? { kind: 'user' },
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+        },
       });
-      retitle(command);
     }
-    start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal', undefined, undefined, command));
+    if (ctx.refused !== undefined) {
+      failTurn(turnId, text, model, from, attachments, ctx.refused);
+      return;
+    }
     /*
-     * The ready the reference host sends for its own: the command is the line
-     * and the input, and nobody is asked. Onto the held call and into the
-     * action from one object, so a client that subscribes while the command
-     * runs reads the running call a watching client holds.
-     * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L75-L82
+     * The record first, so this turn runs on what it says now.
+     *
+     * A record that can no longer be used ends this turn with the sentence:
+     * a turn runs on the record as it is when the turn begins.
      */
-    const ready: Bag = { invocationMessage: command, toolInput: command, confirmed: 'not-needed' };
-    Object.assign(call, ready, { status: 'running' });
-    start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, ...ready });
-    ctx.doing('Running');
-    ctx.touch();
-    /*
-     * The block a client opens the command's terminal from. `isPty` is the
-     * terminal's own, which a client reads to decide whether the output holds
-     * VT sequences, and it is left out where the host says nothing.
-     */
-    const terminalOf = (terminal: CommandTerminal): Bag => ({
-      type: 'terminal',
-      resource: terminal.uri,
-      title: 'Terminal',
-      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
-    });
-    void run(toolCallId, (opened) => {
-      if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
-      /*
-       * The terminal as soon as it opens, so a client watches the output
-       * arrive, as the reference host names its own. Onto the call and into
-       * the action from one object, and with no `_meta`, which the reducer
-       * would put in place of the call's.
-       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
-       */
-      const content = [terminalOf(opened)];
-      call.content = content;
-      start.emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
-    }).then((done) => {
-      if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
-      // The terminal again, with how the command ended, and then the text it
-      // printed: `content` is replaced, not appended to.
-      const content: Bag[] = [
-        ...(done.terminal === undefined ? [] : [{
-          ...terminalOf({ uri: done.terminal, ...(done.isPty === undefined ? {} : { isPty: done.isPty }) }),
-          result: {
-            ...(done.code !== undefined ? { exitCode: done.code } : {}),
-            ...(done.output === '' ? {} : { preview: done.output }),
-          },
-        }]),
-        ...(done.output === '' ? [] : [{ type: 'text', text: done.output }]),
-      ];
-      const result: Bag = {
-        success: done.success,
-        pastTenseMessage: done.said,
-        content,
-        ...(done.success ? {} : { error: { message: done.said } }),
-      };
-      // Into the part as well, so the snapshot a late subscriber reads holds
-      // the finished call rather than the running one.
-      Object.assign(call, result, { status: 'completed' });
-      start.emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
-      const duration = Date.now() - began;
-      ctx.active.state = done.success ? 'complete' : 'error';
-      ctx.active.duration = duration;
-      // A command turn a later one took the place of is in no history, as the
-      // reducer keeps none of it.
-      if (!ctx.replaced.delete(turnId)) turns.push(ctx.active);
-      ctx.active = undefined;
-      /*
-       * The turn closes like any other.
-       *
-       * A shell command is a turn of this chat, so a client that watched it
-       * needs the same completion a model's answer gets; without it the row
-       * stays open on screen while the session already counts it as done.
-       */
-      start.emit('chat', { type: 'chat/turnComplete', turnId, duration });
-      ctx.doing(undefined);
-      ctx.touch();
-      startNext();
-    });
-  };
-
-  /**
-   * A turn the host answered itself, with a shell rather than the agent.
-   *
-   * `!command` means "run this", and the host owns the shell, so what comes
-   * back is the same shape as any other turn: it opens, carries one tool
-   * call, and completes. What waits on a busy session is the command itself
-   * and not the text of it, so when its turn comes `startNext` runs it
-   * rather than handing `!ping` to a model. A queued one set while nothing
-   * runs starts the head, as a queued message does. A steering one waits as
-   * steering, as a steering message does, and runs as a command.
-   */
-  const ran: Session['ran'] = (turnId, command, run, queuedAs, kind = 'queued') => {
-    /*
-     * A command sent as a turn while a run holds another is said now and run
-     * once that one is over, as any turn handed then is; one sent while the
-     * lookup runs waits for it, as a turn does.
-     */
-    if (queuedAs === undefined) {
-      const go = (): void => {
-        if (ctx.active !== undefined || ctx.waiting.length > 0) {
-          hand(turnId, `!${command}`, { from: { origin: { kind: 'user' } }, command: { text: command, run } });
-        }
-        else runCommand(turnId, command, run);
-      };
-      if (ctx.opening === undefined) go();
-      else void ctx.opening.then(go, go);
+    const why = ctx.refreshOptions();
+    if (why !== undefined) {
+      failTurn(turnId, text, model, from, attachments, new Error(why));
       return;
     }
-    if (ctx.active !== undefined || ctx.opening !== undefined || queued.length > 0 || holdsTheQueue(turns.at(-1))) {
-      const id = queuedAs;
-      const message = { text: `!${command}`, origin: { kind: 'user' } };
-      const entry = { id, command: { text: command, run }, message, ...(kind === 'steering' ? { steering: true, shown: true } : {}) };
-      const at = queued.findIndex((held) => String(held.id) === id);
-      if (kind === 'steering') for (const held of queued) delete held.shown;
-      if (at >= 0) queued[at] = entry;
-      else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-      ctx.touch();
-      startNext();
-      return;
-    }
-    runCommand(turnId, command, run, queuedAs);
-  };
-
-  /*
-   * A steering message no turn was running to take runs ahead of what is
-   * queued, after the steering already waiting, as the reference host runs
-   * steering that came too late to steer a turn in the order its queue holds
-   * it. The one set last is what the chat shows, as the protocol's reducer
-   * holds the latest.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L266-L267
-   */
-  const queue: Session['queue'] = (id, text, model, from, attachments, _options, kind = 'queued') => {
-    const message: Bag = {
-      text,
-      ...(from?.origin !== undefined ? { origin: from.origin } : {}),
-      ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
-      // Held with the message, so a picture pasted into one that waits is
-      // still a picture when its turn comes - and so a client draws it while
-      // it waits rather than only after it runs.
-      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-    };
-    const entry: Bag = {
-      id,
-      message,
-      ...(model !== undefined ? { model } : {}),
-      ...(from !== undefined ? { from } : {}),
-      ...(kind === 'steering' ? { steering: true, shown: true } : {}),
-    };
-    const at = queued.findIndex((held) => held.id === id);
-    if (kind === 'steering') for (const held of queued) delete held.shown;
-    if (at >= 0) queued[at] = entry;
-    else queued.push(entry);
-    start.emit('chat', { type: 'chat/pendingMessageSet', kind, id, message });
-    ctx.touch();
-    startNext();
-  };
-
-  /*
-   * A queued message, or a steering message the run handed back, which waits
-   * in `untaken` to be a turn of its own. A steer cofold's submit still holds
-   * reaches here only once the chat holds no running turn, since the host
-   * refuses its removal while one runs: `RunHandle.submit` takes approve, deny,
-   * answer, steer and cancel, and none of them takes a steer back, so this
-   * backend has no `withdraw`. Such a steer is dropped when the run gives it
-   * back, nothing is said here, and the host answers the client.
-   *
-   * A client taking a message back, or reordering what waits, runs the
-   * reference host's drain, so the head starts once nothing runs: a queue a
-   * stop or a failure left waiting starts from here as well.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
-   */
-  const unqueue: Session['unqueue'] = (id) => {
-    const left = ctx.untaken.findIndex((held) => held.id === id);
-    if (left >= 0) {
-      ctx.untaken.splice(left, 1);
-      if (ctx.steering?.id === id) ctx.steering = undefined;
-      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-      ctx.touch();
-      startNext();
-      return;
-    }
-    if (ctx.steering?.id === id) {
-      ctx.withdrawn.add(id);
-      ctx.steering = undefined;
-      ctx.touch();
-      return;
-    }
-    const at = queued.findIndex((held) => held.id === id);
-    if (at < 0) return;
-    const [held] = queued.splice(at, 1);
-    start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
-    ctx.touch();
-    startNext();
-  };
-
-  const reorder: Session['reorder'] = (order) => {
-    const byId = new Map(queued.map((held) => [String(held.id), held]));
-    const seen = new Set<string>();
-    const moved: Bag[] = [];
-    for (const id of order) {
-      const held = byId.get(id);
-      if (held === undefined || seen.has(id)) continue;
-      seen.add(id);
-      moved.push(held);
-    }
-    // Anything the order did not name keeps its place behind what it did.
-    for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-    queued.length = 0;
-    queued.push(...moved);
-    start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-    ctx.touch();
-    startNext();
+    startTurn(turnId, text, model, from, attachments, options);
   };
 
   return {
     beginTurn,
     resumeTurn,
-    startNext,
+    sendNext,
     takesImages: () => takesImages,
-    methods: { ran, queue, unqueue, reorder },
   };
 };

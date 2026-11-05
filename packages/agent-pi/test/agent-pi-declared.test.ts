@@ -60,7 +60,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   const begin = (turnId: string, text: string): void => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
 
@@ -100,7 +100,7 @@ it('builds a running chat and its session with no key the protocol does not decl
   // A start built with no schema, which is the one road to the session's own.
   const { session, pi } = opened({ schema: undefined } as unknown as Partial<Start>);
   pi.hold();
-  session.begin('t1', 'hello');
+  session.sendMessage('t1', 'hello');
   await settledPi();
   const served = (resource: string, state: Bag) => ({ asked: 'subscribe', params: { channel: resource }, result: { snapshot: { resource, state, fromSeq: 0 } } });
   const { resource: _resource, ...sessionState } = session.sessionState();
@@ -144,7 +144,7 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     .find((action) => action.type === type);
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   await until(() => sent('chat/toolCallContentChanged') !== undefined);
 

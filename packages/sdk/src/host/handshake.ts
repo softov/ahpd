@@ -592,7 +592,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        */
       flushDeltas();
       const missing: string[] = [];
-      /** Each channel resumed, by the name this host dispatches under, with the name the client used. */
+      /** Each channel read back, by the name this host dispatches under, with the name the client used. */
       const resumed = new Map<string, string>();
       for (const channel of wanted) {
         try {
@@ -607,12 +607,6 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const meant = meantBy(channel);
           if (!visible(connection, meant)) throw new RpcError(-32001, `Resource not available to this client: ${channel}`);
           await snapshotOf(meant, connection);
-          if (meant !== channel) connection.aliases.set(meant, channel);
-          connection.watching.add(channel);
-          openedBy(meant, connection.clientId);
-          // Recent in the residency, as a subscribe makes it.
-          // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
-          ctx.touch(meant);
           resumed.set(meant, channel);
         }
         catch {
@@ -621,6 +615,21 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // on a channel that will never speak again.
           missing.push(channel);
         }
+      }
+      /*
+       * Every channel it came back for joins at once, once each is read, so
+       * no action reaches it both live and in the replay below, as the
+       * reference host activates a reconnect's subscriptions together once
+       * every restore has settled.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1577-L1583
+       */
+      for (const [meant, channel] of resumed) {
+        if (meant !== channel) connection.aliases.set(meant, channel);
+        connection.watching.add(channel);
+        openedBy(meant, connection.clientId);
+        // Recent in the residency, as a subscribe makes it.
+        // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
+        ctx.touch(meant);
       }
       // Once every channel it came back for is watched, so none of them is
       // let go between two of its subscribes.

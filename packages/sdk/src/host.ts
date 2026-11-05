@@ -58,7 +58,7 @@ import {
 import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
-import type { Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
+import type { Claimed, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
 import { GREETINGS, UNGATED, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
 import type { Home } from './host/gate.js';
 import { createChatRecord } from './host/chatrecord.js';
@@ -87,6 +87,7 @@ import { createSnapshots } from './host/snapshots.js';
 import { createSleep } from './host/sleep.js';
 import { createMerged } from './host/merged.js';
 import { createWakes } from './host/wakes.js';
+import { createQueueDrain } from './host/queuedrain.js';
 import { createTelemetry } from './host/telemetry.js';
 import { createAuth } from './host/auth.js';
 import { createAdmission } from './host/admission.js';
@@ -129,13 +130,6 @@ export const HOST_CLOSE_WAIT_MS = 5_000;
  * meantime, and nothing it contributes is taken away.
  */
 const CLIENT_DISCONNECT_GRACE_MS = 30_000;
-
-/**
- * How long a dispatch waits on a session being started again or on a read
- * of the catalogue, in milliseconds, before it is refused and the
- * connection's later dispatches go on without it.
- */
-const WAIT_LIMIT = 60_000;
 
 /**
  * The action types the protocol knows, which are the ones a version decides.
@@ -320,9 +314,8 @@ export function createHost(options: HostOptions): Host {
    * session started fresh has none, and its backend's record is not read.
    */
   const resumedSessions = new Set<string>();
-  /**
-  /** Every chat, back to the session holding it. */
-  const byChat = new Claiming<{ uri: string; chat: Session }>(claims, 'chat', (_, held) => held.uri);
+  /** Every chat, back to the session holding it, and the road its turns are said on. */
+  const byChat = new Claiming<{ uri: string; chat: Session; say(action: Record<string, unknown>): void }>(claims, 'chat', (_, held) => held.uri);
   /**
    * The peer directories each chat was given, when they are not its session's.
    *
@@ -574,9 +567,25 @@ export function createHost(options: HostOptions): Host {
    * first send pushes the whole config and then the first turn back to back -
    * so the turn can arrive while the restart is still running. An action that
    * reaches such a session waits here rather than being applied to the
-   * backend that is on its way out.
+   * backend that is on its way out, and a turn's send waits here too. Each
+   * settles with the failure's words when the start failed.
    */
-  const restarting = new Map<string, Promise<void>>();
+  const restarting = new Map<string, Promise<string | undefined>>();
+  /**
+   * Each client's dispatches that wait, by its id, in the order it sent them,
+   * across every connection it has, as the reference host queues a client's.
+   *
+   * A dispatch waits only on what this host must have before it can apply it:
+   * a session woken or read from the catalogue, one being started again, a
+   * message's attachments written, a turn or a queued message whose check has
+   * not answered. Every dispatch the client sends meanwhile goes behind it: a
+   * client that changes the config and then starts a turn means that order.
+   * A wait has no time limit. Absent while nothing waits, which is when a
+   * dispatch is applied at once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12639-L12649
+   */
+  const dispatchQueues = new Map<string, Promise<void>>();
   /**
    * One token per session, by session URI: made the first time a
    * `session/configChanged` for it is applied, and dropped when the session
@@ -776,95 +785,6 @@ export function createHost(options: HostOptions): Host {
     return shown === config ? envelope : { ...envelope, action: { ...action, config: shown } };
   };
   /**
-   * The dispatch being applied right now, and whether it has been said back.
-   *
-   * The protocol's write-ahead loop is: a client applies an action to its own
-   * state, sends it with a `clientSeq`, and waits for this host to echo it
-   * back carrying that number. Without the echo a client cannot tell its own
-   * write from somebody else's, and cannot do the optimistic half at all.
-   *
-   * The echo is the one action that is the client's own: on the channel the
-   * client sent it on, of its type, naming the turn, call, request or message
-   * the client named. Everything else the dispatch causes - the title a first
-   * turn gives a session, a chat's row, what the agent says - is this host's,
-   * and carries no origin: the protocol reads an origin as the client that
-   * produced the action, and a client that found its own on an action it
-   * never sent would take that action for its own. Each client holds its
-   * pending actions per subscription, so an answer on another channel answers
-   * nothing it holds.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
-   *
-   * A variable rather than an argument threaded through everything, because
-   * the echo is usually several layers down: a client's `chat/turnStarted`
-   * arrives here as a notification, is handed to `Session.begin`, and is
-   * emitted from inside the session as the turn opens. Carrying an origin
-   * through that would be a parameter on every method a client action reaches.
-   *
-   * It is only ever held across *synchronous* work - `dispatchAction` sets it,
-   * applies, and clears it in a `finally` with nothing awaited in between - so
-   * nothing else can run while it is set. An echo said in a later turn of the
-   * event loop is found another way: a dispatch that waits goes back through
-   * `applyNow` once it is done waiting, work a dispatch waits on runs as that
-   * dispatch again through `later`, a site that answers later passes the origin
-   * it was given, and a backend that answers later holds the dispatch itself
-   * (`Start.handed`), which is why the sender, the channel and the action are
-   * held beside the origin.
-   */
-  let applying: (Dispatched & { answered: boolean }) | undefined;
-  /** The fields that name what a client's action is about: a turn, a tool call, an input request, a pending message. */
-  const NAMING = ['turnId', 'toolCallId', 'requestId', 'id'] as const;
-  /**
-   * The client's dispatch an action says back: the dispatch being applied,
-   * when the action is on its channel, of its kind, and names each thing the
-   * client's names.
-   */
-  const answering = (channel: string, action: Record<string, unknown>): Dispatched | undefined => {
-    const sent = applying?.action;
-    if (applying !== undefined && sent !== undefined && !applying.answered && applying.channel === channel && sent.type === action.type
-      && NAMING.every((key) => typeof sent[key] !== 'string' || sent[key] === '' || sent[key] === action[key])) return applying;
-    return undefined;
-  };
-  /**
-   * The dispatches answered already, by the origin each carries: an echo, a
-   * refusal, or an answer a backend said later. A dispatch is answered once,
-   * and a host that applied one and then refused it would leave the client
-   * reverted and itself moved.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
-   */
-  const said = new WeakSet<Origin>();
-  /**
-   * What waits on a dispatch's answer, by the dispatch's origin: the
-   * connection that sent it, before it applies its next, which is what
-   * `applyNow` returns for a dispatch a backend answers later.
-   */
-  const awaited = new Map<Origin, Set<() => void>>();
-  /** A dispatch answered: held in `said`, and everything waiting on it let go. */
-  const told = (origin: Origin): void => {
-    said.add(origin);
-    const waiting = awaited.get(origin);
-    if (waiting === undefined) return;
-    awaited.delete(origin);
-    for (const go of waiting) go();
-  };
-  /**
-   * The origin an action goes out with when its caller named none: the
-   * dispatch's own, if this is its echo.
-   */
-  const originOf = (channel: string, action: Record<string, unknown>): Origin | undefined => {
-    const answered = answering(channel, action);
-    if (answered === undefined) return undefined;
-    if (answered === applying) applying.answered = true;
-    told(answered.origin);
-    return answered.origin;
-  };
-  /** The dispatch being applied, answered by `origin` on a road that says so itself. */
-  const answeredBy = (origin: Origin | undefined): void => {
-    if (origin === undefined) return;
-    told(origin);
-    if (applying?.origin === origin) applying.answered = true;
-  };
-  /**
    * One state action, to everyone watching that channel.
    *
    * `serverSeq` moves here, once for each envelope, and in `refuse` for a
@@ -967,29 +887,44 @@ export function createHost(options: HostOptions): Host {
    */
   const deltas = merger({ windowMs: options.deltaWindowMs ?? DELTA_WINDOW_MS, send: emit });
   /**
+   * The dispatches answered already, by the origin each carries: its echo or
+   * its refusal. A dispatch is answered once, and a host that said one and then
+   * refused it would leave its client reverted and every other client moved.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
+   */
+  const said = new WeakSet<Origin>();
+  /**
    * One state action on its way out.
+   *
+   * With `origin`, a client's own action, said as that client sent it once
+   * this host's checks of it have passed and before anything it causes: the
+   * echo the client holds its action pending for. With none, this host's own
+   * action, whatever produced it, a backend's included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2737-L2752
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
    *
    * The three kinds that stream text are gathered for `deltaWindowMs`; every
    * other action flushes them and goes out itself, so nothing a client reads
    * against the text is sent ahead of it.
    */
-  const dispatch = (channel: string, given: Record<string, unknown>, named?: Origin): void => {
+  const dispatch = (channel: string, given: Record<string, unknown>, origin?: Origin): void => {
     const action = ctx.withWorkerUri(channel, given);
-    answeredBy(named);
-    const origin = named ?? originOf(channel, action);
+    if (origin !== undefined) said.add(origin);
     /*
-     * A backend's start of a turn the chat holds already, running or ended,
-     * is not said: the host said the client's own start when it handed the
-     * turn on, as the reference host applies a client's start at once, and a
-     * turn starts once.
-     * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+     * A backend's start of a turn the chat holds is not said: the host said
+     * the client's start of it, and a second start would open the turn again
+     * in every client's state, as the protocol's reducer replaces the active
+     * turn with the one a start names.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L368
      */
     if (action.type === 'chat/turnStarted' && origin === undefined) {
       const held = states.get(channel);
-      const turns = Array.isArray(held?.state.turns) ? held.state.turns as Record<string, unknown>[] : [];
+      const turns = held?.kind === 'chat' && Array.isArray(held.state.turns) ? held.state.turns as Record<string, unknown>[] : [];
       if (held?.kind === 'chat' && ((held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId
-        || turns.some((one) => one.id === action.turnId))) return;
+        || turns.some((turn) => turn.id === action.turnId))) return;
     }
+    // Whether this action ends the chat's active turn, which the reducer ends only when the ids match.
+    let ending = false;
     if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
       /*
        * A backend's end of a turn the chat does not hold as its turn is not
@@ -1004,6 +939,7 @@ export function createHost(options: HostOptions): Host {
       const held = states.get(channel);
       if (origin === undefined && held?.kind === 'chat'
         && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
+      ending = held?.kind === 'chat' && (held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId;
       /*
        * A question a host tool asked in this turn has nobody left to answer
        * it: the turn it was asked in is over. Settled as cancelled before the
@@ -1011,6 +947,30 @@ export function createHost(options: HostOptions): Host {
        * waiting on a person a stopped turn no longer has.
        */
       asks.cancelTurn(channel, String(action.turnId ?? ''));
+      /*
+       * A Plan call the host drew is closed by the turn ending, the way the
+       * ACP bridge closes its own: the protocol never closes this row, so
+       * nothing else would. Closed here, before the ending is said, whoever
+       * says it: the backend, or this host for a client's stop.
+       */
+      if (ending) ctx.completePlan(channel, String(action.turnId ?? ''));
+      // And a resumed turn is over, its time with it.
+      ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
+      // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
+      if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
+        ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
+      }
+    }
+    /*
+     * A backend's removal of an entry the session no longer holds is not said
+     * either: this host took the entry down when the request it named
+     * resolved, and an entry goes once.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+     */
+    if (action.type === 'session/inputNeededRemoved' && origin === undefined) {
+      const held = states.get(channel);
+      const entries = held?.kind === 'session' && Array.isArray(held.state.inputNeeded) ? held.state.inputNeeded as Record<string, unknown>[] : [];
+      if (held?.kind === 'session' && !entries.some((entry) => entry.id === action.id)) return;
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1061,7 +1021,11 @@ export function createHost(options: HostOptions): Host {
       else action._meta = meta;
     }
     ctx.stirred(channel, action);
-    if (deltas.push(channel, action, origin)) return;
+    if (deltas.push(channel, action, origin)) {
+      // A streamed delta is an action of the turn, which hands the chat's pending steering on.
+      if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
+      return;
+    }
     emit(channel, action, origin, requestAudience(channel, action, origin));
     // What the chat's state moved, said on its session: a streamed delta moves
     // nothing a session reads, which is why only this road says it, and an
@@ -1071,28 +1035,9 @@ export function createHost(options: HostOptions): Host {
       ctx.askedLeft(channel);
       ctx.chatMoved(channel);
     }
-    /*
-     * A turn that ends cancelled takes every steering message the chat holds
-     * with it, and starts nothing, once the backend has had the stop: the
-     * reference host takes each pending steering entry out with its own action
-     * at a cancel, those handed to the agent and not yet consumed included,
-     * without draining what is queued. The backend lets go of what it holds
-     * through `clearSteering`; for one that has none, the host takes the
-     * steering message the chat shows out itself.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L69
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/AGENTS.md?plain=1#L617
-     */
-    if (action.type === 'chat/turnCancelled' && states.get(channel)?.kind === 'chat') {
-      queueMicrotask(() => {
-        const chat = byChat.get(channel)?.chat;
-        if (chat?.clearSteering !== undefined) {
-          chat.clearSteering();
-          return;
-        }
-        const steering = (states.get(channel)?.state.steeringMessage as Record<string, unknown> | undefined)?.id;
-        if (typeof steering === 'string') dispatch(channel, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
-      });
-    }
+    // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
+    if (ending) ctx.turnEnded(channel, action);
+    else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
      * so the list is said again when either moves it: the root's state holds
@@ -1226,6 +1171,9 @@ export function createHost(options: HostOptions): Host {
    * back to the client that sent it with its reason, whichever channels and
    * versions it watches.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L162
+   *
+   * A dispatch said already is answered, and what failed of it after is this
+   * host's to log.
    */
   const refuse = (
     peer: Peer,
@@ -1236,7 +1184,8 @@ export function createHost(options: HostOptions): Host {
     alone = false,
   ): void => {
     log(`${channel}: ${reason}`);
-    answeredBy(origin);
+    if (origin !== undefined && said.has(origin)) return;
+    if (origin !== undefined) said.add(origin);
     deltas.flush();
     if (alone) ctx.serverSeq += 1;
     else emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
@@ -1296,6 +1245,8 @@ export function createHost(options: HostOptions): Host {
         lapsed.set(client, channels.add(one));
       }
       states.delete(one);
+      ctx.cancelledTurns.delete(one);
+      ctx.forgetChatQueue(one);
     }
   };
 
@@ -1424,7 +1375,7 @@ export function createHost(options: HostOptions): Host {
     ],
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
-    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
+    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
@@ -1437,36 +1388,7 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    later: () => {
-      const held = applying;
-      return (work: () => void) => {
-        const before = applying;
-        applying = held;
-        try { work(); }
-        finally { applying = before; }
-      };
-    },
-    sayUnanswered: (named: Record<string, unknown>) => {
-      if (applying === undefined || applying.taken === true) return;
-      const held = answering(applying.channel, named);
-      if (held === undefined) return;
-      /*
-       * A turn's start time and a message's origin the client left out are
-       * this host's: every reducer reads them, the protocol requires both, and
-       * the server's echo is the one that wins where the two differ.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L71-L91
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
-       */
-      const sent = held.action;
-      const message = typeof sent.message === 'object' && sent.message !== null ? sent.message as Record<string, unknown> : undefined;
-      dispatch(held.channel, {
-        ...(sent.type === 'chat/turnStarted' ? { startedAt: new Date().toISOString() } : {}),
-        ...sent,
-        ...(message === undefined ? {} : { message: { origin: { kind: 'user' }, ...message } }),
-      }, held.origin);
-    },
-    answering,
-    unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
+    answered: (origin: Origin) => said.has(origin),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
@@ -1476,7 +1398,11 @@ export function createHost(options: HostOptions): Host {
       states.set(channel, { kind, state, baselines: new Set() });
       return state;
     },
-    closeState: (channel: string) => { states.delete(channel); },
+    closeState: (channel: string) => {
+      states.delete(channel);
+      ctx.cancelledTurns.delete(channel);
+      ctx.forgetChatQueue(channel);
+    },
     heldStates: states as ReadonlyMap<string, HeldState>,
     asks,
     letStateGo,
@@ -1527,6 +1453,7 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createSleep(ctx));
   Object.assign(ctx, createMerged(ctx));
   Object.assign(ctx, createWakes(ctx));
+  Object.assign(ctx, createQueueDrain(ctx));
   /*
    * Every subscription passes here - the command, and the two handshakes that
    * subscribe on their way in - so this is where a client that comes back is
@@ -1572,13 +1499,13 @@ export function createHost(options: HostOptions): Host {
     statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
     activityOf, sessionAdded, summaryMoved, activeSessionsMoved, learnModels, learnAccount,
     listing, waitingFor, readStored,
-    unstamped, withWorkerUri, stampedCalls, withSender,
+    unstamped, withWorkerUri, stampedCalls,
     sendSubagent, endedWorkers, openSubagent,
     formerChatUri, titleOf, keepTitle, keepProvider, spawn,
     removeSession, restart, restartChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
     permitted, toolDefinitions, retool, renameChat,
-    commanded, terminalInfo, heldTerminals, changed, due, startForAutomation,
+    terminalInfo, heldTerminals, changed, due, startForAutomation,
     past, history, subHistory, titles, refresh, held,
     snapshotOf, value,
   } = ctx;
@@ -2130,105 +2057,40 @@ export function createHost(options: HostOptions): Host {
         ...automationMethods,
         ...vscode,
       };
-      /**
-       * This connection's dispatches that wait, in the order it sent them.
-       *
-       * Two kinds of dispatch cannot be applied at once: one into a session
-       * being started again, which waits for the start, and a config change
-       * for a session nothing is running, which reads its transcript to learn
-       * whether it is one. Each is applied once what it waits on answers, and
-       * every dispatch this connection sends meanwhile goes behind it: a
-       * client that changes the config and then starts a turn means that
-       * order. A dispatch a backend answers later holds the next one the same
-       * way, until it is answered. Undefined when nothing waits, which is when
-       * a dispatch is applied at once.
-       */
-      let waiting: Promise<void> | undefined;
-      /**
-       * `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has
-       * passed without it.
-       */
-      const bounded = <T>(wait: Promise<T>, what: string): Promise<T> => new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => { reject(new Error(`${what} took longer than ${WAIT_LIMIT / 1000}s`)); }, WAIT_LIMIT);
-        wait.then(
-          (value) => { clearTimeout(timer); resolve(value); },
-          (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
-        );
-      });
-      /**
-       * A dispatch applied now, as the one this host is applying.
-       *
-       * One a backend took to answer later holds this connection's next
-       * dispatch until it is answered: a client holds its actions pending
-       * in the order it sent them and matches each answer at the head of that
-       * list, so the answers go out in the same order.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
-       *
-       * Held for `WAIT_LIMIT` at most, and then let go of with its answer still
-       * to come: the backend may still give it, and a dispatch is answered once.
-       */
-      const applyNow = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
-        const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
-        const held: Dispatched & { answered: boolean } = {
-          origin,
-          answered: false,
-          peer: connection.peer,
-          channel: meantBy(String(params.channel ?? '')),
-          action,
-        };
-        applying = held;
-        let later: Promise<void> | undefined;
-        try { later = applyDispatch(params, origin); }
-        finally { applying = undefined; }
-        if (said.has(origin) || held.taken !== true) return later;
-        const answered = new Promise<void>((resolve) => {
-          const go = (): void => {
-            clearTimeout(timer);
-            resolve();
-          };
-          const timer = setTimeout(() => {
-            const waiting = awaited.get(origin);
-            waiting?.delete(go);
-            if (waiting?.size === 0) awaited.delete(origin);
-            resolve();
-          }, WAIT_LIMIT);
-          timer.unref?.();
-          awaited.set(origin, (awaited.get(origin) ?? new Set()).add(go));
-        });
-        return later === undefined ? answered : later.then(() => answered);
-      };
+      /** The id this connection's dispatches wait under, with every other connection of its client. */
+      const queuedAs = (): string => connection.clientId || 'anonymous';
       /**
        * A dispatch whose apply failed, logged and refused to the client that
        * sent it.
        *
        * One that failed at once and one that failed after waiting are told the
        * same way: the client holds its action until it hears an echo or a
-       * refusal, and the error's own words are the reason it is given. One
-       * already answered is answered once: what failed after its answer is
-       * this host's to log.
+       * refusal, and the error's own words are the reason it is given, as the
+       * reference host rejects a queued dispatch that fails.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12639-L12641
        */
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
         log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
-        if (!connections.has(connection) || said.has(origin)) return;
+        if (!connections.has(connection)) return;
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };
       /**
-       * `waiting`, extended by one step for the dispatch in `params`.
+       * The client's queue, extended by one step for the dispatch in `params`.
        *
        * A step whose connection left while it waited is dropped: there is
        * nobody to answer or echo it to. A step that fails is refused to the
        * client, as any other action this host will not apply.
        */
-      conn.bounded = bounded;
-      conn.applyNow = applyNow;
+      conn.applyNow = applyDispatch;
       const behind = (params: Record<string, unknown>, origin: Origin, step: () => Promise<void> | undefined): void => {
-        const next = (waiting ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
+        const client = queuedAs();
+        const next = (dispatchQueues.get(client) ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
           refuseFailed(params, origin, error);
         });
-        waiting = next;
-        void next.then(() => { if (waiting === next) waiting = undefined; });
+        dispatchQueues.set(client, next);
+        void next.then(() => { if (dispatchQueues.get(client) === next) dispatchQueues.delete(client); });
       };
       /** Notifications: no id, no answer, and that is the whole difference. */
       const notifications: Record<string, (params: Record<string, unknown>) => void> = {
@@ -2260,16 +2122,12 @@ export function createHost(options: HostOptions): Host {
         /**
          * What the client says happened.
          *
-         * `applying` is held across the whole of `applyDispatch` and cleared
-         * after, so the action's echo - emitted from inside a session several
-         * layers down as often as not - goes out carrying the `clientSeq` the
-         * client sent, and nothing else the dispatch causes does. Nothing in
-         * there is awaited, which is what makes that safe: no second dispatch
-         * can begin while this one is being applied. A dispatch that has to
-         * wait returns what it waits on instead, and this connection's later
-         * dispatches go behind it in `waiting`.
+         * Applied under the origin the client sent it with: the action's echo
+         * carries that `clientSeq`, and nothing else the dispatch causes does.
+         * A dispatch that has to wait returns what it waits on, and its
+         * client's later dispatches go behind it in `dispatchQueues`.
          *
-         * One whose apply throws is refused here, as a step of `waiting` that
+         * One whose apply throws is refused here, as a step of the queue that
          * fails is: a notification gets no reply, so a throw that left this
          * handler would reach no client at all.
          */
@@ -2278,12 +2136,12 @@ export function createHost(options: HostOptions): Host {
             clientId: connection.clientId || 'anonymous',
             clientSeq: typeof params.clientSeq === 'number' ? params.clientSeq : 0,
           };
-          if (waiting !== undefined) {
-            behind(params, origin, () => applyNow(params, origin));
+          if (dispatchQueues.has(queuedAs())) {
+            behind(params, origin, () => applyDispatch(params, origin));
             return;
           }
           let later: Promise<void> | undefined;
-          try { later = applyNow(params, origin); }
+          try { later = applyDispatch(params, origin); }
           catch (error) {
             refuseFailed(params, origin, error);
             return;

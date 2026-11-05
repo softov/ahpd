@@ -166,7 +166,7 @@ const saying = (client: Client, name: string, text: string): Promise<unknown> =>
     method: 'dispatchAction',
     params: {
       channel: chatUriFor(`ahp-session:/${name}`),
-      action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), message: { text } },
+      action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } },
     },
   });
 

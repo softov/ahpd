@@ -42,12 +42,9 @@ function converse(start: Start): Session {
     uri: start.uri,
     chatUri: start.chatUri,
 
-    begin: (turnId, text) => {
-      // 1. Say the turn back. The client dispatched it; nothing in a client
-      //    applies what it sent itself.
-      const startedAt = new Date().toISOString();
-      active = { id: turnId, startedAt, message: { text }, responseParts: [] };
-      start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
+    sendMessage: (turnId, text) => {
+      // 1. The host said the turn's start; it is the session's turn from here.
+      active = { id: turnId, startedAt: new Date().toISOString(), message: { text }, responseParts: [] };
 
       // 2. Open a part before anything streams into it.
       const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: text.toUpperCase() };
@@ -169,8 +166,8 @@ cofold stores a prompt under the turn's id, says nothing.
 
 **A turn is read back as it began.** The host records, in the session's folder
 under the chat, the transcript id each turn began under: its own id as it
-starts, whether a client sent it or your backend opened it with
-`queuedMessageId`, and what `onTurnRecorded` says. A read puts a turn your
+starts, whether a client sent it, the host took it up from the chat's queue, or
+your backend opened it itself, and what `onTurnRecorded` says. A read puts a turn your
 transcript holds and the record does not inside the turn before it, and so does
 a turn recorded as the same turn as the one before, which is that turn written
 down again: Claude's CLI writes a steering message it runs after the turn's last
@@ -192,16 +189,61 @@ session channel. A session never needs to know either URI to do it.
 | --- | --- |
 | identity | `uri`, `chatUri`, `agentId()` |
 | state for a snapshot | `sessionState()`, `chatState()`, `allTurns()`, `status()`, `activity()`, `title()`, `modifiedAt()`, `workingDirectories()`, `models()`, `customizations()` |
-| the turn | `begin(turnId, text, model?)`, `cancel(turnId)`, `stopWorker?(toolCallId)` |
-| the queue and the draft | `queue(id, text, model?)`, `unqueue(id)`, `reorder(order)`, `setDraft(text)` |
+| the turn | `sendMessage(turnId, text, from?, attachments?, options?)`, `changeModel(model)`, `changeAgent(agent?)`, `abort()`, `resumeTurn?(turnId)`, `stopWorker?(toolCallId)` |
+| steering | `sendSteeringMessage?(message)`, `withdrawSteeringMessage?(id)` |
+| the draft | `setDraft(text)` |
 | being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
+| another host's session | `relay?(channel, action, origin?)` |
 | the end | `close()` |
 
-Every setter refuses a value it will not take, and **a refusal is a real
-answer**: a control that reports success and changes nothing is worse than one
-that refuses, because a client then draws a session in a state it is not in.
+The turn's calls are the ones VS Code's host makes of an agent, under the same
+names
+([agent.ts L1303-L1328](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1303-L1328)).
+The host says a turn's start, the client's own or its own for a turn it begins,
+then hands the turn's model with `changeModel` where your `models()` offers it,
+its agent with `changeAgent`, and its prompt with `sendMessage`. A
+`changeModel` that rejects ends the turn in a `modelSelectionFailed` error, one
+to `changeAgent` is logged and the turn is sent all the same, and a
+`sendMessage` that rejects ends it in a `sendFailed` error with your words. A
+turn stopped while the host prepared it is never sent, and one stopped while
+you prepare it is yours to leave unsent: check for the stop before the prompt
+goes out.
+
+A turn handed while another runs is a send of its own, which you run once the
+work in front of it is done, as VS Code's agents run each send after the one
+before it; `abort` drops every turn handed behind the one it stops. The turn's
+`options.instructions()` is what the host has to say on that turn, asked when
+the turn begins, and goes into that turn's prompt, as each of VS Code's agents
+puts the instructions its host contributes for a send
+([agentSideEffects.ts L2281-L2288](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2281-L2288)).
+
+The chat's pending messages, queued and steering, are the host's, as VS Code's
+host holds them
+([queueDrainContribution.ts L29-L326](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L29-L326)):
+the host says them, starts the head of the queue as a turn it sends you with
+`sendMessage`, and hands you steering while a turn runs.
+
+`sendSteeringMessage` answers as VS Code's agents answer
+([agent.ts L1943-L1955](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1955)):
+`true` when you took the message, `false` when you cannot take it yet, which
+has the host hand it again on the turn's next action, and a promise of `false`
+when the turn it was meant for ended first, handing it back, which has the host
+steer the turn that runs then with it or run it next. `withdrawSteeringMessage`
+takes back one you took that the model has not read, when a client removes it.
+
+A backend that is the proxy of a session another host runs answers `relay`,
+as the nested proxy of a session in a machine does: a client's action on the
+session's turns, its chat's draft, pending messages and bits, or its MCP
+servers is handed to `relay` as the client sent it, and to nothing else, a
+start once the host has admitted it, as a VS Code relay forwards each frame
+as sent
+([relayTransport.ts L123-L137](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/relayTransport.ts#L123-L137)).
+The host running the session applies it and echoes it, and you hand that echo,
+or its refusal, to `start.answer` under the client's origin, which answers the
+client. A message the host queues for the chat is handed to `relay` with no
+origin, said already, for the host there to run.
 
 ### Config keys
 
@@ -212,16 +254,13 @@ A backend without `setConfig` takes none of them - and a client draws its
 controls from that schema, so a key that reaches nothing is a control somebody
 moves that changes the session not at all.
 
-`setConfig` answers one of two things:
-
-| answer | means | what every client is told |
-| --- | --- | --- |
-| `true` | taken as it was sent | the key and the value sent |
-| a sentence | refused, in your words | nothing; the sender gets the sentence |
-
-What every client is told is in the client's own keys, as VS Code's host says a
-client's config action
-([protocolServerHandler.ts L4220-L4222](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222)).
+The host checks a change against the schema and says it in the client's own
+keys, then hands each key to `setConfig`, as VS Code's host says a client's
+config action and then applies it to its agents
+([agentService.ts L13576-L13679](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13679)).
+`setConfig` answers `true` for a value taken as it was sent, or a sentence in
+your words for one you could not take, which the host logs: the change stands as
+every client was told it.
 
 ```ts
 setConfig: (key, value) => {
@@ -257,35 +296,25 @@ answered, and with a single slot the second overwrites the first - the first
 then waits for an answer nobody can give any more, which from the other end is a
 person pressing Approve and nothing at all happening.
 
-`cancel` and `close` must settle everything parked. A cancelled turn that leaves
+`abort` and `close` must settle everything parked. A stopped turn that leaves
 a question standing is a session reporting `InputNeeded` for the rest of its
 life over a promise nothing will ever settle.
 
-The host calls `cancel` when a client's stop names the turn the chat runs, with
-that turn's id. A stop that names another turn or none, and a stop on a chat with
-no turn running, goes to every client of the chat as the client's own action and
-reaches no backend.
+The host calls `abort` when a client's stop names the turn the chat runs, once
+it has said the stop. A stop that names another turn or none, and a stop on a
+chat with no turn running, goes to every client of the chat as the client's own
+action and reaches no backend.
 
-### Answering later
+### A client's action is the host's to say
 
-A client's action reaches a session through one of the methods above, and what
-the session says back goes out as that client's echo, carrying its origin: what
-it emits while the host applies the action, and a turn begun or stopped or a
-message queued that it says once it is ready. The client holds its action as
-pending until it hears that echo or a rejection.
-
-A session that can answer only later, such as the proxy for a session in a
-machine, whose answers come from the host inside, takes
-`start.handed(action)` inside the method, with the action it will say back,
-and answers through it once it knows: `start.emit(channel, action, handed)` is
-the echo, with the client's origin, and `handed.refuse(reason)` refuses the
-action to that client alone. The host finds the client's action the way it
-finds the one an echo answers: the action it is applying, when `action` is of
-its kind and about its turn, or a turn or a queued message it handed over after
-waiting on a machine or a policy check, by the id `action` names. It is
-undefined for an action that answers no client. A turn that reaches a session
-while the one before it is still beginning, which only the session can see, is
-refused the same way, as the Claude session refuses it in `begin`.
+The host says a client's action itself, as the client sent it and with its
+origin, once its own checks of it have passed and before it calls the method
+that hands it to the session: the echo the client holds its action pending for.
+Everything a session emits is the host's own action, said with no origin, as
+[VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679)
+says a client's action and then runs the side effect that reaches its agent. A
+start a session says of a turn the chat holds already is not said again, since
+a second start would open the turn again in every client's state.
 
 ## The rules that fail silently
 
@@ -294,7 +323,7 @@ this repository a bug.
 
 | | |
 | --- | --- |
-| **Say the turn back** | `chat/turnStarted` arrives from the client and you emit it again. Nothing in a client applies what it sent itself, so a backend that reduced it privately goes on to emit response parts for a turn no client has - and the whole answer lands nowhere until somebody reopens the session |
+| **Say a turn you start** | A turn handed with `sendMessage` was said by the host before it, a queued message the host takes up among them. A turn the session starts of its own accord is the session's to say before its first part: nothing in a client applies a turn nobody said, so response parts for it land nowhere until somebody reopens the session |
 | **A part exists before it streams** | `chat/responsePart` creates it, `chat/delta` appends to it. A delta naming a part nobody opened appends to nothing |
 | **The append action follows the part** | `chat/delta` is defined against a *markdown* part and `chat/reasoning` against a *reasoning* one, and a client's reducer returns the part unchanged when they do not match. Thinking sent as a `chat/delta` opens a part and never fills it |
 | **The running turn is `activeTurn`** | and is not in `turns`. It moves across when it completes. A client reading only the history shows an empty conversation for exactly as long as somebody is watching one happen |
