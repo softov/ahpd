@@ -281,12 +281,14 @@ export interface LifecycleSteps extends Omit<InPlace, 'close' | 'stopped' | 'sta
 export function lifecycle(steps: LifecycleSteps): Lifecycle {
   /** The way down, once it has begun. */
   let going: Promise<void> | undefined;
-  let restarting = false;
-  let stopAsked = false;
+  /** A restart under way, VS Code's agent host manager's pending start. */
+  let pendingStart = false;
+  /** A stop asked during that restart, the manager's quit requested. */
+  let wasQuitRequested = false;
   return {
     shutdown: () => {
-      if (restarting) {
-        stopAsked = true;
+      if (pendingStart) {
+        wasQuitRequested = true;
         return;
       }
       // Both signals are wired, and `ahpd stop` sends one to a daemon a person
@@ -321,9 +323,9 @@ export function lifecycle(steps: LifecycleSteps): Lifecycle {
       });
     },
     restart: (argv, token) => {
-      if (restarting) conflict('A restart is already under way.');
+      if (pendingStart) conflict('A restart is already under way.');
       if (going !== undefined) conflict('It is stopping.');
-      restarting = true;
+      pendingStart = true;
       steps.later(() => {
         const close = (): Promise<void> => {
           going = steps.down();
@@ -333,7 +335,7 @@ export function lifecycle(steps: LifecycleSteps): Lifecycle {
         void (hand === undefined
           ? restartInPlace(argv, {
               close,
-              stopped: () => stopAsked,
+              stopped: () => wasQuitRequested,
               start: (line) => steps.start(line, token),
               stop: steps.stop,
               forget: steps.forget,
