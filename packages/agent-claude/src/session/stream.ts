@@ -601,7 +601,6 @@ export function createStream(ctx: SessionContext): Stream {
        */
       if (!list(scope.turn?.responseParts).includes(part)) {
         ctx.pastLines.delete(id);
-        ctx.answeredInputs.delete(id);
         edited(id);
         settleSpawn(id, ok, text);
         continue;
@@ -628,10 +627,6 @@ export function createStream(ctx: SessionContext): Stream {
        */
       const said = ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
       ctx.pastLines.delete(id);
-      // The input a question ran with, for a call that was answered. A denied or
-      // cancelled one was never answered and settles with no input recorded.
-      const answered = ctx.answeredInputs.get(id);
-      ctx.answeredInputs.delete(id);
       /*
        * The link survives the result.
        *
@@ -663,7 +658,6 @@ export function createStream(ctx: SessionContext): Stream {
         pastTenseMessage: said,
         ...(shown.length > 0 ? { content: shown } : {}),
         ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
-        ...(answered !== undefined ? { structuredContent: answered } : {}),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;
       /*
        * Onto the call *and* into the action, from one object.

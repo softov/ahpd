@@ -546,11 +546,10 @@ it('never writes a bare timing key on a tool call', async () => {
 /*
  * An answered question, live.
  *
- * A client draws the questions and what was picked from the call itself, so a
- * completed AskUserQuestion carries the input the tool ran with: its questions
- * plus the answers, keyed by each question's own text and a multi-select as an
- * array. A question nobody answered carries no answers and keeps its input as
- * sent.
+ * The tool runs with its questions plus the answers, keyed by each question's
+ * own text and a multi-select as an array, and a client draws what was picked
+ * from the turn's input request part. A question nobody answered keeps its
+ * input as sent.
  */
 
 const asked = {
@@ -567,13 +566,14 @@ const said = {
 };
 
 /** The question asked and then answered, or not, and the result the CLI sent. */
-async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Session; held: Map<string, Bag>; part: Bag | undefined }> {
+async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Session; held: Map<string, Bag>; part: Bag | undefined; decision: Promise<unknown> | undefined }> {
   let woken: (() => void) | undefined;
   sdk.hold = new Promise<void>((resolve) => { woken = resolve; });
+  let decision: Promise<unknown> | undefined;
   const { sent, session, held } = await live([
     { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
   ], () => {
-    void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+    decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
   });
   session.answer('toolu_ask', accepted, said);
   await settle();
@@ -597,14 +597,21 @@ async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Sessio
   woken?.();
   await settle();
   sdk.hold = Promise.resolve();
-  return { sent, session, held, part };
+  return { sent, session, held, part, decision };
 }
 
-it('carries the questions and the answers of a live answered question', async () => {
-  const { sent, held } = await asking(true);
-  const answered = { questions: asked.questions, answers: picked };
-  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).toMatchObject({ structuredContent: answered });
-  expect(held.get('toolu_ask')?.structuredContent).toEqual(answered);
+/*
+ * An answered question reaches the tool with its answers, and the call
+ * completes with the tool's text alone, the answers staying on the request
+ * part; a question nobody answered is denied in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L14
+ */
+it('completes a live answered question with its text alone, the answers on its request part', async () => {
+  const { sent, held, part, decision } = await asking(true);
+  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: picked } });
+  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
+  expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
+  expect(((part?.request as Bag | undefined)?.answers)).toBeDefined();
   // The input stays what the model sent, which has no answers in it.
   expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
 });
@@ -625,8 +632,9 @@ it('holds a part-way answer on the request, and says nothing of the client\'s an
   sdk.hold = Promise.resolve();
 });
 
-it('carries no answers for a live question nobody answered', async () => {
-  const { sent, held } = await asking(false);
+it('denies a live question nobody answered in VS Code\'s words, and carries no answers', async () => {
+  const { sent, held, decision } = await asking(false);
+  expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
@@ -648,17 +656,11 @@ const answerWith = (toolUseResult?: Bag): Record<string, unknown> => ({
   ...(toolUseResult === undefined ? {} : { toolUseResult }),
 });
 
-it('carries the questions and the answers of a replayed answered question', async () => {
+it('reads a replayed answered question back with its text alone, as it completed live', async () => {
   const back = await restored([ask], [answerWith({ questions: asked.questions, answers: picked })]);
-  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
+  expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
   // The input stays what the model sent, which has no answers in it.
   expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
-});
-
-it('carries the same object live and replayed when the input holds more than its questions', async () => {
-  const wider = { ...ask, input: { ...asked, metadata: { source: 'plan' } } };
-  const back = await restored([wider], [answerWith({ questions: asked.questions, answers: picked })]);
-  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
 });
 
 it('carries no answers for a replayed question that was never answered', async () => {

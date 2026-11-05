@@ -369,16 +369,13 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
          *
          * The CLI records the `updatedInput` it was handed as the
          * `toolUseResult` of the entry that holds the result, so a question
-         * anybody answered carries its input and the answers keyed by each
-         * question's own text. The live call of the same question carries them
-         * the same way, and a result whose entry has no `toolUseResult` was
-         * never answered, so it keeps its input as sent.
+         * anybody answered carries the answers keyed by each question's own
+         * text, and a result whose entry has no `toolUseResult` was never
+         * answered.
          */
         const ran = inputs.get(callId);
         const answers = bag(bag(frame.toolUseResult).answers);
         if (ran !== undefined && Object.keys(answers).length > 0) {
-          // The same object the live call carries: what the SDK was handed back.
-          call.structuredContent = { questions: Array.isArray(ran.questions) ? ran.questions : [], answers };
           /*
            * The question as it was answered, after the call it was asked in.
            *

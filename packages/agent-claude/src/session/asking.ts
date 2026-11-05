@@ -54,6 +54,9 @@ const CANCELLED = 'Cancelled';
 /** What the model is told about a call it asked about while no turn was running. */
 const NO_TURN = 'No turn is running to ask in';
 
+/** What the model is told about a question nobody answered, in VS Code's words. */
+const QUESTION_CANCELLED = 'The user cancelled the question';
+
 /** Where a kept permission lands, as a person reads it. */
 const KEPT_IN: Record<string, string> = {
   session: ' for the rest of the session',
@@ -160,8 +163,6 @@ export function keptLabel(suggestions: unknown[]): string {
 export interface Asking {
   /** Everything the agent is waiting on, by request id. */
   pending: Map<string, PendingInput>;
-  /** The input an answered question ran with, by its call id. */
-  answeredInputs: Map<string, Bag>;
   /** The SDK’s own gate between a tool call and the host that runs it. */
   canUseTool: (toolName: string, raw: Bag, asked?: Bag) => Promise<unknown>;
   /**
@@ -655,15 +656,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     };
   };
 
-  /**
-   * The input an answered question ran with, by its call id.
-   *
-   * The protocol's complete action carries no `toolInput` of its own, so the
-   * answers the tool was given travel in its `result.structuredContent` - the
-   * protocol's own structured result - where a client draws them from the call
-   * instead of parsing the result's sentence.
-   */
-  const answeredInputs = new Map<string, Bag>();
   const methods: Asking['methods'] = {
     confirm: (toolCallId, approved, optionId) => {
       // Found by id rather than assumed to be the only one. This used to
@@ -771,8 +763,10 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // The entry follows the chat's state: the host took it down when it said
       // the completion that answered the request.
 
+      // In VS Code's words, which its Claude agent denies a question with.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L14
       if (!accepted) {
-        held.settle({ behavior: 'deny', message: 'The person declined to answer' });
+        held.settle({ behavior: 'deny', message: QUESTION_CANCELLED });
         return true;
       }
       const said: Record<string, unknown> = {};
@@ -815,16 +809,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
           : [...(Array.isArray(chosen) ? chosen : typeof chosen === 'string' && chosen !== '' ? [chosen] : []), ...beside].join(', ');
       }
       /*
-       * The input the tool ran with: its questions as sent plus what was
-       * answered, which is what the SDK records and what a client draws the
-       * answered question from once the call is complete.
+       * The input the tool runs with: its questions as sent plus what was
+       * answered, which is what the SDK records.
        */
-      const updated = { questions: held.questions ?? [], answers: said };
-      answeredInputs.set(held.id, updated);
-      held.settle({ behavior: 'allow', updatedInput: updated });
+      held.settle({ behavior: 'allow', updatedInput: { questions: held.questions ?? [], answers: said } });
       return true;
     },
   };
 
-  return { pending, answeredInputs, canUseTool, ruleFirst, settleEdits, methods };
+  return { pending, canUseTool, ruleFirst, settleEdits, methods };
 }
