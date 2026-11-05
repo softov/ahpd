@@ -27,12 +27,16 @@ A second call on the same chat draws the same canvas again, because its instance
 
 ## What it assumes
 
-The page's URL is built from the address the daemon bound, with `0.0.0.0` and `::` read as `127.0.0.1`. That URL opens on the daemon's own machine and nowhere else, so a remote window gets a canvas it cannot load.
+The page's URL is built from the address the daemon bound, as VS Code's agent host lists a server's addresses. A daemon bound to every interface, `0.0.0.0` or `::`, gives the page at the machine's first external IPv4 address, which a window on another machine on that network opens, and at `localhost` when the machine has none. A loopback bind gives the page at that loopback address, and any other address gives it there.
 
-For a window on another machine, set the `origin` option to where that window reaches the daemon. The URL then starts with it:
+A canvas opened before the daemon listens has no URL yet, which is how the protocol says its page is not there, and it is drawn again with the URL once the daemon listens.
+
+For a window that reaches the daemon another way, through a tunnel, a proxy or a name, set the `origin` option to where that window reaches it. The URL then starts with it:
 
 ```json
 { "source": "/path/to/ahpd/examples/canvas/plugin.json", "options": { "origin": "https://ahpd.example.test" } }
 ```
 
 The route must be served on the daemon's own port. With the daemon key `routes.port` set, plugin routes move to a listener of their own. A URL built from the bound address then answers 404, and `origin` must name the routes listener.
+
+The route answers `GET` with the page and `HEAD` with its headers alone; any other method is `405` with `Allow: GET, HEAD`.
