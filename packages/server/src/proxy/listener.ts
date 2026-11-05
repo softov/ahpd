@@ -39,8 +39,12 @@ export const HEADERS_TIMEOUT_MS = 120_000;
 /** How long a provider may go between two chunks of its answer before the call is cut. */
 export const IDLE_TIMEOUT_MS = 300_000;
 
-/** The largest request body a call may send, which is the request size Anthropic's API documents. */
-export const MAX_BODY_BYTES = 32 * 1024 * 1024;
+/**
+ * The largest request body a call may send, which is the request size Anthropic's API documents for its
+ * Messages API, 128 MB.
+ * https://platform.claude.com/docs/en/api/errors#request-size-limits
+ */
+export const MAX_BODY_BYTES = 128 * 1024 * 1024;
 
 /** What the proxy is built from. */
 export interface ProxyOptions {

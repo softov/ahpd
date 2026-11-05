@@ -269,14 +269,17 @@ export interface Refusal {
  * A refusal in the dialect's own error body.
  *
  * `openai`: `{ error: { message, type, param: null, code } }`.
- * `anthropic`: `{ type: 'error', error: { type, message } }`.
+ * `anthropic`: `{ type: 'error', error: { type, message }, request_id: null }`,
+ * Anthropic's error shape with the `request_id` it always carries, null for an
+ * answer no request of Anthropic's made, as VS Code's proxy writes it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/anthropicErrors.ts#L26-L32
  * `headers` adds to the answer, such as `Allow` on a 405; a refusal's
  * challenge goes out as its `WWW-Authenticate`.
  */
 export const refusalBody = (dialect: Dialect, refusal: Refusal, headers: Record<string, string> = {}): Response => {
   const type = errorType(refusal.status);
   const body = familyOf(dialect) === 'anthropic'
-    ? { type: 'error', error: { type, message: refusal.message } }
+    ? { type: 'error', error: { type, message: refusal.message }, request_id: null }
     : { error: { message: refusal.message, type, param: null, code: refusal.code ?? null } };
   return new Response(`${JSON.stringify(body)}\n`, {
     status: refusal.status,

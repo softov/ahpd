@@ -182,7 +182,7 @@ A stream that goes 300 s without a chunk is ended. A provider that fails mid-ans
 
 ## What a refusal means
 
-Every refusal is the dialect's own error body, so the tool shows the message. On `/v1/models` the shape follows `anthropic-version`: Anthropic's with the header, OpenAI's without. An unknown path under `/v1` is OpenAI's.
+Every refusal is the dialect's own error body, so the tool shows the message: Anthropic's carries `request_id: null`, the field its errors always hold, as VS Code's proxy writes it. On `/v1/models` the shape follows `anthropic-version`: Anthropic's with the header, OpenAI's without. An unknown path under `/v1` is OpenAI's.
 
 | Status | Type | When |
 | --- | --- | --- |
@@ -191,7 +191,7 @@ Every refusal is the dialect's own error body, so the tool shows the message. On
 | 403 | `permission_error` | No `proxy:call`; a scope you are not in; a policy refuses every entry; a policy limit or the key's own limit has no room; a foreign `Host` or `Origin` |
 | 404 | `not_found_error` | `model <name> is not served here`, or it is served only in the other dialect, and the message names the path to call |
 | 405 | `invalid_request_error` | A method other than `POST` (or `GET` on `/v1/models`) |
-| 413 | `request_too_large` | A body over 32 MiB |
+| 413 | `request_too_large` | A body over 128 MiB, the request size Anthropic documents for its Messages API |
 | 502 | `api_error` | The provider could not be reached |
 | 503 | `api_error` | No open connector serves any entry for this caller; the message names each provider it looked for, never a value |
 | 504 | `timeout_error` | The provider sent no status in time; the next entry is not tried |

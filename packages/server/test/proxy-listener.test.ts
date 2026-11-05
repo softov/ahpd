@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { memoryPolicies, type Grant, type ModelDialect, type ModelUse, type ProviderConnector, type ProviderModel, type Users } from '@ahpd/sdk';
 import { modelCatalog, type ModelCatalog } from '../src/proxy/catalog.js';
-import { connectorModels, type ProxyOptions } from '../src/proxy/listener.js';
+import { connectorModels, MAX_BODY_BYTES, type ProxyOptions } from '../src/proxy/listener.js';
 import { proxyConfiguration } from '../src/proxy/providers.js';
 import {
   answerJson, fakeProvider, isAnthropicError, isOpenAiError, MARKER, memoryUsage, pause, people, providerConnector, ROOT_TOKEN, send,
@@ -103,10 +103,12 @@ describe('/v1 answers in each dialect, and refuses in its own error shape', () =
     expect(isOpenAiError(notJson.json)).toBe(true);
     expect(notJson.json).toMatchObject({ error: { type: 'invalid_request_error', message: 'The request body is not JSON' } });
 
+    // Anthropic's own error shape, the request_id it always carries null for
+    // an answer no request of Anthropic's made, as VS Code's proxy writes it.
     const noModel = await send(served.port, MESSAGES, { headers: asRoot, body: { messages: [] } });
     expect(noModel.status).toBe(400);
     expect(isAnthropicError(noModel.json)).toBe(true);
-    expect(noModel.json).toMatchObject({ type: 'error', error: { type: 'invalid_request_error' } });
+    expect(noModel.json).toEqual({ type: 'error', error: { type: 'invalid_request_error', message: expect.any(String) }, request_id: null });
 
     const array = await send(served.port, CHAT, { headers: asRoot, body: [] });
     expect(array.status).toBe(400);
@@ -163,6 +165,10 @@ describe('/v1 answers in each dialect, and refuses in its own error shape', () =
     for (const host of ['127.0.0.1:41999', 'localhost:7', '[::1]:65000', 'localhost']) {
       expect((await send(served.port, CHAT, { headers: { ...asRoot, host }, body: CALL })).status, host).toBe(200);
     }
+  });
+
+  it('takes a body up to the 128 MB Anthropic documents for its Messages API', () => {
+    expect(MAX_BODY_BYTES).toBe(128 * 1024 * 1024);
   });
 
   it('refuses a body larger than the limit with 413 before reading it all', async () => {
