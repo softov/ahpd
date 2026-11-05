@@ -424,12 +424,11 @@ it('answers the rest of the form when a seed fails', async () => {
 });
 
 /*
- * An answerer that throws is an empty picker, not a failed form.
- *
- * The person is filling in a session's settings, and a machine listing that
- * cannot be read is not a reason to refuse them the rest of it.
+ * An answerer that throws fails the request with its own words, as VS Code's
+ * host lets a completion provider's failure through.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11070-L11081
  */
-it('answers with nothing when the answerer fails', async () => {
+it('fails the request with the answerer\'s words when the answerer fails', async () => {
   const { options } = foldHostOptions(base(), [{
     by: 'fixture',
     agents: [],
@@ -445,10 +444,10 @@ it('answers with nothing when the answerer fails', async () => {
   }]);
   const client = createHost(options).accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
-  expect(await client.handle({
+  await expect(client.handle({
     method: 'sessionConfigCompletions',
     params: { channel: 'ahp-root://', property: 'computer', query: '' },
-  })).toEqual({ items: [] });
+  })).rejects.toThrow('docker is not running');
 });
 
 it('advertises every scheme it serves on the handshake and on the root state', async () => {

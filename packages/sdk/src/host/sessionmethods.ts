@@ -1778,66 +1778,60 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     /**
      * The values behind a property whose list is too long to send.
      *
-     * Only `branch`, because it is the only key here with more values than
-     * a picker holds - the rest are enums of five things or fewer, and a
-     * client is told so by their schema. A property this host has no
-     * lookup for answers with nothing rather than an error: the client
-     * asked what else there is, and "nothing else" is an answer.
+     * `branch` is the host's, for every agent, as VS Code's host answers it
+     * from the one git-backed list; any other property is the answer of the
+     * backend the client named, or of the plugin that contributed the key, a
+     * failure of it let through to the client; a property nothing here looks
+     * up answers with nothing.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11070-L11081
      */
     sessionConfigCompletions: async (params) => {
       const property = String(params.property ?? '');
       const asked = typeof params.workingDirectory === 'string' ? params.workingDirectory : undefined;
+      const port = options.worktrees;
+      if (property === 'branch' && port) {
+        // The client's URI is decoded; the host's own directory is already a
+        // path, so it is the fallback rather than a URI built to be read back.
+        const where = asked === undefined ? dir : localPath(asked);
+        const repository = await port.repository(where).catch(() => undefined);
+        if (repository === undefined) return { items: [] };
+        const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';
+        const branches = await port.branches(repository).catch(() => [] as string[]);
+        /*
+         * Substring rather than prefix, and capped.
+         *
+         * Somebody looking for `softov/agents/1a2b` types `1a2b`, and a
+         * prefix match would answer nothing. The cap is the same one the
+         * schema seeds with, because the list is ordered by most recent
+         * commit and a picker showing four hundred rows is one nobody reads.
+         */
+        const found = branches.filter((name) => name.toLowerCase().includes(query));
+        return { items: found.slice(0, SEEDS).map((name) => ({ value: name, label: name })) };
+      }
       /*
-       * A contributed key answers for itself, before the host's own.
+       * A key a backend answers for itself, then a contributed key.
        *
-       * Without this a key a plugin named reached every client as a text
-       * box: a property with no `enum` reads as a fact somebody types, so
-       * only a client holding code for that key by name could draw a
-       * picker for it. The answerer is registered beside the key, and the
-       * fold is what marks the property `enumDynamic`, so a client asking
-       * is a client that was told to ask.
-       */
-      /*
-       * A key a backend answers for itself, then a contributed key, before the
-       * host's own.
-       *
-       * A backend's schema is its own account of its settings, and a key of it
-       * that names answers had nowhere to go: the plugin seam answers for a key
-       * a plugin declared, and a backend declares none of those. The ask names
+       * A backend's schema is its own account of its settings; the ask names
        * the provider, so the answerer is this backend's only when the client
-       * asked about this backend - a second harness offering the same key name
-       * is not asked what the first one would accept.
+       * asked about this backend. A key a plugin named is answered by the
+       * answerer registered beside it, and the fold is what marks the property
+       * `enumDynamic`, so a client asking is a client that was told to ask.
        */
       const named = typeof params.provider === 'string' ? agents.get(params.provider) : undefined;
       const answerer = named?.completions?.[property] ?? options.sessionConfigCompletions?.[property];
       if (answerer !== undefined) {
-        try {
-          /*
-           * A picker that fails is an empty picker.
-           *
-           * The person is filling in a session's settings, and a machine
-           * listing that cannot be read is not a reason to refuse them the
-           * rest of the form. The `try` covers the call as well as the
-           * promise, because an answerer that throws before it returns one
-           * would otherwise escape a `.catch` on the result.
-           */
-          return {
-            items: await answerer({
-              property,
-              query: typeof params.query === 'string' ? params.query : '',
-              ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
-              ...(asked === undefined ? {} : { workingDirectory: asked }),
-              ...(typeof params.config === 'object' && params.config !== null
-                ? { config: params.config as Record<string, unknown> }
-                : {}),
-            }),
-          };
-        }
-        catch {
-          return { items: [] };
-        }
+        return {
+          items: await answerer({
+            property,
+            query: typeof params.query === 'string' ? params.query : '',
+            ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
+            ...(asked === undefined ? {} : { workingDirectory: asked }),
+            ...(typeof params.config === 'object' && params.config !== null
+              ? { config: params.config as Record<string, unknown> }
+              : {}),
+          }),
+        };
       }
-      const port = options.worktrees;
       if (property === 'scope') {
         /*
          * The choices are the asking person's, so asked for here rather
@@ -1852,24 +1846,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const found = namesOf(who).filter((one) => one.toLowerCase().includes(query));
         return { items: found.map((name) => ({ value: name, label: name })) };
       }
-      if (property !== 'branch' || !port) return { items: [] };
-      // The client's URI is decoded; the host's own directory is already a
-      // path, so it is the fallback rather than a URI built to be read back.
-      const where = asked === undefined ? dir : localPath(asked);
-      const repository = await port.repository(where).catch(() => undefined);
-      if (repository === undefined) return { items: [] };
-      const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';
-      const branches = await port.branches(repository).catch(() => [] as string[]);
-      /*
-       * Substring rather than prefix, and capped.
-       *
-       * Somebody looking for `softov/agents/1a2b` types `1a2b`, and a
-       * prefix match would answer nothing. The cap is the same one the
-       * schema seeds with, because the list is ordered by most recent
-       * commit and a picker showing four hundred rows is one nobody reads.
-       */
-      const found = branches.filter((name) => name.toLowerCase().includes(query));
-      return { items: found.slice(0, SEEDS).map((name) => ({ value: name, label: name })) };
+      return { items: [] };
     },
   };
   return methods;
