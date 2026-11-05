@@ -2,19 +2,23 @@
   "name": "@ahpd/computer",
   "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Disposable Docker machines for the ahpd daemon: a computer: resource provider and the tools that make, use and release one",
+  "description": "Disposable machines for agent sessions, on Docker, VMs or ssh boxes. Run it as an ahpd plugin.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
-    "plugin",
-    "resource",
+    "ahpio",
+    "ai-agent",
+    "agent-sandbox",
     "computer",
     "docker",
     "container",
-    "sandbox"
+    "sandbox",
+    "libvirt",
+    "proxmox",
+    "ssh",
+    "devcontainer",
+    "plugin"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -67,7 +71,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Computer",
-    "description": "Provides isolated Docker/Container environments for agent sessions, including lifecycle management and tools.",
+    "description": "Isolated machines for agent sessions: Docker containers, libvirt or Proxmox VMs, and ssh boxes.",
     "categories": ["channel", "tool"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -92,29 +96,29 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "runtime": { "type": "string", "enum": ["docker", "ssh"], "description": "Which runtime to use: docker, which makes machines, or ssh, which only lists them." },
-        "command": { "type": "string", "description": "The program to run. docker." },
-        "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments before its own, for a wrapper or a context." },
+        "runtime": { "type": "string", "enum": ["docker", "ssh"], "description": "How machines are provided. 'docker' (default) creates them; 'ssh' only lists the boxes in ssh." },
+        "command": { "type": "string", "description": "The program that runs machines. Defaults to 'docker'." },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments placed before the program's own, for a wrapper or a Docker context." },
         "ssh": {
           "type": "object",
-          "description": "Boxes this host reaches over ssh. Each is listed rather than made: nothing of this host is on one, so none can be created, started or removed here.",
+          "description": "Boxes this host reaches over ssh. They are listed, never created, started or removed here.",
           "properties": {
-            "command": { "type": "string", "description": "The program that reaches a box. ssh." },
-            "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments before its own, for a wrapper or a jump host." },
-            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds ssh is given to reach a box before it refuses. 10 when absent." },
-            "pollSeconds": { "type": "integer", "minimum": 1, "description": "Seconds between checks of each box, so the up time charged for a box ends at a check rather than at the next listing. Only a listing moves the meter when absent." },
+            "command": { "type": "string", "description": "The program that reaches a box. Defaults to 'ssh'." },
+            "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments placed before ssh's own, for a wrapper or a jump host." },
+            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds to wait for a box before giving up. Defaults to 10." },
+            "pollSeconds": { "type": "integer", "minimum": 1, "description": "Seconds between checks of each box, so its up time is billed up to the last check. Without it, only a listing updates the meter." },
             "machines": {
               "type": "object",
-              "description": "The boxes, by the name a machine id is spelled with: the entry dev02 is the machine ssh.dev02.",
+              "description": "The boxes, by name. The entry 'dev02' becomes the machine 'ssh.dev02'.",
               "additionalProperties": {
                 "type": "object",
                 "properties": {
-                  "destination": { "type": "string", "description": "What ssh is given as the host: user@host, or a name from its own config. An entry without one is not a box and is dropped." },
-                  "port": { "type": "string", "description": "The port, when it is not the one ssh would use." },
-                  "identity": { "type": "string", "description": "The private key to reach it with, when ssh would not pick one itself." },
-                  "workdir": { "type": "string", "description": "Where a command starts on the box. The login directory when absent, which is also where a path from this host is not." },
-                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box. [\"ahpd\"] when absent." },
-                  "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents the box is prepared for, as a machine carries them in a label. A session of another agent is refused." }
+                  "destination": { "type": "string", "description": "The ssh host: user@host, or a name from your ssh config. An entry without one is dropped." },
+                  "port": { "type": "string", "description": "The ssh port, when it is not ssh's own default." },
+                  "identity": { "type": "string", "description": "The private key to connect with, when ssh would not pick one itself." },
+                  "workdir": { "type": "string", "description": "Where commands start on the box. Defaults to the login directory, so paths from this host do not apply." },
+                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box. Defaults to [\"ahpd\"]." },
+                  "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents the box is prepared for. Sessions of other agents are refused." }
                 }
               }
             }
@@ -122,105 +126,105 @@
         },
         "libvirt": {
           "type": "object",
-          "description": "How a profile with runtime libvirt makes its machines: each is a VM on its server's libvirt, a linked clone of a template disk, reached over ssh through that server.",
+          "description": "VMs for profiles with runtime 'libvirt': linked clones of a template disk on the server's libvirt, reached over ssh through that server.",
           "properties": {
-            "uri": { "type": "string", "description": "The libvirt connection URI for every server. qemu+ssh://<destination>/system when absent." },
-            "pool": { "type": "string", "description": "The storage pool that holds the template and every VM's disk." },
-            "network": { "type": "string", "description": "The libvirt network a VM is attached to." },
-            "template": { "type": "string", "description": "A template's volume in the pool, which every VM's disk backs onto. When absent, a template is built from image on each server, with the parts this host's Docker builds." },
-            "image": { "type": "string", "description": "The cloud image's volume in the pool, a qcow2 with cloud-init, which a template is built from. A VM is refused when neither this nor template is set." },
-            "user": { "type": "string", "description": "The login a VM is made with. ahpd when absent." },
-            "disk": { "type": "string", "description": "The size of a VM's disk, as virsh vol-create-as reads it. 20G when absent." },
-            "virsh": { "type": "array", "items": { "type": "string" }, "description": "The virsh program and the arguments it starts with. [\"virsh\"] when absent." },
-            "virtInstall": { "type": "array", "items": { "type": "string" }, "description": "The virt-install program and the arguments it starts with. [\"virt-install\"] when absent." }
+            "uri": { "type": "string", "description": "The libvirt connection URI for every server. Defaults to 'qemu+ssh://<destination>/system'." },
+            "pool": { "type": "string", "description": "The storage pool for the template and every VM disk." },
+            "network": { "type": "string", "description": "The libvirt network VMs attach to." },
+            "template": { "type": "string", "description": "The template volume every VM disk is cloned from. Without it, a template is built from image on each server, with the parts this host's Docker builds." },
+            "image": { "type": "string", "description": "A qcow2 cloud image with cloud-init, used to build the template. Set this or template, or VMs are refused." },
+            "user": { "type": "string", "description": "The login VMs are created with. Defaults to 'ahpd'." },
+            "disk": { "type": "string", "description": "VM disk size, in virsh vol-create-as format. Defaults to '20G'." },
+            "virsh": { "type": "array", "items": { "type": "string" }, "description": "The virsh program and its leading arguments. Defaults to [\"virsh\"]." },
+            "virtInstall": { "type": "array", "items": { "type": "string" }, "description": "The virt-install program and its leading arguments. Defaults to [\"virt-install\"]." }
           }
         },
         "proxmox": {
           "type": "object",
-          "description": "How a profile with runtime proxmox makes its machines: each is a VM on this node, a linked clone of a template VM, reached over ssh at the address its guest agent reports, through the profile's server when it names one.",
+          "description": "VMs for profiles with runtime 'proxmox': linked clones of a template VM on this node, reached over ssh at the address the guest agent reports, through the profile's server when it names one.",
           "properties": {
-            "url": { "type": "string", "description": "The API's address, https://<node>:8006." },
-            "tokenId": { "type": "string", "description": "The API token's id, <user>@<realm>!<name>." },
-            "secret": { "type": "string", "writeOnly": true, "secretAtUse": true, "description": "The API token's secret. A name may be given instead of the secret, as {\"$secret\": \"host:proxmox\"}." },
-            "node": { "type": "string", "description": "The node every VM is made on." },
-            "storage": { "type": "string", "description": "The storage a template built here is copied onto." },
-            "bridge": { "type": "string", "description": "The bridge a VM's network card is on." },
-            "template": { "type": "string", "description": "The name of a template VM on the node, with cloud-init and the QEMU guest agent, which every VM is a linked clone of. When absent, a template is built from image, with the parts this host's Docker builds." },
-            "image": { "type": "string", "description": "The name of a cloud-init template VM on the node, with the QEMU guest agent, which a template is built from. A VM is refused when neither this nor template is set." },
-            "user": { "type": "string", "description": "The login a VM is made with. ahpd when absent." },
-            "ca": { "type": "string", "description": "A PEM file on this host that the node's certificate is checked against, for a node with its own certificate authority." }
+            "url": { "type": "string", "description": "The Proxmox API address, such as https://<node>:8006." },
+            "tokenId": { "type": "string", "description": "The API token id, as <user>@<realm>!<name>." },
+            "secret": { "type": "string", "writeOnly": true, "secretAtUse": true, "description": "The API token secret, or a vault reference such as {\"$secret\": \"host:proxmox\"}." },
+            "node": { "type": "string", "description": "The node VMs are created on." },
+            "storage": { "type": "string", "description": "The storage a template built here is copied to." },
+            "bridge": { "type": "string", "description": "The network bridge for each VM's network card." },
+            "template": { "type": "string", "description": "A template VM on the node, with cloud-init and the QEMU guest agent, that every VM is cloned from. Without it, a template is built from image, with the parts this host's Docker builds." },
+            "image": { "type": "string", "description": "A cloud-init template VM on the node, with the QEMU guest agent, used to build the template. Set this or template, or VMs are refused." },
+            "user": { "type": "string", "description": "The login VMs are created with. Defaults to 'ahpd'." },
+            "ca": { "type": "string", "description": "A PEM file on this host to verify the node's certificate, for a node with its own certificate authority." }
           }
         },
-        "env": { "type": "object", "additionalProperties": { "type": "string", "writeOnly": true }, "description": "Environment variables merged over the daemon's. A variable is a credential wherever the image keeps one, so each answers <set>." },
-        "image": { "type": "string", "description": "The image a machine is made from when a call names none." },
-        "cpus": { "type": "string", "description": "A CPU limit for every machine this host makes." },
-        "memory": { "type": "string", "description": "A memory limit for every machine this host makes." },
-        "max": { "type": "integer", "minimum": 1, "description": "How many may exist at once." },
-        "label": { "type": "string", "description": "The label every machine carries." },
-        "prefix": { "type": "string", "description": "What the name of every machine this host makes starts with." },
-        "sessionSetting": { "type": "boolean", "description": "Whether a session setting names the machine a session runs in." },
-        "sessionDefault": { "type": "string", "description": "That setting's default." },
-        "needs": { "type": "object", "additionalProperties": { "type": "string", "secretAtUse": true, "writeOnly": true }, "description": "Values for any agent's machine needs, by need name." },
-        "mounts": { "type": "array", "items": { "type": "string" }, "description": "What every machine this plugin makes can see." },
+        "env": { "type": "object", "additionalProperties": { "type": "string", "writeOnly": true }, "description": "Environment variables added over the daemon's. Values are treated as secrets and shown as <set>." },
+        "image": { "type": "string", "description": "The image machines are created from when none is named. Defaults to 'debian:bookworm-slim'." },
+        "cpus": { "type": "string", "description": "CPU limit for every machine, as Docker's --cpus takes it." },
+        "memory": { "type": "string", "description": "Memory limit for every machine, as Docker's --memory takes it." },
+        "max": { "type": "integer", "minimum": 1, "description": "Most machines that may exist at once. Defaults to 3." },
+        "label": { "type": "string", "description": "The label every machine carries. Defaults to 'ahpd.computer=1'." },
+        "prefix": { "type": "string", "description": "Prefix for every machine name. Defaults to 'ahpd-computer'." },
+        "sessionSetting": { "type": "boolean", "description": "Show a session setting for the machine a session runs in. On by default." },
+        "sessionDefault": { "type": "string", "description": "The default machine for that setting, as a computer://<id> URI." },
+        "needs": { "type": "object", "additionalProperties": { "type": "string", "secretAtUse": true, "writeOnly": true }, "description": "Values for agents' machine needs, by need name." },
+        "mounts": { "type": "array", "items": { "type": "string" }, "description": "Mounts every machine from this plugin gets." },
         "profiles": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "title": { "type": "string", "description": "What the picker shows for it, a string. The profile name when absent." },
+              "title": { "type": "string", "description": "The name shown in the picker. Defaults to the profile name." },
               "description": { "type": "string", "description": "One line about what it is for, a string." },
-              "image": { "type": "string", "description": "The image its machines are made from, a string. The plugin's image when absent." },
-              "cpus": { "type": "string", "description": "A CPU limit for its machines, a string. The plugin's cpus when absent." },
-              "memory": { "type": "string", "description": "A memory limit for its machines, a string. The plugin's memory when absent." },
-              "ociRuntime": { "type": "string", "description": "The OCI runtime Docker starts its machines under, a string. runsc is gVisor. Docker's own default when absent." },
-              "runtime": { "type": "string", "enum": ["docker", "libvirt", "proxmox"], "description": "What makes its machines: docker, a container on the server's Docker; libvirt, a VM on the server's libvirt, as the libvirt option says; proxmox, a VM on the proxmox option's node, reached through the server when one is named. docker when absent." },
-              "server": { "type": "string", "description": "The box its machines are made on, by its name in ssh.machines. The box is checked before a machine is made there. This host when absent." },
-              "code": { "type": "string", "enum": ["bundle", "clone"], "description": "How a machine on a server is given the session's code: bundle sends the tree's commit from this host; clone has the machine fetch the session's branch from origin over https, so only a public repository. bundle when absent." },
-              "workdir": { "type": "string", "description": "Where commands start, a string. folder, or the image's own, when absent." },
-              "mounts": { "type": "array", "items": { "type": "string" }, "description": "Mounts added after the plugin's own, a list of strings." },
-              "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents its machines are prepared for, a list of provider ids. A session of another agent is refused." },
-              "folder": { "type": "string", "description": "A host folder mounted at the same path inside the machine, a string." },
-              "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts the nested host inside one of its machines, a list of strings. [\"ahpd\"] when absent." },
-              "disposable": { "type": "boolean", "description": "true: no machine until a session starts, and one is made for that session. false when absent." },
-              "disposableDelay": { "type": "integer", "minimum": 1, "description": "Milliseconds after the last session leaves a disposable machine before it is removed, a whole number above 0. 300000 when absent." },
-              "disposableAlone": { "type": "boolean", "description": "true: a disposable machine is kept out of the picker, so only the session it was made for runs in it. false when absent." },
-              "sessionFolder": { "type": "boolean", "description": "true: the session's working folder is mounted read-write at the same path inside the machine. false when absent." },
-              "sessionRepository": { "type": "boolean", "description": "true: the repository that folder sits inside is mounted too. Needs sessionFolder. false when absent." },
-              "sessionTree": { "type": "string", "enum": ["shared", "copy"], "description": "shared mounts this host's tree; copy gives the machine a checkout of its own that reaches the host only by fetch. Needs sessionFolder. shared when absent." },
+              "image": { "type": "string", "description": "The image its machines use. Defaults to the plugin's image." },
+              "cpus": { "type": "string", "description": "CPU limit for its machines. Defaults to the plugin's cpus." },
+              "memory": { "type": "string", "description": "Memory limit for its machines. Defaults to the plugin's memory." },
+              "ociRuntime": { "type": "string", "description": "The OCI runtime Docker uses for its machines, such as 'runsc' for gVisor. Defaults to Docker's own." },
+              "runtime": { "type": "string", "enum": ["docker", "libvirt", "proxmox"], "description": "What creates its machines. 'docker' (default) runs a container on the server's Docker; 'libvirt' and 'proxmox' create a VM, as those options set up." },
+              "server": { "type": "string", "description": "The box its machines run on, by its name in ssh.machines. The box is checked first. Defaults to this host." },
+              "code": { "type": "string", "enum": ["bundle", "clone"], "description": "How a machine on a server gets the session's code. 'bundle' (default) sends the commit from this host; 'clone' fetches the branch from origin over https, so public repositories only." },
+              "workdir": { "type": "string", "description": "Where commands start. Defaults to folder, or the image's own working directory." },
+              "mounts": { "type": "array", "items": { "type": "string" }, "description": "Mounts added after the plugin's own." },
+              "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents its machines are prepared for, by provider id. Sessions of other agents are refused." },
+              "folder": { "type": "string", "description": "A host folder mounted at the same path inside the machine." },
+              "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts the nested host inside its machines. Defaults to [\"ahpd\"]." },
+              "disposable": { "type": "boolean", "description": "Create a machine only when a session starts, one per session. Off by default." },
+              "disposableDelay": { "type": "integer", "minimum": 1, "description": "Milliseconds a disposable machine stays after its last session leaves. Defaults to 300000 (5 minutes)." },
+              "disposableAlone": { "type": "boolean", "description": "Hide disposable machines from the picker, so only their own session runs in them. Off by default." },
+              "sessionFolder": { "type": "boolean", "description": "Mount the session's working folder read-write at the same path inside the machine. Off by default." },
+              "sessionRepository": { "type": "boolean", "description": "Also mount the repository that folder belongs to. Needs sessionFolder. Off by default." },
+              "sessionTree": { "type": "string", "enum": ["shared", "copy"], "description": "How the machine sees the repository. 'shared' (default) mounts this host's tree; 'copy' gives it its own checkout that reaches the host only by fetch. Needs sessionFolder." },
               "needs": { "type": "object", "additionalProperties": { "type": "string", "secretAtUse": true, "writeOnly": true } },
               "parts": { "type": "array", "items": { "type": "string" }, "description": "The parts every machine from this profile carries, by their ids in the versions file." },
               "secretUnreadable": {
                 "type": "string",
                 "enum": ["fail", "drop"],
-                "description": "When a need value named from the vault cannot be read again after a restart: fail every command into the machine, or drop that variable and log it. fail when absent."
+                "description": "What happens when a vault value for a need cannot be read after a restart. 'fail' (default) fails every command in the machine; 'drop' leaves that variable out and logs it."
               },
               "state": {
                 "type": "string",
                 "enum": ["volume", "host"],
-                "description": "Where its agents keep their state: volume, a named volume per provider seeded from this host, or host, this host's own configuration mounted. volume when absent."
+                "description": "Where its agents keep their state. 'volume' (default) uses a named volume per provider, seeded from this host; 'host' mounts this host's own configuration."
               },
               "stateScope": {
                 "type": "string",
                 "enum": ["owner", "shared"],
-                "description": "Who shares a state volume: owner, one per owner of the machine, or shared, one for every owner of the profile. owner when absent."
+                "description": "Who shares a state volume. 'owner' (default) gives each machine owner one; 'shared' gives the whole profile one."
               },
               "gitGuard": {
                 "type": "string",
                 "enum": ["fetch", "open", "bind"],
-                "description": "How a git directory in a session's machine is guarded: fetch, the machine committing in a git directory of its own so the host fetches the work back, or open, the host's git directory writable in the machine. fetch when absent. bind is read as fetch."
+                "description": "How a session's git directory is protected in the machine. 'fetch' (default) commits in the machine's own git directory and the host fetches the work back; 'open' makes the host's git directory writable. 'bind' is read as 'fetch'."
               },
               "nestedDelete": {
                 "type": "string",
                 "enum": ["inside", "record"],
-                "description": "Deleting a session that ran in a machine from this profile and is not running: inside, start the machine's own host to dispose that session there too, or record, delete it here and leave the machine's copy. inside when absent."
+                "description": "What deleting a stopped session from this profile does. 'inside' (default) starts the machine's host to delete it there too; 'record' deletes it here and keeps the machine's copy."
               }
             }
           },
-          "description": "The named sets a person picks from when making a machine."
+          "description": "Named machine setups a person picks from when creating a machine."
         },
-        "bodyMounts": { "type": "boolean", "description": "Whether a person making a machine may name mounts of their own." },
-        "imageMounts": { "type": "boolean", "description": "Whether a part may be mounted from its own image. false mounts every part from a volume filled once from it." },
-        "images": { "type": "array", "items": { "type": "string" }, "description": "The image patterns a machine may be made from." },
+        "bodyMounts": { "type": "boolean", "description": "Let a person name their own mounts when creating a machine. Off by default." },
+        "imageMounts": { "type": "boolean", "description": "Let a part mount from its own image. Set to false to mount every part from a volume filled once from it." },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "Image patterns machines may be created from. Without it, any image is allowed." },
         "devcontainer": {
           "type": ["object", "boolean"],
           "properties": {
@@ -236,23 +240,23 @@
                   {
                     "type": "object",
                     "properties": {
-                      "source": { "type": "string", "description": "The module specifier, or a path to a directory or a file." },
-                      "name": { "type": "string", "description": "What a listing prints, or the module in an entry written before source." },
-                      "options": { "type": "object", "additionalProperties": {}, "description": "Passed to the plugin's apply as its second argument." },
-                      "enabled": { "type": "boolean", "description": "false drops the plugin before it is resolved. Absent means on." },
-                      "grants": { "type": "array", "items": { "type": "string" }, "description": "What the plugin may do when it connects as a client of its own." }
+                      "source": { "type": "string", "description": "A module specifier, or a path to a directory or file." },
+                      "name": { "type": "string", "description": "The name a listing shows, or the module in an entry written before source existed." },
+                      "options": { "type": "object", "additionalProperties": {}, "description": "Options passed to the plugin." },
+                      "enabled": { "type": "boolean", "description": "Set to false to skip the plugin. On by default." },
+                      "grants": { "type": "array", "items": { "type": "string" }, "description": "What the plugin may do when it connects as its own client." }
                     },
                     "additionalProperties": {}
                   }
                 ]
               },
-              "description": "The plugins the host inside the machine runs, as a module specifier or an object naming one. At least one, or the host inside has no backend."
+              "description": "The plugins the host inside the machine runs. Name at least one, or that host has no backend."
             },
             "docker": { "type": "string" },
             "install": { "type": ["string", "boolean"] },
             "folders": { "type": "array", "items": { "type": "string" } }
           },
-          "description": "The Dev Container CLI, as a launcher and as a machine maker, and the folders it may make one from; false switches every dev container route off."
+          "description": "The Dev Container CLI, as a launcher and a machine maker, and the folders it may build from. Set to false to turn dev containers off."
         }
       }
     }

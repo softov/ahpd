@@ -2,17 +2,17 @@
   "name": "@ahpd/bot",
   "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Bots for the ahpd daemon: a bot: resource provider, where a bot is a record with a workspace and a session",
+  "description": "Bots for ahpd. Each bot has its own identity, workspace and sessions.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
+    "ai-agent",
     "plugin",
-    "resource",
     "bot",
-    "assistant"
+    "assistant",
+    "chatbot"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -66,7 +66,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Bot",
-    "description": "Creates conversational bots with individual identities, workspaces, and persistent sessions.",
+    "description": "Create bots with their own identity, workspace and persistent sessions.",
     "categories": ["agent", "channel", "tool"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -84,11 +84,11 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "root": { "type": "string", "description": "The folder a bot's own workspace is under, as <root>/<slug>." },
-        "lastChats": { "type": "integer", "minimum": 1, "description": "How many chats a template lists for {{chats}}." },
+        "root": { "type": "string", "description": "Folder for bot workspaces, one '<root>/<slug>' per bot. Defaults to '~/.bots'. Cannot be inside the configuration folder." },
+        "lastChats": { "type": "integer", "minimum": 1, "description": "How many recent chats '{{chats}}' lists in a template. Defaults to 10." },
         "mainTurnPostMessageAbsent": {
           "type": "string",
-          "description": "What a main turn does when the back session's turn ends without post_message: post (the default), notice, silence or postNotice."
+          "description": "What the bot's chat shows when its work session ends without post_message. 'post' (default) shows the session's last words; 'notice' shows a notice; 'silence' shows nothing; 'postNotice' shows the last words, or the notice when there are none."
         }
       }
     }

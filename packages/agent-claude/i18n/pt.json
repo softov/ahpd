@@ -1,29 +1,29 @@
 {
   "meta": {
     "title": "Agente Claude",
-    "description": "O Claude Code como backend de agente, um registro por configuração."
+    "description": "Execute o Claude Code como agente AHP, com configurações independentes para cada agente."
   },
   "options": {
     "paths": {
-      "description": "As pastas que ele cataloga, e onde uma sessão fica por padrão. Por padrão, as do host."
+      "description": "Pastas incluídas no catálogo do espaço de trabalho e usadas como local padrão das sessões. Quando omitido, herda os caminhos do host."
     },
     "computerExecutable": {
-      "description": "Onde fica a CLI dentro de uma máquina. Por padrão, claude no PATH da imagem."
+      "description": "Caminho do executável da CLI do Claude dentro de um computador. Por padrão, 'claude' do PATH do computador."
     },
     "computerCli": {
-      "description": "De onde vem a CLI que uma máquina roda: part, a part claude que este host constrói, por padrão; host monta a CLI instalada neste host."
+      "description": "Como os computadores obtêm a CLI do Claude. 'part' (padrão) usa um componente de CLI construído pelo host; 'host' monta a CLI instalada no host."
     },
     "computerCliFallback": {
-      "description": "Com computerCli part, o que uma máquina recebe quando a part claude não pode ser construída: refuse, por padrão, recusa a sessão do Claude e cita a part; host monta a CLI deste host no lugar e registra isso no log."
+      "description": "O que acontece quando o componente da CLI do Claude não pode ser construído. 'refuse' (padrão) recusa a sessão com um erro; 'host' monta a CLI instalada no host no lugar e registra o fallback no log. Vale apenas quando computerCli é 'part'."
     },
     "computerConfigDir": {
-      "description": "A pasta de configuração que a CLI lê dentro de uma máquina. Por padrão, /ahpd/<id>, e /ahpd/claude para o embutido; false mantém a da própria imagem."
+      "description": "Pasta de configuração da CLI do Claude dentro de um computador. Por padrão, '/ahpd/<id>', ou '/ahpd/claude' para o agente integrado. Use false para manter a configuração própria da imagem."
     },
     "workerStop": {
-      "description": "O que um stop dado no chat de um subagente interrompe. Por padrão, worker."
+      "description": "Alcance de um stop pedido no chat de um subagente. 'worker' (padrão) para apenas esse subagente; 'session' para a sessão inteira."
     },
     "handshakeTimeoutMs": {
-      "description": "Quanto tempo a CLI tem para responder ao handshake antes que a sessão a trate como uma CLI que morreu. O padrão é 120000; uma máquina mais lenta pede mais."
+      "description": "Tempo máximo, em milissegundos, para esperar o handshake da CLI do Claude antes de considerar que a inicialização falhou. Por padrão, 120000 (2 minutos). Aumente em computadores mais lentos."
     }
   },
   "session": {
