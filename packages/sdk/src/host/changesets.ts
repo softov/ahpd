@@ -50,6 +50,10 @@ export interface Changesets {
   operationContext(asked: string, dir: string): ChangesetOperationContext;
   opKey(channel: string, id: string): string;
   inFlight: Set<string>;
+  /** The last invocation of each operation of a changeset, which the next one waits behind, by `opKey`. */
+  operationLanes: Map<string, Promise<unknown>>;
+  /** The invocation in flight for each identical request, which another one shares, by its key. */
+  inFlightOperations: Map<string, Promise<unknown>>;
   lastError: Map<string, string>;
   shown: Map<string, { files: ChangesetFile[]; status: string }>;
 }
@@ -148,6 +152,8 @@ export function createChangesets(ctx: HostContext): Changesets {
   const inFlight = new Set<string>();
   const lastError = new Map<string, string>();
   const opKey = (channel: string, id: string): string => `${channel}\u0000${id}`;
+  const operationLanes = new Map<string, Promise<unknown>>();
+  const inFlightOperations = new Map<string, Promise<unknown>>();
 
   /**
    * The answer a chat's newest turn ended with, as text.
@@ -682,6 +688,6 @@ export function createChangesets(ctx: HostContext): Changesets {
 
   return {
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
-    changesetsOf, relaysChangesets, relayedChannel, operationContext, opKey, inFlight, lastError, shown,
+    changesetsOf, relaysChangesets, relayedChannel, operationContext, opKey, inFlight, operationLanes, inFlightOperations, lastError, shown,
   };
 }

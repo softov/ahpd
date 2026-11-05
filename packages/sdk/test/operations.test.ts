@@ -211,6 +211,38 @@ it('says running then idle on the changeset', async () => {
   expect(said.some((one) => one.type === 'changeset/fileSet')).toBe(false);
 });
 
+/*
+ * VS Code's operation lanes: an identical invocation in flight shares the one
+ * run, and another waits for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L431-L471
+ */
+it('runs an operation asked twice at once once, and one asked differently after it', async () => {
+  const { source, invoked } = scripted();
+  const order: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const invoke = source.invoke as NonNullable<typeof source.invoke>;
+  source.invoke = async (request) => {
+    order.push(`start ${JSON.stringify(request.meta ?? null)}`);
+    if (order.length === 1) await gate;
+    const result = await invoke(request);
+    order.push(`end ${JSON.stringify(request.meta ?? null)}`);
+    return result;
+  };
+  const { client, changeset } = await watching(source);
+  const ask = (meta?: Record<string, unknown>) => client.handle({
+    method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit', ...(meta === undefined ? {} : { _meta: meta }) },
+  });
+  const first = ask({ b: 2, a: 1 });
+  const again = ask({ a: 1, b: 2 });
+  const other = ask({ c: 3 });
+  await settle();
+  release();
+  expect(await Promise.all([first, again, other])).toEqual([{ message: 'did commit' }, { message: 'did commit' }, { message: 'did commit' }]);
+  expect(invoked).toHaveLength(2);
+  expect(order).toEqual(['start {"b":2,"a":1}', 'end {"b":2,"a":1}', 'start {"c":3}', 'end {"c":3}']);
+});
+
 /**
  * A source whose file list can be moved between reads.
  *

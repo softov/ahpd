@@ -316,105 +316,127 @@ const CONFLICT = -32011;
       if (!offered.scopes.includes(kind))
         throw new RpcError(INVALID_PARAMS, `${operationId} cannot be invoked on a ${kind}`);
 
-      // Refused rather than queued. The agent is writing to this tree, and
-      // an operation that rewrote a file underneath it would be racing the
-      // thing whose work the changeset is about.
-      // `-32004`, which the protocol has for exactly this: the operation
-      // requires no active turn and there is one. `-32002` is
-      // `ProviderNotFound`, so a client branching on the code was told to
-      // try another provider when what it should do is wait.
+      // Refused while a turn runs: the agent is writing to this tree, and an
+      // operation that rewrote a file underneath it would race the work the
+      // changeset is about. `-32004` is the protocol's code for an operation
+      // that requires no active turn.
       if ((statusOf(at.owner) & Status.InProgress) !== 0)
         throw new RpcError(-32004, `${at.owner} is mid-turn`);
 
       /*
-       * And what the machine committed, before anything acts on the folder.
-       *
-       * The agent's commits are in a git directory of the machine's own until
-       * ahpd fetches them - decision
-       * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
-       * an operation running first would act on a changeset that does not hold
-       * the work the turn just did.
-       *
-       * Where the work could not be moved onto the branch the operation is
-       * refused rather than run: something of the host's is in the way - a
-       * commit of a person's, or staged changes - and what the operation would
-       * commit is not what the machine wrote. Under a ref of ahpd's own the
-       * work is kept, and a look at the branch picks it up.
+       * An identical invocation in flight is shared, and any other waits for
+       * the one before it on the same operation of the same changeset, as the
+       * reference host runs its operation lanes: an operation asked twice runs
+       * once.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L431-L471
        */
-      const brought = await bringBackOf(at.owner);
-      if (brought?.waiting !== undefined) {
-        throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
-      }
-
-      const key = opKey(channel, operationId);
-      inFlight.add(key);
-      lastError.delete(key);
-      dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
-      try {
-        const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
-        const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
-          ...context,
-          dir: at.dir,
-          session: at.owner,
-          scope: at.scope,
-          operationId,
-          ...(target !== undefined ? { target } : {}),
-          ...(meta !== undefined ? { meta } : {}),
-        });
-        inFlight.delete(key);
-        dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
-        // Before the refresh, so GitHub's later answer is what survives.
-        if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
-        // Something wrote to the tree, so every changeset of this session
-        // is now describing a directory that has moved. The catalogue
-        // first, because `refresh` is what makes the next read fresh.
-        refreshFacts(at.dir);
-        await options.changes?.refresh?.(at.dir).catch(() => false);
-        await contentMoved(at.owner);
+      const lane = opKey(channel, operationId);
+      const sorted = (_: string, value: unknown): unknown => (typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([one], [two]) => (one < two ? -1 : one > two ? 1 : 0)))
+        : value);
+      const identity = `${lane}\u0000${JSON.stringify({ target: params.target ?? null, _meta: params._meta ?? null }, sorted)}`;
+      const execute = async (): Promise<Record<string, unknown>> => {
         /*
-         * And where the operation left the branch, the machine is handed it.
+         * And what the machine committed, before anything acts on the folder.
          *
-         * The fetch above brought the machine's own work to the host; this is
-         * the other direction - a commit, a checkout, a discard or a revert has
-         * moved the host's branch, its index, or both, and a machine still at
-         * where it was would run its next turn against a history the folder it
-         * shares is no longer in - decision
-         * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. A
-         * machine that could not be moved is a line in the log and nothing
-         * else: the operation has already happened, and it is the machine's
-         * next turn that is one branch behind.
+         * The agent's commits are in a git directory of the machine's own until
+         * ahpd fetches them - decision
+         * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
+         * an operation running first would act on a changeset that does not
+         * hold the work the turn just did.
+         *
+         * Where the work could not be moved onto the branch the operation is
+         * refused rather than run: something of the host's is in the way - a
+         * commit of a person's, or staged changes - and what the operation
+         * would commit is not what the machine wrote. Under a ref of ahpd's own
+         * the work is kept, and a look at the branch picks it up.
          */
-        await followOf(at.owner);
-        return {
-          ...(result.message !== undefined ? { message: result.message } : {}),
-          // What the operation produced, when it produced something worth
-          // opening. A pull request a push made is the case: the operation
-          // succeeded, and the useful part of it is a page somewhere.
-          ...(result.followUp !== undefined ? { followUp: result.followUp } : {}),
-        };
-      }
-      catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        inFlight.delete(key);
-        lastError.set(key, message);
-        // The failure as the protocol's ErrorInfo, named and traced as the
-        // reference host's changeset operations say one.
-        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
-        dispatch(channel, {
-          type: 'changeset/operationStatusChanged',
-          operationId,
-          status: 'error',
-          error: error instanceof Error
-            ? { errorType: error.name, message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
-            : { errorType: 'Error', message },
-        });
-        log(`${operationId} on ${channel} failed: ${message}`);
-        // With the source's code and data when it chose them: a refusal
-        // the reference client branches on is more than its message.
-        const chosen = error as { code?: unknown; data?: unknown };
-        if (typeof chosen.code === 'number') throw new RpcError(chosen.code, message, chosen.data);
-        throw new RpcError(INTERNAL_ERROR, message);
-      }
+        const brought = await bringBackOf(at.owner);
+        if (brought?.waiting !== undefined) {
+          throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
+        }
+
+        inFlight.add(lane);
+        lastError.delete(lane);
+        dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
+        try {
+          const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
+          const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
+            ...context,
+            dir: at.dir,
+            session: at.owner,
+            scope: at.scope,
+            operationId,
+            ...(target !== undefined ? { target } : {}),
+            ...(meta !== undefined ? { meta } : {}),
+          });
+          inFlight.delete(lane);
+          dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+          // Before the refresh, so GitHub's later answer is what survives.
+          if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
+          // Something wrote to the tree, so every changeset of this session
+          // is now describing a directory that has moved. The catalogue
+          // first, because `refresh` is what makes the next read fresh.
+          refreshFacts(at.dir);
+          await options.changes?.refresh?.(at.dir).catch(() => false);
+          await contentMoved(at.owner);
+          /*
+           * And where the operation left the branch, the machine is handed it.
+           *
+           * The fetch above brought the machine's own work to the host; this
+           * is the other direction - a commit, a checkout, a discard or a
+           * revert has moved the host's branch, its index, or both, and a
+           * machine still at where it was would run its next turn against a
+           * history the folder it shares is no longer in - decision
+           * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+           * A machine that could not be moved is a line in the log and nothing
+           * else: the operation has already happened, and it is the machine's
+           * next turn that is one branch behind.
+           */
+          await followOf(at.owner);
+          return {
+            ...(result.message !== undefined ? { message: result.message } : {}),
+            // What the operation produced, when it produced something worth
+            // opening. A pull request a push made is the case: the operation
+            // succeeded, and the useful part of it is a page somewhere.
+            ...(result.followUp !== undefined ? { followUp: result.followUp } : {}),
+          };
+        }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          inFlight.delete(lane);
+          lastError.set(lane, message);
+          // The failure as the protocol's ErrorInfo, named and traced as the
+          // reference host's changeset operations say one.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
+          dispatch(channel, {
+            type: 'changeset/operationStatusChanged',
+            operationId,
+            status: 'error',
+            error: error instanceof Error
+              ? { errorType: error.name, message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
+              : { errorType: 'Error', message },
+          });
+          log(`${operationId} on ${channel} failed: ${message}`);
+          // With the source's code and data when it chose them: a refusal
+          // the reference client branches on is more than its message.
+          const chosen = error as { code?: unknown; data?: unknown };
+          if (typeof chosen.code === 'number') throw new RpcError(chosen.code, message, chosen.data);
+          throw new RpcError(INTERNAL_ERROR, message);
+        }
+      };
+      const shared = ctx.inFlightOperations.get(identity);
+      if (shared !== undefined && ctx.operationLanes.get(lane) === shared) return await shared;
+      const before = ctx.operationLanes.get(lane);
+      const running = before === undefined ? execute() : before.then(execute, execute);
+      ctx.operationLanes.set(lane, running);
+      ctx.inFlightOperations.set(identity, running);
+      const cleared = (): void => {
+        if (ctx.inFlightOperations.get(identity) === running) ctx.inFlightOperations.delete(identity);
+        if (ctx.operationLanes.get(lane) === running) ctx.operationLanes.delete(lane);
+      };
+      void running.then(cleared, cleared);
+      return await running;
     },
     resourceResolve: async (params) => {
       const uri = String(params.uri ?? '');
