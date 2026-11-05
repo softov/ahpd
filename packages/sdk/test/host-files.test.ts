@@ -731,42 +731,31 @@ describe('more than one directory', () => {
     })).rejects.toThrow(/is not a working directory of/);
   });
 
-  it('starts one chat again when its own set changes, and leaves the others alone', async () => {
+  /*
+   * A chat's own folder actions are refused in VS Code's words, whatever they
+   * name, and start nothing: VS Code's host serves neither.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L139-L142
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2813-L2815
+   */
+  it('refuses a chat\'s own folder actions, as VS Code does, starting nothing', async () => {
     const { client, peer: p, uri } = await wide();
     const chat = 'ahp-chat:/narrow';
     await client.handle({
       method: 'createChat',
       params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
     });
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     const before = sessionQueries().length;
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(TWO) } },
-    });
-    await settle();
-    // One CLI, not the session's every chat: the session's own set has not
-    // moved, so the default chat is still running where it was.
-    expect(sessionQueries().length).toBe(before + 1);
-    expect(sessionQueries().at(-1)?.options.additionalDirectories)
-      .toEqual([THREE, TWO]);
+    await send(client, chat, 12, { type: 'chat/workingDirectorySet', directory: uriOf(TWO) });
+    await send(client, chat, 13, { type: 'chat/workingDirectoryRemoved', directory: uriOf(THREE) });
+    await settle(8);
 
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectoryRemoved', directory: uriOf(THREE) } },
-    });
-    await settle();
-    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([TWO]);
-
-    // And the same rule as `createChat`, said rather than silently widening.
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(ELSEWHERE) } },
-    });
-    await settle();
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('is not a working directory of'))).toBe(true);
+    const answered = actions(p, chat).filter((one) => String(one.action.type).startsWith('chat/workingDirectory'));
+    expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+      ['chat/workingDirectorySet', 12, 'Unsupported action: chat/workingDirectorySet'],
+      ['chat/workingDirectoryRemoved', 13, 'Unsupported action: chat/workingDirectoryRemoved'],
+    ]);
+    expect(sessionQueries().length).toBe(before);
   });
 
   /*
@@ -874,26 +863,6 @@ describe('more than one directory', () => {
     ]);
   });
 
-  it('says a chat adding a folder it holds, or removing one it does not, starting nothing', async () => {
-    const { client, peer: p, uri } = await wide();
-    const chat = 'ahp-chat:/narrow';
-    await client.handle({
-      method: 'createChat',
-      params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
-    });
-    await client.handle({ method: 'subscribe', params: { channel: chat } });
-    const before = sessionQueries().length;
-    await send(client, chat, 12, { type: 'chat/workingDirectorySet', directory: uriOf(THREE) });
-    await send(client, chat, 13, { type: 'chat/workingDirectoryRemoved', directory: uriOf(TWO) });
-    await settle(8);
-
-    const answered = actions(p, chat).filter((one) => String(one.action.type).startsWith('chat/workingDirectory'));
-    expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
-      ['chat/workingDirectorySet', 12, undefined],
-      ['chat/workingDirectoryRemoved', 13, undefined],
-    ]);
-    expect(sessionQueries().length).toBe(before);
-  });
 });
 
 describe('the repository a session\'s machine is handed', () => {

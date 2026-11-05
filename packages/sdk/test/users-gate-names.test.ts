@@ -50,10 +50,16 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
-  // Nothing taken, and nothing heard: a refusal at the gate is the guest's alone.
+  /*
+   * Nothing taken: what reaches the admin watching the session is the
+   * guest's refusal, as every refusal reaches every client of its channel,
+   * VS Code's host recording and broadcasting its rejection of a sender it
+   * has not authenticated.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2806-L2808
+   */
   const acted = admin.seen.seen.filter((one) => one.method === 'action'
     && ['session/titleChanged', 'chat/turnStarted'].includes(String(one.params.action?.type)));
-  expect(acted).toEqual([]);
+  expect(acted.map((one) => one.params.rejectionReason)).toEqual(['g may not session:rename here']);
   expect(guest.refused()).toEqual([
     'file:///one: file:///one is not a session here',
     'file:///one: file:///one is not a session here',
@@ -61,9 +67,10 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     'x:/one: g may not session:rename here',
   ]);
 
-  // The session and a watch under a name of its own both still work.
+  // The session and a watch under a name of its own both still work: the one
+  // refusal the admin holds is the guest's.
   await admin.send('x:/one', { type: 'session/titleChanged', title: 'Mine' });
-  expect(admin.refused()).toEqual([]);
+  expect(admin.refused()).toEqual(['x:/one: g may not session:rename here']);
   expect(admin.seen.seen.some((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')).toBe(true);
   const own = made.accept(publishing('x:/w'));
   await hello(own, 'second'); await signIn(own, 'g');

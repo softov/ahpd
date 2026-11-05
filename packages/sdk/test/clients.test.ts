@@ -159,7 +159,7 @@ it('relays what a watching client reports, and refuses the same from anybody els
   const refused = liar.peer.notes
     .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
     .filter((one): one is string => typeof one === 'string');
-  expect(refused.some((one) => one.includes("this host's to say"))).toBe(true);
+  expect(refused).toContain('Server-only action: resourceWatch/changed');
 });
 
 it('names the client behind a URI, and answers nothing for one nobody published', async () => {

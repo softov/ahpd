@@ -425,8 +425,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * next `serverSeq`.
    *
    * Sent to every client the accepted action would reach, and held for
-   * replay; `alone`, to that client only and not held. No client's state
-   * takes it.
+   * replay. No client's state takes it.
    */
   refuse: (
     peer: Peer,
@@ -434,7 +433,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
-    alone?: boolean,
   ) => void;
   /** The host's own log. */
   log: (message: string) => void;

@@ -83,10 +83,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       ? params.action
       : {}) as Record<string, unknown>;
     const type = String(action.type ?? '');
-    /** Whether the sender has passed the gate; until then a refusal is its alone. */
-    let gated = false;
     /** Refuse this dispatch, in the words of whatever would not have it. */
-    const no = (reason: string, alone = !gated): void => refuse(connection.peer, channel, action, origin, reason, alone);
+    const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
     /*
      * A plugin channel has one writer, its plugin, so a client's action on
      * one is refused before anything reads it - and on an `x-` scheme no
@@ -175,19 +173,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
     }
-    gated = true;
-    /*
-     * Whether a client is allowed to originate this at all, asked of the
-     * protocol rather than answered here.
-     *
-     * `IS_CLIENT_DISPATCHABLE` is exhaustive over `StateAction` and its
-     * own docstring says servers should check it, so it grows with the
-     * protocol and the switch below does not have to. Refused with its own
-     * reason: a host-only action arriving from a client is a client
-     * claiming something happened, which is not the same complaint as an
-     * action this host has not got round to serving - and told apart only
-     * here, because both used to fall into the one default.
-     */
     /*
      * A watch this client itself keeps, whose reports this host relays.
      *
@@ -203,8 +188,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       dispatch(channel, action, origin);
       return;
     }
-    if (ownIn(dispatchable, type) === false) {
-      no(`${type} is this host's to say, not a client's`);
+    /*
+     * A type the protocol does not let a client send, a type it does not know
+     * included, and the two chat folder actions no host serves, refused in the
+     * reference host's words before anything reads them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2811-L2815
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L139-L142
+     */
+    if (ownIn(dispatchable, type) !== true) {
+      no(`Server-only action: ${type}`);
+      return;
+    }
+    if (type === 'chat/workingDirectorySet' || type === 'chat/workingDirectoryRemoved') {
+      no(`Unsupported action: ${type}`);
       return;
     }
     /*

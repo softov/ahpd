@@ -1142,10 +1142,11 @@ export function createHost(options: HostOptions): Host {
    * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4183-L4210
    *
    * It reaches only who the accepted action would reach: a request on the
-   * automations channel goes through `requestAudience`, as its echo does.
-   * One said `alone` goes to its sender and nobody else, and is not held for
-   * replay: a refusal from a client the gate has not passed yet, which may not
-   * write to the channel.
+   * automations channel goes through `requestAudience`, as its echo does. A
+   * refusal of a client the users gate has not passed takes the same road,
+   * as the reference host records and broadcasts its rejection of a sender
+   * it has not authenticated.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2806-L2808
    *
    * The client that sent it is told in every case, under the name it watches
    * the channel by where it watches one, since an invalid action is echoed
@@ -1162,14 +1163,12 @@ export function createHost(options: HostOptions): Host {
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
-    alone = false,
   ): void => {
     log(`${channel}: ${reason}`);
     if (origin !== undefined && said.has(origin)) return;
     if (origin !== undefined) said.add(origin);
     deltas.flush();
-    if (alone) ctx.serverSeq += 1;
-    else emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
+    emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**

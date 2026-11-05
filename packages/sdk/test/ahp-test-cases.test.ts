@@ -264,6 +264,11 @@ const BROKEN = {
     row: 'A11',
     by: '10',
   },
+  chatFolders: {
+    breaks: 'types/channels-chat/actions.ts: chat/workingDirectorySet and chat/workingDirectoryRemoved are @clientDispatchable and reduce into the chat\'s workingDirectories',
+    row: 'A-0034',
+    by: 'none, VS Code\'s host refuses both: "Unsupported action: <type>" (protocolServerHandler.ts L139-L142 and L2813-L2815 at 6b68d3fe)',
+  },
 } satisfies Record<string, Broken>;
 
 /** The rows this host answers otherwise than the protocol, and what it answers. */
@@ -363,6 +368,12 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
+  '247-chat-workingdirectoryset-adds-to-empty-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '248-chat-workingdirectoryset-appends-to-existing-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '249-chat-workingdirectoryset-no-op-when-already-present': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '250-chat-workingdirectoryremoved-removes-existing': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
+  '251-chat-workingdirectoryremoved-no-op-when-not-in-set': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
+  '252-chat-workingdirectoryremoved-no-op-when-set-absent': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
@@ -514,16 +525,12 @@ const REFUSALS: Record<string, {
     source: `types/channels-chat/actions.ts, chat/toolCallContentChanged: ${CONTRIBUTOR}`,
     holds: (state, action) => clientOf(state, action.toolCallId) === undefined,
   }],
-  'chat/workingDirectorySet': [{
-    said: (action, where) => `${localPath(String(action.directory))} is not a working directory of ${where.session}`,
-    source: 'types/channels-chat/actions.ts, chat/workingDirectorySet: "`directory` MUST be one of the owning session\'s SessionState.workingDirectories; a host MUST reject a directory that is not."',
-  }],
   'session/configChanged': [{
     said: (action) => `${Object.keys(action.config as object)[0] ?? ''} is not a config key this backend takes`,
     source: 'types/channels-session/actions.ts, session/configChanged: "Only properties with `sessionMutable: true` in the config schema may be changed."',
   }],
-  'root/nonExistentAction': [{ said: (action) => `${String(action.type)} names nothing here`, source: MAY_NOT_ORIGINATE }],
-  'session/nonExistentAction': [{ said: (action) => `${String(action.type)} is not served yet`, source: MAY_NOT_ORIGINATE }],
+  'root/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
+  'session/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
   'root/configChanged': [{
     said: (action) => `root config does not declare ${Object.keys(action.config as object)[0] ?? ''}`,
     source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
@@ -727,7 +734,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
         }
         if (listed.includes(reason)) continue;
         if (hostOnly(action)) {
-          expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
+          expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`Server-only action: ${type}`);
           continue;
         }
         const rule = (REFUSALS[type] ?? []).find((one) => one.said(action, where) === reason);

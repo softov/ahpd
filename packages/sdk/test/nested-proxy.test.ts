@@ -1645,69 +1645,6 @@ it('a nested session moved to this host before its first turn shows its history'
   port.done();
 });
 
-it('a nested chat started again keeps the transcript inside the machine', async () => {
-  const port = scriptedPort([PROVIDER]);
-  const dir = join(port.dir, 'sessions');
-  /*
-   * A chat's own set of directories is its CLI started again, which for a
-   * nested session is the host inside stopped and another one resumed on the
-   * same transcript - decision `a-nested-session-resumes-its-inner-transcript
-   * -by-id`. Told a removal instead, the machine disposes the session: the
-   * chat comes back on a conversation that is no longer there.
-   */
-  const real: Agent = { ...backend(), runsNested: true, multipleDirectories: true };
-  const host = createHost({
-    path: REPO_ROOT,
-    agents: [real],
-    agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
-    computers: port.computers,
-    sessions: fileSessions({ dir }),
-  });
-  const peer = watching();
-  const client = host.accept(peer);
-  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
-  const uri = 'ahp-session:/wide';
-  const second = join(port.dir, 'second');
-  await client.handle({
-    method: 'createSession',
-    params: {
-      channel: uri, provider: PROVIDER, config: { computer: 'computer://box' },
-      workingDirectories: [uriOf(REPO_ROOT), uriOf(second)],
-    },
-  });
-  await until(() => port.read().length > 0, 1000);
-  const chat = 'ahp-chat:/narrow';
-  await client.handle({ method: 'createChat', params: { channel: uri, chat, workingDirectories: [uriOf(REPO_ROOT)] } });
-  await client.handle({ method: 'subscribe', params: { channel: chat } });
-  const subscribed = (): number =>
-    port.asked().filter(({ method, channel }) => method === 'subscribe' && channel === 'ahp-session:/wide').length;
-  // The chat's own host inside, up: the second subscription to the session,
-  // behind the one the session itself opened with.
-  await until(() => subscribed() >= 2, 1000);
-  /*
-   * A directory the session has and the chat does not, which is the one thing
-   * that starts a chat again: the CLI takes its directories when it is started.
-   */
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(second) } },
-  });
-  // And started again: the third subscription to the session, from the host
-  // that replaces the one the restart closed.
-  await until(() => subscribed() >= 3, 1000);
-  // The action landed, so the frames above are a chat started again and not a
-  // change this host refused.
-  expect(peer.seen.some(({ params }) => params?.action?.type === 'chat/workingDirectorySet')).toBe(true);
-  /*
-   * And the machine still holds the session, which is what the chat resumes
-   * into: a restart that closed as a removal asks for the session to be
-   * disposed, and the transcript inside goes with it.
-   */
-  expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
-  await host.close();
-  port.done();
-});
-
 it('a nested session whose folders change starts the host inside again, and disposes nothing', async () => {
   const port = scriptedPort([PROVIDER]);
   const dir = join(port.dir, 'sessions');

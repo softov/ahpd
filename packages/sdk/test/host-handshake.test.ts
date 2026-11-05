@@ -283,12 +283,16 @@ describe('what it will not pretend', () => {
     });
     expect(sdk.said).toEqual([]);
     const refused = p.notes.filter((note) => note.method === 'action').at(-1);
-    expect(refused?.params).toMatchObject({
-      rejectionReason: expect.stringContaining('not a client\'s'),
-    });
+    expect(refused?.params).toMatchObject({ rejectionReason: 'Server-only action: chat/delta' });
   });
 
-  it('tells a host-only action apart from one it has not got round to', async () => {
+  /*
+   * A host-only action and one the protocol does not name at all are refused
+   * alike, in the reference host's words, as its protocol server refuses any
+   * type its map of client-dispatchable actions does not hold.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2811-L2815
+   */
+  it('refuses a host-only action and one it does not know in the reference host\'s words', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     // Each on the channel its prefix names.
     const why = (action: Record<string, unknown>) => {
@@ -296,15 +300,8 @@ describe('what it will not pretend', () => {
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
-    // `session/ready` is the host's own to say, and a client sending one is
-    // claiming something happened.
-    expect(why({ type: 'session/ready' })).toContain('not a client\'s');
-    // Every action a client *may* originate is served, so the other complaint
-    // is now reachable only from a protocol newer than this host: an action
-    // `IS_CLIENT_DISPATCHABLE` has never heard of is not a client lying, it is
-    // one this host has not caught up with. Two different complaints, and they
-    // used to be the same one.
-    expect(why({ type: 'chat/somethingLater' })).toContain('not served yet');
+    expect(why({ type: 'session/ready' })).toBe('Server-only action: session/ready');
+    expect(why({ type: 'chat/somethingLater' })).toBe('Server-only action: chat/somethingLater');
   });
 
   it('says what is actually wrong with a dispatch, not only that it is unserved', async () => {

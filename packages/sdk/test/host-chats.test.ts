@@ -1577,12 +1577,10 @@ describe('more than one chat in a session', () => {
       const starts: Start[] = [];
       const { client, p } = await apart(join(root, 'sessions'), backend(starts));
       /*
-       * Folders for the chat to keep, narrower than its session's.
+       * Folders for the chat to work in beside its session's first.
        *
-       * A chat works in a subset of its session's folders, so what travels is
-       * the chat's own set: one moved beside a session working somewhere else
-       * goes on where it was, and one narrowed to a folder of its own arrives
-       * narrowed rather than with everything its old session had.
+       * What travels is the chat's own set: one moved beside a session working
+       * somewhere else goes on where it was, with every folder it had.
        */
       for (const directory of [EXTRA, MORE]) {
         void client.handle({
@@ -1591,11 +1589,6 @@ describe('more than one chat in a session', () => {
         });
         await settle(20);
       }
-      void client.handle({
-        method: 'dispatchAction',
-        params: { channel: PEER, action: { type: 'chat/workingDirectoryRemoved', directory: `file://${MORE}` } },
-      });
-      await settle(20);
       await send(client, PEER, 't1', 'over here');
       const before = starts.length;
       const lead = (await opened(client, TWO)).state.defaultChat as string;
@@ -1615,7 +1608,7 @@ describe('more than one chat in a session', () => {
       const mine = starts.at(-1) as Start;
       expect(mine.uri).toBe('ahp-session:/two');
       expect(mine.workingDirectory).toBe(DIR);
-      expect(mine.additional).toEqual([EXTRA]);
+      expect(mine.additional).toEqual([EXTRA, MORE]);
       // The session it landed in, published under a name a client can ask about.
       expect(answer.session).toBe('ahp-session:/two');
 
@@ -2250,36 +2243,6 @@ describe('a chat of another backend', () => {
     // And no chat of `one` was started to hold the session: the default chat is
     // the chat of `two`, and it is a chat of the session, not the session.
     expect(startsOne.slice(beganOne)).toEqual([]);
-  });
-
-  it('starts a chat of another backend again on that backend when only the chat restarts', async () => {
-    const startsOne: Start[] = [];
-    const startsTwo: Start[] = [];
-    const { second } = await opening(backend('one', startsOne), backend('two', startsTwo));
-    await send(second.client, PEER, 't3', 'third');
-    /*
-     * A folder the session may work in, added the way a window adds one. The
-     * restart behind it is a session restart and starts both chats again,
-     * which is also what leaves the chat's own set something to narrow.
-     */
-    second.client.handle({
-      method: 'dispatchAction',
-      params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${EXTRA}` } },
-    });
-    await settle(20);
-
-    const beganOne = startsOne.length;
-    const beganTwo = startsTwo.length;
-    second.client.handle({
-      method: 'dispatchAction',
-      params: { channel: PEER, action: { type: 'chat/workingDirectoryRemoved', directory: `file://${EXTRA}` } },
-    });
-    await settle(8);
-    // The chat, and only the chat: one conversation's folders are its own.
-    expect(resuming(startsTwo.slice(beganTwo))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
-    expect(startsOne.slice(beganOne)).toEqual([]);
-    // Narrowed to nothing, so it works in the session's folder again.
-    expect(startsTwo.at(-1)?.additional).toBeUndefined();
   });
 
   it('rewinds a chat of another backend on that backend', async () => {
