@@ -192,6 +192,8 @@ A back session may also end its turn without posting. What the main turn does th
 
 A value outside those four is reported and `post` is used.
 
+A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat no read of a bot opened, a name a message fills into one no session can have, a back session the host would not start, and a send the host refused. A back session's turn that failed fails the main turn the same way, typed `sendFailed`.
+
 ### The bot's rules
 
 A back session's system prompt says only what no file can: that a person is waiting in the main chat for its reply, that `post_message` is what answers them, that a question is asked with the harness's question tool, and that `send_message` starts a turn somewhere else and is not a reply. The bot's own rules are its `AGENTS.md`, which the harness reads: the template the bot names, or the shipped default `<configDir>/templates/bots/AGENTS.md`, filled with the bot's `name`, `description` and `instructions`. The file is written when the bot is made, and the first wake writes it where the folder has none; a wake never writes over a file that is there - [The persona](#the-persona).

@@ -666,22 +666,31 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         // session that is theirs is answered with its bot's connectors, and a
         // message is what may build its first tool list.
         await filled;
+        /*
+         * A message with nothing to send it to, or whose send failed, ends the
+         * main turn failed with the cause, as VS Code's host ends a turn whose
+         * send failed; a holder with no failed ending says the cause as a notice.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2329-L2337
+         */
+        const failed = (words: string): void => {
+          if (handle.fail !== undefined) handle.fail(words);
+          else handle.notice(words);
+        };
         const chat = await chatOf(message.session);
         if (chat === undefined) {
           /*
            * A chat no read of a bot opened, so nothing says which bot the person
            * is talking to. The turn ends here rather than staying open: there is
-           * nothing behind this chat to answer it, which is what a chat with no
-           * bot was before there was a wake at all.
+           * nothing behind this chat to answer it.
            */
           seams.problem(`${message.session} is a chat no bot on this host opened`);
-          handle.end();
+          failed(`${message.session} is a chat no bot on this host opened`);
           return;
         }
         const { bot, owner } = chat;
         const name = nameFor(bot, message);
         if (!isFilledName(name)) {
-          handle.notice(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
+          failed(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
           return;
         }
         let session: string;
@@ -691,7 +700,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           looked = await seams.look(session);
         }
         catch (error) {
-          handle.notice(`${bot.name} was not woken: ${reason(error)}`);
+          failed(`${bot.name} was not woken: ${reason(error)}`);
           return;
         }
         // A message whose main turn a client stopped on its way is not sent.
@@ -745,7 +754,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           // Nothing was said, so nothing is coming: the turn ends here rather
           // than waiting for an answer this session never received.
           answering.delete(session);
-          handle.notice(`${bot.name} was not woken: ${refused}`);
+          failed(`${bot.name} was not woken: ${refused}`);
           return;
         }
         // A send a stop came during: what it sent is taken back, and the turn
