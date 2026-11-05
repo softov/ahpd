@@ -10,6 +10,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
+/** A server's row id: no file here declares a server, so each is named by its internal uri. */
+const serverId = (name: string): string => `claude-internal:/mcp/${name}#mcp=${name}`;
+
 describe('what the harness offers', () => {
   it('reads models, commands and servers with no turn having happened', async () => {
     sdk.init = {
@@ -247,10 +250,10 @@ describe('what the harness offers', () => {
     // The personal folders are there to write in, empty or not, and a skill
     // no folder has is the CLI's own.
     expect(offered.map((one) => one.id).sort()).toEqual([
-      'directory:builtin:skills', 'directory:user:agents', 'directory:user:commands',
-      'directory:user:rules', 'directory:user:skills', 'mcp:gmail',
+      serverId('gmail'), 'directory:builtin:skills', 'directory:user:agents', 'directory:user:commands',
+      'directory:user:rules', 'directory:user:skills',
     ]);
-    expect(offered.find((one) => one.id === 'mcp:gmail')?.type).toBe('mcpServer');
+    expect(offered.find((one) => one.id === serverId('gmail'))?.type).toBe('mcpServer');
     // And the skill is inside the directory, which is where a leaf goes.
     const held = offered.find((one) => one.id === 'directory:builtin:skills') as { children?: { id: string }[] } | undefined;
     expect(held?.children?.map((one) => one.id)).toEqual(['skill:review']);
@@ -277,14 +280,14 @@ describe('what the harness offers', () => {
     }).snapshot.state;
 
     const byId = new Map(state.customizations.map((c) => [c.id, c]));
-    expect(byId.get('mcp:ok')?.state?.kind).toBe('ready');
-    expect(byId.get('mcp:broken')?.state?.kind).toBe('error');
+    expect(byId.get(serverId('ok'))?.state?.kind).toBe('ready');
+    expect(byId.get(serverId('broken'))?.state?.kind).toBe('error');
     // Why it is not ready, in the host's own words - the whole value of
     // showing the row rather than hiding it. An `ErrorInfo` and not a bare
     // `message`, which is what `McpServerErrorState` actually requires.
-    expect(byId.get('mcp:broken')?.state?.error?.message).toBe('spawn ENOENT');
-    expect(byId.get('mcp:broken')?.enablement?.[0]?.enabled).toBe(false);
-    expect(byId.get('mcp:off')?.state?.kind).toBe('stopped');
+    expect(byId.get(serverId('broken'))?.state?.error?.message).toBe('spawn ENOENT');
+    expect(byId.get(serverId('broken'))?.enablement?.[0]?.enabled).toBe(false);
+    expect(byId.get(serverId('off'))?.state?.kind).toBe('stopped');
 
     /*
      * A server needing a sign-in is an error, not `authRequired`.
@@ -295,11 +298,11 @@ describe('what the harness offers', () => {
      * `needs-auth` and nothing else, so emitting that state would be two
      * required fields short - a client told to sign in with nowhere to do it.
      */
-    expect(byId.get('mcp:gmail')?.state?.kind).toBe('error');
-    expect(byId.get('mcp:gmail')?.state?.error?.errorType).toBe('mcpAuthRequired');
+    expect(byId.get(serverId('gmail'))?.state?.kind).toBe('error');
+    expect(byId.get(serverId('gmail'))?.state?.error?.errorType).toBe('mcpAuthRequired');
     // Still switched on: it is enabled and unreachable, which is not the same
     // as somebody having turned it off.
-    expect(byId.get('mcp:gmail')?.enablement?.[0]?.enabled).toBe(true);
+    expect(byId.get(serverId('gmail'))?.enablement?.[0]?.enabled).toBe(true);
   });
 
   it('offers a live session\'s own commands, which live inside its containers', async () => {
@@ -674,7 +677,7 @@ describe('turning a customization on and off', () => {
   const ask = (client: Awaited<ReturnType<typeof running>>['client'], type: string, clientSeq: number) => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', clientSeq, action: { type, id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', clientSeq, action: { type, id: serverId('desk') } },
     });
   };
 
@@ -682,7 +685,7 @@ describe('turning a customization on and off', () => {
   const desk = async (client: Awaited<ReturnType<typeof running>>['client'], uri: string) =>
     (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
-    }).snapshot.state.customizations.find((one) => one.id === 'mcp:desk');
+    }).snapshot.state.customizations.find((one) => one.id === serverId('desk'));
 
   /*
    * The two in-process servers a session declares itself are no
@@ -698,13 +701,13 @@ describe('turning a customization on and off', () => {
     const listed = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { id: string; type: string }[] } };
     }).snapshot.state.customizations.filter((one) => one.type === 'mcpServer').map((one) => one.id);
-    expect(listed).toEqual(['mcp:desk']);
+    expect(listed).toEqual([serverId('desk')]);
   });
 
   it('switches an MCP server off through the CLI, and reports what it became', async () => {
     const { client, peer: p, uri } = await withServers('connected');
     sdk.mcp = [{ name: 'desk', status: 'disabled' }];
-    toggle(client, 'mcp:desk', false);
+    toggle(client, serverId('desk'), false);
     await settle(8);
 
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
@@ -714,7 +717,7 @@ describe('turning a customization on and off', () => {
     expect(said?.action.customization).toMatchObject({
       // `enablement`, not a flat flag: an MCP server is the one customization
       // the protocol decides per scope.
-      id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' },
+      id: serverId('desk'), enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' },
     });
   });
 
@@ -726,7 +729,7 @@ describe('turning a customization on and off', () => {
       params: {
         channel: 'ahp-session:/live',
         clientSeq: 4,
-        action: { type: 'session/customizationToggled', id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }] },
+        action: { type: 'session/customizationToggled', id: serverId('desk'), enablement: [{ kind: 'session', enabled: false }] },
       },
     });
     await settle(8);
@@ -739,7 +742,7 @@ describe('turning a customization on and off', () => {
   it('reconnects one that was not ready, because that is how signing in happens', async () => {
     const { client } = await withServers('needs-auth');
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
-    toggle(client, 'mcp:desk', true);
+    toggle(client, serverId('desk'), true);
     await settle(8);
 
     // `toggleMcpServer` only lifts the disabled flag - a server that was off
@@ -762,7 +765,7 @@ describe('turning a customization on and off', () => {
 
   it('does not reconnect one that was already ready', async () => {
     const { client } = await withServers('connected');
-    toggle(client, 'mcp:desk', true);
+    toggle(client, serverId('desk'), true);
     await settle(8);
     expect(sdk.mcpReconnected).toEqual([]);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: true }]);
@@ -844,14 +847,14 @@ describe('turning a customization on and off', () => {
     const { client } = await withServers('disabled');
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStartRequested', id: serverId('desk') } },
     });
     await settle(8);
     expect(sdk.mcpReconnected).toEqual(['desk']);
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStopRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStopRequested', id: serverId('desk') } },
     });
     await settle(8);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
@@ -869,7 +872,7 @@ describe('turning a customization on and off', () => {
     // Every client reduced the request to `starting`, so the state the CLI
     // reports has to follow it, the one it was in included.
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
   });
 
   it('answers a start whose sign-in fails once, and follows it with the state', async () => {
@@ -886,7 +889,7 @@ describe('turning a customization on and off', () => {
       .toEqual([['session/mcpServerStartRequested', undefined]]);
     const asked = said.findIndex((e) => e.origin?.clientSeq === 6);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toMatchObject({ id: 'mcp:desk', state: { kind: 'error', error: { errorType: 'mcpAuthRequired' } } });
+      .toMatchObject({ id: serverId('desk'), state: { kind: 'error', error: { errorType: 'mcpAuthRequired' } } });
   });
 
   it('stops a server without switching it off, and a switch off after it is the client\'s', async () => {
@@ -905,7 +908,7 @@ describe('turning a customization on and off', () => {
     expect(said.slice(asked + 1).filter((e) => e.action.type === 'session/customizationUpdated')).toEqual([]);
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'stopped' } });
 
-    toggle(client, 'mcp:desk', false);
+    toggle(client, serverId('desk'), false);
     await settle(8);
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' } });
   });
@@ -925,7 +928,7 @@ describe('turning a customization on and off', () => {
     const said = actions(p, uri);
     const asked = said.findIndex((e) => e.origin?.clientSeq === 9);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
@@ -959,7 +962,7 @@ describe('turning a customization on and off', () => {
     // Every client reduced the request to `stopped`, and the server is still up.
     const asked = said.findIndex((e) => e.origin?.clientSeq === 10);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
@@ -973,7 +976,7 @@ describe('turning a customization on and off', () => {
     const seq = actions(p, uri).at(-1)?.serverSeq;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: serverId('desk') } },
     });
     await settle(8);
 
@@ -1015,13 +1018,13 @@ describe('turning a customization on and off', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerBackgroundRequested', id: serverId('desk') } },
     });
     await settle(8);
 
     // A backend that has the call is asked once the request is said. Once:
     // asking twice would run whatever the backend does twice.
-    expect(asked).toEqual(['mcp:desk']);
+    expect(asked).toEqual([serverId('desk')]);
   });
 
   it.each([

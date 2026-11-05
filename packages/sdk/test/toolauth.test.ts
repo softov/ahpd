@@ -112,6 +112,8 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
 
 const uri = 'ahp-session:/auth';
 const chatUri = chatUriFor(uri);
+/** The server's row, named by its internal uri: no file here declares it. */
+const DESK = 'claude-internal:/mcp/desk#mcp=desk';
 
 async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;
@@ -140,7 +142,7 @@ const becomes = async (
   // nothing here polls, because a status nobody asked about moves nothing.
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+    params: { channel: uri, action: { type: 'session/mcpServerStartRequested', id: DESK } },
   });
   await settle(12);
 };
@@ -163,7 +165,7 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   // Whose tool it is. Without this the reducer drops the auth action, and a
   // client draws a call that is running and never finishes.
   const started = actions(p).find((one) => one.action.type === 'chat/toolCallStart');
-  expect(started?.action.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:desk' });
+  expect(started?.action.contributor).toEqual({ kind: 'mcp', customizationId: DESK });
 
   await becomes(client, 'needs-auth');
   const asked = actions(p).find((one) => one.action.type === 'chat/toolCallAuthRequired');

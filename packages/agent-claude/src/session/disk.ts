@@ -2,8 +2,12 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } fr
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
-/** What a customization file is, in the protocol's words for it. */
-export type DiskKind = 'skill' | 'prompt' | 'agent' | 'rule';
+/**
+ * What a customization file is, in the protocol's words for it. An
+ * `mcpServer` is a server a settings or `.mcp.json` file declares, and its
+ * path is the file that declares it.
+ */
+export type DiskKind = 'skill' | 'prompt' | 'agent' | 'rule' | 'mcpServer';
 
 /**
  * Where a customization file was read from.
@@ -213,6 +217,51 @@ function markdownUnder(dir: string, depth = 0, found: string[] = []): string[] {
   return found;
 }
 
+/** A JSON file's object, or nothing when it is missing, too large, not a regular file or not an object. */
+const objectIn = (path: string): Record<string, unknown> | undefined => {
+  try {
+    const held = statSync(path);
+    if (!held.isFile() || held.size > FILE_MOST * 16) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  }
+  catch { return undefined; }
+};
+
+/**
+ * The MCP servers the settings and `.mcp.json` files declare, each named by
+ * the file that declares it, as VS Code's Claude scan reads them: the
+ * project's `settings.json`, then the working directory's `.mcp.json`, then
+ * the personal `settings.json`, the first file to declare a name taking it. A
+ * `settings.json` declares its `mcpServers` block, and a `.mcp.json` its
+ * `mcpServers` block or, with none, its whole object.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeMcpScan.ts#L10-L76
+ */
+function serversIn(roots: DiskRoots): DiskFile[] {
+  // The home folder's own files are the personal scope's, as its `.claude` is.
+  const own: DiskScope = projectDirOf(roots) === undefined ? 'user' : 'project';
+  const sources: [string, DiskScope][] = [
+    ...(roots.cwd === undefined ? [] : [
+      [join(roots.cwd, '.claude', 'settings.json'), own],
+      [join(roots.cwd, '.mcp.json'), own],
+    ] as [string, DiskScope][]),
+    [join(roots.configDir, 'settings.json'), 'user'],
+  ];
+  const out: DiskFile[] = [];
+  for (const [path, scope] of sources) {
+    const object = objectIn(path);
+    if (object === undefined) continue;
+    const block = Object.hasOwn(object, 'mcpServers') ? object.mcpServers : path.endsWith('.mcp.json') ? object : undefined;
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) continue;
+    for (const [name, config] of Object.entries(block)) {
+      if (typeof config !== 'object' || config === null || Array.isArray(config)) continue;
+      if (out.some((one) => one.name === name)) continue;
+      out.push({ kind: 'mcpServer', name, scope, path });
+    }
+  }
+  return out;
+}
+
 /** A memory file, `CLAUDE.md` and its siblings, which applies always. */
 const memory = (path: string, scope: DiskScope): DiskFile[] =>
   isFile(path) ? [{ kind: 'rule', name: basename(path), scope, path }] : [];
@@ -239,7 +288,8 @@ function rulesIn(dir: string, scope: DiskScope): DiskFile[] {
 }
 
 /**
- * The skill, command, agent and rule files of each scope.
+ * The skill, command, agent and rule files of each scope, and the MCP servers
+ * its settings declare.
  *
  * Read from disk because the CLI reports what it loaded and never where it
  * came from. A folder that is missing or cannot be read gives nothing, and
@@ -276,6 +326,7 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
       ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own)),
     );
   }
+  out.push(...serversIn(roots));
   return out;
 }
 

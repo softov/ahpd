@@ -78,10 +78,12 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    * not this host's files - there is nowhere here to write, and none is sent.
    */
   const files = disk?.files ?? [];
-  const folderOf: Record<DiskKind, string> = { agent: 'agents', skill: 'skills', prompt: 'commands', rule: 'rules' };
+  /** The kinds a directory holds: an MCP server is listed at the top level. */
+  type Contents = Exclude<DiskKind, 'mcpServer'>;
+  const folderOf: Record<Contents, string> = { agent: 'agents', skill: 'skills', prompt: 'commands', rule: 'rules' };
   type Placed = DiskScope | 'builtin';
   /** The directory a scope keeps a kind in, and whether a person may write there. */
-  const whereOf = (scope: Placed, kind: DiskKind): { uri: string; name: string; writable: boolean } | undefined => {
+  const whereOf = (scope: Placed, kind: Contents): { uri: string; name: string; writable: boolean } | undefined => {
     const folder = folderOf[kind];
     if (scope === 'builtin') return { uri: `claude-internal:/${folder}`, name: 'builtin', writable: false };
     if (disk === undefined) return undefined;
@@ -95,7 +97,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   };
   const directories = new Map<string, Bag>();
   /** The container for one scope and kind, made the first time it is asked for. */
-  const directoryOf = (scope: Placed, kind: DiskKind): Bag | undefined => {
+  const directoryOf = (scope: Placed, kind: Contents): Bag | undefined => {
     const key = `${scope}:${folderOf[kind]}`;
     const held = directories.get(key);
     if (held !== undefined) return held;
@@ -106,16 +108,16 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     return made;
   };
   /** Put one leaf in the directory of its scope. */
-  const place = (scope: Placed, kind: DiskKind, leaf: Bag): void => {
+  const place = (scope: Placed, kind: Contents, leaf: Bag): void => {
     (directoryOf(scope, kind)?.children as Bag[] | undefined)?.push(leaf);
   };
   /** The writable directories, in the order they are sent, made before anything is put in them. */
   const writable: Placed[] = disk === undefined ? [] : projectDirOf(disk) !== undefined ? ['project', 'user'] : ['user'];
-  const sent: [Placed, DiskKind][] = [
-    ...writable.flatMap((scope) => (['agent', 'skill', 'prompt', 'rule'] as DiskKind[]).map((kind) => [scope, kind] as [Placed, DiskKind])),
+  const sent: [Placed, Contents][] = [
+    ...writable.flatMap((scope) => (['agent', 'skill', 'prompt', 'rule'] as Contents[]).map((kind) => [scope, kind] as [Placed, Contents])),
     ['managed', 'skill'], ['managed', 'agent'], ['synced', 'skill'], ['builtin', 'skill'], ['builtin', 'prompt'], ['builtin', 'agent'],
   ];
-  for (const scope of writable) for (const kind of ['agent', 'skill', 'prompt', 'rule'] as DiskKind[]) directoryOf(scope, kind);
+  for (const scope of writable) for (const kind of ['agent', 'skill', 'prompt', 'rule'] as Contents[]) directoryOf(scope, kind);
   /** The file the CLI read a name from, in the order it prefers one scope over another. */
   const fileOf = (kind: DiskKind, name: string, scopes: DiskScope[]): DiskFile | undefined => {
     for (const scope of scopes) {
@@ -366,12 +368,24 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     if (found !== undefined && (found.writable === true || (found.children as Bag[]).length > 0)) out.push(found);
   }
 
-  // Bare, and correctly so: an MCP server is the one leaf the protocol lets a
-  // session surface at the top level without a container around it.
+  /*
+   * Bare, and correctly so: an MCP server is the one leaf the protocol lets a
+   * session surface at the top level without a container around it.
+   *
+   * Named by the file that declares it, as VS Code's Claude discovery names a
+   * server: its uri is the file, and its id the file's uri with the server's
+   * name in a `#mcp=` fragment, a `#` of the uri escaped. A server no file
+   * here declares has the internal uri `claude-internal:/mcp/<name>`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L375-L381
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L447-L456
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L179-L189
+   */
   for (const raw of mcp) {
     const server = bag(raw);
     const name = str(server.name);
     if (!name) continue;
+    const declared = fileOf('mcpServer', name, ['project', 'user']);
+    const uri = declared !== undefined ? uriOf(declared.path) : internal('mcp', name);
     const reported = str(server.status);
     const said = str(server.error);
     /*
@@ -420,9 +434,9 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
             : { kind: 'starting' };
     out.push({
       type: 'mcpServer',
-      id: `mcp:${name}`,
+      id: `${uri.replaceAll('#', '%23')}#mcp=${encodeURIComponent(name)}`,
       name,
-      uri: name,
+      uri,
       /*
        * `enablement`, not `enabled`.
        *

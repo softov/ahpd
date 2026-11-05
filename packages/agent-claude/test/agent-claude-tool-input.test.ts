@@ -443,8 +443,10 @@ it('names an MCP call\'s contributor by its server\'s customization, and none fo
   sdk.mcp = [{ name: 'docs', status: 'connected' }];
   const { held, sent, session } = await live();
   sdk.mcp = [];
-  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
-  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  // No file here declares it, so its row is named by its internal uri.
+  const docs = 'claude-internal:/mcp/docs#mcp=docs';
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: docs });
+  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: docs });
   expect(actionOf(sent, 'chat/toolCallStart', 'toolu_numbers')?.contributor).toBeUndefined();
   expect(held.get('toolu_numbers')?.contributor).toBeUndefined();
   await session.close();

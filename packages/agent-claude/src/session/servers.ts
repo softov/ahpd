@@ -9,6 +9,7 @@ import { customizationsOf, rootOf } from './customizations.js';
 import { configDirOf, diskOf, managedDirOf } from './disk.js';
 import { watchFolders } from './watch.js';
 import type { Published } from './customizations.js';
+import type { Disk } from './disk.js';
 
 /** The servers the CLI reports, less this session's own in-process two. */
 const reportedServers = (answer: unknown): unknown[] => (Array.isArray(answer) ? answer : [])
@@ -101,6 +102,17 @@ export function createServers(ctx: SessionContext): Servers {
   const switched = new Map<string, { name: string; source: string; enabled: boolean }>();
 
   /**
+   * The disk as it is now, read again each time so a file written since is the
+   * file listed. A session in a machine reads nothing here: its CLI reads its
+   * own volume.
+   */
+  const diskNow = (): Disk | undefined => (ctx.options.spawn !== undefined ? undefined : diskOf({
+    configDir: configDirOf(ctx.options.env),
+    managedDir: managedDirOf(),
+    ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
+  }));
+
+  /**
    * Lay the session's customizations out from a plugin list, and say them.
    *
    * The plugins are the half a switch moves, so every rebuild starts here -
@@ -116,15 +128,8 @@ export function createServers(ctx: SessionContext): Servers {
     const off = [...switched.values()]
       .filter((one) => !one.enabled)
       .map((one) => ({ name: one.name, path: one.source, source: one.source }));
-    // Read again each time, so a file written since is the file listed. A
-    // session in a machine reads nothing here: its CLI reads its own volume.
-    const disk = ctx.options.spawn !== undefined ? undefined : diskOf({
-      configDir: configDirOf(ctx.options.env),
-      managedDir: managedDirOf(),
-      ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
-    });
     const was = JSON.stringify(ctx.customizations);
-    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, disk, stopRequested);
+    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, diskNow(), stopRequested);
     if (JSON.stringify(ctx.customizations) !== was) {
       ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
     }
@@ -155,19 +160,21 @@ export function createServers(ctx: SessionContext): Servers {
    * can come back `ready`, still `authRequired`, or `error`, and only the CLI's
    * answer says which. What changed is measured against the entry this
    * session holds, which is what every client was last told of the server, a
-   * client's start or stop included.
+   * client's start or stop included. A server is one name in the list, so the
+   * entry held for it is the top-level one of that name.
    */
   const refreshMcp = async (): Promise<void> => {
     const found = await ctx.query.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
     reported.mcp = found;
     await discover(found);
+    const disk = diskNow();
     for (const raw of found) {
       const server = bag(raw);
       const name = str(server.name);
       if (!name) continue;
-      const id = `mcp:${name}`;
-      const held = ctx.customizations.find((entry) => str(entry.id) === id);
-      const fresh = bag(customizationsOf({}, [server], [], wanted, [], undefined, [], undefined, stopRequested)[0]);
+      const held = ctx.customizations.find((entry) => str(entry.type) === 'mcpServer' && str(entry.name) === name);
+      const fresh = bag(customizationsOf({}, [server], [], wanted, [], undefined, [], disk, stopRequested)
+        .find((entry) => str(entry.type) === 'mcpServer'));
       if (!held) {
         ctx.customizations.push(fresh);
         ctx.emit('session', { type: 'session/customizationUpdated', customization: fresh });
@@ -224,7 +231,7 @@ export function createServers(ctx: SessionContext): Servers {
       if (switched)
         ctx.emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
       else
-        ctx.emit('session', { type: 'session/mcpServerStateChanged', id, state: fresh.state });
+        ctx.emit('session', { type: 'session/mcpServerStateChanged', id: str(held.id) as string, state: fresh.state });
     }
     /*
      * And the ones that are no longer there.
@@ -235,12 +242,11 @@ export function createServers(ctx: SessionContext): Servers {
      * removal is the change, and a list re-sent on every refresh is the row
      * redrawn whether or not anything moved.
      */
-    const still = new Set(found.map((raw) => `mcp:${str(bag(raw).name) ?? ''}`));
+    const still = new Set(found.map((raw) => str(bag(raw).name) ?? ''));
     for (const entry of [...ctx.customizations]) {
-      const id = str(entry.id) ?? '';
-      if (!id.startsWith('mcp:') || still.has(id)) continue;
+      if (str(entry.type) !== 'mcpServer' || still.has(str(entry.name) ?? '')) continue;
       ctx.customizations.splice(ctx.customizations.indexOf(entry), 1);
-      ctx.emit('session', { type: 'session/customizationRemoved', id });
+      ctx.emit('session', { type: 'session/customizationRemoved', id: str(entry.id) as string });
     }
   };
 
@@ -265,15 +271,15 @@ export function createServers(ctx: SessionContext): Servers {
   /**
    * The server name behind an id that names one, if it is one.
    *
-   * Two ids name a server. `mcp:<name>` is how this session's own list names
-   * the ones the CLI reported. A plugin's server is named by the file that
-   * declares it with the server in a fragment, `<file uri>#mcp=<name>`, which
-   * is how a client reads it and so how a client switches it off - and the
-   * escaped name is the server's own, so it is decoded before it is used.
+   * A server is named by the file that declares it with the server in a
+   * fragment, `<file uri>#mcp=<name>`, a server no file declares by its
+   * internal uri the same way, which is how a client reads it and so how a
+   * client switches it off. The escaped name is the server's own, so it is
+   * decoded before it is used.
    */
   const serverNamed = (id: string): string | undefined => {
     const at = id.indexOf('#mcp=');
-    if (at === -1) return id.startsWith('mcp:') ? id.slice(4) : undefined;
+    if (at === -1) return undefined;
     try {
       return decodeURIComponent(id.slice(at + '#mcp='.length));
     }

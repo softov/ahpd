@@ -48,6 +48,9 @@ const THREE = 'ahp-session:/three';
 /** A target, as a client names the server whose sign-in it answers. */
 const at = (session: string, customizationId: string) => ({ kind: 'mcpServer', session, customizationId });
 
+/** A server's row id: no file here declares a server, so each is named by its internal uri. */
+const serverId = (name: string): string => `claude-internal:/mcp/${name}#mcp=${name}`;
+
 /**
  * One client with two Claude sessions, each with three servers that wait for a
  * sign-in, and the CLI each session runs.
@@ -100,7 +103,7 @@ it('gives a targeted token to that server in that session alone', async () => {
   const { client, one, two } = await twoSessions();
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'tickets-two', target: at(TWO, 'mcp:tickets') },
+    params: { channel: ROOT, resource: DESK, token: 'tickets-two', target: at(TWO, serverId('tickets')) },
   })).resolves.toEqual({});
   await settle(8);
 
@@ -123,11 +126,11 @@ it('refuses a target it cannot find, and gives the token to nobody', async () =>
 
   for (const target of [
     // A kind this host does not know names a consumer it cannot confine the token to.
-    { ...at(TWO, 'mcp:tickets'), kind: 'hostOwned' },
-    at('ahp-session:/nowhere', 'mcp:tickets'),
-    at(TWO, 'mcp:nowhere'),
+    { ...at(TWO, serverId('tickets')), kind: 'hostOwned' },
+    at('ahp-session:/nowhere', serverId('tickets')),
+    at(TWO, serverId('nowhere')),
     at(TWO, skills?.id ?? ''),
-    'mcp:tickets',
+    serverId('tickets'),
   ]) {
     await expect(client.handle({
       method: 'authenticate',
@@ -144,7 +147,7 @@ it('refuses a targeted token for a resource its server is not waiting for', asyn
   // this server waits for.
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-wrong', target: at(TWO, 'mcp:tickets') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-wrong', target: at(TWO, serverId('tickets')) },
   })).rejects.toMatchObject({ code: -32602 });
   await settle(8);
   expect(sdk.mcpDeclared).toEqual([]);
@@ -154,7 +157,7 @@ it('never starts a session on a token aimed at a server, even one that shares th
   const { client, two } = await twoSessions();
   await client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, serverId('keys')) },
   });
   await settle(8);
   expect(header(two, 'keys')).toBe('Bearer sk-keys');
@@ -176,12 +179,12 @@ it('withdraws a targeted token and keeps the one pushed for the resource', async
   });
   await client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, serverId('keys')) },
   });
   await settle(8);
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: '', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: '', target: at(TWO, serverId('keys')) },
   })).resolves.toEqual({});
 
   await client.handle({
@@ -199,7 +202,7 @@ it('says a targeted token ran out on the session of its server', async () => {
   try {
     await client.handle({
       method: 'authenticate',
-      params: { channel: ROOT, resource: DESK, token: 'tickets-short', expiresIn: 60, target: at(TWO, 'mcp:tickets') },
+      params: { channel: ROOT, resource: DESK, token: 'tickets-short', expiresIn: 60, target: at(TWO, serverId('tickets')) },
     });
     await vi.advanceTimersByTimeAsync(60_000);
     const expired = wire.notes.filter((one) => one.method === 'auth/required'

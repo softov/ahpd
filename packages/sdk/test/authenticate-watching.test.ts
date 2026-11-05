@@ -30,6 +30,8 @@ beforeEach(resetSdk);
 
 const DIR = '/home/softov';
 const DESK = 'https://desk.example/';
+/** The server's row, named by its internal uri: no file here declares it. */
+const DESK_ID = 'claude-internal:/mcp/desk#mcp=desk';
 const ONE = 'ahp-session:/one';
 const TWO = 'ahp-session:/two';
 
@@ -108,7 +110,7 @@ it('refuses a token aimed at a session its connection does not watch', async () 
   const { bea, one } = await twoClients();
   await expect(bea.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-bea', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
+    params: { channel: ROOT, resource: DESK, token: 'desk-bea', target: { kind: 'mcpServer', session: ONE, customizationId: DESK_ID } },
   })).rejects.toMatchObject({ code: -32602 });
   await settle(8);
   expect(header(one)).toBeUndefined();
@@ -134,7 +136,7 @@ it('asks a client watching the session to sign in under its one URI, and refuses
   sdk.mcp = [{ name: 'desk', status: 'needs-auth' }];
   void ana.client.handle({
     method: 'dispatchAction',
-    params: { channel: ONE, action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+    params: { channel: ONE, action: { type: 'session/mcpServerStartRequested', id: DESK_ID } },
   });
   await settle(12);
 
@@ -144,11 +146,11 @@ it('asks a client watching the session to sign in under its one URI, and refuses
   }]);
   await expect(ana.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: 'mcp:desk' } },
+    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: DESK_ID } },
   })).rejects.toMatchObject({ code: -32602 });
   await expect(ana.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
+    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: ONE, customizationId: DESK_ID } },
   })).resolves.toEqual({});
 });
 

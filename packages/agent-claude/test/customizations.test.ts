@@ -379,6 +379,32 @@ describe('where each entry\'s file is', () => {
     expect(children(dir(out, 'directory:user:rules')).map((one) => one.uri)).toEqual([uriOf(join(work, 'CLAUDE.md'))]);
   });
 
+  /*
+   * As VS Code's Claude discovery names a server: by the file that declares
+   * it, the project's settings first, then the working directory's `.mcp.json`,
+   * then the personal settings, and by an internal uri where none does.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeMcpScan.ts#L10-L76
+   */
+  it('names an MCP server by the file that declares it, and one no file declares by an internal uri', () => {
+    const { config, work } = roots({
+      'work/.claude/settings.json': JSON.stringify({ permissions: { allow: [] }, mcpServers: { tickets: { command: 'tickets' } } }),
+      'work/.mcp.json': JSON.stringify({ desk: { url: 'https://desk.example/mcp' } }),
+      'config/settings.json': JSON.stringify({ model: 'opus', mcpServers: { desk: { command: 'other' }, docs: { command: 'docs' } } }),
+    });
+    const reported = ['tickets', 'desk', 'docs', 'gmail', 'desk two'].map((name) => ({ name, status: 'connected' }));
+    const out = customizationsOf({}, reported, [], undefined, [], undefined, [], diskOf({ configDir: config, cwd: work }));
+    const project = uriOf(join(work, '.claude', 'settings.json'));
+    const local = uriOf(join(work, '.mcp.json'));
+    const personal = uriOf(join(config, 'settings.json'));
+    expect(out.filter((one) => one.type === 'mcpServer').map((one) => [one.name, one.uri, one.id])).toEqual([
+      ['tickets', project, `${project}#mcp=tickets`],
+      ['desk', local, `${local}#mcp=desk`],
+      ['docs', personal, `${personal}#mcp=docs`],
+      ['gmail', 'claude-internal:/mcp/gmail', 'claude-internal:/mcp/gmail#mcp=gmail'],
+      ['desk two', 'claude-internal:/mcp/desk%20two', 'claude-internal:/mcp/desk%20two#mcp=desk%20two'],
+    ]);
+  });
+
   it('lists the memory files and the rules of each scope', () => {
     const { config, work } = roots({
       'config/CLAUDE.md': '# Me\n',
