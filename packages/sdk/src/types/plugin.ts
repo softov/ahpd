@@ -480,7 +480,7 @@ export interface ServedCanvases {
   /** The plugin that opened them. */
   by: string;
   /** Where an open goes, set by the host once it exists. */
-  open?: (chat: string, state: CanvasState) => string;
+  open?: (chat: string, state: CanvasState) => Promise<string>;
   /** Where an update goes, set by the host once it exists. */
   update?: (resource: string, state: CanvasState) => void;
   /** Where a close goes, set by the host once it exists. */
@@ -1297,18 +1297,21 @@ export interface PluginHost extends PluginContext {
    */
   sessionMetaChanged(uri: string): void;
   /**
-   * Show a canvas on a live chat, and answer the channel it is served on.
+   * Show a canvas on a chat, and answer the channel it is served on.
    *
-   * `state` is the whole `CanvasState`, with this plugin's own `instanceId` and
-   * `extensionId`. Its `url` is an absolute http(s) URL that the plugin itself
-   * answers, and the host never writes it to a log. A canvas already open on
-   * the chat under the same `instanceId` is drawn again and keeps its channel,
-   * and one this plugin opened is its own to change or close.
+   * A chat whose session sleeps is brought back first, with the session, as
+   * VS Code restores a session's chat before a canvas operation, and a chat no
+   * session holds is refused in VS Code's words. `state` is the whole
+   * `CanvasState`, with this plugin's own `instanceId` and `extensionId`. Its
+   * `url` is an absolute http(s) URL that the plugin itself answers, and the
+   * host never writes it to a log. A canvas already open on the chat under the
+   * same `instanceId` keeps its channel and is drawn again where its state
+   * moved, and one this plugin opened is its own to change or close.
    *
    * Refused until a host is built over the plugin, and while this host has
    * canvases turned off, which is `canvasesEnabled`'s default.
    */
-  openCanvas(chat: string, state: CanvasState): string;
+  openCanvas(chat: string, state: CanvasState): Promise<string>;
   /**
    * Replace the state of a canvas this plugin opened, whole.
    *

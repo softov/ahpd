@@ -1390,6 +1390,17 @@ export function createHost(options: HostOptions): Host {
   ctx.canvases = createCanvases({
     dispatch: (channel, action) => dispatch(channel, action),
     holds: (chat) => byChat.has(chat),
+    /*
+     * The session that holds the chat, woken where it sleeps, and a chat it
+     * does not hold refused in the reference host's words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6637-L6648
+     */
+    restore: async (chat) => {
+      if (byChat.has(chat)) return;
+      const session = ctx.sessionFor(chat);
+      if (session !== chat) await ctx.wake(session, chat);
+      if (!byChat.has(chat)) throw new Error(`Canvas operation targeted a chat outside session '${session}'.`);
+    },
     relays: (chat) => byChat.get(chat)?.chat.channel !== undefined,
     // Read at each call, because a window may push the key while the daemon
     // runs, and a canvas that is already open stays open when it turns off.

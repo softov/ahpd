@@ -1109,7 +1109,7 @@ A canvas is a page a plugin draws on the chat a person is reading. The host serv
 
 | Call | Answers | What it does |
 | --- | --- | --- |
-| `openCanvas(chat, state)` | the canvas channel, `ahp-canvas:/<base64url(chat)>/<uuid>` | Opens a canvas on a chat this host has live, or draws an open one again |
+| `openCanvas(chat, state)` | a promise of the canvas channel, `ahp-canvas:/<base64url(chat)>/<uuid>` | Opens a canvas on a chat, waking the session that holds it where it sleeps, or draws an open one again |
 | `updateCanvas(resource, state)` | nothing | Replaces the state of a canvas this plugin opened, whole |
 | `closeCanvas(resource)` | nothing | Takes a canvas off its chat; a resource that is gone does nothing |
 
@@ -1122,12 +1122,14 @@ const state = {
   status: 'ready',
   url: 'https://boards.acme.test/live/board-1',
 } satisfies CanvasState;
-const canvas = host.openCanvas(chat, state);
+const canvas = await host.openCanvas(chat, state);
 host.updateCanvas(canvas, { ...state, status: 'saving' });
 host.closeCanvas(canvas);
 ```
 
-The state is your whole claim about the canvas, and the host draws it. `instanceId`, `extensionId` and `canvasId` are required and non-empty, and `title`, `status` and `url` are as the protocol declares them. An `open` under an `instanceId` that is already open on that chat replaces its state and answers the same channel. A canvas that is redrawn is therefore not a second one.
+`openCanvas` brings the chat back first, as VS Code's host restores a session's chat before a canvas operation: a chat whose session sleeps is woken with it, and a chat no session holds is refused with `Canvas operation targeted a chat outside session '<session>'.`
+
+The state is your whole claim about the canvas, and the host draws it. `instanceId`, `extensionId` and `canvasId` are required and non-empty, and `title`, `status` and `url` are as the protocol declares them. An `open` under an `instanceId` that is already open on that chat replaces its state and answers the same channel, and one with the state it already has says nothing, as VS Code's host keeps a canvas it already shows. A canvas that is redrawn is therefore not a second one.
 
 A canvas belongs to the plugin that opened it. Only that plugin can update or close it, and a second plugin naming another's canvas is refused. A client cannot close one either. A canvas is the plugin's claim about a page it serves, and a client that hid one would leave the plugin drawing to nobody.
 

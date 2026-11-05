@@ -31,6 +31,12 @@ export interface CanvasHost {
    */
   holds(chat: string): boolean;
   /**
+   * Bring the session that holds a chat back where it sleeps, with the chat,
+   * as the reference host restores a session's chat before a canvas
+   * operation. Rejects for a chat no session holds.
+   */
+  restore(chat: string): Promise<void>;
+  /**
    * Whether a chat's canvases are its backend's, which lists and serves them:
    * the chat of a session in a machine, whose host there runs the session.
    */
@@ -50,11 +56,12 @@ export interface Canvases {
   /**
    * Open a canvas on a chat, or draw an open one again.
    *
-   * Answers the channel. A canvas already open on the chat under the same
-   * `instanceId` keeps its channel and is drawn again; any other gets a new
+   * Answers the channel, once the chat is back where its session slept. A
+   * canvas already open on the chat under the same `instanceId` keeps its
+   * channel and is drawn again where its state moved; any other gets a new
    * one, and the chat's list is said whole after it.
    */
-  open(chat: string, state: CanvasState, by: string): string;
+  open(chat: string, state: CanvasState, by: string): Promise<string>;
   /** Replace the state of a canvas this plugin opened, whole. */
   update(resource: string, state: CanvasState, by: string): void;
   /** Take a canvas off its chat. A canvas that is already gone stays gone. */
@@ -155,17 +162,24 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     }
   };
 
-  const open = (chat: string, state: CanvasState, by: string): string => {
+  /*
+   * Whether canvases are served, then the chat brought back, as the reference
+   * asks both before its provider opens anything.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6601-L6604
+   */
+  const open = async (chat: string, state: CanvasState, by: string): Promise<string> => {
     callable();
-    if (!ctx.holds(chat)) {
-      throw new Error(`plugin ${by}: openCanvas needs a chat this host has live, and ${chat} is not one`);
-    }
+    check('openCanvas', by, state);
+    await ctx.restore(chat);
     if (ctx.relays?.(chat) === true) {
       throw new Error(`plugin ${by}: openCanvas needs a chat whose canvases this host lists, and ${chat}'s are listed by the host its session runs in`);
     }
-    check('openCanvas', by, state);
     const resources = chats.get(chat) ?? [];
     const same = resources.find((resource) => held.get(resource)?.state.instanceId === state.instanceId);
+    // An instance opened again as it is says nothing, as the reference's
+    // projection keeps one it already shows.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L5196-L5210
+    if (same !== undefined && isDeepStrictEqual(held.get(same)?.state, state)) return same;
     const resource = same ?? canvasResource(chat, crypto.randomUUID());
     if (same === undefined) {
       resources.push(resource);

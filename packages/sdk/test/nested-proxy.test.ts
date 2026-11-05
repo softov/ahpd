@@ -2214,7 +2214,7 @@ it('lists a nested chat\'s canvases as the host inside does, and serves each fro
   await local.handle({ method: 'initialize', params: { clientId: 'inside', protocolVersions: ['1.0.0'] } });
   await local.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { canvasesEnabled: true } } } });
   const state = { instanceId: 'board-1', extensionId: 'com.brbyte.canvas', canvasId: 'board', title: 'Board', url: 'https://canvas.test/board' };
-  const resource = served.open?.(chatUriFor(uri), state) ?? '';
+  const resource = await served.open?.(chatUriFor(uri), state) ?? '';
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/canvasesChanged'));
 
   expect((await read(chatUriFor(uri))).canvases).toEqual([{ resource }]);

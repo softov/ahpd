@@ -78,10 +78,10 @@ export const apply: Plugin['apply'] = (host, options) => {
       description: 'Open the example canvas beside this chat. Answer: the canvas resource and its URL.',
       inputSchema: { type: 'object', properties: {} },
     },
-    run: (_input, at) => {
+    run: async (_input, at) => {
       if (url === undefined) throw new Error('The daemon has no address yet, so the page has no URL.');
       const state = { instanceId: INSTANCE, extensionId: name, canvasId: 'check', title: 'Example canvas', url } satisfies CanvasState;
-      const resource = host.openCanvas(at.chat, state);
+      const resource = await host.openCanvas(at.chat, state);
       return JSON.stringify({ resource, url });
     },
   });

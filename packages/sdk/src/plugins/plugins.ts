@@ -1769,12 +1769,12 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
      * either reaches it or is refused by it. What this side adds is the name of
      * the plugin and the sentence a plugin reads before a host exists.
      */
-    openCanvas(chat, state) {
+    async openCanvas(chat, state) {
       const open = contribution.canvases.open;
       if (open === undefined) {
         throw new Error(miss(by, 'openCanvas', 'the canvas', 'opened once a host is built over this plugin'));
       }
-      const resource = open(chat, state);
+      const resource = await open(chat, state);
       // The unload road, put on the list once there is something to take away:
       // `HostOptions.closers` carries one entry per registration and none for a
       // plugin that registered nothing.
