@@ -368,13 +368,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** What the client picked. Absent means whatever the CLI defaults to. */
   chosen: string | undefined;
   /**
-   * The effort level a turn's model set over the session's `effortLevel`.
-   *
-   * The CLI holds one effort for the whole query, so a turn that names a
-   * level moves it, and the next turn that names none puts the session's
-   * back. Absent while the CLI runs at the session's level.
+   * The effort level the CLI was last given, VS Code's pipeline's applied
+   * effort: absent while the CLI runs at its model's own, which a new CLI
+   * does until a turn names one.
    */
-  turnEffort: string | undefined;
+  appliedEffort: string | undefined;
   /*
    * The tools on offer, which is not a fixed list.
    *

@@ -850,7 +850,7 @@ it('still refuses something that is not a URI at all', async () => {
  * asks a backend to; VS Code's own hosts advertise different properties for
  * Copilot and for Claude.
  */
-it('advertises the six modes the CLI has, under the name it has them', async () => {
+it('advertises the five modes VS Code\'s Claude has, under the name the CLI has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
     schema: { properties: Record<string, { enum?: string[] }> };
@@ -860,12 +860,13 @@ it('advertises the six modes the CLI has, under the name it has them', async () 
    * Code's own Claude host advertises exactly this and *omits* `autoApprove`,
    * `mode`, `isolation` and `branch` - its pickers key off property names, so
    * omitting them suppresses a mode and branch UI that means nothing on this
-   * harness. `auto` was missing here and is a real mode the CLI takes.
+   * harness.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2287
    */
   expect(Object.keys(cfg.schema.properties)).not.toContain('autoApprove');
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
   expect(cfg.schema.properties.permissionMode?.enum)
-    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
+    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
 });
 
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
@@ -903,16 +904,14 @@ it('takes one on a running session, and leaves the advertised control saying wha
 });
 
 /*
- * A key the schema does not declare, refused in the backend's words.
+ * A key the schema does not declare, taken as it was set.
  *
- * "Only properties with `sessionMutable: true` in the config schema may be
- * changed", and this backend declares neither `autoApprove` nor `mode`. No VS
- * Code client sends either to a host whose schema leaves it out: its clients
- * filter a session's config by the schema (sessionConfigProperties.ts
- * L131-L133, L159-L165 at a4e689ae).
- * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+ * VS Code's host takes any key a client writes but its own host-written ones,
+ * and this backend declares neither `autoApprove` nor `mode`: each is held as
+ * sent and moves nothing, the mode staying where it was.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
  */
-it('refuses the approval and mode keys its schema does not declare, and the mode stays', async () => {
+it('takes the approval and mode keys its schema does not declare as they were set, and the mode stays', async () => {
   const { client, peer: p, uri } = await running();
   /** The permission mode a client subscribing now is served. */
   const served = async (): Promise<unknown> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -923,11 +922,9 @@ it('refuses the approval and mode keys its schema does not declare, and the mode
   await settle();
   dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'plan' } });
   await settle();
-  expect(refusals(p, uri)).toEqual([
-    'autoApprove is not a config key this backend takes',
-    'mode is not a config key this backend takes',
-  ]);
-  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toEqual([]);
+  expect(refusals(p, uri)).toEqual([]);
+  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged').map((one) => one.config))
+    .toEqual([{ autoApprove: 'assisted' }, { mode: 'plan' }]);
   expect(await served()).toBe('default');
 });
 

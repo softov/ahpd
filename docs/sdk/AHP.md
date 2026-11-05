@@ -570,12 +570,12 @@ that model's own `supportedEffortLevels` - some Claude models take all five
 efforts, some take one, some take none, and a model that takes none carries no
 schema, so a client draws no control for it. `thinkingLevel` is the key the
 reference client's picker writes into `ModelSelection.config`, and a turn that
-arrives with one sets the effort for that turn and the ones after it, because
-the CLI holds a single effort setting per query rather than one per turn - so
-`session/configChanged` goes out for the session-wide `effortLevel` at the same
-time, and the two controls never describe different futures. Where models carry
-their own schema the session-wide `effortLevel` key is not advertised at all:
-two controls reaching one setting is one too many.
+arrives with one sets the effort for that turn, while a turn whose model names
+none clears it back to the model's own, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224)
+sets the effort each model selection resolves to: the CLI holds a single effort
+setting per query. The session's config has no effort key; its keys are VS
+Code's Claude's, `permissionMode` with five modes, `permissions` and
+`sensitiveEditLocations`, with the platform's `shellInitScripts` beside them.
 
 The other five declared fields - `maxContextWindow`, `maxOutputTokens`,
 `maxPromptTokens`, `supportsVision` and `policyState` - are absent, and are

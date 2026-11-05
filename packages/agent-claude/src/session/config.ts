@@ -1,19 +1,17 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { isShellName } from '@ahpd/sdk';
 import type { ConfigTaken, Session, ShellEnv } from '@ahpd/sdk';
 import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
- * The effort levels this backend has, weakest first.
- *
- * One list, because two of them drifted: a model's own `thinkingLevel` form
- * and the session-wide `effortLevel` key are the same five words reaching the
- * same setting, and a client that read one set of labels from one control and
- * another set from the other is being told they are different things.
+ * The effort levels this backend has, weakest first: what a model's own
+ * `thinkingLevel` form offers and a turn's message names, the five VS Code's
+ * Claude resolves a model selection to.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L66-L81
  */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -211,13 +209,11 @@ export function createConfig(ctx: SessionContext): Config {
 
   const methods: Config['methods'] = {
     /**
-     * A key this backend's schema declares, and the model a turn may name.
-     *
-     * A refusal for anything else, since only a key the schema declares may
-     * be changed, and a refusal is a real answer: a setter that reported
-     * success and changed nothing would leave a client showing a session in a
-     * state it is not in.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
+     * Every key a client sets, taken as VS Code's host takes any key but its
+     * own: `permissions`, `shellInitScripts` and `permissionMode` act on the
+     * CLI, and any other is held as it was set. A value the CLI cannot take
+     * is refused, so a client never shows a session in a state it is not in.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
      */
     setConfig: async (key, value) => {
       /*
@@ -237,28 +233,13 @@ export function createConfig(ctx: SessionContext): Config {
         return true;
       }
       if (key === 'shellInitScripts') return setShellInit(value);
-      const said = typeof value === 'string' ? value : '';
-      if (key === 'model') {
-        try {
-          await ctx.handle.setModel(said === 'default' ? undefined : said);
-          ctx.chosen = said;
-          ctx.settings.model = said;
-          return true;
-        }
-        catch { return `The harness would not take model ${said}`; }
-      }
-      if (key === 'effortLevel') {
-        const found = EFFORTS.find((one) => one === said);
-        if (!found) return `The harness has no effort level called ${said}`;
-        ctx.settings.effortLevel = found;
-        // The level in force from here, over any a turn's model set.
-        ctx.turnEffort = undefined;
-        void ctx.handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
+      if (key !== 'permissionMode') {
+        ctx.settings[key] = value;
         return true;
       }
-      if (key !== 'permissionMode') return `${key} is not a config key this backend takes`;
-      // The schema's own property, whose six values are the CLI's.
-      const modes = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
+      // The schema's own property, whose five values are the CLI's.
+      const said = typeof value === 'string' ? value : '';
+      const modes = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
       ctx.settings.permissionMode = found;

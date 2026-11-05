@@ -272,23 +272,19 @@ export function createTurns(ctx: SessionContext): Turns {
      * The form the model came with, which is one key here.
      *
      * `thinkingLevel` is what a client writes into `ModelSelection.config`,
-     * and it is this turn's: the reference host hands a turn's model to its
-     * agent, which sets the model's effort on the SDK, and no session config
-     * moves. The CLI holds one effort for the whole query, so a turn that
-     * names none after one that did puts the session's `effortLevel` back.
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
-     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1206-L1226
+     * and it is this turn's: VS Code's Claude sets the effort each model
+     * selection resolves to, and clears it where the selection names none,
+     * since the CLI holds one effort for the whole query. A level the CLI
+     * already holds is not sent again, as VS Code's pipeline keeps the one it
+     * applied.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L375-L385
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L66-L78
      */
     const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
-    const sessions = EFFORTS.find((one) => one === ctx.settings.effortLevel);
-    const running = ctx.turnEffort ?? sessions;
-    if (level !== undefined && level !== running) {
-      ctx.turnEffort = level === sessions ? undefined : level;
-      void ctx.handle.applyFlagSettings({ effortLevel: level }).catch(() => {});
-    }
-    else if (level === undefined && ctx.turnEffort !== undefined) {
-      ctx.turnEffort = undefined;
-      if (sessions !== undefined) void ctx.handle.applyFlagSettings({ effortLevel: sessions }).catch(() => {});
+    if (level !== ctx.appliedEffort) {
+      ctx.appliedEffort = level;
+      void ctx.handle.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
     }
     ctx.beginning = undefined;
     // The turn this session runs from now, as the host said it.

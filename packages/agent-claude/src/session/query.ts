@@ -634,9 +634,11 @@ export function createQuery(ctx: SessionContext): Query {
     const replaced = ctx.wake;
     ctx.wake = undefined;
     replaced?.();
-    // A new CLI owes nothing: what the last one was handed went with it.
+    // A new CLI owes nothing: what the last one was handed went with it, and
+    // it runs at its model's own effort until a turn names one.
     ctx.owed.clear();
     ctx.answering = undefined;
+    ctx.appliedEffort = undefined;
     return buildQuery(agent, first, cut);
   };
 

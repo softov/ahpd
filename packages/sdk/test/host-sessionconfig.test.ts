@@ -28,16 +28,12 @@ describe('choosing a model', () => {
     // without it matches nothing a client validates against.
     expect(cfg.schema.type).toBe('object');
     // `schema.properties`, not `properties`. One level up draws no controls
-    // at all - no permission mode, no model, no effort - which is what it did.
+    // at all. These are VS Code's Claude's keys, the platform's shell init
+    // script beside them; the model and its effort are each message's.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
     const keys = Object.keys(cfg.schema.properties);
-    expect(keys).toContain('permissionMode');
-    expect(keys).toContain('effortLevel');
-    // The three options an operator writes down as a preset are not controls a
-    // session offers, so the chips a client would draw for them are gone.
-    expect(keys).not.toContain('outputStyle');
-    expect(keys).not.toContain('thinking');
-    expect(keys).not.toContain('sandboxEnabled');
-    expect(cfg.schema.properties.permissionMode?.enum).toContain('dontAsk');
+    expect(keys.sort()).toEqual(['permissionMode', 'permissions', 'sensitiveEditLocations', 'shellInitScripts']);
+    expect(cfg.schema.properties.permissionMode?.enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
     expect(cfg.values.permissionMode).toBe('default');
   });
 
@@ -48,7 +44,7 @@ describe('choosing a model', () => {
       schema: { properties: Record<string, { sessionMutable?: boolean }> };
     };
     expect(cfg.schema.properties.permissionMode?.sessionMutable).toBe(true);
-    expect(cfg.schema.properties.effortLevel?.sessionMutable).toBe(true);
+    expect(cfg.schema.properties.permissions?.sessionMutable).toBe(true);
   });
 
   it('answers back with what has already been chosen', async () => {
@@ -59,9 +55,10 @@ describe('choosing a model', () => {
       params: { config: { permissionMode: 'plan' } },
     }) as { values: Record<string, string> };
     // Iterative: a form that returned its defaults every time would quietly
-    // undo a choice the moment anything re-asked.
+    // undo a choice the moment anything re-asked. `permissions` is left unset
+    // until a tool is approved, as VS Code's Claude leaves it.
     expect(cfg.values.permissionMode).toBe('plan');
-    expect(cfg.values.effortLevel).toBe('high');
+    expect(cfg.values.permissions).toBeUndefined();
   });
 
   it('carries the schema and the values on the session itself', async () => {
@@ -69,14 +66,18 @@ describe('choosing a model', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { config: { schema: { properties: Record<string, unknown> }; values: Record<string, string> } } };
     }).snapshot.state;
-    // A session without this has no permission control, no model picker and
-    // no effort control - which is what it had.
+    // A session without this has no permission control.
     expect(Object.keys(state.config.schema.properties)).toContain('permissionMode');
     expect(state.config.values.permissionMode).toBe('default');
-    expect(state.config.values.effortLevel).toBe('high');
   });
 
-  it('changes the effort level on the running session', async () => {
+  /*
+   * A key VS Code's Claude does not declare is taken as it was set, as VS
+   * Code's host takes any key but its own, and moves nothing in the CLI: the
+   * effort is each turn's model's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
+   */
+  it('holds a key it does not declare as it was set, and leaves the CLI\'s effort to each turn', async () => {
     const { client, uri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -87,9 +88,7 @@ describe('choosing a model', () => {
       snapshot: { state: { config: { values: Record<string, string> } } };
     }).snapshot.state;
     expect(state.config.values.effortLevel).toBe('max');
-    // Told, not merely recorded: a control that updates the state a client
-    // reads while the CLI keeps its old setting is the worst of both.
-    expect(sdk.effortsSet).toEqual(['max']);
+    expect(sdk.effortsSet).toEqual([]);
   });
 
   it('runs each session on the variant its own agent was built with', async () => {
@@ -238,21 +237,6 @@ describe('choosing a model', () => {
     expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });
   });
 
-  it('refuses an effort level that is not one, rather than passing it on', async () => {
-    const { client, uri } = await running();
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'enormous' } } },
-    });
-    await settle();
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { config: { values: Record<string, string> } } };
-    }).snapshot.state;
-    expect(state.config.values.effortLevel).toBe('high');
-    // A rejected promise nobody reads is not an answer.
-    expect(sdk.effortsSet).toEqual([]);
-  });
-
   it('runs the turn on the model the turn named, and keeps it', async () => {
     const { client, chatUri } = await running();
     client.handle({
@@ -301,16 +285,18 @@ describe('choosing a model', () => {
     expect(state.model).toBeUndefined();
   });
 
-  it('resolves the default alias at the CLI, not here', async () => {
+  /*
+   * A model is each message's, as VS Code's Claude declares no model key: a
+   * `model` a client sets as config is held and switches nothing.
+   */
+  it('switches no model for a model a client sets as config', async () => {
     const { client, uri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { model: 'default' } } },
     });
     await settle();
-    // `default` is a choice the CLI offers. Resolving it to a concrete id
-    // before sending would be the host answering a question nobody asked.
-    expect(sdk.modelsSet).toEqual([undefined]);
+    expect(sdk.modelsSet).toEqual([]);
   });
 
   it('refuses a permission mode the CLI does not know', async () => {
@@ -418,9 +404,10 @@ describe('a session\'s config across a restart', () => {
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
   /** A host on the store folder, introduced. */
-  const hostOnFile = async () => {
+  const hostOnFile = async (sessionConfig?: Record<string, Record<string, unknown>>) => {
     const host = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+      ...(sessionConfig === undefined ? {} : { sessionConfig }),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -473,10 +460,19 @@ describe('a session\'s config across a restart', () => {
   });
 
   it('keeps a change the backend refused out of the store', async () => {
-    const client = await hostOnFile();
+    // A backend that refuses every key its schema does not declare.
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const refusing: Agent = {
+      ...base,
+      create: (start) => ({ ...base.create(start), setConfig: (key: string) => `${key} is not taken here` }),
+    };
+    const host = createHost({ path: '/home/softov', agents: [refusing], ...machine(), sessions: fileSessions({ dir }) });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/refused', provider: 'claude', config: { permissionMode: 'plan' } },
+      params: { channel: 'ahp-session:/refused', provider: 'echo', config: { voice: 'shouty' } },
     });
     client.handle({
       method: 'dispatchAction',
@@ -484,7 +480,7 @@ describe('a session\'s config across a restart', () => {
     });
     await settle();
     await written();
-    expect(stored('refused')).toEqual({ permissionMode: 'plan' });
+    expect(stored('refused')).toEqual({ voice: 'shouty' });
   });
 
   it('keeps an array as an array, on a live session and on a row', async () => {
@@ -513,8 +509,11 @@ describe('a session\'s config across a restart', () => {
     expect(opened.snapshot.state.config.values.shellInitScripts).toEqual(scripts);
   });
 
+  /** A key this host declares for one chat, which a plugin's setting is. */
+  const CHAT_SCOPED = { depth: { scope: 'chat', type: 'string', title: 'Depth', sessionMutable: true } };
+
   it('keeps a key the schema scopes to one chat out of the session\'s store', async () => {
-    const client = await hostOnFile();
+    const client = await hostOnFile(CHAT_SCOPED);
     await client.handle({
       method: 'createSession',
       params: { channel: 'ahp-session:/peers', provider: 'claude', config: { permissionMode: 'plan' } },
@@ -522,26 +521,25 @@ describe('a session\'s config across a restart', () => {
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/peers', chat: 'ahp-chat:/peer' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/peer', action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: 'ahp-chat:/peer', action: { type: 'session/configChanged', config: { depth: 'low' } } },
     });
     await settle();
     await written();
     // Taken by the chat it was set on, and not what the session resumes with.
-    expect(sdk.effortsSet).toContain('low');
     expect(stored('peers')).toEqual({ permissionMode: 'plan' });
   });
 
   it('keeps a key the schema scopes to one chat when it was set on the lead chat', async () => {
-    const client = await hostOnFile();
+    const client = await hostOnFile(CHAT_SCOPED);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/lead'), action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: chatUriFor('ahp-session:/lead'), action: { type: 'session/configChanged', config: { depth: 'low' } } },
     });
     await settle();
     await written();
     // What a resume hands the lead chat.
-    expect(stored('lead')).toEqual({ effortLevel: 'low' });
+    expect(stored('lead')).toEqual({ depth: 'low' });
   });
 
   it('writes nothing for a session disposed before its backend took the change, even under its name again', async () => {
@@ -645,8 +643,9 @@ describe('a session\'s config across a restart', () => {
     // Kept: the store only holds what the backend took, declared or not.
     expect(values.model).toBe('opus');
     expect(values.sandboxEnabled).toBe('on');
-    // The wrong JSON type is refused the same way an unknown value is.
-    expect(values.permissions).toEqual({ allow: [], deny: [] });
+    // The wrong JSON type is refused the same way an unknown value is, which
+    // leaves the key unset, as VS Code's Claude resolves `permissions`.
+    expect(values.permissions).toBeUndefined();
     await read();
     expect(said.filter((line) => /stale.*permissions.*"all"/.test(line))).toHaveLength(1);
     expect(said.some((line) => line.includes('stored model'))).toBe(false);

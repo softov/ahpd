@@ -557,7 +557,7 @@ describe('more than one chat in a session', () => {
       .toEqual({ fork: true, sideChat: true });
   });
 
-  it('spreads a session-scoped key across every chat, and keeps a chat-scoped one where it was', async () => {
+  it('spreads a session-scoped key across every chat', async () => {
     const { client, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const before = sdk.modesSet.length;
@@ -575,16 +575,6 @@ describe('more than one chat in a session', () => {
      * schema's answer rather than this host's.
      */
     expect(sdk.modesSet.length - before).toBe(2);
-
-    const efforts = sdk.effortsSet.length;
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
-    });
-    await settle();
-    // One, because that one says `scope: 'chat'`. How hard a conversation
-    // thinks is that conversation's.
-    expect(sdk.effortsSet.length - efforts).toBe(1);
   });
 
   it('opens one, and lists both on the session', async () => {

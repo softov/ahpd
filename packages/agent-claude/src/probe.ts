@@ -18,12 +18,11 @@ const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 /**
  * How hard *this* model can be told to think, as its own config schema.
  *
- * Per model and not per session, which is the whole point: the CLI reports a
- * different `supportedEffortLevels` for each - some take all five, some take
- * one, and some take none - so a single session-wide effort control offers
- * levels the chosen model may not have, and accepts one it will then ignore.
- * A model that supports none gets no schema and a client draws no control,
- * which is the honest form of "this one does not think harder on request".
+ * Per model: the CLI reports a different `supportedEffortLevels` for each -
+ * some take all five, some take one, and some take none - and a control lists
+ * what its model has. A model that supports none gets no schema and a client
+ * draws no control, which is the honest form of "this one does not think
+ * harder on request".
  *
  * `thinkingLevel` is the key, because that is the one the reference client's
  * picker writes into `ModelSelection.config` for both of its providers, and

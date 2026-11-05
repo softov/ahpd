@@ -1,6 +1,6 @@
 import { probe } from './probe.js';
 import { offeredServers, serversFor } from './mcp.js';
-import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
+import { createSession } from './session.js';
 import { restoreSavedOutputs } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
 import { watchFolders } from './session/watch.js';
@@ -230,18 +230,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
   };
 
   /**
-   * Whether the models this harness offers carry effort controls of their own.
-   *
-   * A model's `configSchema` and the session-wide `effortLevel` reach the same
-   * setting, and a client draws both - so a person is shown two effort
-   * controls, on two different values, for one thing. The model's is the
-   * truthful one: it lists what that model actually supports, where the
-   * session-wide key lists all five whatever is chosen. So this backend offers
-   * the session key only while there is nothing better.
-   */
-  let perModelEffort = false;
-
-  /**
    * What a session can be told to do differently.
    *
    * One schema, used by `resolveSessionConfig` (before a session exists) and
@@ -249,8 +237,12 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * the composer would offer one set of controls on the new-session screen and
    * a different set the moment a session opened.
    *
-   * `sessionMutable` is what each row turns on: the permission mode, the model
-   * and the effort level are things the CLI takes on a *running* session.
+   * The keys are VS Code's Claude's, in its words: its `permissionMode`, and
+   * the platform's `Permissions` and `SensitiveEditLocations` unchanged, with
+   * the platform's `shellInitScripts` beside them, the session key VS Code's
+   * Copilot applies to its shell tool. The model is each message's, and its
+   * effort the model's own `configSchema`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
    */
   const schema = (): Bag => ({
     // A JSON Schema object, and it has to say so: `type` is required, and a
@@ -258,7 +250,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     type: 'object',
     properties: {
       /*
-       * One axis, and the CLI's own six values.
+       * One axis, and the five values VS Code's Claude offers of the SDK's.
        *
        * The protocol's config schema is generic and a backend advertises what
        * it has - VS Code's own hosts advertise different properties for
@@ -268,58 +260,33 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * matching the SDK's enum, and *omits* `autoApprove`, `mode`,
        * `isolation` and `branch` deliberately, because the pickers key off
        * property names and omitting them suppresses a mode and branch UI that
-       * would not mean anything here.
-       *
-       * The wording is that host's too, so one session reads the same however
-       * it is opened. `auto` was missing here and is a real mode the CLI
-       * takes: the agent deciding, per call, whether it needs to ask. `dontAsk`
-       * was missing too, and is the SDK's other mode.
+       * would not mean anything here. The wording is that host's too, so one
+       * session reads the same however it is opened.
        */
       permissionMode: {
         scope: 'session',
         type: 'string',
         title: 'Approvals',
-        description: 'How the agent handles tool approvals.',
-        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'],
+        description: 'How Claude handles tool approvals.',
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
         enumLabels: [
           'Ask Before Edits',
           'Edit Automatically',
           'Plan Mode',
           'Auto Mode',
           'Bypass Permissions',
-          "Don't Ask",
         ],
         enumDescriptions: [
-          'Asks before editing files.',
-          'Edits files without asking, and asks before using other tools.',
-          'Creates a plan before making changes.',
-          'Decides whether to ask for each tool operation.',
-          'Runs all tools without asking.',
-          'Denies anything not already approved, without asking.',
+          'Claude asks before editing files.',
+          'Claude edits files without asking, and asks before using other tools.',
+          'Claude creates a plan before making changes.',
+          'Claude decides whether to ask for each tool operation.',
+          'Claude runs all tools without asking.',
         ],
         default: 'default',
         sessionMutable: true,
+        chatMutable: true,
       },
-      /*
-       * The model is not a config property.
-       *
-       * A session has no model; each message has one. The choices are carried
-       * on the agent (`RootState.agents[].models`) and the choice on the turn.
-       * `session/configChanged` with a `model` key is still honoured, but the
-       * model is not advertised here as a control of its own.
-       */
-      ...(perModelEffort ? {} : {
-        effortLevel: {
-          scope: 'chat',
-          type: 'string',
-          title: 'Effort',
-          description: 'How hard it thinks before answering.',
-          enum: [...EFFORTS],
-          enumLabels: EFFORTS.map((one) => EFFORT_LABELS[one]),
-          default: 'high',
-          sessionMutable: true,
-        },
-      }),
       /*
        * Scripts a client generated, sourced before every shell command.
        *
@@ -348,44 +315,60 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       /*
        * Per-tool allow and deny, which is the slope the mode above is a cliff.
        *
-       * A platform key rather than one of this backend's invention: it is what
-       * the reference client's permission picker writes when somebody approves
-       * a tool "in this session", and its own Claude host advertises it
-       * unchanged because the SDK takes `allowedTools` / `disallowedTools`
-       * natively. Without it the only way to stop being asked about the one
-       * command you trust is `bypassPermissions`, which stops asking about
-       * everything.
-       *
-       * An object, and the first config value here that is not a string. The
-       * protocol declares the bag `Record<string, unknown>`; this host used to
-       * declare it `Record<string, string>`, which is why nothing of this
-       * shape could be carried at all.
+       * The platform's key as VS Code declares it: what the reference client's
+       * permission picker writes when somebody approves a tool "in this
+       * session", and what its Claude host advertises unchanged because the
+       * SDK takes `allowedTools` / `disallowedTools` natively. Live: the SDK
+       * takes the lists when the query is built, and `canUseTool` is where
+       * this host sits between the agent and the person.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
        */
       permissions: {
         scope: 'session',
         type: 'object',
         title: 'Permissions',
-        description: 'Per-tool session permissions. Updated when a tool is approved for this session.',
+        description: 'Permission rules: a tool name or Tool(specifier), e.g. Shell(npm run *), WebFetch(example.com), WebFetch(example.com/docs/*), Read(./src/**), or Edit(./docs/**). Shell specifiers support wildcards, /regex/flags, and commandLine:<specifier> for the full command line. Deny rules reject matching calls; ask rules require confirmation before allow rules or implicit defaults. Updated automatically when approving "in this Session" or "Always Allow".',
         properties: {
-          allow: { type: 'array', title: 'Allowed tools', items: { type: 'string', title: 'Tool name' } },
-          deny: { type: 'array', title: 'Denied tools', items: { type: 'string', title: 'Tool name' } },
+          allow: { type: 'array', title: 'Allowed permission rules', items: { type: 'string', title: 'Permission rule' } },
+          deny: { type: 'array', title: 'Denied permission rules', items: { type: 'string', title: 'Permission rule' } },
+          ask: { type: 'array', title: 'Permission Rules Requiring Confirmation', items: { type: 'string', title: 'Permission rule' } },
         },
         default: { allow: [], deny: [] },
-        // Live: the SDK takes the lists when the query is built, and
-        // `canUseTool` is where this host already sits between the agent and
-        // the person.
+        sessionMutable: true,
+        chatMutable: true,
+      },
+      /*
+       * The customization locations whose edits always ask, as VS Code's
+       * platform declares them and its Claude host advertises them: written
+       * by the client, so read-only.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L347-L368
+       */
+      sensitiveEditLocations: {
+        scope: 'session',
+        type: 'array',
+        title: 'Sensitive Edit Locations',
+        description: 'Workspace-relative customization locations whose edits always require confirmation.',
+        items: {
+          type: 'object',
+          title: 'Sensitive Edit Location',
+          properties: {
+            path: { type: 'string', title: 'Path' },
+            isDirectory: { type: 'boolean', title: 'Directory' },
+          },
+          required: ['path', 'isDirectory'],
+        },
+        readOnly: true,
         sessionMutable: true,
       },
     },
   });
 
-  const defaults = (): Record<string, unknown> => ({
-    permissionMode: 'default',
-    // Beside its schema or not at all: a value with no property to draw it is
-    // a control a client cannot show and cannot change.
-    ...(perModelEffort ? {} : { effortLevel: 'high' }),
-    permissions: { allow: [], deny: [] },
-  });
+  /*
+   * The values a session starts with: the mode alone, as VS Code's Claude
+   * resolves them, `permissions` left unset until a tool is approved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2311-L2317
+   */
+  const defaults = (): Record<string, unknown> => ({ permissionMode: 'default' });
 
   /**
    * How to start the CLI for a session that named a machine, or nothing.
@@ -505,13 +488,10 @@ export function claude(options: ClaudeOptions): Agent<Session> {
 
     directories: () => [...dirs],
 
-    // The models are kept as well as handed on: `schema()` is asked before any
-    // session exists, and it can only offer what has already been learned.
+    // What the CLI offers, its models with this variant's own.
     probe: async () => {
       const probed = await probe(dir);
-      const offered = { ...probed, models: await offer(probed.models) };
-      perModelEffort = offered.models.some((model) => model.configSchema !== undefined);
-      return offered;
+      return { ...probed, models: await offer(probed.models) };
     },
 
     // The personal folder only, which is the one the probe reads.
