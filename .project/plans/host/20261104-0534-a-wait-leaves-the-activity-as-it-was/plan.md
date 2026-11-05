@@ -62,17 +62,15 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 | Claude, cofold, pi and ACP all follow it | Softov, 2026-11-04, chose "All four agents" | 01 |
 | The example agent in `examples/notes` follows it too | (defaulted: an example teaches the pattern) | 01 |
 | `reopen` in cofold sets no activity after a replay | Softov, 2026-11-04, chose "Leave it as it was" | 01 |
-| cofold names each tool when it starts, and says `Thinking` when it completes or is denied | Softov, 2026-11-04, chose "Yes, name every running tool" | 02 |
-| cofold's line is `<displayName> <subject>`, or `<displayName>` with no subject, with whitespace collapsed and cut to 80 characters | (defaulted: the shape of Claude's `busyWith`, with cofold's display name) | 02 |
-| The mapping says the line, in a new `doing` field of `MappedEvent`, and `apply` says it | (defaulted: the mapping holds the call's display name and subject) | 02 |
+| cofold names no running tool, and no backend says a turn's thinking or its tools in the activity, as [the decision](../../../decisions/a-chat-activity-is-only-a-wait-before-its-turn.md) says | Softov, 2026-11-05, "VS Code's, no tool activity. make a decision." | 02 |
 | `Waiting on <owner>: <tool>` for a client's tool stays | (defaulted: it is a wait on a client, not on the person) | - |
 
 ## Proposed architecture
 
-- **Data flow** - cofold's mapping returns `doing` on `tool.started`, `tool.completed` and `tool.denied`; `apply` passes it to `ctx.activity.say`.
-- **Event flow** - no new action. `session/activityChanged` and `chat/activityChanged` go out less often on a wait, and more often in a cofold turn.
+- **Data flow** - a wait changes no activity.
+- **Event flow** - no new action. `session/activityChanged` and `chat/activityChanged` go out less often on a wait.
 - **State flow** - the activity keeps its last value while a request waits.
-- **Layer responsibilities** - agent-claude, agent-pi, agent-acp: remove the wait text · agent-cofold: remove the wait text in `reopen`, and name running tools · examples: remove the wait text.
+- **Layer responsibilities** - agent-claude, agent-pi, agent-acp: remove the wait text · agent-cofold: remove the wait text in `reopen` · examples: remove the wait text.
 - **Source-of-truth files** - [`code://packages/agent-cofold/src/mapping.ts`](../../../../packages/agent-cofold/src/mapping.ts)
 
 ## Tasks
@@ -80,22 +78,20 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - no agent says waiting on you](task-01-no-agent-says-waiting-on-you.md) | implemented | - |
-| [02 - cofold names its running tool](task-02-cofold-names-its-running-tool.md) | implemented | 01 |
+| [02 - cofold names its running tool](task-02-cofold-names-its-running-tool.md) | dropped | 01 |
 
 ## Risks and tradeoffs
 
 - A client that shows only the activity no longer sees a wait in it - ahpc, ahpw and VS Code read the status.
-- A replayed cofold run now says the last tool line it replays - the status says the run waits, as in Claude.
 
 ## Resume state
 
-- **Done so far:** both tasks are implemented on 2026-11-04. Each new test fails without its change.
+- **Done so far:** task 01 is implemented on 2026-11-04. Task 02 is dropped on 2026-11-05 by the merge of `host/20261104-1647-the-backends-follow-the-audit`.
 - **Next action:** review, then the PR.
-- **Watch out for:** a cofold tool of its own is named by its tool name, such as `read_file a.txt`, as its tool call row is. A replayed cofold run says the last tool line it replays.
+- **Watch out for:** the activity is only a wait before a turn can run, as the decision in *Answers* says.
 
 ## Final verification checklist
 
 - [x] `rg -n "Waiting on you" packages/*/src examples` finds nothing.
 - [x] Each of the four agents has a test that reads the activity while a confirmation waits.
-- [x] A cofold test reads the tool line on `tool.started` and `Thinking` after `tool.completed` and `tool.denied`.
 - [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass, and the tests of agent-claude, agent-pi, agent-acp and agent-cofold pass.
