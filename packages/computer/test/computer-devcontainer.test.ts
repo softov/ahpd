@@ -253,13 +253,15 @@ it('makes a computer from a folder\'s devcontainer.json, and lists it by its fol
   });
 
   // The exact line, which is the whole create: the folder and the two labels
-  // every later call about this container repeats, and the override config
-  // this host adds to the folder's own definition.
+  // every later call about this container repeats, the folder's own
+  // definition where `read-configuration` found it, and the override config
+  // this host adds to it.
   expect(upOf(devState)).toEqual([
     'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   /*
@@ -504,6 +506,7 @@ it('makes one from the body a form sends, and still refuses an image beside it',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
 
@@ -678,6 +681,7 @@ it('makes it at session start, with the harness needs in the override config', a
     // The need the harness declared that names a host path, which the CLI's
     // own `--mount` takes.
     '--mount', `type=bind,source=${configDir},target=/ahpd/config`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   /*
@@ -894,6 +898,7 @@ it('refuses a folder outside the list on every route, and makes one inside it', 
     '--workspace-folder', allowed,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${allowed}`,
+    '--config', join(allowed, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 6);
@@ -957,6 +962,7 @@ it('makes no dev container on a host with users until the operator names the fol
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 6);
@@ -1034,6 +1040,7 @@ it('hands every route the folder as it resolves, and refuses one that is not a p
     '--workspace-folder', there,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${there}`,
+    '--config', join(there, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 4);
@@ -1536,10 +1543,10 @@ it('finds an adopted container again by its folder, on a second connect and afte
 
 /*
  * The folder's own definition is read before anything is written, so one that
- * does not parse is refused in its own words, not as a CLI that is missing,
+ * does not parse is refused in VS Code's words, not as a CLI that is missing,
  * and no override directory is left behind.
  */
-it('refuses a definition that does not parse in its own words, and leaves no override behind', async () => {
+it('refuses a definition that does not parse in VS Code\'s words, and leaves no override behind', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -1555,10 +1562,9 @@ it('refuses a definition that does not parse in its own words, and leaves no ove
       data: JSON.stringify({ devcontainer: { folder } }),
       encoding: 'utf-8',
     }).then(() => undefined, (error: unknown) => error as Error);
-    expect(refused?.message).toMatch(/devcontainer\.json and it does not parse/);
-    expect(refused?.message).not.toMatch(/Install @devcontainers\/cli/);
+    expect(refused?.message).toBe(`Invalid Dev Container configuration: ${join(folder, '.devcontainer', 'devcontainer.json')}`);
     expect(readdirSync(scratch).filter((one) => one.startsWith('ahpd-devcontainer-'))).toEqual([]);
-    expect(devHeld(devState).calls).toEqual([]);
+    expect(devHeld(devState).calls.map((one) => one[0])).toEqual(['read-configuration']);
   }
   finally {
     if (before === undefined) delete process.env.TMPDIR;
@@ -1586,9 +1592,55 @@ it('masks the values in the error a failed up is refused with', async () => {
 });
 
 /*
- * The JSONC reader takes a trailing comma out only where it is JSONC's: a comma
- * inside a string is part of the value.
+ * The definition is JSON with comments, as VS Code's parser reads it: a
+ * trailing comma is taken out wherever it is JSONC's, a comment after it
+ * included, and a comma inside a string is part of the value.
  */
+it('reads a definition whose trailing comma has a comment after it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), [
+    '{',
+    '  "image": "base",',
+    '  "forwardPorts": [3000, /* the app */ ],',
+    '  "remoteUser": "dev", // the user',
+    '}',
+  ].join('\n'));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(overrideOf(devState)?.config).toMatchObject({ image: 'base', forwardPorts: [3000], remoteUser: 'dev' });
+  await answered(dockerState, 6);
+});
+
+/*
+ * The definition the CLI's `read-configuration` names is the one read, and up
+ * is given it as `--config` beside the override, as VS Code gives it.
+ */
+it('makes the machine from the definition read-configuration names, given to up as its config', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const elsewhere = join(dir, 'elsewhere.json');
+  writeFileSync(elsewhere, '{ "image": "elsewhere" }');
+  writeFileSync(devState, JSON.stringify({ calls: [], commands: [], configFile: elsewhere }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(overrideOf(devState)?.config).toMatchObject({ image: 'elsewhere' });
+  const up = devHeld(devState).calls.find((one) => one[0] === 'up') ?? [];
+  expect(up[up.indexOf('--config') + 1]).toBe(elsewhere);
+  expect(devHeld(devState).calls.map((one) => one[0])).toEqual(['read-configuration', 'up']);
+  await answered(dockerState, 6);
+});
+
 it('reads a definition with comments and trailing commas, and keeps a comma inside a string', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');

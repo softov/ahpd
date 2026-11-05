@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { hostPathOf, machinePathOf, ownerOf, partTarget } from '@ahpd/sdk';
 import type { BroughtBack, Owner, ResolvedSeed, Spawn, SpawnOptions } from '@ahpd/sdk';
-import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
+import { parse as parseJsonc } from 'jsonc-parser';
+import type { ParseError } from 'jsonc-parser';
+import { cliOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, readConfiguration, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
@@ -19,7 +21,7 @@ import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
 import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
-import type { Cli, CliOptions, Reach } from './devcontainer.js';
+import type { Cli, CliOptions, DevContainerConfiguration, Reach } from './devcontainer.js';
 import type { ServerReport } from './servercheck.js';
 
 /**
@@ -1273,68 +1275,27 @@ const cliMount = (mount: string): string => {
 const readOnlyMount = (mount: string): boolean => mount.endsWith(':ro');
 
 /**
- * A folder's own definition as an object, read the way the CLI reads it.
+ * A folder's own definition as an object, where the CLI's `read-configuration`
+ * finds it, read as VS Code's dev container host reads it
+ * (devContainerSandbox.ts L102-L106 at 6b68d3fe): with VS Code's JSONC parser,
+ * published as jsonc-parser, under its default options
+ * (src/vs/base/common/json.ts L145-L147), a parse error or a value that is
+ * not an object refused in VS Code's words.
  *
- * JSONC rather than JSON: the file is the one the Dev Container CLI documents
- * as carrying comments and a trailing comma, so a plain parse would refuse a
- * folder whose definition works, and the override config is that file's own
- * contents with this host's keys laid over it.
+ * The override config is that file's own contents with this host's keys laid
+ * over it, so the file is read whole.
  */
-const configOf = (folder: string): Record<string, unknown> => {
-  const where = definitionOf(folder);
-  if (where === undefined) {
-    throw new Error(`${folder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
+const configOf = async (
+  run: (argv: string[]) => Promise<{ code: number; stdout: string; stderr: string }>,
+  folder: string,
+): Promise<{ configuration: DevContainerConfiguration; config: Record<string, unknown> }> => {
+  const configuration = await readConfiguration(run, folder);
+  const errors: ParseError[] = [];
+  const config: unknown = parseJsonc(readFileSync(configuration.configPath, 'utf8'), errors, { allowTrailingComma: true });
+  if (errors.length > 0 || typeof config !== 'object' || config === null || Array.isArray(config)) {
+    throw new Error(`Invalid Dev Container configuration: ${configuration.configPath}`);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsoncOf(readFileSync(where, 'utf8')));
-  }
-  catch (error) {
-    throw new Error(`${where} is the folder's devcontainer.json and it does not parse: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`${where} is the folder's devcontainer.json and it is not an object`);
-  }
-  return parsed as Record<string, unknown>;
-};
-
-/** JSONC as JSON: the comments and trailing commas taken out, nothing else. */
-const jsoncOf = (text: string): string => {
-  let out = '';
-  let quoted = false;
-  let escaped = false;
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i] ?? '';
-    if (quoted) {
-      out += char;
-      // A backslash inside a string escapes the next character, so a quote
-      // behind one is not the end of the string.
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') quoted = false;
-      continue;
-    }
-    if (char === '"') { quoted = true; out += char; continue; }
-    if (char === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      out += '\n';
-      continue;
-    }
-    if (char === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i++;
-      continue;
-    }
-    /*
-     * A comma that is the last one before a closing bracket, taken out where a
-     * string is not: a definition's own text may hold `"echo a, }"`, and a
-     * comma inside one is part of the value rather than a JSONC habit.
-     */
-    if (char === ',' && /^[\s]*[}\]]/.test(text.slice(i + 1))) continue;
-    out += char;
-  }
-  return out;
+  return { configuration, config: config as Record<string, unknown> };
 };
 
 /**
@@ -2849,6 +2810,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        */
       if (spec.devcontainer !== undefined) {
         const cli = cliOf(options.devcontainerCli);
+        // The CLI's two runs, `read-configuration` and `up`, each saying what
+        // installs the CLI where it could not be started.
+        const run = (argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
+          runCli(cli, argv).catch((error: unknown) => {
+            throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer ?? ''} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
+          });
         const argv = [
           'up',
           '--workspace-folder', spec.devcontainer,
@@ -2879,10 +2846,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * what is in it.
          *
          * The folder's definition is read before the directory exists, so a
-         * definition that does not parse is refused in its own words and leaves
-         * nothing behind.
+         * definition that does not parse is refused and leaves nothing behind.
          */
-        const config = configOf(spec.devcontainer);
+        const { configuration, config } = await configOf(run, spec.devcontainer);
         /*
          * The tree the machine is given, and the guard its git directory is
          * made with. Under `copy` the machine's volume is the CLI's own
@@ -2921,10 +2887,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         let ran: { code: number; stdout: string; stderr: string };
         try {
           writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route, git), undefined, 2), { mode: 0o600 });
-          argv.push('--override-config', override);
-          ran = await runCli(cli, argv).catch((error: unknown) => {
-            throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
-          });
+          // The folder's own file stays the base for its relative paths and
+          // its identity, as VS Code passes it beside its override
+          // (devContainerSandbox.ts L101 and L151 at 6b68d3fe).
+          argv.push('--config', configuration.configPath, '--override-config', override);
+          ran = await run(argv);
         }
         finally {
           // The directory holds the definition's own values, so it goes whether

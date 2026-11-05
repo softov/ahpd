@@ -2,17 +2,20 @@
 /**
  * A scripted `devcontainer`, for the launcher's tests.
  *
- * It answers `--version` and `up` from one JSON file named by
+ * It answers `--version`, `read-configuration` and `up` from one JSON file named by
  * `DEVCONTAINER_FAKE_STATE`, and appends every call to the same file, so a test
  * can ask what the launcher ran. Nothing here talks to a daemon, and nothing
  * builds anything: the launcher is what is under test.
  *
- * There is no `exec`. The CLI runs `up` and nothing else, and every command in
- * a container it made is a `docker exec` against the container id it reported -
- * so the commands, and what they answer, belong to the Docker fixture.
+ * There is no `exec`. The CLI runs `read-configuration` and `up`, and every
+ * command in a container it made is a `docker exec` against the container id it
+ * reported - so the commands, and what they answer, belong to the Docker fixture.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { parse } from 'jsonc-parser';
 
 const state = process.env.DEVCONTAINER_FAKE_STATE;
 if (state === undefined) {
@@ -89,6 +92,36 @@ if (args.includes('--version')) {
 }
 
 const verb = args[0];
+
+/*
+ * `read-configuration`: where the folder's definition is, found by the CLI's
+ * two names or at the `configFile` a test names, and the definition itself,
+ * parsed as leniently as the CLI parses it, under `configuration` with its
+ * `configFilePath` as the URI object the CLI prints.
+ */
+if (verb === 'read-configuration') {
+  const folder = String(args[args.indexOf('--workspace-folder') + 1]);
+  const named = [held.configFile, join(folder, '.devcontainer', 'devcontainer.json'), join(folder, '.devcontainer.json')]
+    .find((one) => typeof one === 'string' && existsSync(one));
+  if (named === undefined) {
+    process.stderr.write(`Dev container config (${join(folder, '.devcontainer', 'devcontainer.json')}) not found.\n`);
+    keep();
+    process.exit(1);
+  }
+  const configuration = parse(readFileSync(named, 'utf8'));
+  if (typeof configuration !== 'object' || configuration === null || Array.isArray(configuration)) {
+    process.stderr.write(`Dev container config (${named}) must contain a JSON object literal.\n`);
+    keep();
+    process.exit(1);
+  }
+  const path = decodeURIComponent(pathToFileURL(named).pathname);
+  process.stdout.write(`${JSON.stringify({
+    configuration: { ...configuration, configFilePath: { $mid: 1, fsPath: named, path, scheme: 'file' } },
+    workspace: { workspaceFolder: folder },
+  })}\n`);
+  keep();
+  process.exit(0);
+}
 
 if (verb === 'up') {
   // The CLI logs while it works, so the result is one line among several.
