@@ -1328,6 +1328,37 @@ const endedRuns = async (store: AutomationStore, times: number): Promise<string[
   return made;
 };
 
+/*
+ * A change to a definition is written down before the store holds it and
+ * says it, as VS Code's automation service persists a mutation before it
+ * publishes it: a write that fails fails the change, and the store is left as
+ * it was, saying nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L346-L350
+ */
+it('writes a definition down before it holds and says it, and a failed write changes nothing', () => {
+  const written: unknown[] = [];
+  let failing = false;
+  const store = memoryAutomations({
+    persist: (change) => {
+      if (failing) throw new Error('the disk is full');
+      written.push(change);
+    },
+  });
+  const said: unknown[] = [];
+  store.onChanged?.((event) => { said.push(event); });
+  store.create(ONE, {});
+  expect(written).toEqual([{ automation: expect.objectContaining({ resource: ONE }) }]);
+
+  failing = true;
+  expect(() => store.update(ONE, { enabled: false })).toThrow('the disk is full');
+  expect(store.get(ONE)?.definition.enabled).not.toBe(false);
+  expect(() => store.remove(ONE)).toThrow('the disk is full');
+  expect(store.get(ONE)).toBeDefined();
+  expect(() => store.create('ahp-automation:/two', {})).toThrow('the disk is full');
+  expect(store.get('ahp-automation:/two')).toBeUndefined();
+  expect(said).toEqual([{ automation: ONE }]);
+});
+
 it('keeps the newest ended runs, and only that many of them', async () => {
   const store = memoryAutomations();
   store.create(ONE, {});

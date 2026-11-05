@@ -178,7 +178,10 @@ cron in a named time zone, one Markdown file per definition under
 `<configDir>/automations`, and one catch-up run for what was missed while the
 host was down. A program that wants a clock writes its own `AutomationStore`
 over `memoryAutomations()`, with `parseCron` and `nextOccurrence` from this
-package.
+package. One that keeps the definitions somewhere passes `persist`, which is
+handed each change to a definition before the store holds it and says it, as
+VS Code's automation service persists before it publishes: a throw there fails
+the change and leaves the store as it was.
 A run reads `running` while any session it started is executing or waiting on a
 person, and the host says the execution ended through `settle`: a store that
 implements it records the terminal `completed`, `failed` or `cancelled` and

@@ -80,6 +80,16 @@ export interface AutomationsOptions {
    * host's agents and not a person's or a team's.
    */
   hasUsers?: () => boolean;
+  /**
+   * Write a change to a definition down before the store holds it and says
+   * it, as VS Code's automation service persists a mutation before it
+   * publishes it: a create, an update or a met condition hands the entry it
+   * would hold, and a removal the resource it takes away. A throw fails the
+   * change and leaves the store as it was, so nothing is announced that was
+   * not written.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L346-L350
+   */
+  persist?: (change: { automation: AutomationEntry } | { removed: string }) => void;
 }
 
 /** How many runs a summary list carries before it needs a cursor. */
@@ -631,8 +641,11 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
    */
   const stop = (automation: Automation): void => {
     if (automation.definition.enabled === false) return;
-    automation.definition = { ...automation.definition, enabled: false };
-    automation.modifiedAt = now();
+    const definition = { ...automation.definition, enabled: false };
+    const modifiedAt = now();
+    options.persist?.({ automation: entry({ ...automation, definition, modifiedAt }) });
+    automation.definition = definition;
+    automation.modifiedAt = modifiedAt;
     said({ automation: automation.resource });
   };
 
@@ -672,6 +685,7 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
         createdAt: at,
         modifiedAt: at,
       };
+      options.persist?.({ automation: entry(made) });
       held.set(resource, made);
       said({ automation: resource });
       return entry(made);
@@ -726,13 +740,16 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
         ...(customizations === undefined ? {} : { customizations }),
         modifiedAt: now(),
       };
+      options.persist?.({ automation: entry(after) });
       held.set(resource, after);
       said({ automation: resource });
       return entry(after);
     },
 
     remove: (resource) => {
-      if (!held.delete(resource)) return false;
+      if (!held.has(resource)) return false;
+      options.persist?.({ removed: resource });
+      held.delete(resource);
       for (const run of history.get(resource) ?? []) byRun.delete(run.resource);
       history.delete(resource);
       loaded.delete(resource);
