@@ -12,8 +12,8 @@ import type { LogoFetcher } from '../src/logos.js';
  *
  * A fetch is handed in rather than reached for, so a case answers without a
  * network and can count how many times the piece was asked for. The cases on
- * the guarded fetch hand none, and name an address the guard blocks before a
- * socket opens.
+ * the guarded fetch hand none, and name a URL it refuses before a socket
+ * opens.
  */
 
 let home: string;
@@ -131,12 +131,12 @@ describe('logoOf', () => {
     expect(await read).toEqual({ problem: 'the logo of ap-demo could not be fetched: the read took longer than 10 seconds' });
   });
 
-  it('reads through the guarded fetch: https: alone, an address that is not unicast blocked', async () => {
+  it('reads through the guarded fetch: https: alone, an address in the host\'s own network refused', async () => {
     const plain = await logoOf('ap-demo', 'http://example.com/demo.png', home);
     expect(plain.problem).toBe('the logo of ap-demo could not be fetched: only an https: URL is fetched, and http: is not');
 
     const inside = await logoOf('ap-other', 'https://169.254.169.254/latest/meta-data/logo.png', home);
-    expect(inside.problem).toContain('SSRF protection: refusing to connect to 169.254.169.254 (resolved 169.254.169.254)');
+    expect(inside.problem).toBe('the logo of ap-other could not be fetched: 169.254.169.254 answers on an address that this plugin does not fetch');
   });
 
   it('makes no fetch when there is nowhere to cache', async () => {

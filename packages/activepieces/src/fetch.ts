@@ -1,11 +1,11 @@
 /**
- * The fetch a piece's logo takes, in the plugin's own process.
+ * The fetch one `FILE` value's `https:` URL takes, in the engine, and a
+ * piece's logo, in the plugin's own process.
  *
  * Only `https:` is read, and the address a name resolves to is checked before
- * a socket opens, by Activepieces' classifier: an address that is not unicast
- * is blocked, in `SSRFBlockedError`'s words. Any one such address blocks the
- * call, because a name that answers on two is a name this plugin does not
- * trust either way.
+ * a socket opens: a loopback, link-local, private or unspecified address is
+ * refused. Any one such address refuses the call, because a name that answers
+ * on two is a name this plugin does not trust either way.
  *
  * The check runs after the lookup and again on every redirect, because a
  * public URL may answer with one that points into the host's own network. The
@@ -20,7 +20,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
-import { SSRFBlockedError, isBlockedIp } from './guard.ts';
 
 /** One address a host name resolved to. */
 export interface Address {
@@ -54,21 +53,25 @@ export interface FetchOptions {
   request?: Requester;
   /** The most redirects to follow; five otherwise. */
   redirects?: number;
-  /** The most bytes one answer may hold; 256 KB otherwise. */
+  /** The most bytes one answer may hold; 32 MB otherwise. */
   maxBytes?: number;
-  /** The longest one request may take; 10 s otherwise. */
+  /** The longest one request may take; 30 s otherwise. */
   timeoutMs?: number;
 }
 
+/** The most redirects one fetch follows before it is refused. */
+const MOST_REDIRECTS = 5;
+
 /**
- * The bounds of VS Code's remote image read, which this fetch takes unless a
- * caller names its own: five redirects followed by hand, ten seconds, and an
- * image of 256 KB, VS Code's bound for an icon's.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
+ * The most bytes one answer may hold.
+ *
+ * The host reads an attachment up to the same size, so a file this fetch reads
+ * is of a size the session already takes in.
  */
-export const MOST_REDIRECTS = 5;
-export const MOST_BYTES = 256 * 1024;
-export const WITHIN_MS = 10_000;
+const MOST_BYTES = 32 * 1024 * 1024;
+
+/** The longest one request may take, so a server that never answers costs 30 s. */
+const WITHIN_MS = 30_000;
 
 /** The name a URL is for, with the brackets of an IPv6 literal removed. */
 const hostOf = (url: URL): string => url.hostname.replace(/^\[|\]$/gu, '');
@@ -158,6 +161,109 @@ const httpsOf = (most: number, within: number): Requester => (url, address) => n
   asked.end();
 });
 
+/** The four octets of an IPv4 address, as written. */
+const octets = (text: string): number[] => text.split('.').map((one) => Number(one));
+
+/** Whether an IPv4 address is one this plugin does not fetch. */
+const refusedV4 = (taken: readonly number[]): boolean => {
+  if (taken.length !== 4 || taken.some((one) => !Number.isInteger(one) || one < 0 || one > 255)) return true;
+  const a = taken[0] ?? 0;
+  const b = taken[1] ?? 0;
+  return a === 0 // Unspecified, and the whole of `0.0.0.0/8`.
+    || a === 127 // Loopback.
+    || (a === 169 && b === 254) // Link-local, the metadata service among them.
+    || a === 10 // Private.
+    || (a === 172 && b >= 16 && b <= 31) // Private.
+    || (a === 192 && b === 168) // Private.
+    || (a === 100 && b >= 64 && b <= 127) // Shared address space, `100.64.0.0/10`.
+    || (a === 198 && (b === 18 || b === 19)) // Benchmarking, `198.18.0.0/15`.
+    || (a >= 224 && a <= 239) // Multicast, `224.0.0.0/4`.
+    || a >= 240; // Reserved, `240.0.0.0/4` and the broadcast address in it.
+};
+
+/**
+ * One written group as 16-bit numbers.
+ *
+ * An IPv4 address written as the last group is two groups: that is how
+ * `::ffff:127.0.0.1`, and the older `::127.0.0.1`, are written.
+ */
+const groupOf = (text: string): number[] | undefined => {
+  if (!text.includes('.')) return /^[0-9a-f]{1,4}$/iu.test(text) ? [parseInt(text, 16)] : undefined;
+  const v4 = octets(text);
+  if (v4.length !== 4 || v4.some((one) => !Number.isInteger(one) || one < 0 || one > 255)) return undefined;
+  return [((v4[0] ?? 0) << 8) | (v4[1] ?? 0), ((v4[2] ?? 0) << 8) | (v4[3] ?? 0)];
+};
+
+/** The eight 16-bit groups of an IPv6 address, or nothing when it cannot be read. */
+function groupsOf(address: string): number[] | undefined {
+  const bare = address.split('%')[0] ?? '';
+  if (bare === '') return undefined;
+  const halves = bare.split('::');
+  if (halves.length > 2) return undefined;
+  const written = (half: string): number[] | undefined => {
+    const out: number[] = [];
+    if (half === '') return out;
+    for (const one of half.split(':')) {
+      const group = groupOf(one);
+      if (group === undefined) return undefined;
+      out.push(...group);
+    }
+    return out;
+  };
+  const left = written(halves[0] ?? '');
+  const right = halves.length === 2 ? written(halves[1] ?? '') : [];
+  if (left === undefined || right === undefined) return undefined;
+  const fill = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if (halves.length === 2 && fill < 0) return undefined;
+  const out = halves.length === 2 ? [...left, ...new Array<number>(fill).fill(0), ...right] : left;
+  return out.length === 8 ? out : undefined;
+}
+
+/** The IPv4 address the last two groups of an IPv6 address hold. */
+const embeddedV4 = (groups: readonly number[]): number[] => [
+  (groups[6] ?? 0) >> 8,
+  (groups[6] ?? 0) & 0xff,
+  (groups[7] ?? 0) >> 8,
+  (groups[7] ?? 0) & 0xff,
+];
+
+/** Whether an IPv6 address is one this plugin does not fetch. */
+const refusedV6 = (address: string): boolean => {
+  const groups = groupsOf(address);
+  if (groups === undefined) return true;
+  // The unspecified address `::`.
+  if (groups.every((one) => one === 0)) return true;
+  // The loopback address `::1`.
+  if (groups.slice(0, 7).every((one) => one === 0) && groups[7] === 1) return true;
+  // An IPv4 address written as IPv6: `::ffff:a.b.c.d`, and the older `::a.b.c.d`.
+  const mapped = groups.slice(0, 5).every((one) => one === 0) && groups[5] === 0xffff;
+  const compatible = groups.slice(0, 6).every((one) => one === 0);
+  if (mapped || compatible) return refusedV4(embeddedV4(groups));
+  // Link-local `fe80::/10`, and the unique local addresses `fc00::/7`.
+  if (((groups[0] ?? 0) & 0xffc0) === 0xfe80) return true;
+  if (((groups[0] ?? 0) & 0xfe00) === 0xfc00) return true;
+  // Multicast, `ff00::/8`.
+  if (((groups[0] ?? 0) & 0xff00) === 0xff00) return true;
+  // A NAT64 address, `64:ff9b::/96`, is the IPv4 address it holds.
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((one) => one === 0)) {
+    return refusedV4(embeddedV4(groups));
+  }
+  return false;
+};
+
+/**
+ * Whether an address is one this plugin does not fetch.
+ *
+ * A string that is not an address is refused too, so an answer this code
+ * cannot read is never one it connects to.
+ */
+export function refused(address: string): boolean {
+  const version = isIP(address);
+  if (version === 4) return refusedV4(octets(address));
+  if (version === 6) return refusedV6(address);
+  return true;
+}
+
 /** One URL, or the refusal that repeats nothing of it. */
 const parsed = (url: string): URL => {
   try {
@@ -230,8 +336,9 @@ export async function fetched(url: string, options: FetchOptions = {}): Promise<
     const version = isIP(name);
     const addresses = version === 0 ? await lookup(name) : [{ address: name, family: version }];
     if (addresses.length === 0) throw new Error(`${name} did not resolve to an address`);
-    const blocked = addresses.find((one) => isBlockedIp(one.address));
-    if (blocked !== undefined) throw new SSRFBlockedError(name, blocked.address);
+    if (addresses.some((one) => refused(one.address))) {
+      throw new Error(`${name} answers on an address that this plugin does not fetch`);
+    }
     const answer = checkedSize(await withinTime(request(at, (addresses[0] as Address).address), within, at), at, most);
     const location = answer.headers['location'];
     if (answer.status >= 300 && answer.status < 400 && location !== undefined && location !== '') {

@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { installSsrfGuard } from './guard.ts';
 import { inputOf } from './props.ts';
 import type { Props } from './props.ts';
 import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store, ValidateRequest } from './wire.js';
@@ -61,9 +60,6 @@ const pinTls = (): void => {
 };
 
 pinTls();
-
-// The SSRF guard, before any piece loads, as the engine installs it at start.
-installSsrfGuard();
 
 /** The values of a static dropdown, or nothing when the prop is not one. */
 const staticOptions = (prop: Record<string, unknown>): unknown[] | undefined => {

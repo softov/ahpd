@@ -127,7 +127,7 @@ describe('the pieces are adapters', () => {
       const found = adapter(name).capabilities.find((one) => one.name === action);
       expect(found, `${name} ${action}`).toBeDefined();
       const properties = Object.values((found?.input?.['properties'] ?? {}) as Record<string, Record<string, unknown>>);
-      const files = properties.filter((one) => String(one['description'] ?? '').includes('A URL, a base64 data: URI'));
+      const files = properties.filter((one) => String(one['description'] ?? '').includes('An https: URL, a data: URI'));
       expect(files, `${name} ${action}`).not.toHaveLength(0);
       for (const one of files) expect(one['type'], `${name} ${action}`).toBe('string');
     }

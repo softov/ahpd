@@ -75,8 +75,8 @@ export function propOf(prop: PropDescription): Record<string, unknown> | undefin
     case 'FILE':
       schema['type'] = 'string';
       schema['description'] = described
-        ? `${prop.description ?? ''} A URL, a base64 data: URI or the name of a session attachment.`
-        : 'A URL, a base64 data: URI or the name of a session attachment.';
+        ? `${prop.description ?? ''} An https: URL, a data: URI or the name of a session attachment.`
+        : 'An https: URL, a data: URI or the name of a session attachment.';
       break;
     case 'NUMBER':
       schema['type'] = 'number';
