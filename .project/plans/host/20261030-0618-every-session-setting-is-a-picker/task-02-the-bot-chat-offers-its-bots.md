@@ -1,6 +1,6 @@
 ---
 title: The bot chat offers its bots
-status: implemented
+status: done
 depends: [task-01-a-harness-answers-its-own-setting.md]
 layer: bot
 refs:

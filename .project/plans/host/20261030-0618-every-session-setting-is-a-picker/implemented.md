@@ -25,6 +25,7 @@ A client now draws the Bot chat's bot and an ACP harness's approvals as pickers 
 - `packages/agent-acp/test/agent-acp-presets.test.ts`, 17 tests, including the row's modes and the text box where a row has none. The whole `packages/agent-acp/test` folder passes, 285 tests.
 - `packages/sdk/test/session-config-order.test.ts`, 3 tests. Claude Code's form starts `computer, isolation, branch`, a host with no computer plugin starts `isolation, branch`, and a running session reports the same order.
 - `packages/sdk/test/host-sessionconfig.test.ts`, `session-scope.test.ts`, `session-fixed-key.test.ts`, `plugin-host.test.ts`, `host-snapshots.test.ts`, `conformance.test.ts` and `wire.test.ts` pass on the changed folds.
+- On 2026-11-04 Softov checked the form in a client: the `Bot` picker lists each bot by its name, and the form order and the ACP approval modes pass.
 - `pnpm exec tsc -p tsconfig.json --noEmit` prints nothing.
 
 ## Departures from the plan
@@ -35,5 +36,6 @@ A client now draws the Bot chat's bot and an ACP harness's approvals as pickers 
 
 ## Left for later
 
+- The chat a picked bot opens does nothing. See [the brief](../../../briefs/bot-master-chat.md).
 - The remaining ACP rows carry no preset modes: Copilot, OpenCode, Kilo, Goose, Pi, dsh, Devin, Cursor, Amp, Cline and omp.
 - Each stays a text box until its first session names its modes.
