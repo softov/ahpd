@@ -56,11 +56,13 @@
     "test": "cd ../.. && vitest run packages/bot/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.14 <1"
+    "@ahpd/sdk": ">=0.14 <1",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*",
-    "@cofold/yaml": "^0.3.0"
+    "@cofold/yaml": "^0.3.0",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",

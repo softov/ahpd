@@ -1035,11 +1035,14 @@ The plugin speaks the protocol with those three and the types `@ahpd/sdk` alread
 Call it from `listening` or later, which is when a host exists to accept a connection.
 Asked for during `apply`, it throws a sentence saying so rather than answering a connection to nothing.
 Every call answers a connection of its own, and the daemon closes each one when `stopping` is raised, so a plugin that wants a shorter life closes its own.
+The handshake offers every protocol version the plugin speaks, most preferred first, as the specification has a client offer them: `SUPPORTED_PROTOCOL_VERSIONS` from `@microsoft/agent-host-protocol` is that list.
 
 ```ts
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+
 host.on('listening', async () => {
   const conn = host.connect();
-  await conn.request('initialize', { clientId: 'bot', protocolVersions: ['0.9.0'] });
+  await conn.request('initialize', { clientId: 'bot', protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
   await conn.request('createSession', { channel: 'ahp-session:/bot', provider: 'claude' });
   const opened = await conn.request('subscribe', { channel: 'ahp-session:/bot' }) as {
     snapshot: { state: { defaultChat: string } };
@@ -1049,7 +1052,12 @@ host.on('listening', async () => {
   await conn.request('subscribe', { channel: chat });
   conn.notify('dispatchAction', {
     channel: chat,
-    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'Say hello.' } },
+    action: {
+      type: 'chat/turnStarted',
+      turnId: 't1',
+      startedAt: new Date().toISOString(),
+      message: { text: 'Say hello.', origin: { kind: 'systemNotification' } },
+    },
   });
 });
 ```

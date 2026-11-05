@@ -18,6 +18,7 @@
  */
 
 import { reason } from '@ahpd/sdk';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { Plugin, PluginHost, PluginPeer } from '@ahpd/sdk';
 import { hostname as machineName } from 'node:os';
 import { devtunnelAdapter, OpenTunnels } from './adapter.js';
@@ -114,6 +115,10 @@ const CLIENT = name;
  * `connect` is only answered from `listening` on, and a stored connector may
  * open while the host is still being built. So the first call waits for that
  * event rather than reporting a failure the next tick would have avoided.
+ *
+ * The handshake offers every version the package speaks, most preferred
+ * first, as the spec has a client offer them (docs/specification/versioning.md
+ * at spec/v1.0.0, "Negotiation").
  */
 const throughHost = (host: PluginHost): {
   secret: (id: string, values: Record<string, string>) => Promise<void>;
@@ -127,7 +132,7 @@ const throughHost = (host: PluginHost): {
     await started;
     opened ??= (async () => {
       const conn = host.connect();
-      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
       return conn;
     })();
     const failed = (): void => { opened = undefined; };

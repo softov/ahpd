@@ -76,8 +76,11 @@ const actions = (notes: Notes, channel: string): Bag[] => notes
  * about a grant.
  *
  * `more` is what a case adds to the host, such as the shells a command runs in.
+ * `grants` is what the plugin's own entry holds, as the daemon's entry does: a
+ * wake starts its back session in the bot's folder, which takes
+ * `session:trust`.
  */
-function made(more: Partial<HostOptions> = {}) {
+function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] = []) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-chat-'));
   loose.push(root);
   /** Where a bot's own folder goes, which is the plugin's `root` option. */
@@ -101,6 +104,7 @@ function made(more: Partial<HostOptions> = {}) {
     sessions: () => sessions,
     records: () => records,
     alert: () => {},
+    grants,
   });
   apply(plugin, { root: bots });
 
@@ -1278,6 +1282,42 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   expect(calls).toHaveLength(1);
   expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: CHAT }, result: late }])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, CHAT)));
+});
+
+it('offers its host every protocol version the package speaks, newest first, once a message wakes a bot', async () => {
+  const { host, contribution } = made({}, ['session:trust']);
+  // The plugin's own connection, served by this host, with what it offered kept.
+  const offered: unknown[] = [];
+  const accept = host.accept.bind(host);
+  contribution.connects.host = {
+    ...host,
+    accept: (from, principal, root, opened) => {
+      const served = accept(from, principal, root, opened);
+      return {
+        ...served,
+        handle: (request) => {
+          if (request.method === 'initialize') offered.push((request.params as Bag)['protocolVersions']);
+          return served.handle(request);
+        },
+      };
+    },
+  };
+  const client = await anyone(host);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
+  });
+  // The chat a read of the bot opens, which is the chat a message wakes it in.
+  const read = await client.handle({ method: 'resourceRead', params: { uri: 'bot://backer' } }) as { data: string };
+  const chat = chatUriFor(String((JSON.parse(read.data) as Bag)['chat']));
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
+  });
+
+  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
 });
 
 it('refuses a chat with a bot that is not there', async () => {

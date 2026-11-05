@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { connect, createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
+import type { Host as DaemonHost } from '../../sdk/src/types/host.js';
 import type { Alert, LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
 import type { Tunnel, TunnelReport } from '../../sdk/src/types/tunnels.js';
 import {
@@ -356,6 +357,45 @@ it('registers the connector and the devtunnel kind', async () => {
   expect(contribution.tunnelKinds?.['devtunnel']?.schema).toHaveProperty(
     'properties.connector.x-ahpd-connector', 'devtunnel',
   );
+});
+
+it('offers its host every protocol version the package speaks, newest first, when a refresh writes its secret back', async () => {
+  // GitHub's answer to the refresh a connector opens with.
+  vi.stubGlobal('fetch', async () => new Response(
+    JSON.stringify({ access_token: 'token-2', refresh_token: 'refresh-2' }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  ));
+  try {
+    const { host, contribution } = pluginHost('tunnel', context());
+    await apply(host, { service: unusedService() });
+    // A host that answers every request and keeps what the handshake offered.
+    const offered: unknown[] = [];
+    contribution.connects.host = {
+      accept: () => ({
+        handle: (request: { method: string; params?: Record<string, unknown> }) => {
+          if (request.method === 'initialize') offered.push(request.params?.['protocolVersions']);
+          return {};
+        },
+        close: () => {},
+      }),
+    } as unknown as DaemonHost;
+    for (const listener of contribution.events.listening ?? []) {
+      await listener.handle({ type: 'listening', runtime: 'node', host: '127.0.0.1', port: 9187, guarded: false }, listener.context);
+    }
+
+    const close = contribution.adapters['devtunnel']?.open({
+      id: 'mine', adapter: 'devtunnel', owner: 'host', config: { token: 'token-1', refresh: 'refresh-1' },
+    });
+    try {
+      await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
+    }
+    finally {
+      if (typeof close === 'function') close();
+    }
+  }
+  finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it('adds no system tunnel until a connector is set', async () => {

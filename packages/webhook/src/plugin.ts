@@ -1,4 +1,5 @@
 import { reason } from '@ahpd/sdk';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { WEBHOOK_TRIGGER } from './automation.js';
 import { botTarget, turnEnds } from './bot.js';
 import { webhookAdapter } from './adapter.js';
@@ -205,7 +206,13 @@ export const apply: Plugin['apply'] = (host, options) => {
     ? Math.floor(askedBytes)
     : defaults.maxBodyBytes;
 
-  /** The connection, once the daemon listens and the host has answered `initialize`. */
+  /**
+   * The connection, once the daemon listens and the host has answered `initialize`.
+   *
+   * The handshake offers every version the package speaks, most preferred
+   * first, as the spec has a client offer them (docs/specification/versioning.md
+   * at spec/v1.0.0, "Negotiation").
+   */
   let opened: Promise<Opened> | undefined;
   host.on('listening', () => {
     opened = (async () => {
@@ -213,7 +220,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       const sender = dispatcher(conn, CLIENT, ECHO_MS, (channel) => {
         host.problem(`${name}: the host did not echo a turn in ${channel} in ${ECHO_MS / 1000} seconds`);
       });
-      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
       return { conn, sender };
     })();
     opened.catch((error: unknown) => { host.problem(`${name}: the connection to the host failed: ${reason(error)}`); });
