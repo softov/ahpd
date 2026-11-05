@@ -199,17 +199,19 @@ The session tools are bounded the way the reference host bounds its own, with it
 | Bounded | Limit | The refusal |
 | --- | --- | --- |
 | Spawn depth | 3 links below the session a chain began in | `Refusing to create a session: recursion limit reached (max spawn depth 3). This session was itself created 3 level(s) deep.` |
-| Sessions | 50 per session tree, made by `create_session` with `independent` | `Refusing to create more than 50 sessions from server tools in this session tree.` |
-| Chats | 50 per session tree, made by `create_chat` or by `create_session` with `currentSession` | `Refusing to create more than 50 chats from server tools in this session tree.` |
-| Messages | 100 per session tree, sent by `send_message` | `Refusing to send more than 100 messages from server tools in this session tree.` |
+| Sessions | 50 per session tree in the last hour, made by `create_session` with `independent` | `Refusing to create more sessions: this session tree already used 50 of 50 allowed in the last 60 minutes. The limit applies to each session tree separately and frees up as older actions leave that window. Retry after <n> seconds, or turn off agent orchestration limits in settings.` |
+| Chats | 50 per session tree in the last hour, made by `create_chat` or by `create_session` with `currentSession` | the same, with `create more chats` |
+| Messages | 100 per session tree in the last hour, sent by `send_message` | the same, with `send more messages` and `100 of 100` |
 
 Depth is per session, and a chain rather than a tree: it is how many `create` links sit above the session making the call, so a session nothing started is at 0 and one the tool made inside another is one link deeper. A session three links down may not make one of its own, so a chain is four sessions long at most. The number in `created 3 level(s) deep` is the depth of the session that was refused, which is 3 or more.
 
-The three counts are kept per session tree: a session nothing started, and everything the `create` tool grew from it, read through the parent links the store keeps. This is the one place the bounds differ from the reference host's, whose counters belong to its tool group and are therefore shared by every session and every person on one daemon; a tree here spends its own budget instead, so one session's runaway agent leaves what another session may make untouched. A count is taken against the session the tool runs in, and not against whatever the call makes or reaches. A message is counted in the tree of the session that sent it, however many sessions it is sent to. A chat or a session is counted in the tree whose tools made it. Counting the target instead would give one runaway a fresh hundred messages for every session it can name, and fifty more chats in each. Each is taken only once the thing it counts has happened, so a call refused for any other reason - a link naming a chat the session does not run, a turn whose person does not hold `session:write` - is not counted against the budget.
+The three counts are kept per session tree: a session nothing started, and everything the `create` tool grew from it, read through the parent links the store keeps. The reference host keeps them per session; a tree here spends its own budget, so one session's runaway agent leaves what another session may make untouched, and the refusal says the tree. A count is taken against the session the tool runs in, and not against whatever the call makes or reaches. A message is counted in the tree of the session that sent it, however many sessions it is sent to. A chat or a session is counted in the tree whose tools made it. Counting the target instead would give one runaway a fresh hundred messages for every session it can name, and fifty more chats in each. Each is taken only once the thing it counts has happened, so a call refused for any other reason - a link naming a chat the session does not run, a turn whose person does not hold `session:write` - is not counted against the budget.
+
+Each count is taken over a sliding hour, as the reference host's are, so a tree that reached a limit makes again as its oldest actions leave that hour, and the refusal says how many seconds that is away. The counts live in memory, as the reference host's do, so a restart begins them again.
+
+A client turns the depth and the three counts off together with `agentOrchestrationLimits: off` in root config, VS Code's key for it, and on again with `on`, the default.
 
 Only the tools are counted. A client's own `createSession`, and a message it sends with `chat/turnStarted`, are unbounded here: a count is a bound on what an agent may start on its own, and a person at a window is answerable for what they start.
-
-The counters live in memory, as the reference host's do, so a restart is a new process with new counters. This bounds a runaway rather than metering a tree's work: an install that wants a tree to make fifty more sessions restarts the daemon.
 
 ## See also
 

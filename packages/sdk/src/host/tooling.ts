@@ -64,28 +64,26 @@ const MAX_SENT_MESSAGES = 100;
 const RULE_MOST = 4096;
 
 /**
- * What one session tree may make, and what it is told when it has.
+ * VS Code's `orchestrationLimitWindowMs`: the sliding window each count is
+ * taken over, so room frees up as older actions leave it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L43-L44
+ */
+const LIMIT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * What one session tree may make in the window, and the action its refusal
+ * names.
  *
- * VS Code's three counters and its refusal words, from `sessionServerTools.ts`
- * - `createdSessionCount`, `createdChatCount` and `sentMessageCount`, refused
- * as "Refusing to create/send more than N ... from server tools in this
- * process." One process is what VS Code bounds; here it is one session tree,
- * so the sentence says the tree, which is what is true of it - the plan's own
- * answer to what the counts are kept per.
+ * VS Code's three limiters and its refusal, from `sessionServerTools.ts`, each
+ * counted over the window. VS Code counts per session; here it is one session
+ * tree, the plan's own answer to what the counts are kept per, so the
+ * sentence says the tree, which is what is true of it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
  */
 const TREE_LIMITS = {
-  sessions: {
-    max: MAX_CREATED_SESSIONS,
-    words: `Refusing to create more than ${MAX_CREATED_SESSIONS} sessions from server tools in this session tree.`,
-  },
-  chats: {
-    max: MAX_CREATED_CHATS,
-    words: `Refusing to create more than ${MAX_CREATED_CHATS} chats from server tools in this session tree.`,
-  },
-  messages: {
-    max: MAX_SENT_MESSAGES,
-    words: `Refusing to send more than ${MAX_SENT_MESSAGES} messages from server tools in this session tree.`,
-  },
+  sessions: { max: MAX_CREATED_SESSIONS, action: 'create more sessions' },
+  chats: { max: MAX_CREATED_CHATS, action: 'create more chats' },
+  messages: { max: MAX_SENT_MESSAGES, action: 'send more messages' },
 } as const;
 
 /** Which of the three a tree is being asked about. */
@@ -1184,20 +1182,17 @@ export function createTooling(ctx: HostContext): Tooling {
       : [])));
 
   /**
-   * What each session tree has made, by the id of the session at its top.
+   * When each session tree made each of the three, inside the window, by the
+   * id of the session at its top.
    *
-   * VS Code keeps its three counters in the tool group, which one process
-   * shares between every session and every person on it. Kept per tree here:
-   * one tree is a session somebody started and everything the `create` tool
-   * grew from it, so a runaway agent exhausts its own budget and not the
-   * host's, and a second tree is made from nothing.
-   *
-   * In memory, as VS Code's are. A restart is a new process with new counters,
-   * which is a bound on a runaway and not a quota: an install that wants a
-   * tree to make fifty more sessions restarts.
+   * Kept per tree: one tree is a session somebody started and everything the
+   * `create` tool grew from it, so a runaway agent exhausts its own budget and
+   * not the host's, and a second tree is made from nothing. A time older than
+   * the window is dropped as the tree is next asked about, so a tree that hit
+   * a limit recovers, as VS Code's limiter frees room. In memory, as VS Code's
+   * are.
    */
-  const counted = new Map<string, Record<Made, number>>();
-  const NOTHING_COUNTED: Record<Made, number> = { sessions: 0, chats: 0, messages: 0 };
+  const counted = new Map<string, Record<Made, number[]>>();
 
   /**
    * The session at the top of one session's tree, which is the id its counts
@@ -1209,17 +1204,41 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const treeOf = (id: string): string => kept.rootOf?.(id) ?? id;
 
-  const countsIn = (tree: string): Record<Made, number> => counted.get(tree) ?? NOTHING_COUNTED;
+  /** A tree's times for one of the three that are still inside the window. */
+  const recentIn = (tree: string, what: Made): number[] => {
+    const cutoff = Date.now() - LIMIT_WINDOW_MS;
+    return (counted.get(tree)?.[what] ?? []).filter((time) => time > cutoff);
+  };
 
-  /** Refuse one more of something a tree has no room for, in the host's words. */
+  /**
+   * Whether the limits are enforced: VS Code's `agentOrchestrationLimits`, the
+   * root key this host declares, `on` unless a client turned it `off`. It
+   * covers the spawn depth as well as the three counts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2306
+   */
+  const enforced = (): boolean => ctx.rootConfig.agentOrchestrationLimits !== 'off';
+
+  /**
+   * Refuse one more of something a tree has no room for, in VS Code's words
+   * with the tree where VS Code names the session.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
+   */
   const room = (tree: string, what: Made): void => {
+    if (!enforced()) return;
     const limit = TREE_LIMITS[what];
-    if (countsIn(tree)[what] >= limit.max) throw new Error(limit.words);
+    const recent = recentIn(tree, what);
+    if (recent.length < limit.max) return;
+    const retryAfterSeconds = Math.max(1, Math.ceil(((recent[0] ?? Date.now()) + LIMIT_WINDOW_MS - Date.now()) / 1000));
+    throw new Error(`Refusing to ${limit.action}: this session tree already used ${recent.length} of ${limit.max}`
+      + ` allowed in the last ${Math.round(LIMIT_WINDOW_MS / 60000)} minutes. The limit applies to each session tree`
+      + ' separately and frees up as older actions leave that window.'
+      + ` Retry after ${retryAfterSeconds} seconds, or turn off agent orchestration limits in settings.`);
   };
 
   /** One more, counted once the thing it counts has actually been made. */
   const countUp = (tree: string, what: Made): void => {
-    counted.set(tree, { ...countsIn(tree), [what]: countsIn(tree)[what] + 1 });
+    const held = counted.get(tree) ?? { sessions: [], chats: [], messages: [] };
+    counted.set(tree, { ...held, [what]: [...recentIn(tree, what), Date.now()] });
   };
 
   /**
@@ -1781,7 +1800,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const tree = treeOf(idOf(uri));
       room(tree, 'sessions');
       const depth = kept.depthOf?.(idOf(uri)) ?? 0;
-      if (depth >= MAX_SPAWN_DEPTH) {
+      if (enforced() && depth >= MAX_SPAWN_DEPTH) {
         throw new Error(
           `Refusing to create a session: recursion limit reached (max spawn depth ${MAX_SPAWN_DEPTH}).`
           + ` This session was itself created ${depth} level(s) deep.`,

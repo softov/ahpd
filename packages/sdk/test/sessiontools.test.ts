@@ -610,6 +610,17 @@ describe("VS Code's limits on spawning and messaging", () => {
   const telling = (at: number, to: string, message: string): Promise<Answer> =>
     call('send_message', { session: to, message }, at);
 
+  /**
+   * VS Code's refusal for a tree out of room, with the tree where VS Code
+   * names the session.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
+   */
+  const outOfRoom = (action: string, max: number): RegExp => new RegExp(
+    `^Refusing to ${action}: this session tree already used ${max} of ${max} allowed in the last 60 minutes\\.`
+    + ' The limit applies to each session tree separately and frees up as older actions leave that window\\.'
+    + ' Retry after \\d+ seconds, or turn off agent orchestration limits in settings\\.$',
+  );
+
   /*
    * The reference host's create carries the session, chat and turn it was
    * made from on the new session's summary, under `agentHost/createdBySession`,
@@ -665,7 +676,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await spawn(first.at, 'one more');
-    expect(said(refused)).toBe('Refusing to create more than 50 sessions from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('create more sessions', 50));
     expect(refused.isError).toBe(true);
 
     // A second tree is a session nothing started, and its budget is its own.
@@ -673,6 +684,49 @@ describe("VS Code's limits on spawning and messaging", () => {
     // runaway agent does not spend what another session may make.
     const elsewhere = await started(client, 'elsewhere');
     expect(said(await spawn(elsewhere.at, 'its own child'))).toMatch(/^New session created \(/);
+  });
+
+  /*
+   * Counted over VS Code's sliding hour, so a tree that hit a limit recovers
+   * as its oldest actions leave the window.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L43-L94
+   */
+  it('makes a session again once the oldest of its tree\'s fifty has left the hour', async () => {
+    const client = await top();
+    const first = await started(client, 'first');
+    for (let i = 0; i < 50; i++) {
+      expect(said(await spawn(first.at, `made ${i}`)), `made ${i}`).toMatch(/^New session created \(/);
+    }
+    expect(said(await spawn(first.at, 'one more'))).toMatch(outOfRoom('create more sessions', 50));
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000 + 1000);
+      expect(said(await spawn(first.at, 'an hour on'))).toMatch(/^New session created \(/);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * VS Code's `agentOrchestrationLimits`, a root key this host declares: `off`
+   * lifts the spawn depth and the counts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1197-L1200
+   */
+  it('makes a session past spawn depth 3 once a client turned agentOrchestrationLimits off', async () => {
+    const client = await top();
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: ROOT, action: { type: 'root/configChanged', config: { agentOrchestrationLimits: 'off' } } },
+    });
+    await settle(4);
+    const first = await started(client, 'first');
+    let at = first.at;
+    for (const title of ['second', 'third', 'fourth', 'fifth']) {
+      expect(said(await spawn(at, title)), title).toMatch(/^New session created \(/);
+      at = sessionQueries().length - 1;
+    }
   });
 
   it('refuses the 51st chat in one tree, by either tool that makes one', async () => {
@@ -683,13 +737,13 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await call('create_chat', { prompt: 'one more' }, first.at);
-    expect(said(refused)).toBe('Refusing to create more than 50 chats from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('create more chats', 50));
     expect(refused.isError).toBe(true);
 
     // `create_session` with `currentSession` makes a chat too, and spends the
     // same budget. The reference host counts them as one, and so does this.
     expect(said(await call('create_session', { relationship: 'currentSession', title: 'x', prompt: 'y' }, first.at)))
-      .toBe('Refusing to create more than 50 chats from server tools in this session tree.');
+      .toMatch(outOfRoom('create more chats', 50));
   });
 
   it('refuses the 101st message sent through the tools', async () => {
@@ -704,7 +758,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await telling(from.at, to.held, 'one more');
-    expect(said(refused)).toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('send more messages', 100));
     expect(refused.isError).toBe(true);
   });
 
@@ -727,7 +781,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       expect(said(await telling(from.at, to.held, `word ${i}`)), `word ${i}`).toMatch(/^Message (sent|queued) \(/);
     }
     expect(said(await telling(from.at, to.held, 'one more')))
-      .toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+      .toMatch(outOfRoom('send more messages', 100));
   });
 
   it('counts messages sent to any session against the sender, not the target', async () => {
@@ -751,7 +805,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await telling(from.at, two.held, 'one more');
-    expect(said(refused)).toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('send more messages', 100));
     expect(refused.isError).toBe(true);
     // And the sessions it was writing into are untouched by the refusal: what
     // ran out is the sender's budget, not theirs.
