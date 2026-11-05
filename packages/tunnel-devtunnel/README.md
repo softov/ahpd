@@ -51,7 +51,9 @@ A `devtunnel` connector is one GitHub account, signed in with a device code. In 
 
 A second sign-in on an existing connector from the same account keeps it. From another account it is refused, because a connector is one account. Set `allowAccountChange` to `true` to let a sign-in replace the account instead.
 
-The token lasts eight hours. The plugin refreshes it when the connector opens and every seven hours after. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered.
+The token lasts eight hours. The plugin refreshes it when the connector opens, then keeps it alive as VS Code's CLI does: again at two thirds of the lifetime GitHub gives the new token, or an hour on when GitHub gives none. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered; it is tried again in ten seconds, unless GitHub answered with a 4xx, which ends the refreshing until you sign in again.
+
+A sign-in that polls too soon is told so by GitHub's `slow_down` or by a 429, and either adds five seconds to the wait, as VS Code's CLI does.
 
 The plugin needs no grant for that: the host lets the plugin that registered an adapter write the secrets of that adapter's connectors and ask for their check, whoever owns them.
 

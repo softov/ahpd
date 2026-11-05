@@ -1,7 +1,7 @@
 export { apply, defaults, name, title } from './plugin.js';
 export type { Options, Seams } from './plugin.js';
 export {
-  CLIENT_ID, devtunnelAdapter, OpenTunnels, REFRESH_MS,
+  CLIENT_ID, DEFAULT_REFRESH_MS, devtunnelAdapter, MIN_REFRESH_MS, OpenTunnels,
   ACCESS_TOKEN_URL, ACCOUNT_URL, DEVICE_CODE_URL, TUNNELS_URL,
 } from './adapter.js';
 export type { DevtunnelAdapterOptions, OpenTunnel } from './adapter.js';
