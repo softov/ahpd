@@ -496,20 +496,6 @@ export function createHost(options: HostOptions): Host {
   /** Everything watching a channel, which is not everything connected. */
 
   /**
-   * What somebody is part-way through typing in a chat with nothing running.
-   *
-   * A live chat holds its own draft, because two people on one session are
-   * meant to see each other's. A session browsed out of the catalogue has no
-   * process to hold one - and typing into it is exactly what somebody does
-   * first, before there is any reason to start an agent. Refusing it made the
-   * client revert the character it had already drawn, which is a composer that
-   * empties itself as it is typed into.
-   *
-   * Kept here until the session is started, and handed to the chat when it is.
-   */
-  const drafts = new Map<string, Bag>();
-
-  /**
    * What a client has marked on a session, by that session's id.
    *
    * Kept, not computed. Annotations are the one channel whose state is
@@ -1430,7 +1416,7 @@ export function createHost(options: HostOptions): Host {
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Set<string>(), described, links,
-    watches, marksOf, resumedSessions, activeClientsOf, drafts,
+    watches, marksOf, resumedSessions, activeClientsOf,
     restartNeeded: false,
     markRestart: () => {
       if (ctx.restartNeeded) return;

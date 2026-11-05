@@ -164,6 +164,13 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, value);
       patch(id, { chatFlags: held.size === 0 ? undefined : held });
     },
+    chatDraft: (id, chatUri) => rows.get(id)?.chatDrafts?.get(chatUri),
+    setChatDraft: (id, chatUri, draft) => {
+      const held = new Map(rows.get(id)?.chatDrafts);
+      if (draft === undefined) held.delete(chatUri);
+      else held.set(chatUri, draft);
+      patch(id, { chatDrafts: held.size === 0 ? undefined : held });
+    },
     chats: (id) => rows.get(id)?.chats ?? [],
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
@@ -179,10 +186,14 @@ export function memorySessions(): SessionStore & Held {
       const titles = new Map(source?.chatTitles);
       const title = titles.get(uri);
       titles.delete(uri);
+      const drafts = new Map(source?.chatDrafts);
+      const draft = drafts.get(uri);
+      drafts.delete(uri);
       const left = (source?.chats ?? []).filter((one) => one.uri !== uri);
       patch(from, {
         chats: left.length === 0 ? undefined : left,
         chatTitles: titles.size === 0 ? undefined : titles,
+        chatDrafts: drafts.size === 0 ? undefined : drafts,
       });
       /*
        * And onto the destination, as one write: the entry appended to its list,
@@ -198,9 +209,12 @@ export function memorySessions(): SessionStore & Held {
       if (chat !== undefined) list.push({ ...chat });
       const named = new Map(target?.chatTitles);
       if (title !== undefined) named.set(uri, title);
+      const typed = new Map(target?.chatDrafts);
+      if (draft !== undefined) typed.set(uri, draft);
       patch(to, {
         chats: list.length === 0 ? undefined : list,
         ...(title === undefined ? {} : { chatTitles: named }),
+        ...(draft === undefined ? {} : { chatDrafts: typed }),
       });
     },
     // A row is held only while it says something, so this is the sessions
@@ -229,6 +243,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
+        ...(held.chatDrafts === undefined ? {} : { chatDrafts: held.chatDrafts }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
         ...(held.nested === undefined ? {} : { nested: held.nested }),
         ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -414,6 +429,7 @@ interface Row {
   pullRequests?: PullRequestBaseline | undefined;
   chatTitles?: Map<string, string> | undefined;
   chatFlags?: Map<string, number> | undefined;
+  chatDrafts?: Map<string, Record<string, unknown>> | undefined;
   parent?: string | undefined;
   nested?: NestedRecord | undefined;
   chats?: StoredChat[] | undefined;
@@ -439,7 +455,7 @@ const empty = (row: Row): boolean =>
   && row.owner === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
-  && row.chatFlags === undefined
+  && row.chatFlags === undefined && row.chatDrafts === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
   && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
   && row.autoArchivedAt === undefined && row.changes === undefined;
@@ -473,6 +489,8 @@ interface Saved {
   chatTitles?: Record<string, string>;
   /** The read and archived bits of each chat, by the chat's URI. */
   chatFlags?: Record<string, number>;
+  /** The draft typed into each chat, by the chat's URI. */
+  chatDrafts?: Record<string, Record<string, unknown>>;
   /** The id of the session this one was started from, where one did. */
   parent?: string;
   nested?: NestedRecord;
@@ -622,6 +640,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
+      ...(held.chatDrafts === undefined ? {} : { chatDrafts: Object.fromEntries(held.chatDrafts) }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
       ...(held.nested === undefined ? {} : { nested: held.nested }),
       ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -767,6 +786,12 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof value === 'number') inner.setChatFlags(row.id, chatUri, value);
         }
       }
+      // A record of messages, one per chat: an entry that is no object is ignored.
+      if (typeof row.chatDrafts === 'object' && row.chatDrafts !== null && !Array.isArray(row.chatDrafts)) {
+        for (const [chatUri, draft] of Object.entries(row.chatDrafts)) {
+          if (typeof draft === 'object' && draft !== null && !Array.isArray(draft)) inner.setChatDraft?.(row.id, chatUri, draft);
+        }
+      }
       // The id of a session that started this one. Anything that is not a
       // non-empty string is ignored rather than guessed at, as every other
       // field here is.
@@ -851,6 +876,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
     chatFlags: (id, chatUri) => inner.chatFlags(id, chatUri),
     setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
+    chatDraft: (id, chatUri) => inner.chatDraft?.(id, chatUri),
+    setChatDraft: (id, chatUri, draft) => { touched(id, () => { inner.setChatDraft?.(id, chatUri, draft); }); },
     chats: (id) => inner.chats(id),
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
     // Two rows move, so two files have to be written - which is why this is

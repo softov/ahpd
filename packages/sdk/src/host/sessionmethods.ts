@@ -58,7 +58,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const {
     about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat,
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
-    chatSummary, chatsReordered, claimable, claims, dir, dispatch, drafts, dropChat, flushDeltas,
+    chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
     isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
     movable, movableMoved, openSession, openedBy, options, orderChats, oweTree,
@@ -1454,18 +1454,17 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       found.chat.close('dispose');
       byChat.delete(chatUri);
       ctx.chatRelaunches.delete(chatUri);
-      drafts.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       // After `byChat` has let the chat go, so the store says nothing on a
       // channel nobody can reach any more.
       ctx.canvases.forgetChat(chatUri);
       held?.chats.delete(chatUri);
-      // And the name this chat was given. The store is what keeps a chat's
-      // own title rather than the catalogue's derived one, so a chat that
-      // has gone takes its title with it rather than leaving it for a chat
-      // opened under that name years from now.
+      // And the name this chat was given, and its draft: the store keeps a
+      // chat's own title and draft, and a chat that has gone takes both with
+      // it, so a chat opened under that name later starts with neither.
       kept.setChatTitle(idOf(found.uri), chatUri, '');
+      kept.setChatDraft?.(idOf(found.uri), chatUri, undefined);
       /*
        * The name the backend keeps this chat's conversation under, read before
        * the record goes: a fork and a chat whose URI names no id the backend

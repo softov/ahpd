@@ -208,7 +208,7 @@ export function chatAction(
   const {
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig,
     contributedDefaults, decided,
-    described, dispatch, drafts, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
+    described, dispatch, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
     renameSession, restart, restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
     statusOf, subagents, summaryMoved, value, waitingFor, wake, hold,
@@ -625,13 +625,13 @@ export function chatAction(
    * A draft in a session this host is not running.
    *
    * The one client action worth taking without starting anything: it
-   * moves no conversation, costs a map entry, and starting a CLI
-   * because somebody typed a character would be a session opened by
+   * moves no conversation, is kept in the session's record, and starting a
+   * CLI because somebody typed a character would be a session opened by
    * accident. Everything else still needs a session, and says so.
    *
-   * Checked against the catalogue rather than taken on trust, the way
-   * `chat/turnStarted` is - a chat URI is a client's to spell, and a
-   * draft held for a session nobody has is a map that only grows. The read
+   * Checked against the catalogue, the way `chat/turnStarted` is - a chat
+   * URI is a client's to spell, and a draft is kept only for a session this
+   * host has a record of. The read
    * is returned, so its client's later dispatches go behind it, as the
    * reference host queues an action on a chat whose session it has not
    * restored. A session whose agent this host is not serving is refused as
@@ -659,14 +659,14 @@ export function chatAction(
       const next = typeof action.draft === 'object' && action.draft !== null
         ? action.draft as Bag
         : undefined;
-      // The draft this host holds already moves nothing kept, and goes to
+      // The draft this host keeps already moves nothing kept, and goes to
       // every client of the chat, as a flag that did not move does.
-      if (JSON.stringify(next) === JSON.stringify(drafts.get(channel))) {
+      if (JSON.stringify(next) === JSON.stringify(kept.chatDraft?.(id, channel))) {
         dispatch(channel, action, origin);
         return;
       }
-      if (next === undefined) drafts.delete(channel);
-      else drafts.set(channel, next);
+      // Kept in the session's record, as every chat's draft is.
+      kept.setChatDraft?.(id, channel, next);
       // Echoed, because the point of a draft being on the wire at all is
       // that the other clients watching this chat see it.
       dispatch(channel, action, origin);
@@ -1854,9 +1854,13 @@ export function chatAction(
         dispatch(channel, action, origin);
         break;
       }
-      // Said, and then held by the backend.
+      // Said, held by the backend, and kept in the session's record, so it
+      // comes back when the chat opens again, as VS Code's host keeps a
+      // chat's draft whatever its agent.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L38-L52
       dispatch(session.chatUri, action, origin);
       session.setDraft(next);
+      kept.setChatDraft?.(idOf(sessionFor(session.chatUri)), session.chatUri, next);
       break;
     }
     case 'chat/pendingMessageRemoved': {

@@ -466,6 +466,36 @@ describe('the fields a client reads by name', () => {
     expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')).toEqual([]);
   });
 
+  /*
+   * A chat's draft is kept in the session's record whatever runs the chat, and
+   * comes back when the chat opens again, here on the next process, as VS
+   * Code's host keeps a chat's draft and restores it when the chat opens.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L14-L68
+   */
+  it('keeps a running chat\'s draft in the session\'s record, which the chat opens with on the next process', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-draft-'));
+    try {
+      const { client, chatUri } = await running({ sessions: fileSessions({ dir }) });
+      const draft = { text: 'half a thought', origin: { kind: 'user' } };
+      client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/draftChanged', draft } } });
+      await settle();
+
+      // The next process finds the conversation where its CLI keeps it.
+      sdk.sessions.push({ sessionId: 'live', summary: 'Half done', lastModified: 1, cwd: '/home/softov' });
+      const next = serving('/home/softov', [], { sessions: fileSessions({ dir }) });
+      const back = next.accept(peer());
+      await back.handle(hello(['0.9.0']));
+      await back.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      const state = (await back.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { draft?: unknown } };
+      }).snapshot.state;
+      expect(state.draft).toEqual(draft);
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('holds a draft typed into a session nothing is running for', async () => {
     sdk.sessions.push({ sessionId: 'typed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov');

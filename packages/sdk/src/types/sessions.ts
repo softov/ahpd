@@ -494,6 +494,16 @@ export interface SessionStore {
   /** Replace them. The whole bitset, because that is what the protocol sends. */
   setChatFlags(id: string, chatUri: string, value: number): void;
   /**
+   * The draft typed into one chat, the `Message` its client last sent, or
+   * nothing. Kept by chat URI for the reason a chat's title is, so a draft
+   * outlives the process and comes back when the chat opens, as VS Code's
+   * host keeps a chat's draft.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L14-L68
+   */
+  chatDraft?(id: string, chatUri: string): Record<string, unknown> | undefined;
+  /** Replace it. Nothing forgets it, which is a draft cleared. */
+  setChatDraft?(id: string, chatUri: string, draft: Record<string, unknown> | undefined): void;
+  /**
    * The chats this session has, in the order they were opened.
    *
    * A session is a container for conversations, and this is what makes a

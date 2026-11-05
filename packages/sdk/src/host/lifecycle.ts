@@ -218,7 +218,7 @@ const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving sess
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
-    drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside, detached,
+    madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside, detached,
     dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
@@ -276,7 +276,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       closing.push(Promise.resolve(chat.close('dispose')).catch(() => {}));
       byChat.delete(chatUri);
       ctx.chatRelaunches.delete(chatUri);
-      drafts.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       // The chat is gone with the session, so its canvases are too. Said

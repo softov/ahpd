@@ -255,8 +255,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   resumedSessions: Set<string>;
   /** Who is in a session, as its state reports them. */
   activeClientsOf: (uri: string) => Bag[];
-  /** What a person typed into a row and has not sent. */
-  drafts: Map<string, Bag>;
   /** Whether the advanced tools are offered, a daemon key that takes hold while the daemon runs. */
   advancedTools: boolean;
   /**

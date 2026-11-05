@@ -38,7 +38,7 @@ export interface Snapshots {
 
 export function createSnapshots(ctx: HostContext): Snapshots {
   const {
-    options, sessions, subagents, byChat, owners, decided, wheres, moves, drafts, terminals,
+    options, sessions, subagents, byChat, owners, decided, wheres, moves, terminals,
     kept, marksOf, resumedSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
@@ -627,7 +627,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           modifiedAt: stamp,
           turns: ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[]),
           queuedMessages: [],
-          ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
+          ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
         },
       };
     }
@@ -675,10 +675,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           ...startedBy(nameOf(id)),
           turns: ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers)),
           queuedMessages: [],
-          // Held here rather than by a chat, because there is no chat. A
-          // client that typed into this row and came back finds what it
-          // typed, which is what a draft is for.
-          ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
+          // Kept in the session's record. A client that typed into this row
+          // and came back finds what it typed, which is what a draft is for.
+          ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
         },
       };
     }

@@ -173,7 +173,7 @@ function heldResources(store: ResourceStore): ResourceStore {
 
 export function createSpawn(ctx: HostContext): Spawn {
   const {
-    options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
+    options, sessions, byChat, subagents, owners, kept, names, births, about,
     dispatch, log, described, links, resumedSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
@@ -1720,17 +1720,14 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     movableMoved(chatUri);
     /*
-     * The draft somebody left on this chat before it was running.
-     *
-     * Handed over rather than dropped: it was typed into this conversation,
-     * and a session that loses it on the way to starting is one that ate what
-     * was in the composer.
+     * The draft the session's record keeps for this chat, handed to the chat
+     * as it opens, as VS Code's host restores a chat's draft when it opens
+     * the chat: it was typed into this conversation, before this start or
+     * before the last process stopped.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L54-L67
      */
-    const typed = drafts.get(chatUri);
-    if (typed !== undefined) {
-      drafts.delete(chatUri);
-      session.setDraft(typed);
-    }
+    const typed = kept.chatDraft?.(idOf(uri), chatUri);
+    if (typed !== undefined) session.setDraft(typed);
     /*
      * The session's own backend, which claims the session where it was built
      * from a record rather than started: a chat of another backend is one chat
