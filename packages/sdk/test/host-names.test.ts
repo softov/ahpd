@@ -259,7 +259,7 @@ describe('a session a client names', () => {
     expect(asked).toEqual([]);
   });
 
-  it('refuses the id of a session a backend keeps on disk', async () => {
+  it('keeps a session a backend keeps on disk when it is made again under its name, and refuses its id under another', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
     const stamp = new Date(0).toISOString();
     const host = createHost({
@@ -271,7 +271,40 @@ describe('a session a client names', () => {
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } }))
+      .resolves.toBeNull();
+    await expect(client.handle({ method: 'createSession', params: { channel: 'echo:/kept', provider: 'echo' } }))
       .rejects.toMatchObject({ code: -32003 });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; title: string }[];
+    };
+    expect(listed.items.map((one) => [one.resource, one.title])).toEqual([['ahp-session:/kept', 'Kept']]);
+  });
+
+  /*
+   * A window whose subscription a reconnect reported missing creates the
+   * session again before it subscribes, and VS Code's host runs that creation
+   * over the session it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6323-L6328
+   */
+  it('answers a session made again for the agent it is held under, and keeps it, as VS Code\'s host', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    const added = () => p.notes.filter((one) => one.method === 'root/sessionAdded').length;
+    const before = added();
+
+    await expect(client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } })).resolves.toBeNull();
+    await settle();
+
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[]; activeTurn?: { id: string } } };
+    };
+    const { state } = read.snapshot;
+    expect([...state.turns.map((turn) => turn.id), state.activeTurn?.id]).toContain('t1');
+    expect(added()).toBe(before);
   });
 });
 

@@ -1036,6 +1036,21 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const clientId = connection.clientId;
       if (claimed !== undefined && claimed.clientId !== clientId)
         throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
+      /*
+       * A session this host holds under this name, made again for the agent
+       * it is held under, is answered as made and kept as it is, recent in
+       * the residency, as VS Code's host runs a creation of a URI registered
+       * to the same provider over the state it keeps: a window whose
+       * subscription a reconnect reported missing creates the session again
+       * before it subscribes.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6166-L6174
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6323-L6328
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1239-L1246
+       */
+      if ((sessions.get(uri)?.agent ?? owners.get(uri))?.provider === provider) {
+        ctx.touch(uri);
+        return null;
+      }
       unheld(uri);
       /*
        * The name, claimed before anything is made for the session, so a second
