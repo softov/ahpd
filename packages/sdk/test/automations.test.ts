@@ -165,6 +165,26 @@ it('refuses the catalogue on a host with no store, in VS Code\'s words', async (
     .rejects.toMatchObject({ code: -32001, message: `Automation catalogue is unavailable: ${AUTOMATIONS}` });
 });
 
+/*
+ * The session a run starts has a default chat like any other, which VS Code's
+ * host marks the user's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L678-L692
+ */
+it('lists the default chat of a session a run started as the user\'s', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'origin' },
+  }) as { resource: string };
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  const session = (await runState(client, run.resource)).primarySession;
+  expect(session).toBeDefined();
+  const opened = await client.handle({ method: 'subscribe', params: { channel: String(session) } }) as {
+    snapshot: { state: { chats: { origin?: unknown }[] } };
+  };
+  expect(opened.snapshot.state.chats.map((one) => one.origin)).toEqual([{ kind: 'user' }]);
+});
+
 it('answers a run on the automations channel, which is the one it declares', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);

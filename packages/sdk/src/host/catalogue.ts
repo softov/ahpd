@@ -30,7 +30,7 @@ export interface RestoredWorker {
 /** The session list and each row of it. */
 export interface Catalogue {
   statusOf(uri: string): number;
-  startedBy(session: string, chat?: string): Bag;
+  startedBy(chat?: string): Bag;
   chatSummary(session: string, uri: string, chat: Session): Bag;
   /** Whether a chat, or a worker inside one of its calls, has a turn in progress. */
   running(uri: string): boolean;
@@ -132,16 +132,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * How a chat came to exist.
    *
    * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool`. A
-   * chat made out of another says which, from `madeFrom`; any other chat here
-   * is one somebody opened, or one read back from a transcript somebody typed.
-   * Workers say `tool` in their own rows. There is no kind for a session an
-   * automation started, so that one gets none rather than a wrong one, and
-   * absent is what the protocol says when a host has nothing to say.
+   * chat made out of another says which, from `madeFrom`; every other chat
+   * here, a session's default chat among them whoever started the session, is
+   * `user`, as VS Code's host marks a session's default chat. Workers say
+   * `tool` in their own rows.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L678-L692
    */
-  const startedBy = (session: string, chat?: string): Bag => {
+  const startedBy = (chat?: string): Bag => {
     const made = chat === undefined ? undefined : madeFrom.get(chat);
-    if (made !== undefined) return { origin: made };
-    return origins.has(session) ? {} : { origin: { kind: 'user' } };
+    return { origin: made ?? { kind: 'user' } };
   };
   /**
    * One chat, as its session's catalogue lists it: the summary fields of the
@@ -161,7 +160,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (state !== undefined) return summaryIn(state, uri);
     return {
       resource: uri,
-      ...startedBy(session, uri),
+      ...startedBy(uri),
       // The title its state opens with: a default chat's own, or none.
       title: sessions.get(session)?.defaultChat === uri ? ctx.titleOf(session, uri) ?? '' : chat.title(),
       // What the backend is doing, with the client's own bits laid over it. A

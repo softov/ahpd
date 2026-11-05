@@ -192,7 +192,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const canvases = talking.chat.channel === undefined ? ctx.canvases.listOf(chatUri) : undefined;
     const state: Bag = {
       ...talking.chat.chatState(),
-      ...startedBy(session, chatUri),
+      ...startedBy(chatUri),
       /*
        * The session's default chat holds the title it was given, or none,
        * which reads as its session's: whoever titles the session, a client
@@ -695,7 +695,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           title: channel === leadUri ? leadTitle(besides || workers.length > 0) : title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
-          ...startedBy(nameOf(id)),
+          ...startedBy(),
           turns: ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers)),
           // Kept in the session's record. A client that typed into this row
           // and came back finds what it typed, which is what a draft is for.
@@ -735,7 +735,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             title: leadTitle(besides || workers.length > 0),
             status: Status.Idle | kept.chatFlags(id, leadUri),
             modifiedAt: listedAt,
-            ...startedBy(nameOf(id), lead?.uri),
+            ...startedBy(lead?.uri),
           },
           /*
            * And every other chat the store recorded for it.
@@ -753,7 +753,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
               title: one.title ?? title,
               status: Status.Idle | kept.chatFlags(id, one.uri),
               modifiedAt: listedAt,
-              ...startedBy(nameOf(id), one.uri),
+              ...startedBy(one.uri),
             })),
           // And the workers this session ran, each read-only and linked from
           // the call that spawned it - which is what makes a restored
