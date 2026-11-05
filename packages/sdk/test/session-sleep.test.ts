@@ -360,7 +360,8 @@ it('keeps the state of a session asleep while it is resident, and replays a clie
   await client.handle({ method: 'unsubscribe', params: { channel: one.chatUri } });
   client.close();
 
-  // The record moves, which a state let go would be read again from.
+  // The record moves, which a state let go would be read again from: the
+  // state held is what the client comes back to.
   knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
   const back = host.accept(peer());
   const answer = await back.handle({
@@ -368,15 +369,17 @@ it('keeps the state of a session asleep while it is resident, and replays a clie
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
   }) as { type: string };
   expect(answer.type).toBe('replay');
+  const held = await back.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  expect(((held.snapshot.state.turns ?? []) as Bag[]).map((turn) => turn.state)).not.toContain('cancelled');
 });
 
-it('answers a client back from a drop with the state read again once the residency let it go', async () => {
+it('replays to a client back from a drop onto what it holds, its session let go and opened again meanwhile', async () => {
   /*
-   * A client whose state came from the earlier opening cannot be replayed
-   * onto the one held now: the actions since apply to a state it never had.
-   * The reference answers a client that holds no baseline from the state the
-   * host holds with the state itself.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   * A baseline is owed only for a channel a client holds with no snapshot from
+   * this process: a session the residency let go is opened again from its
+   * record and replayed onto what the client holds, as VS Code's host replays
+   * onto a session it evicted and restored.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
    */
   const knobs: Knobs = { closes: [], closed: [] };
   const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
@@ -389,16 +392,12 @@ it('answers a client back from a drop with the state read again once the residen
   await until(() => knobs.closes.length > 0);
   expect(knobs.closed).toEqual(['one']);
 
-  // The record says the turn was stopped, which the client never held.
-  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
   const back = host.accept(peer());
   const answer = await back.handle({
     method: 'reconnect',
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
-  }) as { type: string; snapshots?: { resource: string; state: Bag }[] };
-  expect(answer.type).toBe('snapshot');
-  const chat = answer.snapshots?.find((one_) => one_.resource === one.chatUri);
-  expect(((chat?.state.turns ?? []) as Bag[]).map((turn) => turn.state)).toEqual(['cancelled']);
+  });
+  expect(answer).toMatchObject({ type: 'replay', missing: [] });
 });
 
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
@@ -417,13 +416,13 @@ it('lets an archived session go once nobody watches it, whatever the count', asy
 
   client.close();
   await until(() => knobs.closes.length > 0);
-  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  // Opened again from its record when its client comes back, and replayed onto what that client holds.
   const back = host.accept(peer());
   const answer = await back.handle({
     method: 'reconnect',
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.chatUri] },
-  }) as { type: string };
-  expect(answer.type).toBe('snapshot');
+  });
+  expect(answer).toMatchObject({ type: 'replay', missing: [] });
 });
 
 it('sleeps the least recently used quiet session over the count limit', async () => {

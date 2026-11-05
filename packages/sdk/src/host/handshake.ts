@@ -138,7 +138,6 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       known.delete(id);
       clientNames.delete(id);
       locales.delete(id);
-      ctx.lapsed.delete(id);
     }
   };
 
@@ -685,21 +684,16 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       }
 
       const oldest = replayable[0]?.serverSeq;
-      /*
-       * A channel whose state this host let go of while the client was away
-       * holds, once opened again from its record, a state the client was never
-       * given: the actions since apply to that state and not to the one the
-       * client has. Such a client is sent the state, as the reference sends
-       * one to a client that holds no baseline from the state it holds.
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1374-L1379
-       */
-      const unbased = [...resumed.keys()].some((meant) => ctx.lapsed.get(clientId)?.has(meant) === true);
       // Nothing buffered means nothing has happened since, which is a
       // replay of nothing rather than a reason to re-snapshot. A client
       // ahead of this host is the other way round and cannot be replayed to
       // at all - whatever it counted, it was not this stream - so it is
-      // sent state rather than a difference.
-      const replayable_ = !unbased && since <= ctx.serverSeq && (oldest === undefined || since >= oldest - 1);
+      // sent state rather than a difference. A channel whose state this host
+      // let go of and opened again while the client was away is replayed
+      // onto what the client holds, as the reference host replays onto a
+      // session it evicted and restored.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
+      const replayable_ = since <= ctx.serverSeq && (oldest === undefined || since >= oldest - 1);
       if (replayable_) {
         log(`${clientId} came back at ${since}, replaying`);
         return {

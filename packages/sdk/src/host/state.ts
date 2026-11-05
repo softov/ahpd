@@ -64,13 +64,6 @@ export interface Held {
 export interface HeldState {
   kind: 'root' | 'session' | 'chat';
   state: Bag;
-  /**
-   * The clients this state was served to, by id: each was given a snapshot
-   * of it, and the actions since apply to what that client holds. A client
-   * whose state came from an earlier opening of the channel is not here.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
-   */
-  baselines: Set<string>;
 }
 
 /**

@@ -482,8 +482,6 @@ export function createHost(options: HostOptions): Host {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2971
    */
   const states = new Map<string, HeldState>();
-  /** The channels each client was served a state of that has gone since, by client id. */
-  const lapsed = new Map<string, Set<string>>();
   /**
    * One action through the protocol's reducer for the kind of state it lands
    * on. A type the reducer does not know is said in this host's log, which is
@@ -1280,16 +1278,14 @@ export function createHost(options: HostOptions): Host {
   /**
    * Let the state this host holds of a session go, its own and its chats'.
    *
-   * Each client that was served a state let go is owed the state its channel
-   * opens with next, since what it holds is the state let go.
+   * A client that held one is replayed onto what it holds when it comes back,
+   * as the reference host replays onto a session it evicted and restored: a
+   * baseline is owed only for a channel this process never gave one for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
    */
   const letStateGo = (session: string): void => {
     for (const [one, open] of [...states]) {
       if (one !== session && (open.kind !== 'chat' || sessionFor(one) !== session)) continue;
-      for (const client of open.baselines) {
-        const channels = lapsed.get(client) ?? new Set<string>();
-        lapsed.set(client, channels.add(one));
-      }
       states.delete(one);
       ctx.cancelledTurns.delete(one);
       ctx.forgetChatQueue(one);
@@ -1447,7 +1443,7 @@ export function createHost(options: HostOptions): Host {
       const open = states.get(channel);
       if (open !== undefined) return open.state;
       const state = options.opening?.(channel, kind) ?? seed;
-      states.set(channel, { kind, state, baselines: new Set() });
+      states.set(channel, { kind, state });
       return state;
     },
     closeState: (channel: string) => {
@@ -1458,7 +1454,6 @@ export function createHost(options: HostOptions): Host {
     heldStates: states as ReadonlyMap<string, HeldState>,
     asks,
     letStateGo,
-    lapsed,
     asleep: new Set<string>(),
   } as HostContext;
   // Before any area is built, because everything a person or a backend does

@@ -213,16 +213,11 @@ export function createRouting(ctx: HostContext): Routing {
    * under. A host channel the client named in another spelling is recorded
    * as its alias on this connection and the snapshot is answered in that
    * spelling. A session's chats are the ones this connection may see. What
-   * comes back is the held name, which is what a replay is keyed by. The
-   * client now holds the state this host holds for the channel, which a replay
-   * to it later builds on.
+   * comes back is the held name, which is what a replay is keyed by.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4403-L4409
    */
   const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
     const meant = meantBy(channel);
-    ctx.heldStates.get(meant)?.baselines.add(connection.clientId);
-    const owing = ctx.lapsed.get(connection.clientId);
-    if (owing?.delete(meant) === true && owing.size === 0) ctx.lapsed.delete(connection.clientId);
     if (meant !== channel) {
       connection.aliases.set(meant, channel);
       snapshot.resource = channel;
