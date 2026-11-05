@@ -36,8 +36,8 @@ export interface Parts {
   inputNeededSet: (entry: Bag) => void;
   /** Say the session is no longer waiting on one request. */
   inputNeededRemoved: (id: string) => void;
-  /** The turn a conversation is on, opened if it has none, with the id and the message given. */
-  openTurn: (scope?: Scope) => Bag;
+  /** The turn a frame of a conversation belongs to: the lead's running turn, or a worker's, opened if it has none. */
+  openTurn: (scope?: Scope) => Bag | undefined;
   /** Announce a prose part. */
   addPart: (scope: Scope, part: Bag) => void;
   /** Hold a tool call for the snapshot, without announcing it. */
@@ -229,13 +229,19 @@ export function createParts(ctx: SessionContext): Parts {
 
   // ------------------------------------------------------------- translation
 
-  const openTurn = (scope: Scope = ctx.mainScope): Bag => {
+  /**
+   * The turn a frame belongs to.
+   *
+   * A lead frame no prompt is pending for has none, and is dropped, as VS
+   * Code's Claude router maps a frame only to the prompt it answers: a CLI that
+   * runs on its own opens no turn a client did not start. A worker's chat whose
+   * turn ended opens one of the agent's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L82-L84
+   */
+  const openTurn = (scope: Scope = ctx.mainScope): Bag | undefined => {
     if (scope.turn) return scope.turn;
-    // A turn the client did not begin: the agent spoke first, which happens on
-    // a resumed session. Better an id of our own than a turn with none.
+    if (scope === ctx.mainScope) return undefined;
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
-    // Leaving the key off put a turn on the wire that did not satisfy its own
-    // type, which nothing here would have noticed.
     const opened = {
       id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
@@ -246,13 +252,6 @@ export function createParts(ctx: SessionContext): Parts {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     scope.turn = opened;
-    // Only the session's own turn moves the session's clock and clears its
-    // last failure; a worker's turn is not what the session is doing.
-    if (scope === ctx.mainScope) {
-      ctx.startedAt = Date.now();
-      ctx.failed = undefined;
-      newTurn();
-    }
     ctx.emitOn(scope, {
       type: 'chat/turnStarted',
       turnId: opened.id,

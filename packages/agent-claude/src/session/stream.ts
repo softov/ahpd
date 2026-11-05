@@ -134,7 +134,7 @@ export function createStream(ctx: SessionContext): Stream {
       scope.streaming = str(bag(event.message).id) ?? 'm';
       // A new round: whatever the last one said, this one has said nothing.
       ctx.rounds.set(parent, { answered: false });
-      ctx.openTurn(scope);
+      if (ctx.openTurn(scope) === undefined) return;
       // This call's input side, the half only this event reports.
       ctx.count(bag(event.message).usage, INPUT_SIDE);
       return;
@@ -195,6 +195,7 @@ export function createStream(ctx: SessionContext): Stream {
 
     if (type === 'content_block_start') {
       const turn = ctx.openTurn(scope);
+      if (turn === undefined) return;
       const block = bag(event.content_block);
       const kind = str(block.type);
       // Prose or a tool call is an answer; thinking is not, which is the whole
@@ -313,6 +314,7 @@ export function createStream(ctx: SessionContext): Stream {
       return;
     }
     const turn = ctx.openTurn(scope);
+    if (turn === undefined) return;
     const of = str(message.id) ?? 'm';
     // The model a turn ran on is the session's own answer; a worker's may be
     // a different one and is not what the session reports.

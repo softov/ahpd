@@ -103,7 +103,6 @@ interface Worker {
 /** Replay one fixture through a real session with a recording host seam. */
 async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), extra: { workerStop?: 'worker' | 'session' } = {}) {
   sdk.reset();
-  sdk.push(...frames);
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
   /** Every call id the seam was asked for, once per ask. */
@@ -131,6 +130,11 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     subagent,
     ...extra,
   });
+  await settle();
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
+  await settle();
+  sdk.push(...frames);
   await settle();
   return { main, workers, session, asked, askedAt };
 }
@@ -364,14 +368,17 @@ it('says nothing for a subagent when the host has no seam', async () => {
   // The same fixture, without `subagent`: a worker's frames stay in the turn
   // that spawned them.
   sdk.reset();
-  sdk.push(...fixture('claude-subagent.jsonl'));
   const main: Bag[] = [];
-  createSession({
+  const session = createSession({
     uri: 'ahp-session:/plain',
     chatUri: 'ahp-chat:/plain',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-plain-')),
     emit: (_channel, action) => { main.push(action as Bag); },
   });
+  await settle();
+  session.sendMessage('t1', 'go');
+  await settle();
+  sdk.push(...fixture('claude-subagent.jsonl'));
   await settle();
   // The lead turn still draws the worker's frames inline.
   expect(main.some((one) => one.type === 'chat/toolCallStart' && one.toolName === 'Bash')).toBe(true);

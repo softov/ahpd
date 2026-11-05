@@ -26,27 +26,35 @@ const sdk = vi.hoisted(() => ({
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.frames,
-  query: ({ options }: { options: Record<string, unknown> }) => ({
-    async *[Symbol.asyncIterator]() {
-      sdk.options = options;
-      sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
-      for (const frame of sdk.frames) yield frame;
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    let close = (): void => {};
+    const closed = new Promise<void>((resolve) => { close = resolve; });
+    return {
+      async *[Symbol.asyncIterator]() {
+        sdk.options = options;
+        sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+        // The frames answer the turn's prompt, as a CLI's do, and the CLI stays
+        // open until it is closed.
+        await prompt[Symbol.asyncIterator]().next();
+        for (const frame of sdk.frames) yield frame;
+        await closed;
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close,
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
@@ -86,6 +94,9 @@ async function sessionWith(check?: Check, settings: Bag = {}, shellEnv?: Record<
     ...(shellEnv === undefined ? {} : { shellEnv }),
     ...(replay.subagent === undefined ? {} : { subagent: replay.subagent }),
   });
+  await settle();
+  // A turn running, as the CLI asks about a call and speaks only inside one.
+  session.sendMessage('t1', 'go');
   await settle();
   return { session, canUseTool: sdk.canUseTool!, options: sdk.options!, sent };
 }

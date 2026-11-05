@@ -476,3 +476,25 @@ it('fails a turn whose result is an error during execution, typed by it, in its 
     .toEqual([{ errorType: 'error_during_execution', message: 'API Error: 500\nagain' }]);
 });
 
+/*
+ * A CLI running on its own, with no prompt pending, opens no turn a client did
+ * not start: its lead frames are dropped, as VS Code's Claude router maps a
+ * frame only to the prompt it answers, and a question it asks is refused, as
+ * VS Code's host rejects a permission without an active turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L82-L84
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+ */
+it('opens no turn for a lead frame no prompt is pending for, and refuses its question', async () => {
+  sdk.reset();
+  const { chat, session } = live();
+  await settle();
+  sdk.push(step('a1'), worked);
+  await settle();
+  expect(chat).toEqual([]);
+  expect((session.chatState() as Bag).activeTurn).toBeUndefined();
+  const canUseTool = sdk.queries.at(-1)?.options.canUseTool as (name: string, input: Bag, about: Bag) => Promise<Bag>;
+  expect(await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'toolu_alone', signal: new AbortController().signal }))
+    .toMatchObject({ behavior: 'deny' });
+  expect(chat).toEqual([]);
+});
+

@@ -154,6 +154,9 @@ async function open(extra: Partial<ClaudeSessionOptions> = {}, outputs: ReturnTy
     ...extra,
   });
   await settle();
+  // The turn the frames a case feeds answer.
+  session.sendMessage('t1', 'go');
+  await settle();
   return { session, sent, kept: outputs?.kept ?? new Map<string, { output: string; exitCode?: number }>() };
 }
 

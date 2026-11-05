@@ -18,10 +18,12 @@ import type { BoundTool } from '@ahpd/sdk';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: ({ options }: { options: Record<string, unknown> }) => {
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     sdk.options.push(options);
     return {
       async *[Symbol.asyncIterator]() {
+        // The frames answer the turn's prompt, as a CLI's do.
+        await prompt[Symbol.asyncIterator]().next();
         for (const frame of sdk.frames) yield frame;
       },
       interrupt: async () => {},
@@ -178,7 +180,7 @@ const replayed = async (
   sdk.options = [];
   sdk.frames = frames;
   const heard: Record<string, unknown>[] = [];
-  createSession({
+  const session = createSession({
     uri: 'ahp-session:/tasks',
     chatUri: 'ahp-chat:/tasks',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-tasks-')),
@@ -186,6 +188,9 @@ const replayed = async (
     planUpdate: (update) => { heard.push(update as unknown as Record<string, unknown>); },
     ...(given.tools === undefined ? {} : { tools: given.tools }),
   });
+  await settle(30);
+  // The turn the frames answer.
+  session.sendMessage('t1', 'go');
   await settle(30);
   return heard;
 };

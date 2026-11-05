@@ -49,6 +49,9 @@ const DECLINED = 'The person declined this action';
  */
 const CANCELLED = 'Cancelled';
 
+/** What the model is told about a call it asked about while no turn was running. */
+const NO_TURN = 'No turn is running to ask in';
+
 /** Where a kept permission lands, as a person reads it. */
 const KEPT_IN: Record<string, string> = {
   session: ' for the rest of the session',
@@ -269,6 +272,27 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const { toolName, raw, callId: id, agentId, signal, suggestions } = asked;
     if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
     /*
+     * The conversation the tool is running in.
+     *
+     * A permission ask from inside a subagent belongs on that subagent's
+     * chat, against the call it is for, where it reads as a question about
+     * the subagent's own work. The caller hands the subagent's id as
+     * `agentId`; a call whose frames already arrived is joined by its own id,
+     * which also places a call from a harness that says nothing about the
+     * subagent.
+     */
+    const scope = ctx.scopeOfCall(id)
+      ?? (agentId !== undefined ? ctx.byAgent.get(agentId) : undefined)
+      ?? ctx.mainScope;
+    if (agentId !== undefined && scope.chat !== undefined) ctx.byAgent.set(agentId, scope);
+    /*
+     * A question with no turn to put it in, from a CLI running on its own, is
+     * refused, as VS Code's host rejects a permission without an active turn.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
+     */
+    const turn = ctx.openTurn(scope);
+    if (turn === undefined) return { behavior: 'deny', message: NO_TURN };
+    /*
      * The edit the tool would make, drawn on the card before it is approved.
      *
      * Somebody approving a write is being asked to trust a file they cannot
@@ -316,21 +340,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         held.settle({ behavior: 'deny', message: CANCELLED });
       };
       signal?.addEventListener('abort', cancelled);
-      /*
-       * The conversation the tool is running in.
-       *
-       * A permission ask from inside a subagent belongs on that subagent's
-       * chat, against the call it is for - not on the lead chat, where it
-       * would read as a question about the parent's own work. The caller hands
-       * the subagent's id as `agentId`; a call whose frames already arrived is
-       * joined by its own id, which is the fallback that also works for a
-       * harness that says nothing about the subagent.
-       */
-      const scope = ctx.scopeOfCall(id)
-        ?? (agentId !== undefined ? ctx.byAgent.get(agentId) : undefined)
-        ?? ctx.mainScope;
-      if (agentId !== undefined && scope.chat !== undefined) ctx.byAgent.set(agentId, scope);
-      const turn = ctx.openTurn(scope);
       /*
        * A spawning call, recorded from the input the caller was handed.
        *

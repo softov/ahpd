@@ -109,9 +109,10 @@ interface Opened {
  * A session on the fake feed, with a host seam that opens worker chats.
  *
  * `seam` off is a host that hands the session no way to open a worker's chat,
- * which is the case a background subagent cannot be listed in.
+ * which is the case a background subagent cannot be listed in. `turn` is the
+ * turn the frames a case feeds answer, running from the start.
  */
-async function open(seam = true): Promise<Opened> {
+async function open(seam = true, turn = true): Promise<Opened> {
   sdk.reset();
   const main: Bag[] = [];
   const workers = new Map<string, Bag[]>();
@@ -144,6 +145,10 @@ async function open(seam = true): Promise<Opened> {
     },
   });
   await settle();
+  if (turn) {
+    running.sendMessage('t1', 'go');
+    await settle();
+  }
   return { main, workers, handed, tasks, session: running };
 }
 
@@ -453,7 +458,7 @@ const submitted = async (): Promise<unknown[]> => {
  * function, rather than a list captured earlier, what the hook answers from.
  */
 it('gives a turn the instructions the host asked for, and nothing once it ends', async () => {
-  const { session } = await open();
+  const { session } = await open(true, false);
   const words = ['<remote_session_origin>', 'report back', '</remote_session_origin>'];
   // Registered from the start and nothing to give: no turn has begun.
   expect(await submitted()).toEqual([{}]);
