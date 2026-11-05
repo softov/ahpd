@@ -88,6 +88,7 @@ const envelopes = (p: ReturnType<typeof peer>, channel: string) => p.notes
     action: Record<string, unknown>;
     serverSeq: number;
     origin?: { clientId: string; clientSeq: number };
+    rejectionReason?: string;
   })
   .filter((n) => n.channel === channel);
 
@@ -396,6 +397,41 @@ it('holds an entry that names no client as sent, and the sender\'s leaving leave
   await b.client.handle({ method: 'subscribe', params: { channel: URI } });
   await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
   expect(await entries(b.client)).toEqual([entry]);
+});
+
+/*
+ * A client that leaves by its own action is out at once, with what it
+ * contributed, as the reference host's reducer and side effect take it out;
+ * one that names a client the session does not hold changes nothing and is
+ * still said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2012-L2015
+ */
+it('takes a client out on its own removal, with its tools, and says one naming nobody', async () => {
+  const held = host();
+  const a = await joins(held, 'one');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await enter(a.client, 'one', [{ name: 'lookup', description: 'Look a thing up.', inputSchema: { type: 'object' } }]);
+  expect(await clientsIn(a.client, URI)).toEqual(['one']);
+  const remove = (clientId: string, clientSeq: number) => a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq, action: { type: 'session/activeClientRemoved', clientId } },
+  });
+  await remove('one', 1);
+  await remove('nobody', 2);
+  await settle();
+
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+  expect(envelopes(a.peer, URI)
+    .filter((one) => one.action.type === 'session/activeClientRemoved')
+    .map((one) => [one.action.clientId, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+    ['one', 1, undefined],
+    ['nobody', 2, undefined],
+  ]);
+  // And the session's tools are offered again without the client's.
+  const tools = (await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { serverTools?: { name: string }[] } };
+  }).snapshot.state.serverTools ?? [];
+  expect(tools.map((one) => one.name)).not.toContain('lookup');
 });
 
 it('replaces what a client contributes rather than merging it', async () => {

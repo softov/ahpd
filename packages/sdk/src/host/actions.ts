@@ -880,6 +880,31 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       return;
     }
 
+    if (type === 'session/activeClientRemoved') {
+      /*
+       * A client leaving a session by its own action: the entry held under
+       * the id it names goes, the calls out with that client fail, and every
+       * chat is offered the tools that are left, as the reference host's
+       * reducer removes the entry and its side effect removes the client's
+       * tools. A session it does not know is refused as `activeClientSet` is.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2012-L2015
+       */
+      if (!sessions.has(channel) && !owners.has(channel)) {
+        no(`No agent for session: ${channel}`);
+        return;
+      }
+      const named: unknown = action.clientId;
+      const held = presence.get(idOf(channel));
+      held?.delete(named);
+      if (held !== undefined && held.size === 0) presence.delete(idOf(channel));
+      dispatch(channel, action, origin);
+      if (typeof named === 'string') {
+        for (const chat of sessions.get(channel)?.chats.values() ?? []) chat.clientGone?.(named);
+      }
+      retool(channel);
+      return;
+    }
+
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
       /*
        * A session this host does not know, once the catalogue has been read

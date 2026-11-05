@@ -259,11 +259,6 @@ const BROKEN = {
     row: 'H1-0025',
     by: 'none, VS Code\'s host drains an idle chat\'s queue on every change to its pending messages and starts the head (queueDrainContribution.ts L71-L90 and L245-L326 at 6b68d3fe)',
   },
-  removalUnserved: {
-    breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
-    row: 'A11',
-    by: '10',
-  },
   chatFolders: {
     breaks: 'types/channels-chat/actions.ts: chat/workingDirectorySet and chat/workingDirectoryRemoved are @clientDispatchable and reduce into the chat\'s workingDirectories',
     row: 'A-0034',
@@ -366,8 +361,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
   '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
-  '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '247-chat-workingdirectoryset-adds-to-empty-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
   '248-chat-workingdirectoryset-appends-to-existing-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
   '249-chat-workingdirectoryset-no-op-when-already-present': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
