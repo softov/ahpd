@@ -2,7 +2,6 @@ import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
 import { accountKey } from './root.js';
 import { Status, idFor, idOf, titleFrom, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
-import { statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { ChangesSummary } from '../types/changes.js';
@@ -560,29 +559,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return summary?.files ? { changes: summary } : {};
   };
   /**
-   * The folders a summary may name: the ones that are there.
-   *
-   * A session outlives its folder. A git worktree removed by hand leaves the
-   * record behind, and a summary that still named the worktree was a client
-   * drawing a folder that opens onto nothing. Only a `file:` folder on this
-   * host is checked, because a URI naming another machine says nothing about
-   * this one's disk. A folder whose check throws is kept as well: a folder
-   * this host cannot read is not a folder this host can say is gone.
-   *
-   * The session's own record and the folders its row was listed with keep
-   * every one of them, so a folder made again is named again, and a session
-   * opened from a row still knows where it ran.
-   */
-  const directoriesThere = (folders: string[]): string[] => folders.filter((folder) => {
-    if (!folder.startsWith('file:')) return true;
-    try {
-      return statSync(localPath(folder), { throwIfNoEntry: false })?.isDirectory() === true;
-    }
-    catch {
-      return true;
-    }
-  });
-  /**
    * A running session's catalogue row: the summary fields of the state the
    * session holds, with the ones only a row carries.
    *
@@ -612,7 +588,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       ...(activity !== undefined ? { activity } : {}),
       createdAt: held.createdAt,
       modifiedAt: modifiedOf(held),
-      workingDirectories: directoriesThere(Array.isArray(state.workingDirectories) ? state.workingDirectories as string[] : []),
+      // The folders as recorded, one that has gone among them, as the
+      // reference host's listing carries a session's recorded folders.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14736
+      workingDirectories: Array.isArray(state.workingDirectories) ? state.workingDirectories as string[] : [],
       /*
        * What the session's chats are, and which of them a client gets when it
        * names none.
@@ -1261,7 +1240,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       status: Status.Idle | kept.flags(row.id),
       createdAt: row.createdAt,
       modifiedAt: row.modifiedAt,
-      workingDirectories: directoriesThere(row.workingDirectories),
+      workingDirectories: row.workingDirectories,
       ...changesOf(resource),
       ...ctx.describes(resource),
     };
@@ -1309,7 +1288,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
         createdAt: held.createdAt,
         modifiedAt: modifiedOf(held),
-        workingDirectories: directoriesThere(lead.workingDirectories()),
+        workingDirectories: lead.workingDirectories(),
         // The chats and the default one, as `summaryOf` carries them: a client
         // that lists rather than subscribes reads a row's chats from here, and
         // a row that left them out would disagree with the session it names.
