@@ -273,6 +273,27 @@ describe('where each entry\'s file is', () => {
     expect(children(dir(out, 'directory:project:skills')).map((one) => one.name)).toEqual(['build']);
   });
 
+  /*
+   * An agent of one name is the CLI's from the managed directory first, then
+   * the project's, then the person's, as the CLI ranks subagents.
+   * https://code.claude.com/docs/en/sub-agents
+   */
+  it('gives an agent its file in the directory of its scope, managed first and the project before the person', () => {
+    const { config, work, managed } = roots({
+      'managed/.claude/agents/auditor.md': skill('auditor'),
+      'config/agents/auditor.md': skill('auditor'),
+      'config/agents/scout.md': skill('scout'),
+      'work/.claude/agents/scout.md': skill('scout'),
+    });
+    const out = customizationsOf({ agents: [{ name: 'auditor' }, { name: 'scout' }] }, [], [], undefined, [], undefined, [],
+      diskOf({ configDir: config, cwd: work, managedDir: managed }));
+    expect(leaf(out, 'directory:managed:agents', 'auditor')).toMatchObject({ uri: uriOf(join(managed, '.claude', 'agents', 'auditor.md')) });
+    expect(dir(out, 'directory:managed:agents')).toMatchObject({ name: 'managed', writable: false });
+    expect(leaf(out, 'directory:project:agents', 'scout')).toMatchObject({ uri: uriOf(join(work, '.claude', 'agents', 'scout.md')) });
+    // One name in two scopes is listed once, in the scope the CLI runs it from.
+    expect(children(dir(out, 'directory:user:agents'))).toEqual([]);
+  });
+
   it('matches a synced skill by its namespaced name and by its bare one', () => {
     const { config } = roots({
       'config/skills/synced/acct/manifest.json': JSON.stringify({ skills: [{ name: 'docs' }, { name: 'pdf' }] }),
