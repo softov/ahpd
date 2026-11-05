@@ -907,16 +907,14 @@ export function chatAction(
      * one had the form open.
      */
     /*
-     * A rename from a client.
+     * A rename from a client, taken as it sent it, a blank title included.
      *
      * On a chat channel it names that chat, the way the reference host
      * reads it: the client's action goes out on that channel, then the
      * chat's held title and its row move together, and a default chat
      * renames its session after. On the session channel it names the
-     * session, which is its default chat. Blank is a refusal, not a blank
-     * title: a row nobody can find again is the thing the derived title
-     * exists to prevent.
-     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L72
+     * session, which is its default chat.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L78
      */
     case 'session/titleChanged': {
       const uri = session.uri;
@@ -925,11 +923,7 @@ export function chatAction(
         no(`${channel} is not a session this host is running`);
         break;
       }
-      const title = String(action.title ?? '').trim();
-      if (title === '') {
-        no('a title cannot be blank');
-        break;
-      }
+      const title = String(action.title ?? '');
       if (byChat.has(channel)) {
         dispatch(channel, action, origin);
         renameChat(uri, channel, title);

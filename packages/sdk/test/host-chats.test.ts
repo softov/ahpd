@@ -1962,6 +1962,29 @@ describe('a chat renamed on its own channel', () => {
     expect(own.snapshot.state.title).toBe('Renamed');
   });
 
+  /*
+   * VS Code's host takes a rename as its client sent it, a blank title and
+   * one with spaces around it included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L78
+   */
+  it('takes a blank title and an untrimmed one as they were sent', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: second, clientSeq: 6, action: { type: 'session/titleChanged', title: '' } } });
+    client.handle({ method: 'dispatchAction', params: { channel: second, clientSeq: 7, action: { type: 'session/titleChanged', title: '  Spaced  ' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [second, { type: 'session/titleChanged', title: '' }, { clientId: 'probe', clientSeq: 6 }],
+      [uri, { type: 'session/chatUpdated', chat: second, changes: { title: '' } }, undefined],
+      [second, { type: 'session/titleChanged', title: '  Spaced  ' }, { clientId: 'probe', clientSeq: 7 }],
+      [uri, { type: 'session/chatUpdated', chat: second, changes: { title: '  Spaced  ' } }, undefined],
+    ]);
+  });
+
   it('renames a default chat on its channel in its row, then its session', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     p.notes.length = 0;
