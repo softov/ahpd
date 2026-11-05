@@ -143,10 +143,20 @@ describe('choosing a model', () => {
     expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
     const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
-    // A PowerShell script is nothing to a bash tool, and a malformed list is refused rather than written.
+    /*
+     * A malformed value, a shell VS Code's list does not take or more than
+     * its one entry, is held as it was set and leaves the last valid script
+     * in force, as VS Code's Copilot ignores one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8469-L8473
+     */
+    const two = [{ shell: 'bash', script: 'export A=1\n' }, { shell: 'bash', script: 'export B=2\n' }];
+    expect(await set(two)).toEqual(two);
+    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'zsh', script: 'x' }]);
+    expect((await before('make')).hookSpecificOutput?.updatedInput?.command).toBe(sourced);
+    expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
+    // A PowerShell script is nothing to a bash tool.
     expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
     expect((await before('make')).hookSpecificOutput).toBeUndefined();
-    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
     // Cleared, and the file with it.
     expect(await set([])).toEqual([]);
     expect(existsSync(path)).toBe(false);

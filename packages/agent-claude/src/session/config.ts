@@ -47,14 +47,15 @@ interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 const MAX_SHELL_INIT_SCRIPT = 64 * 1024;
 
 /**
- * The `shellInitScripts` value, checked to the reference host's rule.
+ * The `shellInitScripts` value, checked to VS Code's `isShellInitScriptList`.
  *
- * A list of `{ shell, script }`, each script non-empty and no longer than a
- * generated one could be. `undefined` for anything else, which is what lets
- * `setConfig` refuse it rather than write it to disk.
+ * A list of at most one `{ shell, script }`, its script non-empty and no
+ * longer than a generated one could be. `undefined` for anything else, which
+ * is what keeps it off the disk.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/shellInitScript.ts#L110-L126
  */
 const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
+  if (!Array.isArray(value) || value.length > 1) return undefined;
   const list: ShellInitScript[] = [];
   for (const entry of value) {
     const one = bag(entry);
@@ -180,7 +181,16 @@ export function createConfig(ctx: SessionContext): Config {
   const environment = shellEnvLines(ctx.options.shellEnv);
   const setShellInit = (value: unknown): true | string => {
     const list = shellInitScripts(value);
-    if (list === undefined) return 'shellInitScripts takes a list of { shell, script }';
+    /*
+     * A malformed value is held as it was set and the last valid script stays
+     * in force, as VS Code's Copilot ignores one and keeps the script it had.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8469-L8473
+     */
+    if (list === undefined) {
+      console.warn('@ahpd/agent-claude: ignoring a malformed shellInitScripts; the last valid script stays in force');
+      ctx.settings.shellInitScripts = value;
+      return true;
+    }
     const bash = list.find((one) => one.shell === 'bash');
     try {
       if (bash === undefined) rmSync(initScript, { force: true });
