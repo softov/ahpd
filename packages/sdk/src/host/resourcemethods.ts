@@ -273,9 +273,13 @@ const CONFLICT = -32011;
           ...(params.write !== undefined ? { write: params.write === true } : {}),
         });
       }
-      if (!uri.startsWith('file://')) throw new RpcError(-32009, `This host does not mediate ${uri}`);
-      // Neither flag is a read, which is what the protocol tells receivers
-      // to make of a request that sets nothing.
+      /*
+       * Granted, for any URI this host serves, as VS Code's host grants every
+       * request: a receiver may still refuse a later operation, which is where
+       * this host's own refusals are. Neither flag is a read, which is what
+       * the protocol tells receivers to make of a request that sets nothing.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2493-L2498
+       */
       const write = params.write === true;
       log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
       return {};

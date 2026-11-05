@@ -210,21 +210,20 @@ it('lets an operation that writes nothing through without one', async () => {
   expect(source).toBeUndefined();
 });
 
-it('answers yes to any file on this machine, and mediates nothing else', async () => {
+/*
+ * As VS Code's host: every request is granted, whatever the URI, since
+ * there is nobody at a daemon to ask and the token already answered who may
+ * be here. The answer withholds nothing, because the write half is served
+ * without it, and a later operation is where a refusal comes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2493-L2498
+ */
+it('answers yes to any resource request, a file on this machine or any other URI, as VS Code\'s host', async () => {
   const { client } = await watching(scripted().source);
-  expect(await client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}/a.txt`, write: true },
-  })).toEqual({});
-  // As the reference host: there is nobody at a daemon to ask, and the
-  // token already answered who may be here. The answer withholds nothing,
-  // because the write half is served without it.
-  expect(await client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'file:///etc/hostname', write: true },
-  })).toEqual({});
-  const denied = await refused(client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt', write: true },
-  }));
-  expect(denied.code).toBe(-32009);
+  for (const uri of [`file://${DIR}/a.txt`, 'file:///etc/hostname', 'virtual://plugin/a.txt']) {
+    expect(await client.handle({
+      method: 'resourceRequest', params: { channel: 'ahp-root://', uri, write: true },
+    })).toEqual({});
+  }
 });
 
 it('says running then idle on the changeset', async () => {

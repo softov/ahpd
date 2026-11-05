@@ -34,7 +34,7 @@ One method per act, and the grants below are per operation because of it.
 | `resourceDelete` | Remove a file, or a directory when `recursive` |
 | `resourceMove` | Rename, refused across two schemes |
 | `resourceCopy` | Copy, refused across two schemes |
-| `resourceRequest` | May I read or write this. Answered yes for any `file:` URI without withholding anything, and refused `-32009` for a URI this host does not mediate |
+| `resourceRequest` | May I read or write this. Answered yes for any URI without withholding anything, as VS Code's host answers it; one under the client scheme is asked of the client it names |
 | `createResourceWatch` | A channel that reports what changes under a path |
 | `completions` | `@` completes a path, against the session's own directory |
 
