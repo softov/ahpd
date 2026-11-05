@@ -84,11 +84,11 @@ export function createTurns(ctx: SessionContext): Turns {
     // Held before the wait: a result read while the blocks are built is not
     // this prompt's answer, and has to know that one is still to come.
     if (uuid !== undefined && owed !== undefined) ctx.owed.set(uuid, owed);
-    const to = ctx.handle;
+    const to = ctx.query;
     const content = await blocksFor(text, attachments);
     // A CLI put away meanwhile took what it was owed with it, and the one in
     // its place is sent that by whatever put it there.
-    if (ctx.handle !== to) return;
+    if (ctx.query !== to) return;
     ctx.waiting.push({
       type: 'user',
       message: { role: 'user', content },
@@ -213,7 +213,7 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.rebind = undefined;
       ctx.gone = undefined;
       ctx.buildClientMcpServers();
-      ctx.handle = ctx.startQuery(ctx.running, false);
+      ctx.query = ctx.startQuery(ctx.running, false);
       void ctx.consume();
     }
     /*
@@ -236,7 +236,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * The turn is recorded as one that failed rather than refused, because a
      * person typed it and it belongs in the transcript beside the reason.
      */
-    if (ctx.gone !== undefined && ctx.rebind === ctx.handle) {
+    if (ctx.gone !== undefined && ctx.rebind === ctx.query) {
       ctx.beginning = undefined;
       refuseTurn(turnId, text, ctx.gone, began, from, attachments);
       return;
@@ -284,7 +284,7 @@ export function createTurns(ctx: SessionContext): Turns {
     const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
     if (level !== ctx.appliedEffort) {
       ctx.appliedEffort = level;
-      void ctx.handle.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
+      void ctx.query.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
     }
     ctx.beginning = undefined;
     // The turn this session runs from now, as the host said it.
@@ -434,9 +434,9 @@ export function createTurns(ctx: SessionContext): Turns {
         }
         // The SDK's own request for the control the CLI names
         // `cancel_async_message`, which the SDK's types leave undeclared.
-        const handle = ctx.handle as typeof ctx.handle & { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
+        const handle = ctx.query as typeof ctx.query & { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
         void handle.cancelAsyncMessage(uuid).then((cancelled) => {
-          if (cancelled && ctx.handle === handle) ctx.owed.delete(uuid);
+          if (cancelled && ctx.query === handle) ctx.owed.delete(uuid);
         }, () => {});
       }
       if (str(bag(ctx.steering).id) === id) ctx.steering = undefined;
@@ -552,7 +552,7 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.noteLive({ tasks: [] });
       // The files the turn's edit calls began changing, as the stop leaves them.
       ctx.editsStopped();
-      const was = ctx.handle;
+      const was = ctx.query;
       ctx.rebind = was;
       try { was.close(); }
       catch { /* A CLI already closing is stopped all the same. */ }

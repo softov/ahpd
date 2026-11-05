@@ -18,8 +18,8 @@ const reportedServers = (answer: unknown): unknown[] => (Array.isArray(answer) ?
 export interface Servers {
   /** What the CLI said of each server it is using, by name. */
   onServer: Map<string, { server: string; turnId: string; blocked: boolean }>;
-  /** The MCP servers this session declares, which the CLI is told about. */
-  declared: Record<string, Bag>;
+  /** The MCP servers this session declares, which the CLI is told about: the SDK's `mcpServers`. */
+  mcpServers: Record<string, Bag>;
   /** Ask the CLI what its MCP servers are, and keep the answer. */
   refreshMcp: () => Promise<void>;
   /** Say what the CLI's servers are, in chat. */
@@ -54,7 +54,7 @@ export function createServers(ctx: SessionContext): Servers {
    * replaces its dynamic servers with what it is given, so a set rebuilt from
    * one server would take the others away.
    */
-  const declared: Record<string, Bag> = { ...(ctx.options.mcpServers ?? {}) };
+  const mcpServers: Record<string, Bag> = { ...(ctx.options.mcpServers ?? {}) };
 
   /** What each server that needs signing in published about itself, by name. */
   const wanted = new Map<string, Published>();
@@ -140,7 +140,7 @@ export function createServers(ctx: SessionContext): Servers {
       const server = bag(raw);
       const name = str(server.name);
       if (name === undefined || str(server.status) !== 'needs-auth' || wanted.has(name)) return;
-      const url = urlOf(declared[name] ?? server.config);
+      const url = urlOf(mcpServers[name] ?? server.config);
       if (url === undefined) return;
       wanted.set(name, await protectedResource(url, name).catch(() => ({ resource: url, resource_name: name })) as Published);
     }));
@@ -156,7 +156,7 @@ export function createServers(ctx: SessionContext): Servers {
    * client's start or stop included.
    */
   const refreshMcp = async (): Promise<void> => {
-    const found = await ctx.handle.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
+    const found = await ctx.query.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
     reported.mcp = found;
     await discover(found);
     for (const raw of found) {
@@ -308,12 +308,12 @@ export function createServers(ctx: SessionContext): Servers {
       [source, enabled] as const,
     ]);
     try {
-      await ctx.handle.applyFlagSettings({ ...flagSettingsOf(ctx.values), enabledPlugins: decided });
+      await ctx.query.applyFlagSettings({ ...flagSettingsOf(ctx.values), enabledPlugins: decided });
     }
     catch {
       return false;
     }
-    const plugins = await ctx.handle.reloadPlugins()
+    const plugins = await ctx.query.reloadPlugins()
       .then((answer) => list(bag(answer as unknown).plugins))
       .catch(() => undefined);
     if (plugins === undefined)
@@ -353,8 +353,8 @@ export function createServers(ctx: SessionContext): Servers {
         again = false;
         if (ctx.closed) return;
         const answered = await Promise.all([
-          ctx.handle.reloadPlugins().then((r) => bag(r as unknown)),
-          ctx.handle.reloadSkills().then((r) => list(bag(r as unknown).skills)),
+          ctx.query.reloadPlugins().then((r) => bag(r as unknown)),
+          ctx.query.reloadSkills().then((r) => list(bag(r as unknown).skills)),
         ]).catch(() => undefined);
         if (answered === undefined || ctx.closed) continue;
         const [plugins, skills] = answered;
@@ -381,11 +381,11 @@ export function createServers(ctx: SessionContext): Servers {
    */
   const describe = async (): Promise<void> => {
     const [init, mcp, skills, plugins] = await Promise.all([
-      ctx.handle.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
-      ctx.handle.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]),
+      ctx.query.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
+      ctx.query.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]),
       // The only way to know which commands are skills. It re-reads them from
       // disk, which at the start of a session is what one wants anyway.
-      ctx.handle.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
+      ctx.query.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
       /*
        * The plugins, which `initializationResult()` does not report.
        *
@@ -393,7 +393,7 @@ export function createServers(ctx: SessionContext): Servers {
        * plugin list is used: it re-reads commands and agents too, and those
        * are already answered above.
        */
-      ctx.handle.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
+      ctx.query.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
     ]);
     ctx.offered = list(init.models)
       .map((raw) => {
@@ -414,7 +414,7 @@ export function createServers(ctx: SessionContext): Servers {
      */
     const asked = str(ctx.values.outputStyle);
     if (asked !== undefined && asked !== str(init.output_style)) {
-      await ctx.handle.applyFlagSettings(flagSettingsOf(ctx.values)).catch(() => {});
+      await ctx.query.applyFlagSettings(flagSettingsOf(ctx.values)).catch(() => {});
     }
     reported.init = init;
     reported.mcp = mcp;
@@ -453,7 +453,7 @@ export function createServers(ctx: SessionContext): Servers {
       const was = str(bag(held?.state).kind);
       try {
         if (!enabled) {
-          await ctx.handle.toggleMcpServer(server, false);
+          await ctx.query.toggleMcpServer(server, false);
         }
         /*
          * Switching on a server that is not ready is how somebody signs into
@@ -466,12 +466,12 @@ export function createServers(ctx: SessionContext): Servers {
          * sign-in.
          */
         else if (was === 'ready') {
-          await ctx.handle.toggleMcpServer(server, true);
+          await ctx.query.toggleMcpServer(server, true);
         }
         else {
-          await ctx.handle.toggleMcpServer(server, true).catch(() => {});
+          await ctx.query.toggleMcpServer(server, true).catch(() => {});
           request(id, 'session/mcpServerStartRequested');
-          await ctx.handle.reconnectMcpServer(server);
+          await ctx.query.reconnectMcpServer(server);
         }
       }
       catch {
@@ -507,10 +507,10 @@ export function createServers(ctx: SessionContext): Servers {
       request(id, 'session/mcpServerStartRequested');
       try {
         if (stopRequested.has(server)) {
-          await ctx.handle.toggleMcpServer(server, true);
+          await ctx.query.toggleMcpServer(server, true);
           stopRequested.delete(server);
         }
-        await ctx.handle.reconnectMcpServer(server);
+        await ctx.query.reconnectMcpServer(server);
       }
       catch {
         // Said by the refresh below, which reads what the CLI made of it.
@@ -537,18 +537,18 @@ export function createServers(ctx: SessionContext): Servers {
         ? [...wanted.entries()].find(([, published]) => published.resource === resource)?.[0]
         : serverNamed(server);
       if (named === undefined || wanted.get(named)?.resource !== resource) return false;
-      const config = declared[named];
+      const config = mcpServers[named];
       if (config === undefined) return false;
       const headers = typeof config.headers === 'object' && config.headers !== null
         ? config.headers as Record<string, string>
         : {};
-      declared[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
+      mcpServers[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
       try {
-        await ctx.handle.setMcpServers(declared as never);
+        await ctx.query.setMcpServers(mcpServers as never);
         // Discovered again next time: a server that connects is no longer one
         // anybody needs to sign into.
         wanted.delete(named);
-        await ctx.handle.reconnectMcpServer(named);
+        await ctx.query.reconnectMcpServer(named);
       }
       catch { return false; }
       await refreshMcp();
@@ -577,7 +577,7 @@ export function createServers(ctx: SessionContext): Servers {
       request(id, 'session/mcpServerStopRequested');
       if (on) stopRequested.add(server);
       try {
-        await ctx.handle.toggleMcpServer(server, false);
+        await ctx.query.toggleMcpServer(server, false);
       }
       catch {
         // Said by the refresh below, which reads what the CLI made of it.
@@ -590,7 +590,7 @@ export function createServers(ctx: SessionContext): Servers {
 
   return {
     onServer,
-    declared,
+    mcpServers,
     refreshMcp,
     describe,
     reread,

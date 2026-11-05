@@ -352,7 +352,7 @@ export function createQuery(ctx: SessionContext): Query {
   const bounded = (handle: ReturnType<typeof query>): ReturnType<typeof query> => {
     const within = ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS;
     const timer = setTimeout(() => {
-      if (ctx.handle !== handle || ctx.rebind === handle) return;
+      if (ctx.query !== handle || ctx.rebind === handle) return;
       putAway(handle, `Claude Code did not answer within ${within / 1000} seconds`);
       /*
        * Closed rather than left running: a CLI that answers ten minutes later
@@ -439,7 +439,7 @@ export function createQuery(ctx: SessionContext): Query {
        * that is the only way a token a client signed in with can be applied -
        * `setMcpServers` does not touch servers that came from a settings file.
        */
-      ...(Object.keys(ctx.declared).length > 0 ? { mcpServers: ctx.declared as never } : {}),
+      ...(Object.keys(ctx.mcpServers).length > 0 ? { mcpServers: ctx.mcpServers as never } : {}),
       /*
        * The client plugins this session runs with.
        *
@@ -694,7 +694,7 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const take = async (id: string): Promise<string | undefined> => {
     try {
-      await ctx.handle.setModel(id === 'default' ? undefined : id);
+      await ctx.query.setModel(id === 'default' ? undefined : id);
       return undefined;
     }
     catch (error: unknown) {
@@ -720,14 +720,14 @@ export function createQuery(ctx: SessionContext): Query {
   const switchAgent = (uri: string | undefined): string | undefined => {
     const name = uri === undefined ? undefined : agentNameOf(uri);
     if (name === ctx.running) return undefined;
-    const was = ctx.handle;
+    const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
       return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
     }
     ctx.running = name;
     ctx.gone = undefined;
-    ctx.handle = startQuery(name, false);
+    ctx.query = startQuery(name, false);
     void consume();
     return undefined;
   };
@@ -742,7 +742,7 @@ export function createQuery(ctx: SessionContext): Query {
    * doing and the session is exactly where it was.
    */
   const consume = async (): Promise<void> => {
-    const mine = ctx.handle;
+    const mine = ctx.query;
     try {
       for await (const raw of mine) {
         // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
@@ -1152,7 +1152,7 @@ export function createQuery(ctx: SessionContext): Query {
       // to another login is about to start it, or a stop, a death or the
       // bound above closed it for the next send to start again, a close
       // keeping the reason it was put away for.
-      if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+      if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
        * The failure in its own words, a CLI that never started included, as
        * VS Code's host ends a send that failed with the error's own message.
@@ -1162,7 +1162,7 @@ export function createQuery(ctx: SessionContext): Query {
       return;
     }
     // A stream that ended without a result.
-    if (ctx.closed || ctx.handle !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+    if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
     putAway(mine, 'Claude SDK stream ended without a result message');
   };
 
@@ -1192,7 +1192,7 @@ export function createQuery(ctx: SessionContext): Query {
     if (unready !== undefined) return unready;
     const login = ctx.loginFor(now);
     if (startedFrom(now, login) === ctx.startedWith) return undefined;
-    const was = ctx.handle;
+    const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
       return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
@@ -1200,7 +1200,7 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.values = now;
     ctx.login = login;
     ctx.gone = undefined;
-    ctx.handle = startQuery(ctx.running, false);
+    ctx.query = startQuery(ctx.running, false);
     void consume();
     return undefined;
   };

@@ -6,7 +6,7 @@ import type { Bag, BoundTool } from '@ahpd/sdk';
  *
  * This lives beside `clienttools.ts` and not in `packages/sdk`, where the task
  * placed it, because what is under test is this backend's `setTools`, the
- * send that gives the CLI the set, and its `ctx.declared`: the holder and the
+ * send that gives the CLI the set, and its `ctx.mcpServers`: the holder and the
  * entry a call is raised against are the sdk's, but "kept only once the SDK
  * has taken it" is this file's. So the cases build the small part of a
  * session's context the two read and drive them, rather than a whole host.
@@ -34,7 +34,7 @@ const offeredTool = (name: string, owner = 'probe'): BoundTool => ({
  * A session whose `setMcpServers` refuses: every declaration, one of them, or
  * none.
  *
- * Only the fields `setTools` reads are here. `declared` starts as a session's
+ * Only the fields `setTools` reads are here. `mcpServers` starts as a session's
  * does: a server the host was given by a person, and neither in-process
  * server - `session.ts` declares those from the tools the session was built
  * with, so a session built with none has neither. A case that wants one to
@@ -50,10 +50,10 @@ const session = () => {
   const ctx = {
     options: { chatUri: 'ahp-chat:/contributed' },
     emit: () => {},
-    declared: { files: filesServer } as Record<string, Bag>,
+    mcpServers: { files: filesServer } as Record<string, Bag>,
     offering: [] as BoundTool[],
     toolDiff: undefined as BoundTool[] | undefined,
-    handle: {
+    query: {
       setMcpServers: async (servers: Record<string, Bag>) => {
         made += 1;
         if (refuse === 'all' || refuse === made) throw new Error('the CLI said no');
@@ -70,7 +70,7 @@ const session = () => {
     },
     sent,
     /** What the session offers and declares now, which `setTools` moves. */
-    state: () => ({ offering: ctx.offering, declared: ctx.declared }),
+    state: () => ({ offering: ctx.offering, declared: ctx.mcpServers }),
     refusing: (on: boolean) => { made = 0; refuse = on ? 'all' : undefined; },
     /** Refuse the `at`-th declaration made from here on, and no other. */
     refusingAt: (at: number) => { made = 0; refuse = at; },

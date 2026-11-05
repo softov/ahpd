@@ -47,11 +47,11 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
   const ctx = {
     options: { chatUri: 'ahp-chat:/probe' },
     emit: () => {},
-    declared,
+    mcpServers: declared,
     offering: [] as BoundTool[],
     toolDiff: undefined as BoundTool[] | undefined,
     doing: () => {},
-    handle: { setMcpServers: async () => {} },
+    query: { setMcpServers: async () => {} },
     // The session's own chat holds every call here: no worker opened one.
     scopeOfCall: () => undefined,
   };

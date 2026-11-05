@@ -209,7 +209,7 @@ export function createConfig(ctx: SessionContext): Config {
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
       ctx.settings.permissionMode = found;
-      void ctx.handle.setPermissionMode(found).catch(() => {});
+      void ctx.query.setPermissionMode(found).catch(() => {});
       return true;
     },
 

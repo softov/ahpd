@@ -68,7 +68,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     chosen: undefined as string | undefined,
     appliedEffort: undefined as string | undefined,
     offering: [] as BoundTool[],
-    handle: undefined as unknown as ReturnType<typeof query>,
+    query: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
@@ -164,7 +164,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   // ------------------------------------------------------------------ the run
   // The login the first CLI signs in with, which the query's environment reads.
   ctx.login = ctx.loginFor(ctx.values);
-  ctx.handle = ctx.startQuery(ctx.running, true);
+  ctx.query = ctx.startQuery(ctx.running, true);
   void ctx.describe().catch(() => {});
 
   void ctx.consume();
@@ -342,12 +342,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
       ctx.releaseCalls('The session was disposed');
       try { rmSync(ctx.initScript, { force: true }); }
       catch { /* a script that was never written */ }
-      ctx.handle.close();
+      ctx.query.close();
       /*
        * The query's cleanup, which `close` starts and does not return: it
        * settles once the CLI's process has exited, or after the SDK's own bound.
        */
-      const disposed = (ctx.handle as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
+      const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
       return Promise.resolve(disposed).catch(() => undefined);
     },
   };

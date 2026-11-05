@@ -382,16 +382,14 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   offering: BoundTool[];
   /**
-   * The query this session is reading, once there is one.
+   * The query this session is reading, once there is one: the SDK's `Query`,
+   * named as the SDK and VS Code's Claude name it.
    *
-   * Typed as the query and not as the query or nothing, because as a `let` in
-   * the closure it was declared where it was first built and TypeScript kept it
-   * narrowed from there. As a field it exists from the start of the session, so
-   * `undefined` would have to be widened into it by hand; nothing reads it
-   * before the query is built, and the identity checks that follow it want the
-   * query either way.
+   * Typed as the query and not as the query or nothing: it exists from the
+   * start of the session, nothing reads it before the query is built, and the
+   * identity checks that follow it want the query either way.
    */
-  handle: ReturnType<typeof query>;
+  query: ReturnType<typeof query>;
   /**
    * What somebody is part-way through typing.
    *

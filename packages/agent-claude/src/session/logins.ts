@@ -310,7 +310,7 @@ export function createLogins(ctx: SessionContext): Logins {
    * which starts no CLI that nothing would close.
    */
   const restartAt = async (turn: string, cut: Cut, login: Login | undefined): Promise<{ started: boolean; failed?: string }> => {
-    const was = ctx.handle;
+    const was = ctx.query;
     let failed: string | undefined;
     closing = was;
     try {
@@ -327,7 +327,7 @@ export function createLogins(ctx: SessionContext): Logins {
       }
       if (failed === undefined) ctx.ends.delete(turn);
       ctx.gone = undefined;
-      ctx.handle = cut.over !== true
+      ctx.query = cut.over !== true
         ? ctx.startQuery(ctx.running, false, cut.at)
         : ctx.startQuery(ctx.running, failed === undefined);
       void ctx.consume();

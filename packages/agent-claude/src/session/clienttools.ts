@@ -471,7 +471,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
    * left out when it carries none.
    */
   const declaring = (tools: BoundTool[]): Record<string, Bag> => {
-    const declared: Record<string, Bag> = { ...ctx.declared };
+    const declared: Record<string, Bag> = { ...ctx.mcpServers };
     delete declared[CLAUDE_CLIENT_MCP_SERVER_NAME];
     delete declared[CLAUDE_SERVER_TOOL_MCP_SERVER_NAME];
     const clients = tools.filter((one) => one.owner !== undefined);
@@ -486,7 +486,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     if (handed === undefined) return;
     ctx.toolDiff = undefined;
     ctx.offering = takes(handed);
-    ctx.declared = declaring(ctx.offering);
+    ctx.mcpServers = declaring(ctx.offering);
   };
 
   const rebindForClientTools = async (): Promise<void> => {
@@ -500,13 +500,13 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const declared = declaring(next);
     try {
       if (ctx.offering.length > 0) {
-        await ctx.handle.setMcpServers(removed as never);
+        await ctx.query.setMcpServers(removed as never);
         // Gone from the CLI now, so what this session holds is the set
         // without them, whatever the second declaration answers.
         ctx.offering = [];
-        ctx.declared = removed;
+        ctx.mcpServers = removed;
       }
-      if (next.length > 0) await ctx.handle.setMcpServers(declared as never);
+      if (next.length > 0) await ctx.query.setMcpServers(declared as never);
     }
     catch (error: unknown) {
       // The CLI holds what it held, so the set waits for the next send, as
@@ -516,7 +516,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
       throw error;
     }
     ctx.offering = [...next];
-    ctx.declared = declared;
+    ctx.mcpServers = declared;
   };
 
   const methods: ClientTools['methods'] = {
