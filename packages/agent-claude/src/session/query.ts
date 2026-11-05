@@ -912,6 +912,9 @@ export function createQuery(ctx: SessionContext): Query {
          * that carries a failure's `error` and names when the login is back.
          */
         if (type === 'rate_limit_event') { ctx.limited(bag(message.rate_limit_info)); continue; }
+        // The status of a request the CLI retries, which says whether the API
+        // answered it at all.
+        if (type === 'system' && str(message.subtype) === 'api_retry') ctx.retried(message);
         if (type === 'stream_event') { ctx.streamed(bag(message.event), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'assistant') {
           // A failure of the turn's login that the turn does not show.

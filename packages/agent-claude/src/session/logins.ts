@@ -26,6 +26,8 @@ export interface Logins {
   unready: (values: Bag) => string | undefined;
   /** A `rate_limit_event` from the CLI, kept for the retry time the failure after it names. */
   limited: (info: Bag) => void;
+  /** An `api_retry` frame from the CLI, kept for the HTTP status the failure after it had. */
+  retried: (message: Bag) => void;
   /**
    * Whether an assistant frame is a failure of the running turn's login that
    * the turn does not show: one the turn moves on from, or one it ends with
@@ -149,6 +151,16 @@ export function createLogins(ctx: SessionContext): Logins {
   };
 
   /**
+   * The HTTP status of the CLI's last retried request: a number for an answer
+   * the API gave, null for a request that had no answer, which the provider may
+   * still have run.
+   */
+  let errorStatus: number | null | undefined;
+  const retried = (message: Bag): void => {
+    errorStatus = typeof message.error_status === 'number' ? message.error_status : null;
+  };
+
+  /**
    * The retry time a `rejected` event names, in epoch milliseconds.
    *
    * Its `resetsAt` is in the epoch seconds the CLI reads the API's
@@ -214,6 +226,8 @@ export function createLogins(ctx: SessionContext): Logins {
     if (error === undefined) return false;
     const until = retryOf(rejected);
     rejected = undefined;
+    const status = errorStatus;
+    errorStatus = undefined;
     const turn = ctx.active;
     const login = ctx.login;
     const agent = ctx.options.logins;
@@ -235,6 +249,13 @@ export function createLogins(ctx: SessionContext): Logins {
       move = { turn: String(turn.id), said: `Claude refused login ${login.id} (${error})`, end: true };
       return true;
     }
+    /*
+     * A server's failure moves on only with the status the API answered it
+     * with, a 5xx or a 529: one with no answer may have run at the provider,
+     * so it ends the turn as any other error, as the proxy sends a call that
+     * may have arrived to no other entry.
+     */
+    if ((error === 'server_error' || error === 'overloaded') && typeof status !== 'number') return false;
     if (list(turn.responseParts).length > 0) return false;
     const cut = cutOf();
     if (cut === undefined) return false;
@@ -352,5 +373,5 @@ export function createLogins(ctx: SessionContext): Logins {
     if (login !== undefined) ctx.options.logins?.open.called(login.id, login.token, { ok: true });
   };
 
-  return { login: undefined, cutOf, loginFor, unready, limited, refused, nextLogin, moveOn, restartAt, failure, answered, replacing };
+  return { login: undefined, cutOf, loginFor, unready, limited, retried, refused, nextLogin, moveOn, restartAt, failure, answered, replacing };
 }

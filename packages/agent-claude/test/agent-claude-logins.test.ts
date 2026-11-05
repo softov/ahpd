@@ -401,6 +401,11 @@ const failure = (error: string, said = SPENT, resetsAt?: number) => [
   { type: 'result', subtype: 'success', is_error: true, session_id: 'cli-1', duration_ms: 5, result: said },
 ];
 
+/** The CLI's retry of a request, with the HTTP status it had, or null for one no answer came to. */
+const retriedWith = (status: number | null, error: string) => ({
+  type: 'system', subtype: 'api_retry', session_id: 'cli-1', attempt: 1, max_retries: 1, retry_delay_ms: 0, error_status: status, error,
+});
+
 /** Whether a chat was shown the words of a failure. */
 const shown = (chat: Bag[], said = SPENT): boolean => chat.some((action) => JSON.stringify(action).includes(said));
 
@@ -446,17 +451,16 @@ describe('a failed login', () => {
     expect(tokenOf()).toBe('token-work');
   });
 
-  it('moves a turn the same way for a 5xx, a 529 and a connection that never arrived', async () => {
-    for (const [error, said] of [
-      ['server_error', 'API Error: 500 Internal server error. This is a server-side issue, usually temporary.'],
-      ['overloaded', 'API Error: 529 Overloaded'],
-      ['server_error', 'API Error: Connection error.'],
+  it('moves a turn the same way for a 5xx and a 529 the API answered', async () => {
+    for (const [error, said, status] of [
+      ['server_error', 'API Error: 500 Internal server error. This is a server-side issue, usually temporary.', 500],
+      ['overloaded', 'API Error: 529 Overloaded', 529],
     ] as const) {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
       session.sendMessage('t2', 'two');
       await settle();
-      sdk.push(...failure(error, said));
+      sdk.push(retriedWith(status, error), ...failure(error, said));
       await settle();
       expect(tokenOf(), said).toBe('token-personal');
       expect(sdk.said.at(-1), said).toMatchObject({ content: 'two', query: 1 });
@@ -781,7 +785,7 @@ describe('a failed login', () => {
     await settle();
     expect(tokenOf()).toBe('token-home');
     const down = 'API Error: 500 Internal server error';
-    sdk.push(...failure('server_error', down));
+    sdk.push(retriedWith(500, 'server_error'), ...failure('server_error', down));
     await settle();
 
     expect(sdk.queries).toHaveLength(3);
@@ -789,6 +793,31 @@ describe('a failed login', () => {
     expect(failed).toHaveLength(1);
     expect(JSON.stringify(failed[0])).toContain(down);
     expect(JSON.stringify(failed[0])).toContain(`personal is back first, at ${new Date(soon * 1000).toISOString()}`);
+  });
+
+  /*
+   * A server's failure the API never answered may have run at the provider,
+   * so the turn ends with it and no other login runs it again, as the model
+   * proxy sends a call that may have arrived to no other entry; one the API
+   * answered with a 5xx moves on.
+   */
+  it('ends the turn on a server failure no answer came to, and moves on from one the API answered', async () => {
+    const logins = twoLogins();
+    const { session, chat } = await answeredOnce(logins, ['work', 'personal']);
+    session.sendMessage('t2', 'two');
+    await settle();
+    const lost = 'API Error: Connection error.';
+    sdk.push(retriedWith(null, 'server_error'), ...failure('server_error', lost));
+    await settle();
+    expect(sdk.queries).toHaveLength(1);
+    expect(tokenOf()).toBe('token-work');
+    expect(JSON.stringify(ofTurn(chat, 'chat/error', 't2'))).toContain(lost);
+
+    session.sendMessage('t3', 'three');
+    await settle();
+    sdk.push(retriedWith(529, 'overloaded'), ...failure('overloaded', 'API Error: 529 Overloaded'));
+    await settle();
+    expect(tokenOf()).toBe('token-personal');
   });
 
   it('refuses a turn that starts with every open login resting, and names the earliest retry time', async () => {
