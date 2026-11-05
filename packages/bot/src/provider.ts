@@ -537,8 +537,12 @@ export function botProvider(options: BotOptions): BotProvider {
     const workspace = asked ?? existing?.workspace ?? join(root, slug);
     // A named folder is one under `root`: the plugin makes it, and a maker
     // names folders only where the plugin's own are kept.
+    // A folder outside the allowed roots is the protocol's PermissionDenied,
+    // in the words VS Code's file resources refuse one with.
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/errors.ts#L68-L79
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L83
     if (asked !== undefined && existing === undefined && !resolve(asked).startsWith(`${resolve(root)}${sep}`)) {
-      throw new RpcError(-32602, `${asked} is not under ${root}; a bot's folder is one there`);
+      throw new RpcError(-32009, `Permission denied: ${asked}`);
     }
     const clash = store.all().find((one) => one.id !== slug && one.workspace === workspace);
     if (clash !== undefined) {

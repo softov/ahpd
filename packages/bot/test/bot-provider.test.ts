@@ -361,10 +361,12 @@ it('gives a bot its own folder, and refuses one another bot has', async () => {
   await write(soft, 'bot://other', { name: 'Other', workspace: join(bots, 'elsewhere') }, { createOnly: true });
   expect((await record(soft, 'bot://other'))['workspace']).toBe(join(bots, 'elsewhere'));
 
-  // A named folder is one under the plugin's root, never one beside it.
+  // A named folder is one under the plugin's root, never one beside it, and
+  // one outside it is the protocol's PermissionDenied in VS Code's words:
+  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/errors.ts#L68-L79
   for (const outside of [join(bots, '..', 'escaped'), bots, '/tmp/anywhere']) {
     const refused = await write(soft, 'bot://third', { name: 'Third', workspace: outside }, { createOnly: true });
-    expect(refused).toMatchObject({ code: -32602 });
+    expect(refused).toMatchObject({ code: -32009, message: `Permission denied: ${outside}` });
   }
 });
 
