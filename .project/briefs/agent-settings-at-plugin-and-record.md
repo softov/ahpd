@@ -27,6 +27,7 @@ His example, 2026-11-05: "ACP put the hostTools on plugin while claude put on ag
 - A record field is in the engine's `schema`, in `~/.config/ahpd/agents/<id>.json` under `config`. It holds for one agent.
 - A record field marked host only may be set only on a record whose owner is `host`.
 - Every record also has top-level fields outside `config`: `name`, `description`, `icon`, `model` and `owner`.
+- A plugin's `model` is only the default for a record that names none. Two records of one plugin can each name their own `model`.
 - Where a setting is at both levels, the record's value wins, and the plugin's is the default. This holds in the code of all four.
 
 ## The table
@@ -89,7 +90,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 
 ## Why each blue circle
 
-- **claude plugin `model`.** The Claude CLI takes a model, and cofold and pi give a plugin-wide default.
+- **claude `model`.** Every record has a top-level `model`, and acp, cofold and pi start a session on it. Claude's engine does not read it, so a Claude agent starts on the CLI's default. See [`code://packages/agent-claude/src/plugin.ts#L125-L135`](../../packages/agent-claude/src/plugin.ts#L125-L135). A plugin-wide default is missing too.
 - **pi record `models`, pi `baseUrl`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344).
 - **claude and pi `instructions`.** Claude's SDK takes a prompt to append, and ahpd already sends the host's instructions through it. See [`code://packages/agent-claude/src/session/query.ts#L451`](../../packages/agent-claude/src/session/query.ts#L451). pi's SDK replaces or appends to its system prompt. cofold has `instructions` at both levels.
 - **pi record `thinking`.** pi's `createAgentSession` takes a `thinkingLevel`, and claude has `thinking` on the record.
@@ -107,7 +108,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - **Project trust.** acp has `honoursTrust` on the record, and pi has `projectTrust` at both levels. Claude and cofold have none.
 - **Computers.** Claude has four plugin options, the `computer` ones. cofold has `computerConfigDir` at both levels. acp has `machine` on the record. pi has none.
 - **Environment.** acp, claude and pi take `env` on the record. cofold takes `baseUrl`, `apiKey` and `resource` instead.
-- **pi's provider.** A pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`. A base URL and a model list come only from pi's own `models.json`, outside ahpd.
+- **pi's provider.** pi takes credentials, and ahpd uses that: a pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`. A base URL and a model list come only from pi's own `models.json`, outside ahpd.
 
 ## Claude's `paths`
 
