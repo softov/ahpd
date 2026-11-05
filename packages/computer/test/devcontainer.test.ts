@@ -238,14 +238,20 @@ it('makes the container the folder asks for, and answers the reference shape', a
   // What the host inside says is the next test's; this one is about the CLI.
 });
 
-it('refuses with the CLI\'s own words when there is no container', async () => {
+it('refuses in VS Code\'s words with what the CLI said when there is no container', async () => {
   wrote({ upFailure: 'docker: command not found' });
   await expect(launcher().connect({ ...connect, workspaceFolder: workspace() }, sink()))
-    .rejects.toThrow(/command not found/);
+    .rejects.toThrow(/^Dev Container CLI returned an invalid result: .*command not found/s);
 
   wrote({ up: { outcome: 'error', message: 'no image' } });
   await expect(launcher().connect({ ...connect, workspaceFolder: workspace() }, sink()))
-    .rejects.toThrow(/reported no container/);
+    .rejects.toThrow(/^Dev Container CLI returned an invalid result: .*no image/s);
+});
+
+it('refuses a result the CLI wrote and then exited non-zero after, as VS Code does', async () => {
+  wrote({ upCode: 1 });
+  await expect(launcher().connect({ ...connect, workspaceFolder: workspace() }, sink()))
+    .rejects.toThrow(/^Dev Container CLI returned an invalid result: .*"outcome":"success"/s);
 });
 
 // POSIX-only: the scripted docker stands in for a Linux container by running

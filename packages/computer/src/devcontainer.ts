@@ -152,12 +152,33 @@ export const execArgv = (
  * goes to a client through the relay and into the message a caller reads when a
  * make fails. Only the name is kept: what a variable is for is a property of the
  * machine, and what it says is a credential wherever the image keeps one.
+ *
+ * A line the CLI writes as JSON, its result among them, is masked value by
+ * value, read with JSON's own parser: inside a JSON string a quote is written
+ * `\"`, and a value quoted that way is still a value.
  */
 export const masked = (said: string): string => said
   .split('\n')
-  .map((line) => line.replace(ENV_FLAG, (_all, flag: string, gap: string, double?: string, single?: string, plain?: string) =>
-    `${flag}${gap}${double ?? single ?? plain ?? ''}=<set>`))
+  .map((line) => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); }
+    catch {
+      return line.replace(ENV_FLAG, (_all, flag: string, gap: string, double?: string, single?: string, plain?: string) =>
+        `${flag}${gap}${double ?? single ?? plain ?? ''}=<set>`);
+    }
+    return JSON.stringify(maskedValue(parsed));
+  })
   .join('\n');
+
+/** A JSON value with every string in it masked, at any depth. */
+const maskedValue = (value: unknown): unknown => {
+  if (typeof value === 'string') return masked(value);
+  if (Array.isArray(value)) return value.map(maskedValue);
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, one]) => [key, maskedValue(one)]));
+  }
+  return value;
+};
 
 /**
  * One `-e` or `--env` and its value, however the value is quoted.
@@ -1038,9 +1059,11 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
           sink,
         );
         const fresh = parseUp(up.stdout);
-        if (fresh === undefined) {
-          const said = masked([up.stdout.trim(), up.stderr.trim()].filter((one) => one !== '').join(' '));
-          throw new Error(`The Dev Container CLI reported no container: ${said === '' ? `exit ${String(up.code)}` : said}`);
+        // A result is taken with the CLI's exit 0 beside it, and anything else
+        // is refused in VS Code's words with what the CLI said, its result
+        // first (devContainerAgentHostService.ts L316-L319 at 6b68d3fe).
+        if (up.code !== 0 || fresh === undefined) {
+          throw new Error(`Dev Container CLI returned an invalid result: ${masked(up.stdout.trim() || up.stderr.trim())}`);
         }
         made = fresh;
         remotes.set(one.workspaceFolder, fresh.remoteWorkspaceFolder);

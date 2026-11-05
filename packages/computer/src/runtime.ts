@@ -731,34 +731,43 @@ export interface ComputerRuntime {
 export const roomFor = (held: Machine[], max: number): Machine[] | undefined =>
   held.length >= max ? held : undefined;
 
-/** The operation each runtime has queued last, which the next one waits on until it settles. */
-const operations = new WeakMap<ComputerRuntime, Promise<unknown>>();
+/**
+ * One operation at a time for each key, VS Code's `SequencerByKey`: an
+ * operation waits on the last one queued under its key, one that fails settles
+ * like any other and the next one runs, and a key is dropped once its last
+ * operation has settled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/async.ts#L338-L363
+ */
+export class SequencerByKey<K> {
+  private readonly promises = new Map<K, Promise<unknown>>();
+
+  queue<T>(key: K, task: () => Promise<T>): Promise<T> {
+    const next: Promise<T> = (this.promises.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(task)
+      .finally(() => {
+        if (this.promises.get(key) === next) this.promises.delete(key);
+      });
+    this.promises.set(key, next);
+    return next;
+  }
+}
+
+/** The create each runtime has queued, keyed by the runtime. */
+const creates = new SequencerByKey<ComputerRuntime>();
 
 /**
  * One create at a time per runtime, queued as VS Code queues one source's dev
- * container operations: a `SequencerByKey` (devContainerAgentHostService.ts
- * L224 and L246, and its `queue` in src/vs/base/common/async.ts L338-L363, at
+ * container operations (devContainerAgentHostService.ts L224 and L246 at
  * 6b68d3fe), keyed by the runtime.
  *
  * The tool's `max` is a count, and a count read and then acted on is read too
  * early: two calls at once both read the same listing, both find room, and one
  * more machine exists than the limit says. So the count and the create it
  * allows are one operation, and a caller that arrives second counts the first
- * create as one of the machines.
- *
- * Keyed by runtime: two runtimes are two sets of machines. An operation that
- * fails settles like any other, and the next one runs.
+ * create as one of the machines. Two runtimes are two sets of machines.
  */
-export const queue = <T>(runtime: ComputerRuntime, task: () => Promise<T>): Promise<T> => {
-  const next: Promise<T> = (operations.get(runtime) ?? Promise.resolve())
-    .catch(() => {})
-    .then(task)
-    .finally(() => {
-      if (operations.get(runtime) === next) operations.delete(runtime);
-    });
-  operations.set(runtime, next);
-  return next;
-};
+export const queue = <T>(runtime: ComputerRuntime, task: () => Promise<T>): Promise<T> => creates.queue(runtime, task);
 
 /**
  * What a machine is using, as numbers rather than as a runtime's display text.
@@ -3016,14 +3025,16 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           rmSync(scratch, { recursive: true, force: true });
         }
         const made = parseUp(ran.stdout);
-        if (made === undefined) {
+        if (ran.code !== 0 || made === undefined) {
           /*
+           * A result is taken with the CLI's exit 0 beside it, and anything else
+           * is refused in VS Code's words with what the CLI said, its result
+           * first (devContainerAgentHostService.ts L316-L319 at 6b68d3fe).
            * Masked before it is thrown: the CLI echoes the `docker run` it
            * builds at info level, which carries every `-e` a need asked for, and
            * an error text goes into a log and into whatever a person is told.
            */
-          const said = masked([ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' '));
-          throw new Error(`The Dev Container CLI reported no container for ${spec.devcontainer}: ${said === '' ? `exit ${String(ran.code)}` : said}`);
+          throw new Error(`Dev Container CLI returned an invalid result: ${masked(ran.stdout.trim() || ran.stderr.trim())}`);
         }
         /*
          * A definition that builds its image is seeded now, inside the running

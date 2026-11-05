@@ -124,6 +124,25 @@ if (verb === 'read-configuration') {
 }
 
 if (verb === 'up') {
+  /*
+   * Whether another `up` runs beside this one, which a test of one folder's
+   * connects asks. A directory beside the state stands for the `up` that is
+   * running for as long as it runs; one already there is an `up` this one
+   * overlapped, said by a file beside the state that nothing else writes.
+   */
+  const running = `${state}.up`;
+  let alone = true;
+  try { mkdirSync(running); }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    alone = false;
+    writeFileSync(`${state}.overlapped`, '');
+  }
+  process.on('exit', () => {
+    if (!alone) return;
+    try { rmdirSync(running); }
+    catch {}
+  });
   // The CLI logs while it works, so the result is one line among several.
   process.stdout.write('{"type":"progress","step":"building"}\n');
   /*
@@ -206,11 +225,18 @@ if (verb === 'up') {
     }
   }
 
-  if (held.upFailure !== undefined) {
-    process.stderr.write(`${held.upFailure}\n`);
+  /*
+   * A failed `up` as the CLI fails it: the cause on stderr, and the result on
+   * stdout, `outcome: 'error'` with the cause as its message, then exit 1.
+   * https://github.com/devcontainers/cli/blob/a190a3f86fe20b582c25c4dcb7bbf5fdb739ab26/src/spec-node/devContainersSpecCLI.ts#L347-L389
+   */
+  const failed = (message) => {
+    process.stderr.write(`${message}\n`);
+    process.stdout.write(`${JSON.stringify({ outcome: 'error', message, description: 'An error occurred setting up the container.' })}\n`);
     keep();
     process.exit(1);
-  }
+  };
+  if (held.upFailure !== undefined) failed(held.upFailure);
   const made = held.up ?? { outcome: 'success', containerId: 'abc123', remoteWorkspaceFolder: '/workspaces/Box' };
   /*
    * Where the folder lands inside.
@@ -363,14 +389,15 @@ if (verb === 'up') {
       replace(`${docker}.${process.pid}.tmp`, docker);
     });
     if (missing !== undefined) {
-      process.stderr.write(`Error response from daemon: pull access denied for vsc-${base}, repository does not exist or may require 'docker login'\n`);
-      keep();
-      process.exit(1);
+      failed(`Error response from daemon: pull access denied for vsc-${base}, repository does not exist or may require 'docker login'`);
     }
   }
+  // The result, and the exit its outcome gives; `upCode` stands for an exit
+  // that is not 0 after a result was written, as a task the CLI finishes after
+  // writing it can fail.
   process.stdout.write(`${JSON.stringify(made)}\n`);
   keep();
-  process.exit(0);
+  process.exit(held.upCode ?? (made.outcome === 'error' ? 1 : 0));
 }
 
 process.stderr.write(`the fake devcontainer does not know ${String(verb)}\n`);

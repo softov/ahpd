@@ -1132,6 +1132,25 @@ it('takes the override file away after a failed up, as after a good one', async 
 });
 
 /*
+ * VS Code takes `up`'s result only with the CLI's exit 0 beside it: a result
+ * written before a later step of the CLI failed is refused in its words.
+ */
+it('refuses a result the CLI wrote and then exited non-zero after, in VS Code\'s words', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upCode: 1 }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+
+  await expect(providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/^Dev Container CLI returned an invalid result: .*"outcome":"success"/s);
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+/*
  * A need's variable, as `containerEnv`, is the container's own environment:
  * every process in there inherits it, so a command run after the create sees
  * it. `up --remote-env` reaches only the lifecycle commands `up` runs and
@@ -1976,6 +1995,36 @@ const relayed = (devState: string, dockerState: string): Record<string, unknown>
     install: false,
     plugins: ['@ahpd/agent-cofold'],
   },
+});
+
+/*
+ * Two connects for one folder at once are one container operation after the
+ * other, as VS Code's host queues them by the folder: no `up` runs beside
+ * another, and the second connect finds the container the first made running.
+ * The `up` is slowed by its log, so a second connect that did not wait would
+ * be asking the CLI while it was still making the container.
+ */
+it('runs one folder\'s connects one after the other', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upLog: ['making ', 'the ', 'container ', 'slowly\n'] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], passthrough: [process.execPath] }));
+  const { options: loaded } = await load(relayed(devState, dockerState), [agentWith()], join(dir, 'config'));
+  const { client } = await viewer(loaded);
+
+  await Promise.all(['one', 'two'].map(async (connectionId) => await client.handle({
+    method: 'vscode/devContainers/connect',
+    params: { connectionId, workspaceFolder: folder, name: 'Box' },
+  })));
+
+  expect(existsSync(`${devState}.overlapped`)).toBe(false);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  for (const connectionId of ['one', 'two']) {
+    await client.handle({ method: 'vscode/devContainers/disconnect', params: { connectionId } });
+  }
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
 });
 
 it('stops the container a folder is, ending the window\'s relay first', async () => {

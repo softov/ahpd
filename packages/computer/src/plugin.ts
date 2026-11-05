@@ -14,7 +14,7 @@ import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
 import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
+import { SequencerByKey, adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
 import { routed, parseMachineId, spellMachineId } from './router.js';
 import type { Routed } from './router.js';
@@ -2293,6 +2293,13 @@ export const apply: Plugin['apply'] = (host, options) => {
     });
 
     relay = launcher;
+    /*
+     * One container operation at a time for each folder: a connect, a stop and
+     * a remove of one folder's computer are queued behind each other, as VS
+     * Code's dev container host queues them by the folder
+     * (devContainerAgentHostService.ts L224, L246, L988-L994 at 6b68d3fe).
+     */
+    const folders = new SequencerByKey<string>();
     host.registerContainers({
       ...launcher,
       /*
@@ -2307,15 +2314,16 @@ export const apply: Plugin['apply'] = (host, options) => {
       connect: async (asked, sink) => {
         const answer = folderFor(asked.workspaceFolder);
         if (typeof answer !== 'string') throw new Error(answer.refusal);
-        const here = { ...asked, workspaceFolder: answer };
-        const result = await launcher.connect(here, sink);
-        const machine = await machineFor(answer);
-        if (machine === undefined) return result;
-        if (asked.owner !== undefined) {
-          claimOwned(host.configDir, machine.id, { owner: asked.owner }, noted);
-        }
-        open(machine.id);
-        return result;
+        return await folders.queue(answer, async () => {
+          const result = await launcher.connect({ ...asked, workspaceFolder: answer }, sink);
+          const machine = await machineFor(answer);
+          if (machine === undefined) return result;
+          if (asked.owner !== undefined) {
+            claimOwned(host.configDir, machine.id, { owner: asked.owner }, noted);
+          }
+          open(machine.id);
+          return result;
+        });
       },
       /*
        * VS Code's `stop` and `remove`, on the computer a folder is.
@@ -2332,16 +2340,22 @@ export const apply: Plugin['apply'] = (host, options) => {
        * delete does.
        */
       stop: async (folder) => {
-        const found = await machineFor(resolved(folder));
-        if (found === undefined) return true;
-        await made.stop(found.id);
-        return true;
+        const at = resolved(folder);
+        return await folders.queue(at, async () => {
+          const found = await machineFor(at);
+          if (found === undefined) return true;
+          await made.stop(found.id);
+          return true;
+        });
       },
       remove: async (folder) => {
-        const found = await machineFor(resolved(folder));
-        if (found === undefined) return true;
-        await made.remove(found.id);
-        return true;
+        const at = resolved(folder);
+        return await folders.queue(at, async () => {
+          const found = await machineFor(at);
+          if (found === undefined) return true;
+          await made.remove(found.id);
+          return true;
+        });
       },
     });
   }
