@@ -42,8 +42,8 @@ export interface Spawn {
   unstamped(meta: unknown): meta is Bag;
   /** A tool call action with the worker chat's URI in its `_meta`. */
   withWorkerUri(chat: string, action: Bag): Bag;
-  /** Every turn's tool calls stamped with this session's name. */
-  stampedCalls(session: string, turns: Bag[]): Bag[];
+  /** Every turn's tool calls stamped with this session's name where a client reduced the stamp. */
+  stampedCalls(session: string, chat: string, turns: Bag[]): Bag[];
   /** A chat's state with the attachments its clients sent back on its messages. */
   asSentChat(state: Bag): Bag;
   /** Write one action on a worker's chat. */
@@ -188,12 +188,13 @@ export function createSpawn(ctx: HostContext): Spawn {
   /**
    * A tool call action with the chat it links in its `_meta`.
    *
-   * The reference's `subagentChatUri`, stamped on every tool call action that
-   * carries a `_meta` whose `toolKind` is `subagent`, so a client can open the
-   * worker's chat from the call before the chat is announced. Every such
-   * action and not only the start: an action carrying `_meta` replaces the
-   * call's whole bag; the backend never spells a worker chat URI, and this
-   * host does. Any other action is returned as it is.
+   * The reference's `subagentChatUri`, stamped on a call's start, delta and
+   * ready whose `_meta` says `toolKind` `subagent`, so a client can open the
+   * worker's chat from the call before the chat is announced; the backend
+   * never spells a worker chat URI, and this host does. A later action goes
+   * out as the backend made it, as the reference sends it, and every other
+   * action is returned as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
    *
    * A call that carries a `subagent` content already says which chat it works
    * with, and that link is kept: a worker chat of this session is the URI
@@ -204,7 +205,7 @@ export function createSpawn(ctx: HostContext): Spawn {
    * from an earlier one, because a completion may carry no content at all.
    */
   const withWorkerUri = (chat: string, action: Bag): Bag => {
-    if (typeof action.type !== 'string' || !action.type.startsWith('chat/toolCall')) return action;
+    if (action.type !== 'chat/toolCallStart' && action.type !== 'chat/toolCallDelta' && action.type !== 'chat/toolCallReady') return action;
     if (!unstamped(action._meta) || typeof action.toolCallId !== 'string') return action;
     const session = sessionHolding(chat);
     if (session === undefined) return action;
@@ -287,20 +288,22 @@ export function createSpawn(ctx: HostContext): Spawn {
     return next;
   };
   /**
-   * A chat's state with the same stamp on every spawning call in its turns,
-   * so a client that subscribes late reads what the wire said. A call that
-   * links a chat carries that link, and every other one gets this session's
-   * worker chat; a worker's own content names exactly that URI, so a worker
-   * of this session is left as it was. A copy where anything moved; the state
-   * passed in is the backend's own.
+   * A chat's state with the stamp on each spawning call whose bag, as a
+   * client reduced it, carries one, so a client that subscribes late reads
+   * what the wire said: a call whose last `_meta` came on its start, delta or
+   * ready. A call that links a chat carries that link, and every other one
+   * gets this session's worker chat; a worker's own content names exactly that
+   * URI, so a worker of this session is left as it was. A copy where anything
+   * moved; the state passed in is the backend's own.
    */
-  const stampedCalls = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+  const stampedCalls = (session: string, chat: string, turns: Bag[]): Bag[] => turns.map((turn) => {
     const parts = Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : undefined;
     if (parts === undefined) return turn;
     let touched = false;
     const next = parts.map((part) => {
       const call = part.toolCall as Bag | undefined;
-      if (call === undefined || !unstamped(call._meta) || typeof call.toolCallId !== 'string') return part;
+      if (call === undefined || !unstamped(call._meta) || typeof call.toolCallId !== 'string'
+        || !links.stampedOn(chat, call.toolCallId)) return part;
       touched = true;
       const linked = linkIn(call.content);
       return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? subagentChatUri(session, call.toolCallId) } } };

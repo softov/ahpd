@@ -206,10 +206,16 @@ describe('driving a turn', () => {
         .map((e) => e.action._meta);
       // `_meta.progressMessage`, the reference client's word for a line on a
       // running row - never the result, which is what the tool answered and
-      // not what it was doing on the way. The kind and the worker's keys
-      // stamped at the start ride along, because an action carrying `_meta`
-      // replaces the bag whole.
-      const worker = { toolKind: 'subagent', subagentDescription: 'look', subagentChatUri: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/) };
+      // not what it was doing on the way. The kind and the worker's keys the
+      // backend put on the call ride along, because an action carrying `_meta`
+      // replaces the bag whole. The worker chat's link is stamped on the
+      // start, delta and ready alone, as the reference stamps it, so a later
+      // action carries none, and a late subscriber reads what that action left.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
+      const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'tc1');
+      expect((start?.action._meta as Record<string, unknown> | undefined)?.subagentChatUri)
+        .toEqual(expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/));
+      const worker = { toolKind: 'subagent', subagentDescription: 'look' };
       // The times ride with them: the plugin stamped the call's start when it
       // began running and the completion adds the end.
       const started = { ...worker, 'ahpd.startedAt': expect.any(String) };

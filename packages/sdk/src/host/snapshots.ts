@@ -238,11 +238,11 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     // Every turn the backend holds, with each worker linked from its call;
     // the window a subscribe asks for is cut from these when it is served.
     if (Array.isArray(state.turns)) {
-      state.turns = ctx.stampedCalls(session, linkedTurns(session, state.turns as Bag[], restored));
+      state.turns = ctx.stampedCalls(session, chatUri, linkedTurns(session, state.turns as Bag[], restored));
     }
     delete state.turnsNextCursor;
     if (typeof state.activeTurn === 'object' && state.activeTurn !== null) {
-      state.activeTurn = ctx.stampedCalls(session, [state.activeTurn as Bag])[0];
+      state.activeTurn = ctx.stampedCalls(session, chatUri, [state.activeTurn as Bag])[0];
     }
     // The attachments the clients sent, back on the messages that carry them:
     // a `chat` attachment reaches a backend as a pointer, and the reference
@@ -626,7 +626,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           title: opened.title ?? title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
-          turns: ctx.stampedCalls(owning, (own ?? []) as unknown as Bag[]),
+          turns: ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[]),
           queuedMessages: [],
           ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
         },
@@ -654,7 +654,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
           interactivity: 'read-only',
           // With each worker it spawned linked from the call that ran it.
-          turns: ctx.stampedCalls(owning, linkedTurns(
+          turns: ctx.stampedCalls(owning, channel, linkedTurns(
             owning,
             (one.turns ?? []) as Bag[],
             workers.filter((held) => String(held.parentToolCallId ?? '') === wanted),
@@ -674,7 +674,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           ...startedBy(nameOf(id)),
-          turns: ctx.stampedCalls(owning, linkedTurns(owning, turns, workers)),
+          turns: ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers)),
           queuedMessages: [],
           // Held here rather than by a chat, because there is no chat. A
           // client that typed into this row and came back finds what it

@@ -180,15 +180,15 @@ it('keeps the chat a call links in another session', async () => {
   expect(linkedOn).toHaveLength(1);
   expect(linkedOn[0]?.content).toEqual([{ type: 'subagent', resource: backChat, title: 'Back' }]);
   /*
-   * The link kept where the host stamps spawning calls: the action said
-   * `toolKind: 'subagent'` and named no chat, so without the content the host
-   * would have derived a worker chat of the main session - a chat nothing
-   * opened. What it stamped instead is the chat the call works with.
+   * The content change goes out as the backend made it: the host stamps a
+   * call's start, delta and ready, as the reference does, and the content is
+   * where the chat the call works with is named.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
    */
-  expect((linkedOn[0]?._meta as Bag).subagentChatUri).toBe(backChat);
+  expect(linkedOn[0]?._meta).toEqual({ toolKind: 'subagent' });
 
-  // And the state a client subscribing late reads says the same, from the
-  // part's own content rather than from what the index happened to see.
+  // And the state a client subscribing late reads says the same: the content
+  // names the chat, and the bag is the one the content change left.
   const opened = await ask('subscribe', { channel: mainChat }) as { snapshot: { state: Bag } };
   const active = opened.snapshot.state.activeTurn as Bag | undefined;
   expect(active).toBeDefined();
@@ -196,8 +196,8 @@ it('keeps the chat a call links in another session', async () => {
   expect(part.toolCall).toMatchObject({
     status: 'running',
     content: [{ type: 'subagent', resource: backChat, title: 'Back' }],
-    _meta: { toolKind: 'subagent', subagentChatUri: backChat },
   });
+  expect((part.toolCall as Bag)._meta).toEqual({ toolKind: 'subagent' });
 });
 
 it('answers a subscribe to the chat the call links', async () => {
