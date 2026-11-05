@@ -1235,6 +1235,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         }
         throw new RpcError(AhpErrorCodes.AlreadyExists, `Chat already exists: ${chatUri}`);
       }
+      /*
+       * A new chat's URI is an `ahp-chat:` one, refused InvalidParams in the
+       * reference host's words otherwise.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L57-L60
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2283-L2285
+       */
+      if (!chatUri.startsWith('ahp-chat:'))
+        throw new RpcError(INVALID_PARAMS, `Chat URI must use the ahp-chat scheme: ${chatUri}`);
       claimable(chatUri, 'chat');
       /*
        * Made out of another chat, when a client asks for that.

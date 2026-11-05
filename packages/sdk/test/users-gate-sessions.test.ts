@@ -36,10 +36,11 @@ it('reads a session held under its provider\'s scheme as a session, and a file a
   expect(await call(guest, 'subscribe', { channel: session })).toMatchObject({ code: -32009 });
   expect(await call(guest, 'subscribe', { channel: chat })).toMatchObject({ code: -32009 });
 
-  // A chat the client named itself, whose scheme says nothing about whose it is.
-  expect(await call(admin, 'createChat', { channel: session, chat: 'peer:/two' })).toHaveProperty('result');
-  expect(await call(member, 'subscribe', { channel: 'peer:/two' })).toHaveProperty('result');
-  expect(await call(guest, 'subscribe', { channel: 'peer:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
+  // A chat the client named itself, whose id says nothing about whose it is,
+  // read as a chat of the session that holds it.
+  expect(await call(admin, 'createChat', { channel: session, chat: 'ahp-chat:/two' })).toHaveProperty('result');
+  expect(await call(member, 'subscribe', { channel: 'ahp-chat:/two' })).toHaveProperty('result');
+  expect(await call(guest, 'subscribe', { channel: 'ahp-chat:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('chat:turns') });
 });
 
 it('needs a session\'s write group to drive one, and the act it is refused is the one it did', async () => {

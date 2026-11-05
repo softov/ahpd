@@ -849,13 +849,13 @@ it('keeps a session\'s chat names while the session starts again', async () => {
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
+  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'ahp-chat:/side' })).toHaveProperty('result');
   void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
   // The session is being started again into its machine: its chats are gone
   // from the backend and not yet back, and their names are still its.
-  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
+  expect(await asked(client, 'createTerminal', { channel: 'ahp-chat:/side', cwd: DIR })).toMatchObject({ code: -32003 });
   machine.made('m1');
   await settle();
-  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
+  expect(await asked(client, 'createTerminal', { channel: 'ahp-chat:/side', cwd: DIR })).toMatchObject({ code: -32003 });
 });

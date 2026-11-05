@@ -311,10 +311,10 @@ describe('a canvas whose chat goes', () => {
     const { made, calls } = withCanvases();
     const { client } = await at(made, 'canvas');
     await sessionAt(client);
-    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });
-    const resource = await calls.open('peer:/spare', STATE);
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'ahp-chat:/spare' } });
+    const resource = await calls.open('ahp-chat:/spare', STATE);
 
-    await client.handle({ method: 'disposeChat', params: { channel: 'peer:/spare' } });
+    await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/spare' } });
     await refusedCanvas(client, resource);
   });
 
@@ -333,23 +333,23 @@ describe('a canvas whose chat goes', () => {
     });
     await sessionAt(client);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'base' } });
-    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });
-    await client.handle({ method: 'subscribe', params: { channel: 'peer:/spare' } });
-    const resource = await calls.open('peer:/spare', STATE);
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'ahp-chat:/spare' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } });
+    const resource = await calls.open('ahp-chat:/spare', STATE);
     const lists = () => seen.seen.filter((one) => one.method === 'action'
-      && one.params.channel === 'peer:/spare'
+      && one.params.channel === 'ahp-chat:/spare'
       && one.params.action?.type === 'chat/canvasesChanged').length;
     const before = lists();
 
     await client.handle({
       method: 'moveChat',
-      params: { channel: 'peer:/spare', destination: { kind: 'session', session: 'ahp-session:/two' } },
+      params: { channel: 'ahp-chat:/spare', destination: { kind: 'session', session: 'ahp-session:/two' } },
     });
 
     expect(lists()).toBe(before);
     const opened = await client.handle({ method: 'subscribe', params: { channel: resource } }) as { snapshot: { state: CanvasState } };
     expect(opened.snapshot.state).toEqual(STATE);
-    const chat = await client.handle({ method: 'subscribe', params: { channel: 'peer:/spare' } }) as { snapshot: { state: Record<string, unknown> } };
+    const chat = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } }) as { snapshot: { state: Record<string, unknown> } };
     expect(chat.snapshot.state.canvases).toEqual([{ resource }]);
   });
 });

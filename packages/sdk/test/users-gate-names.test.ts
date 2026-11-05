@@ -222,13 +222,15 @@ it('keeps every name to one kind of thing', async () => {
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  // A chat named in a space this host keeps for something else.
-  for (const chat of ['file:///c', 'ahp-root://c', 'ahp-session:/c', 'ahp-terminal:/c', 'claude:/c']) {
-    expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat })).toMatchObject({ code: -32003 });
+  // A chat named outside `ahp-chat:`, refused as VS Code's host refuses it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L57-L60
+  for (const chat of ['file:///c', 'ahp-root://c', 'ahp-session:/c', 'ahp-terminal:/c', 'claude:/c', 'peer:/two']) {
+    expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat }))
+      .toMatchObject({ code: -32602, message: `Chat URI must use the ahp-chat scheme: ${chat}` });
   }
-  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/two' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'ahp-chat:/two' })).toHaveProperty('result');
   // A terminal named after a chat, or a channel of a session.
-  for (const channel of ['peer:/two', 'ahp-session:/one/annotations', 'ahp-session:/one/changeset/x', 'file:///t', 'ahp-chat:/t']) {
+  for (const channel of ['ahp-chat:/two', 'ahp-session:/one/annotations', 'ahp-session:/one/changeset/x', 'file:///t', 'ahp-chat:/t']) {
     expect(await call(admin.client, 'createTerminal', { channel, cwd: root })).toMatchObject({ code: -32003 });
   }
   // A session named after a terminal, in the name it was asked for.
@@ -402,10 +404,13 @@ it('keeps a name in a provider\'s scheme for a session, before anything has list
   expect(await call(admin.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
   await admin.send('ahp-session:/disk', { type: 'session/isReadChanged', isRead: true });
   expect(admin.refused()).toEqual([]);
-  // A chat in a provider's scheme is refused too; any other scheme is a chat's to take.
+  // A chat named in a provider's scheme is refused as any chat outside
+  // `ahp-chat:` is, in VS Code's words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L57-L60
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
-  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'claude:/side' })).toMatchObject({ code: -32003 });
-  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'peer:/side' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'claude:/side' }))
+    .toMatchObject({ code: -32602, message: 'Chat URI must use the ahp-chat scheme: claude:/side' });
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'ahp-chat:/side' })).toHaveProperty('result');
 });
 
 it('keeps a terminal named like a session\'s marks what it is once the session is listed', async () => {
