@@ -744,8 +744,9 @@ const tarEntry = (entry: ArchiveEntry): Buffer => {
   header.write(`${(entry.uid ?? 0).toString(8).padStart(7, '0')}\0`, 108, 8, 'utf8');
   header.write(`${(entry.gid ?? 0).toString(8).padStart(7, '0')}\0`, 116, 8, 'utf8');
   header.write(`${bytes.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'utf8');
-  // A fixed mtime, so the same context twice is the same bytes and Docker's own
-  // cache is not thrown away by a build that changed nothing.
+  // A fixed mtime, the epoch, so the same entries are the same bytes every time
+  // they are written, as VS Code writes its SDK tarballs.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/package.ts#L312-L328
   header.write('00000000000\0', 136, 12, 'utf8');
   header.write('        ', 148, 8, 'utf8');
   header.write(entry.directory === true ? '5' : '0', 156, 1, 'utf8');
