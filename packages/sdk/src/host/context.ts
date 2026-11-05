@@ -308,6 +308,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   restarting: Map<string, Promise<string | undefined>>;
   /**
+   * The relaunch each running session owes, by its own uri: a change of
+   * config its backend reads only when it starts, already said, and taken
+   * when the backend starts again at the session's next turn boundary, with
+   * the credentials and the connection of the change that asked for it.
+   */
+  relaunches: Map<string, { config: Bag; credentials: Record<string, string>; sender: Connection | undefined; tokensFor: (provider: string) => Record<string, string> }>;
+  /**
    * The turns a client resumed that run now, by their chat and their id: the
    * time each ran before and when it ran again, which its stop is said with.
    */

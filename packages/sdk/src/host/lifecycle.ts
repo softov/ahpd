@@ -140,7 +140,12 @@ export interface Lifecycle {
   shelve(uri: string, after?: Promise<unknown>): Promise<void>;
   /** A session's tree put back at its path on its branch, where `shelve` took it. */
   restore(uri: string): Promise<void>;
-  /** A message's turn, whichever way it arrived. */
+  /**
+   * A message's turn, whichever way it arrived. `relay` carries a client's
+   * start to the session that runs it on another host, when the session the
+   * turn reaches is one; a session a relaunch brought back here takes the turn
+   * itself.
+   */
   beginOrRun(
     session: Session,
     provider: string,
@@ -152,7 +157,7 @@ export interface Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
-    relay?: () => void,
+    relay?: (on: Session) => void,
   ): string | undefined | Promise<string | undefined>;
   /** A turn this host begins itself, with no client's start behind it: said, then sent. */
   startTurn(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined;
@@ -362,6 +367,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const gone = dirOf(uri);
     sessions.delete(uri);
+    // And the relaunch it owed, which no backend is left to take.
+    ctx.relaunches.delete(uri);
     // And the tools server this session opened, which stops answering with it.
     ctx.toolsServersGone(uri);
     if (gone !== undefined) stopUnwatched(gone);
@@ -788,6 +795,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const previous = dirOf(uri);
     respawning.set(uri, held);
     sessions.delete(uri);
+    // A start takes the config the session holds, which is all a relaunch it
+    // owed would have taken.
+    ctx.relaunches.delete(uri);
     if (previous !== undefined && previous !== to) stopUnwatched(previous);
     try {
       /*
@@ -988,6 +998,47 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         },
       },
     );
+  };
+
+  /**
+   * The relaunch a session owes, run at its next turn boundary.
+   *
+   * Its backend is started again on the config the session now holds, and a
+   * machine the change made from a source the client named is said after it
+   * as this host's own, since every client holds the source. The session is
+   * `restarting` while it runs, so an action sent meanwhile waits for the
+   * backend that comes back. Rejects with the start's failure, which ends the
+   * turn that was waiting on it, as the reference host relaunches a runtime at
+   * the next turn boundary and a failed relaunch ends that turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+   */
+  const relaunch = async (uri: string): Promise<void> => {
+    const due = ctx.relaunches.get(uri);
+    const owning = sessions.get(uri);
+    ctx.relaunches.delete(uri);
+    if (due === undefined || owning === undefined) return;
+    const work = (async (): Promise<void> => {
+      await restart(uri, due.credentials, undefined, due.sender, undefined, due.tokensFor);
+      const made = Object.entries(due.config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
+      if (made.length === 0) return;
+      const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
+      const id = idOf(uri);
+      for (const [key, value] of Object.entries(machine)) {
+        if (!HOSTS_OWN.includes(key)) kept.setConfig(id, { ...kept.config(id), [key]: value });
+      }
+      dispatch(uri, { type: 'session/configChanged', config: machine });
+    })();
+    const held = work.then(() => undefined, (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    ctx.restarting.set(uri, held);
+    try { await work; }
+    catch (error) {
+      lives.delete(uri);
+      log(`${uri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+    finally {
+      if (ctx.restarting.get(uri) === held) ctx.restarting.delete(uri);
+    }
   };
 
   /**
@@ -1481,7 +1532,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
-    relay?: () => void,
+    relay?: (on: Session) => void,
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out, a command's as much as
@@ -1494,7 +1545,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * stop, rather than only saying so.
      */
     if (ctx.refusing !== undefined) return ctx.refusing;
-    const command = relay === undefined ? commandIn(session, text) : undefined;
+    // Carried to another host where this session runs on one, and the host
+    // there runs the command a start's text names.
+    const relayed = relay !== undefined && session.relay !== undefined;
+    const command = relayed ? undefined : commandIn(session, text);
     if (command !== undefined) {
       const by = sender === undefined ? undefined : ownerFor(sender);
       if (by !== undefined) senders.set(turnId, by);
@@ -1503,6 +1557,20 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       else said();
       ctx.bang(session, session.chatUri, turnId, command);
       return undefined;
+    }
+    /*
+     * A relaunch the session owes for a change of config, run here as the
+     * turn's preparation, since this is the session's next turn boundary: the
+     * turn then goes to the chat the relaunch brought back, and a relaunch
+     * that failed rejects, which ends the turn as a send that failed.
+     */
+    if (ctx.relaunches.has(session.uri)) {
+      const chatUri = session.chatUri;
+      return relaunch(session.uri).then(() => {
+        const back = byChat.get(chatUri)?.chat;
+        if (back === undefined) throw new Error(`${chatUri} did not start again`);
+        return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      });
     }
     /*
      * A turn with nowhere to charge.
@@ -1558,7 +1626,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * the same thing, and the only thing that decides it is what the
        * session holds at the moment the turn starts.
        */
-      if (relay !== undefined) relay();
+      if (relayed) relay(session);
       else {
         if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
         else said();

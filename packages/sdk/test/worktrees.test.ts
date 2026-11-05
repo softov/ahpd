@@ -10,6 +10,7 @@ import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { fileResources } from '../src/resources/resources.js';
 import { localPath, uriOf } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
@@ -712,6 +713,13 @@ describe('a session with a working tree of its own', () => {
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'worktree', branch: 'main' } } },
+    });
+    // The first message, which is the session's next turn boundary: the
+    // answer is said as it arrives, and the session is started again in the
+    // tree there, as VS Code relaunches a runtime at its next turn boundary.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
     });
     // On the directory rather than the value: the answer is recorded as it
     // arrives and the tree is made after it, so a test that waited on the

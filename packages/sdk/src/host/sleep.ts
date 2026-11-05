@@ -226,6 +226,9 @@ export function createSleep(ctx: HostContext): Sleep {
     }
     const dir = dirOf(uri);
     sessions.delete(uri);
+    // A wake starts the backend on the config the session holds, which is all
+    // a relaunch it owed would have taken.
+    ctx.relaunches.delete(uri);
     // Asleep and still open: counted as one this host holds, and resident
     // with the state it holds until the residency lets it go.
     ctx.asleep.add(uri);

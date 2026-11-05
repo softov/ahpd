@@ -255,16 +255,18 @@ it('settles a scope and a key that starts a backend in one action, with one star
   expect(spawns).toHaveLength(1);
 
   // One action, one decision: the scope moves and so does a key a session is
-  // built around, and there is one start rather than two.
+  // built around, and there is one start rather than two, at the session's
+  // next turn boundary, as VS Code relaunches a runtime there.
   await change(client, { scope: 'frontend:controllr', branch: 'elsewhere' });
   await settle();
-  expect(spawns).toHaveLength(2);
-  // The restarted backend is handed what the first start was: no host keys.
-  expect(spawns[1]?.scope).toBeUndefined();
-  expect(spawns[1]?.branch).toBeUndefined();
+  expect(spawns).toHaveLength(1);
 
   await turn(client);
   await settle();
+  expect(spawns).toHaveLength(2);
+  // The relaunched backend is handed what the first start was: no host keys.
+  expect(spawns[1]?.scope).toBeUndefined();
+  expect(spawns[1]?.branch).toBeUndefined();
   expect(began).toEqual(['go']);
   expect(store.scope('scoped')).toEqual({ team: 'frontend', project: 'controllr' });
 });

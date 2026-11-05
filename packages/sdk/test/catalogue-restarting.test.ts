@@ -6,14 +6,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent } from '@ahpd/sdk';
 
 /*
  * A session in the middle of a restart.
  *
- * A config change before the first turn starts the backend again, and the
- * session is out of the running ones until it is back. A backend that has no
+ * A config change before the first turn starts the backend again at that
+ * turn, and the session is out of the running ones until it is back. A backend that has no
  * transcript yet does not list it either, so a listing in that window read the
  * record as one for a session deleted outside this host, and pruned it: owner,
  * scope and config with it.
@@ -74,14 +75,20 @@ it('keeps the record of a session a listing finds mid-restart', async () => {
   const before = store.rowOf('restarting');
   expect(before?.config).toEqual({ mode: 'plain', tone: 'calm' });
 
-  const changed = client.handle({
+  await client.handle({
     method: 'dispatchAction',
     params: { channel: uri, action: { type: 'session/configChanged', config: { mode: 'other' } } },
+  });
+  // The first turn, the session's next turn boundary, where the relaunch the
+  // change owes runs.
+  const turned = client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
   });
   await until(() => closing > 0);
   await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
   release();
-  await changed;
+  await turned;
   await settle();
 
   expect(closing).toBe(1);

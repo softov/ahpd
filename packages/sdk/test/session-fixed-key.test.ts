@@ -166,6 +166,29 @@ it('starts the session again for a fixed key, and the first turn lands there', a
 });
 
 /*
+ * The change is said at once and the backend, which reads a fixed key only
+ * when it starts, is started again at the session's next turn boundary, as
+ * VS Code relaunches a runtime there: nothing restarts while no turn comes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+ */
+it('says a fixed key\'s change at once, and starts the backend again only at the next turn', async () => {
+  const { client, p, uri, chatUri, spawns, began } = await opened();
+  await change(client, uri, { fixed: 'two' });
+  await settle();
+
+  expect(spawns).toHaveLength(1);
+  const changed = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
+    .filter((one) => one.action.type === 'session/configChanged');
+  expect(changed.map((one) => one.action.config)).toEqual([{ fixed: 'two' }]);
+
+  void turn(client, chatUri);
+  await settle();
+  expect(spawns).toHaveLength(2);
+  expect(spawns[1]?.settings.fixed).toBe('two');
+  expect(began).toEqual([{ spawn: 1, text: 'go' }]);
+});
+
+/*
  * The restart is the turn's preparation, so a restart that fails ends the turn
  * said meanwhile in an error in its words, as VS Code's host ends a turn whose
  * preparation failed.
@@ -389,7 +412,13 @@ it('keeps a change the backend took while the session was being started again', 
   expect(store.config('fixed')).toMatchObject({ fixed: 'two', mutable: 'b' });
 });
 
-it('applies a config change and a turn sent while the session starts again into a machine, in order, to the new backend', async () => {
+/*
+ * A change the running backend takes is handed to it at once, and the turn
+ * after it goes to the backend its relaunch into the machine brings up, as
+ * VS Code says a change at once and relaunches at the next turn boundary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+ */
+it('hands a change to the running backend, and a turn after it to the backend its relaunch into a machine brings up, in order', async () => {
   const base = echo({ path: DIR, pace: 0 });
   /** What each backend was told, by the spawn it was. */
   const said: string[] = [];
@@ -431,8 +460,9 @@ it('applies a config change and a turn sent while the session starts again into 
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/boxed' } });
   void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
-  // The machine is still being made: the old backend is gone and the new one
-  // not yet started. Both are sent back to back, as the first send does.
+  // Both are sent back to back, as the first send does: the change reaches
+  // the backend still running, and the turn is the session's next turn
+  // boundary, where its relaunch into the machine runs.
   void change(client, 'ahp-session:/boxed', { mutable: 'b' });
   void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   // And one on another channel, which this connection sent after them.
@@ -440,7 +470,7 @@ it('applies a config change and a turn sent while the session starts again into 
   await settle();
   made('m1');
   await settle();
-  expect(said).toEqual(['1: mutable=b', '1: begin go']);
+  expect(said).toEqual(['0: mutable=b', '1: begin go']);
   const echoed = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as Note).action)
     .filter((action) => action.type === 'root/configChanged' || (action.type === 'session/configChanged' && (action.config as Bag).mutable === 'b'))
     .map((action) => String(action.type));
@@ -592,6 +622,10 @@ const notesOf = (r: ReturnType<typeof peer>): Note[] => r.notes.filter((n) => n.
  */
 it('holds a dispatch behind its client\'s waiting one, sent on another connection of that client', async () => {
   const { host, client, machine } = await intoMachine();
+  // The turn is the session's next turn boundary, where its relaunch into the
+  // machine runs, and what the client sends after it waits for the relaunch.
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  await settle();
   void client.handle({ method: 'dispatchAction', params: { channel: chatUriFor('ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
   await settle();
   const q = peer();
@@ -676,6 +710,10 @@ it('applies a dispatch that waited on a restart however long it took, and the ne
   const { p, client, machine } = await intoMachine();
   const chat = chatUriFor('ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
+  // The turn is the session's next turn boundary, where its relaunch into the
+  // machine runs, and what the client sends after it waits for the relaunch.
+  void turn(client, chat, 'first');
+  await settle();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });

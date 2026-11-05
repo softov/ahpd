@@ -426,13 +426,25 @@ export function chatAction(
     }
     const message = messageOf(action);
     const turnId = String(action.turnId ?? '');
+    const since = Date.now();
     void fire({ type: 'message', session: relaying.uri, chat: relaying.chatUri, turn: turnId, text: String(message.text ?? '') });
+    /*
+     * A session a relaunch it owed brings back on this host takes the turn
+     * itself: the client's start is said here, as any other, and a turn it
+     * then will not run ends in an error on it.
+     */
+    let startSaid = false;
     return beginTurn(
       () => beginOrRun(relaying, sessions.get(relaying.uri)?.agent.provider ?? 'This provider', turnId, String(message.text ?? ''),
-        modelIn(message.model), messageFrom(message), connection, undefined, undefined, undefined,
-        () => { relaying.relay?.('chat', action, origin); }),
-      (why) => { no(why); },
-      (why) => { no(why); },
+        modelIn(message.model), messageFrom(message), connection, undefined,
+        () => {
+          startSaid = true;
+          if (!ctx.answered(origin)) dispatch(relaying.chatUri, action, origin);
+        },
+        () => ctx.cancelledTurns.get(relaying.chatUri)?.has(turnId) === true,
+        (on) => { on.relay?.('chat', action, origin); }),
+      (why) => { if (startSaid) unsent(relaying.chatUri, 'rejected', why, since); else no(why); },
+      (why) => { if (startSaid) unsent(relaying.chatUri, 'sendFailed', why, since); else no(why); },
     );
   }
   /*
@@ -1417,15 +1429,8 @@ export function chatAction(
         });
       }
       /*
-       * The restart, held while it runs.
-       *
-       * A turn can arrive in the window between the whole config
-       * being pushed and the backend being ready - VS Code sends
-       * both back to back - so `applyDispatch` waits on this
-       * promise before it touches the session, and a turn said
-       * meanwhile waits on it before its send. It is cleared before
-       * the promise settles to its consumers, so an action that
-       * waited re-runs against the backend that is actually there.
+       * The change said, and the relaunch it needs owed to the session's
+       * next turn boundary.
        *
        * Whether this session may move to the machine it is being
        * moved to is asked first, where the keys are still theirs and
@@ -1436,57 +1441,34 @@ export function chatAction(
        * refusal undoes the whole action, the keys, the row this host
        * decides from and the charge the scope moved onto, before
        * anything of it is said, and the session stays exactly where
-       * it was.
+       * it was. The client's next dispatch waits for the check, so
+       * what it sends after the change is said after it.
        *
-       * Admitted, the change is said, and the restart is its side
-       * effect. The backend started again is started on the session's
-       * config, which holds every key of the action; a machine it made
-       * from a source the client named is said after it as this
-       * host's own, since every client holds the source. The client's
-       * next dispatch waits for the check, so what it sends after the
-       * change is said after it.
+       * Admitted, the change is said at once, and the backend, which
+       * reads these keys only when it starts, is started again at the
+       * session's next turn boundary on the config the session then
+       * holds, as the reference host relaunches a runtime there; two
+       * changes before it are one relaunch.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
        */
       const admission = admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
-      let spoken = false;
-      const work = (async (): Promise<string | undefined> => {
-        const wrong = await admission;
-        if (wrong !== undefined) return wrong;
-        said(config);
-        spoken = true;
-        await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection, undefined, conn.tokensFor);
-        const made = Object.entries(config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
-        if (made.length > 0) {
-          const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
-          for (const [key, value] of Object.entries(machine)) if (!HOSTS_OWN.includes(key)) remember(key, value);
-          dispatch(uri, { type: 'session/configChanged', config: machine });
-        }
-        return undefined;
-      })();
-      // The promise a close and a turn's send wait on, made from the work's: a
-      // refusal is answered to the client below, so a failure is carried here
-      // as its words, and its rejection reaches nobody twice.
-      restarting.set(uri, work.then(() => undefined, (error: unknown) => (error instanceof Error ? error.message : String(error))));
-      const held = restarting.get(uri);
-      const clear = (): void => {
-        if (restarting.get(uri) === held) restarting.delete(uri);
-      };
-      void work.then(
+      return admission.then(
         (wrong) => {
-          clear();
-          if (wrong !== undefined) withdrawn(wrong);
-        },
-        (error: unknown) => {
-          clear();
-          const why = error instanceof Error ? error.message : String(error);
-          if (!spoken) {
-            withdrawn(why);
+          if (wrong !== undefined) {
+            withdrawn(wrong);
             return;
           }
-          lives.delete(uri);
-          log(`${uri} did not start again: ${why}`);
+          said(config);
+          const due = ctx.relaunches.get(uri);
+          ctx.relaunches.set(uri, {
+            config: { ...due?.config, ...config },
+            credentials: conn.tokensFor(owning.agent.provider),
+            sender: connection,
+            tokensFor: conn.tokensFor,
+          });
         },
+        (error: unknown) => { withdrawn(error instanceof Error ? error.message : String(error)); },
       );
-      return admission.then(() => undefined, () => undefined);
     }
     /*
      * The latest turn, run again rather than typed again.
