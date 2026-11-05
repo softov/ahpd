@@ -315,8 +315,9 @@ export interface Start {
    * one, then one per client rule of the session that always applies, and then
    * what the session's request adds: a request may name a tool only its session
    * has, so what it says belongs after the tools every session is told about. A
-   * backend that can add to its system prompt adds these; one that cannot gets
-   * them in the first message instead.
+   * backend gives these by its runtime's own channel: beside each prompt where
+   * the runtime has one, as VS Code's Claude agent does, in its system prompt
+   * where it can add to one, and in the first message otherwise.
    */
   instructions?: string[];
   /**

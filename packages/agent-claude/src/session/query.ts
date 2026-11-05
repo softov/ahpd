@@ -142,23 +142,26 @@ export function createQuery(ctx: SessionContext): Query {
    *
    * The CLI's own door for context the person did not type: a
    * `UserPromptSubmit` hook returns `additionalContext`, and the harness puts
-   * it into the prompt without it appearing as part of the message. Registered
-   * once with the query and asked on every prompt, which is what makes it a
-   * turn's own: the words are read off the turn now running, so a turn that
-   * ended has already taken its instruction with it.
+   * it into the prompt without it appearing as part of the message, as VS
+   * Code's Claude agent gives its host's instructions on each turn. The
+   * session's own instructions first, then what the turn now running was
+   * handed: registered once with the query and asked on every prompt, so a
+   * turn that ended has already taken its instruction with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L206
    *
-   * Nothing when the host said nothing, which is every turn of a session it
-   * began itself - and the key is left off rather than sent empty, because
-   * empty context is a heading with nothing under it.
+   * Nothing when the host said nothing, and the key is left off rather than
+   * sent empty, because empty context is a heading with nothing under it.
    */
   const giveHostInstructions: HookCallback = async (input) => {
     if (input.hook_event_name !== 'UserPromptSubmit') return {};
     const held = ctx.hostInstructions;
-    if (held === undefined || held.turn !== ctx.active || held.said.length === 0) return {};
+    const turns = held !== undefined && held.turn === ctx.active ? held.said : [];
+    const said = [...(ctx.options.instructions ?? []), ...turns].filter((one) => one.trim() !== '');
+    if (said.length === 0) return {};
     return {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit' as const,
-        additionalContext: held.said.join('\n\n'),
+        additionalContext: said.join('\n\n'),
       },
     };
   };
@@ -427,16 +430,12 @@ export function createQuery(ctx: SessionContext): Query {
         plugins: ctx.options.plugins.map((one) => ({ type: 'local' as const, path: one.path, skipMcpDiscovery: true })),
       }),
       /*
-       * What the host wants said, after the CLI's own prompt.
-       *
-       * The preset with an `append`, not a prompt of this backend's own: the
-       * CLI's prompt is what makes it the CLI. `snapshot`, so the prompt is
-       * recorded once for the conversation and a resume does not rewrite it
-       * under the model's reasoning.
+       * The CLI's own prompt alone, as VS Code's Claude options name it: the
+       * CLI's prompt is what makes it the CLI, and what the host wants said
+       * reaches each turn through `giveHostInstructions`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L206
        */
-      ...(ctx.options.instructions && ctx.options.instructions.length > 0
-        ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: ctx.options.instructions.join('\n\n'), snapshot: true } }
-        : {}),
+      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
       includePartialMessages: true,
       /*
        * Which of the CLI's settings files this session loads.

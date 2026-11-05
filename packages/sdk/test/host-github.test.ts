@@ -290,20 +290,26 @@ describe('what a session recorded', () => {
       .map((one) => [one.name, one]),
   );
 
-  it('tells the model when to record one, in the reference host\'s words, through the system prompt', async () => {
+  /** What the session's CLI is told beside a prompt, through its `UserPromptSubmit` hook. */
+  const toldOnPrompt = async (): Promise<string> => {
+    const hooks = (sessionQueries().at(-1)?.options.hooks as Record<string, { hooks: ((input: unknown, id: undefined, options: { signal: AbortSignal }) => Promise<{ hookSpecificOutput?: { additionalContext?: string } }>)[] }[]> | undefined)?.UserPromptSubmit ?? [];
+    const answers = await Promise.all(hooks.flatMap((one) => one.hooks)
+      .map((hook) => hook({ hook_event_name: 'UserPromptSubmit', prompt: '' }, undefined, { signal: new AbortController().signal })));
+    return answers.map((one) => one.hookSpecificOutput?.additionalContext ?? '').join('\n');
+  };
+
+  it('tells the model when to record one, in the reference host\'s words, beside each prompt', async () => {
     await withTools();
-    const prompt = sessionQueries().at(-1)?.options.systemPrompt as { type: string; preset: string; append: string; snapshot: boolean } | undefined;
-    expect(prompt?.type).toBe('preset');
-    expect(prompt?.preset).toBe('claude_code');
-    expect(prompt?.snapshot).toBe(true);
-    expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
+    const prompt = sessionQueries().at(-1)?.options.systemPrompt as { type: string; preset: string; append?: string } | undefined;
+    expect(prompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(await toldOnPrompt()).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
   });
 
   it('gives the long wording whatever a client pushes, and offers every tool the same', async () => {
     const { client, uri } = await withTools({ telemetryLevel: 'off' });
-    const prompt = sessionQueries().at(-1)?.options.systemPrompt as { append: string } | undefined;
-    expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
-    expect(prompt?.append).not.toContain('Artifact registration is optional; default to none.');
+    const told = await toldOnPrompt();
+    expect(told).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
+    expect(told).not.toContain('Artifact registration is optional; default to none.');
     // Every tool is offered, in the same order: no root key selects words or
     // availability.
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
