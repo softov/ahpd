@@ -143,6 +143,18 @@ function open(
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     ...extra,
   });
+  /*
+   * A send as the host makes it: the host says the client's start on the chat
+   * before it hands the turn to the backend, which says nothing of the start.
+   */
+  const send = session.sendMessage.bind(session);
+  session.sendMessage = (turnId, text, from, attachments, options) => {
+    view.emit('chat', {
+      type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(),
+      message: { text, origin: from?.origin ?? { kind: 'user' }, ...(attachments === undefined ? {} : { attachments }) },
+    });
+    return send(turnId, text, from, attachments, options);
+  };
   return { session, view, uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` };
 }
 
@@ -855,7 +867,7 @@ it('takes a second turn handed while a resumed session opens, said at once and r
   expect((await reader.runs.list({ sessionId: 'one' })).length).toBe(3);
 });
 
-it('takes a turn handed while a paused run reopens, said at once in its place', async () => {
+it('holds a turn handed while a paused run reopens behind that run, which stays the run', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
@@ -871,9 +883,10 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
   await pausedRun(root, 'one');
 
   /*
-   * Somebody writes before the resume has found the run waiting on them. Once
-   * it has, that run is the chat's turn again, and the new one takes its place
-   * and waits for it.
+   * Somebody writes before the resume has found the run waiting on them. The
+   * host said the new turn's start, which takes the paused one's place in
+   * every client's chat; the backend runs each send after the one before it,
+   * so the new turn waits for the paused run and nothing of it fails.
    */
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
@@ -884,7 +897,9 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
     () => JSON.stringify(after.view.notes.map((one) => one.action.type)),
   );
 
-  expect((after.session.chatState().activeTurn as Bag | undefined)?.id).toBe('t2');
+  await new Promise((r) => { setTimeout(r, 100); });
+  expect((after.session.chatState().activeTurn as Bag | undefined)?.id).toBe('t1');
+  expect(after.view.notes.filter((one) => one.action.type === 'chat/error')).toEqual([]);
 });
 
 it('keeps two chats of one session in two conversations, each with its own turn', async () => {
