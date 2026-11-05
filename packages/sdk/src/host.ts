@@ -404,18 +404,19 @@ export function createHost(options: HostOptions): Host {
    */
   const listedMeta = new Map<string, Bag>();
   /**
-   * Every client this host has handshaken with, by the id it gave.
+   * Every client this host has handshaken with and still keeps a record of,
+   * by the id it gave.
    *
    * What `reconnect` is answerable *against*. A client comes back saying "I am
    * this id and I had seen up to here", and both halves are meaningless to a
    * host that has never met it: this one's sequence numbers are its own, so
-   * "everything after 419" means nothing if 419 was another process's.
-   *
-   * Per host and for its lifetime, because that is the span the sequence
-   * covers. A daemon that restarts has genuinely forgotten every client, and
-   * saying so is the point - see the refusal in `reconnect`.
+   * "everything after 419" means nothing if 419 was another process's. A
+   * daemon that restarts has forgotten every client, and a record is forgotten
+   * once its client has been gone for the reference host's retention.
    */
   const known = new Set<string>();
+  /** When each client with no connection open went, by client id. */
+  const lastSeen = new Map<string, number>();
   /**
    * The person who first signed in under each client id, by client id: the
    * only one a `reconnect` under that id is answered for.
@@ -1336,7 +1337,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, lastSeen, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -2242,6 +2243,11 @@ export function createHost(options: HostOptions): Host {
           const departed = connections.delete(connection);
           // Said once, however often the close is asked for.
           if (departed && connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: false });
+          // A client with no connection left is gone from now, which its
+          // record's retention is counted from.
+          if (departed && known.has(connection.clientId) && ![...connections].some((one) => one.clientId === connection.clientId)) {
+            lastSeen.set(connection.clientId, Date.now());
+          }
           // The relays above were ended one by one; the view across
           // connections drops this one with the connection itself.
           ctx.relays.delete(connection);

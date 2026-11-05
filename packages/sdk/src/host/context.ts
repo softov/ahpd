@@ -92,18 +92,19 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** The person who first signed in under each client id, by client id. */
   holders: Map<string, string>;
   /**
-   * Every client this host has handshaken with, by the id it gave.
+   * Every client this host has handshaken with and still keeps a record of,
+   * by the id it gave.
    *
    * What `reconnect` is answerable *against*. A client comes back saying "I am
    * this id and I had seen up to here", and both halves are meaningless to a
    * host that has never met it: this one's sequence numbers are its own, so
-   * "everything after 419" means nothing if 419 was another process's.
-   *
-   * Per host and for its lifetime, because that is the span the sequence
-   * covers. A daemon that restarts has genuinely forgotten every client, and
-   * saying so is the point - see the refusal in `reconnect`.
+   * "everything after 419" means nothing if 419 was another process's. A
+   * daemon that restarts has forgotten every client, and a record is forgotten
+   * once its client has been gone for the reference host's retention.
    */
   known: Set<string>;
+  /** When each client with no connection open went, by client id: what its record's retention counts from. */
+  lastSeen: Map<string, number>;
   /**
    * The last locale each client sent, by client id.
    *

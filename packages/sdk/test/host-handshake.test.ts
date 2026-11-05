@@ -913,13 +913,43 @@ describe('telling a client how far along something is', () => {
  * it, keeps the state it had, and never subscribes to anything again.
  */
 describe('a client this host has not met', () => {
-  it('is refused with the code its client reads as "forgotten"', async () => {
+  it('is refused with the code its client reads as "forgotten", in VS Code\'s words', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
     await expect(client.handle({
       method: 'reconnect',
       params: { channel: 'ahp-root://', clientId: 'never-said-hello', lastSeenServerSeq: 419, subscriptions: ['ahp-root://'] },
-    })).rejects.toMatchObject({ code: -32008 });
+    })).rejects.toMatchObject({ code: -32008, message: 'Reconnect client not found: never-said-hello' });
+  });
+
+  /*
+   * VS Code prunes a client record once its client has been gone ten of its
+   * 30 s disconnect windows, when another client attaches, and refuses a
+   * reconnect naming it; one back sooner is resumed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2064-L2076
+   */
+  it('forgets a client gone longer than VS Code\'s retention, and resumes one back sooner', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const host = serving('/home/softov');
+      const resume = (clientId: string) => host.accept(peer()).handle({
+        method: 'reconnect',
+        params: { channel: 'ahp-root://', clientId, lastSeenServerSeq: 0, subscriptions: [] },
+      });
+      for (const clientId of ['early', 'late']) {
+        const one = host.accept(peer());
+        await one.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'] } });
+        one.close();
+        vi.setSystemTime(Date.now() + 200_000);
+      }
+      // A third client arrives 400 s after the first went and 200 s after the second.
+      await host.accept(peer()).handle({ method: 'initialize', params: { clientId: 'third', protocolVersions: ['0.9.0'] } });
+      await expect(resume('early')).rejects.toMatchObject({ code: -32008, message: 'Reconnect client not found: early' });
+      await expect(resume('late')).resolves.toMatchObject({ type: 'replay' });
+    }
+    finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is answered once it has handshaken', async () => {

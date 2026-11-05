@@ -83,6 +83,13 @@ const mcpServerIn = (customizations: unknown[], id: string): Bag | undefined => 
   return undefined;
 };
 
+/**
+ * How long a client with no connection open keeps its record: ten of the
+ * reference host's 30 s disconnect windows.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostClientConnectionService.ts#L10
+ */
+const CLIENT_RECORD_RETENTION = 30_000 * 10;
+
 export function createHandshake(ctx: HostContext, conn: ConnectionContext): Handshake {
   const { connection } = conn;
   const {
@@ -106,6 +113,26 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     const declared = bag(meta);
     connection.legacySessionUris = window && declared['vscode.ahpSessionUris'] !== true;
     connection.legacyChatUris = window && declared['vscode.ahpChatUris'] !== true;
+  };
+
+  /**
+   * A client arrived: its record is active again, and the records of clients
+   * gone longer than the retention are forgotten, as the reference host prunes
+   * its client records whenever a client attaches. A reconnect naming one is
+   * then refused, and its client starts again with `initialize`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2064-L2076
+   */
+  const attached = (clientId: string): void => {
+    ctx.lastSeen.delete(clientId);
+    const cutoff = Date.now() - CLIENT_RECORD_RETENTION;
+    for (const [id, at] of [...ctx.lastSeen]) {
+      if (at >= cutoff) continue;
+      ctx.lastSeen.delete(id);
+      known.delete(id);
+      clientNames.delete(id);
+      locales.delete(id);
+      ctx.lapsed.delete(id);
+    }
   };
 
   /**
@@ -317,6 +344,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       connection.protocolVersion = agreed;
       // Met, so a later `reconnect` under this id is answerable.
       known.add(connection.clientId);
+      attached(connection.clientId);
       /*
        * And what it called itself, which a `reconnect` reads again: an older
        * VS Code window is told by its name and by what this `initialize`
@@ -538,10 +566,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * reads that one code as "the server forgot me" and falls back to a
        * fresh `initialize` - which is the only path on which it restores
        * its subscriptions. Any other error is rethrown and the connection
-       * fails, so this is not a detail: it is the whole recovery.
+       * fails, so this is not a detail: it is the whole recovery. The words
+       * are the reference host's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1339-L1342
        */
       if (!known.has(clientId)) {
-        throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
+        throw new RpcError(-32008, `Reconnect client not found: ${clientId}`);
       }
       /*
        * Under a users directory, a person signed in resumes only an id
@@ -561,6 +591,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         holders.set(clientId, connection.principal.id);
       }
       connection.clientId = clientId;
+      attached(clientId);
       // An older VS Code window, by the name it gave at `initialize` and what
       // this `reconnect` declares, as the reference host reads it.
       // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
