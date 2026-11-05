@@ -735,7 +735,9 @@ it('opens a terminal on the shell a client asked for', async () => {
     method: 'createTerminal',
     params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
   });
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/usr/bin/fish' } });
+  // A shell this machine can run, which is the one a pushed shell is taken as:
+  // the executable this test runs under.
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: process.execPath } });
   await settle();
   await client.handle({
     method: 'createTerminal',
@@ -743,7 +745,7 @@ it('opens a terminal on the shell a client asked for', async () => {
   });
 
   // The store's own choice before anybody said, and the client's after.
-  expect(asked).toEqual([undefined, '/usr/bin/fish']);
+  expect(asked).toEqual([undefined, process.execPath]);
 });
 
 /*

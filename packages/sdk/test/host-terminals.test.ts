@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
+import { shellOf } from '../src/machines/terminals.js';
 import type { OpenedTerminal, SpawnPty, SpawnScreen } from '../src/types/terminals.js';
 import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS } from '../src/machines/shellcommand.js';
 import { uriOf } from '../src/resources/resources.js';
@@ -162,6 +163,8 @@ describe('a command typed into the conversation', () => {
       method: 'createTerminal',
       params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
     });
+    // Its shell started once the folder it opens in is read, and then its prompt.
+    await settle();
     pty.say('$ ');
     await made;
     await expect(client.handle({ method: 'disposeTerminal', params: { channel: uri } })).resolves.toBeNull();
@@ -846,6 +849,43 @@ describe('a shell on this machine', () => {
     expect(await claimed('ahp-terminal:/unclaimed')).toEqual({ kind: 'client', clientId: '' });
     expect(await claimed('ahp-terminal:/half')).toEqual({ kind: 'session', session: 'ahp-session:/x' });
     for (const channel of ['ahp-terminal:/unclaimed', 'ahp-terminal:/half']) await client.handle({ method: 'disposeTerminal', params: { channel } });
+  });
+
+  /*
+   * A folder that is not there, or none, opens in the home folder, as VS
+   * Code's terminal manager resolves a terminal's folder: a shell started in a
+   * folder that is not there exits at once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L962-L992
+   */
+  it('opens in the home folder where the folder it names is not there, or it names none, as VS Code\'s', async () => {
+    const { client } = await opened();
+    const gone = join(tmpdir(), `ahpd-not-there-${crypto.randomUUID()}`);
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/gone', cwd: uriOf(gone) } });
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/nowhere' } });
+    const where = async (channel: string): Promise<string> => ((await client.handle({ method: 'subscribe', params: { channel } })) as {
+      snapshot: { state: { cwd: string } };
+    }).snapshot.state.cwd;
+    const home = process.env.HOME || process.env.USERPROFILE || process.cwd();
+    expect(await where('ahp-terminal:/gone')).toBe(uriOf(home));
+    expect(await where('ahp-terminal:/nowhere')).toBe(uriOf(home));
+    for (const channel of ['ahp-terminal:/gone', 'ahp-terminal:/nowhere']) await client.handle({ method: 'disposeTerminal', params: { channel } });
+  });
+
+  /*
+   * A pushed `defaultShell` this machine cannot run opens the system's shell,
+   * as VS Code's terminal manager falls back from one it cannot access.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
+   */
+  it('opens the system shell where the pushed defaultShell cannot run here, as VS Code\'s', async () => {
+    const { client } = await opened();
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', clientSeq: 1, action: { type: 'root/configChanged', config: { defaultShell: '/no/such/shell' } } } });
+    await settle();
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/fallen-back', cwd: uriOf(tmpdir()) } });
+    const state = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-terminal:/fallen-back' } })) as {
+      snapshot: { state: { title: string } };
+    }).snapshot.state;
+    expect(state.title).toBe(basename(shellOf()));
+    await client.handle({ method: 'disposeTerminal', params: { channel: 'ahp-terminal:/fallen-back' } });
   });
 
   it('lists them on the root channel, and stops when one is disposed', async () => {

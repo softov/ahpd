@@ -1,3 +1,5 @@
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
 import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
 import { commandTurnKey } from './chatactions.js';
 import { localPath } from '../resources/fileuri.js';
@@ -7,6 +9,7 @@ import { textOf } from './outputs.js';
 import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS, executeShellCommand, shellTypeForExecutable } from '../machines/shellcommand.js';
 import { shellOf } from '../machines/terminals.js';
 import { callTimes } from '../utils/timing.js';
+import { reason } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
 import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, ShellCommandResult, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
@@ -594,7 +597,7 @@ export interface TerminalMethods {
 
 export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext): TerminalMethods {
   const {
-    claimable, dir, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
+    claimable, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
   } = ctx;
 
   return {
@@ -602,10 +605,9 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
      * A shell on this machine.
      *
      * The client picks the URI, as it does for a session, so it can
-     * subscribe without a round trip in between. `cwd` is checked against
-     * the directories this host serves - a terminal is arbitrary code on
-     * the machine, and one that started anywhere would be a host that
-     * hands out a shell wherever it is asked.
+     * subscribe without a round trip in between. The connection token is
+     * what decides who gets one, as it is for a session, so it opens in the
+     * folder the client names.
      */
     createTerminal: async (params) => {
       // Before the URI is looked at. A host that opens no shells at all
@@ -622,7 +624,33 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
       if (retainedTerminalOf(uri) !== undefined)
         throw new RpcError(-32003, `${uri} is a name this host keeps for the terminals a tool result names`);
       claimable(uri, 'terminal');
-      const asked = typeof params.cwd === 'string' ? localPath(params.cwd) : dir;
+      /*
+       * The folder the client names, as a `file:` URI or a path, and the home
+       * folder where it names none, or one that is not a folder here: a shell
+       * started in a folder that is not there exits at once. As VS Code's
+       * terminal manager resolves it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L962-L992
+       */
+      const given = typeof params.cwd === 'string' ? localPath(params.cwd) : '';
+      const folder = given !== '' && given !== '/' && await stat(given).then((found) => found.isDirectory(), () => false);
+      const asked = folder ? given : process.env.HOME || process.env.USERPROFILE || process.cwd();
+      if (!folder && given !== '') log(`${uri}: ${given} is not a folder here, so it opens in ${asked}`);
+      /*
+       * The host's `defaultShell` where a client pushed one this machine can
+       * run, and the system's shell otherwise, as VS Code's terminal manager
+       * reads it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
+       */
+      const configured = typeof ctx.rootConfig.defaultShell === 'string' && ctx.rootConfig.defaultShell !== ''
+        ? ctx.rootConfig.defaultShell
+        : undefined;
+      const shell = configured === undefined ? undefined : await access(configured, constants.X_OK).then(
+        () => configured,
+        (error: unknown) => {
+          log(`the defaultShell ${configured} cannot run here, so ${uri} opens the system shell: ${reason(error)}`);
+          return undefined;
+        },
+      );
       /*
        * Whose terminal this is, taken as the client sent it, and a client's
        * with no id where it sent none, as the reference's terminal manager
@@ -641,13 +669,7 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
         uri,
         cwd: asked,
         claim,
-        // The host's `defaultShell`, if a client pushed one: the one value
-        // every client's terminal opens, as the reference host's terminal
-        // manager reads it.
-        // https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
-        ...(typeof ctx.rootConfig.defaultShell === 'string'
-          ? { shell: ctx.rootConfig.defaultShell }
-          : {}),
+        ...(shell === undefined ? {} : { shell }),
         ...(typeof params.name === 'string' ? { name: params.name } : {}),
         ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
         ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
