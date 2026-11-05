@@ -507,6 +507,36 @@ it('wakes nothing for an archive of a sleeping session\'s default chat, and arch
   expect((rows.items.find((row) => row.resource === one.resource)?.status ?? 0) & 64).toBe(0);
 });
 
+/*
+ * VS Code's host takes a chat's read on a session it has not restored into
+ * the session's record without restoring it, the session's read bit
+ * following, and says the client's action.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12557-L12577
+ */
+it('marks a sleeping session\'s chat read and unread without waking it, and the session follows', async () => {
+  const knobs: Knobs = { closes: [] };
+  const { client, time, open, awake } = await serving(knobs);
+  const one = await open('one');
+  await one.leave();
+  time.pass(31);
+  await until(() => knobs.closes.length > 0);
+  expect(awake()).toBe(0);
+  const starts = knobs.starts;
+  const status = async (): Promise<number> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+    items: { resource: string; status: number }[];
+  }).items.find((row) => row.resource === one.resource)?.status ?? 0;
+  for (const isRead of [false, true, false]) {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isReadChanged', isRead } },
+    });
+    await settle();
+    // `SessionStatus.IsRead` is 32.
+    expect((await status()) & 32).toBe(isRead ? 32 : 0);
+  }
+  expect(knobs.starts).toBe(starts);
+});
+
 it('closes each chat with close(\'stopping\'), and keeps its terminals and rule state', async () => {
   const knobs: Knobs = { closes: [] };
   const shells = shellTerminals();

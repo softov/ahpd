@@ -856,6 +856,22 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
+  /*
+   * The reference host marks an unread chat read at every archive, whether or
+   * not its archived bit moved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L46-L52
+   */
+  it('marks an unread chat read when it is archived again', async () => {
+    const { client, peer: p } = await twoChats();
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    await send(client, second, chatRead(false));
+    p.notes.length = 0;
+
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    expect(actions(p, second).map((e) => e.action.type)).toEqual(['chat/isArchivedChanged', 'chat/isReadChanged']);
+    expect(await isRead(client, second)).toBe(true);
+  });
+
   it('changes no read bit when a chat is taken out of the archive', async () => {
     const { client, peer: p } = await twoChats();
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });

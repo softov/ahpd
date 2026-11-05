@@ -941,6 +941,27 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   expect(await readOn(ask, uri)).toBe(true);
 });
 
+/*
+ * A subagent's chat is a tool's, and VS Code's host refuses an archive of a
+ * chat a tool made, in the words it refuses a default chat's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13467-L13477
+ */
+it('refuses an archive of a worker chat, as VS Code refuses a tool\'s chat', async () => {
+  const { ask, uri, lead } = await busyHost();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
+  await settle();
+  const before = wire.length;
+  await ask('dispatchAction', { channel: worker, clientSeq: 9, action: { type: 'chat/isArchivedChanged', isArchived: true } });
+  await settle();
+  const answered = wire.slice(before).filter((one) => one.method === 'action'
+    && (one.params as { origin?: { clientSeq?: number } }).origin?.clientSeq === 9);
+  expect(answered.map((one) => (one.params as { rejectionReason?: string }).rejectionReason))
+    .toEqual(['Only a known independently manageable non-default chat can be archived.']);
+  finishWorker();
+  await settle();
+});
+
 it('leaves the session read when a worker chat is marked unread', async () => {
   const { ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;

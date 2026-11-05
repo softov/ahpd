@@ -256,67 +256,77 @@ export function chatAction(
    *
    * Handled above the worker guard, because a worker chat carries them too.
    * Read-only says nobody types into it; it does not say nobody may file it
-   * away. Only a chat of a session this host is running has anywhere to keep
-   * one - a chat read back off a disk is a row nothing was recorded for, and
-   * the guard below answers for it.
+   * away.
+   *
+   * A chat of a session this host is not running takes them without a wake,
+   * kept in its record, as the reference host applies a chat's read and
+   * archive to a session it has not restored: the session's read bit follows
+   * the same way, and the client's action is said. A chat such a session does
+   * not record wakes it, and is answered by the session that comes up.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12557-L12577
    */
   const bitOf = type === 'chat/isReadChanged' ? Status.IsRead
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
     : undefined;
   const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
-  /*
-   * A session's default chat is not archived on its own.
-   *
-   * The reference host refuses an archive of a default chat, in a session it
-   * runs and in one it has not loaded, and its window sends one on the chat's
-   * channel. A session is archived by its own `session/isArchivedChanged`.
-   * The default chat is the running session's, or the one a session not
-   * running records, or the one its catalogue row names. Refused before
-   * anything wakes the session, as the reference host refuses one without
-   * restoring it.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13453-L13464
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12120-L12122
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L7838-L7856
-   */
-  if (bitOf === Status.IsArchived && flagSession !== undefined) {
+  if (bitOf !== undefined && flagSession !== undefined) {
     const id = idOf(flagSession);
-    const recorded = sessions.has(flagSession) || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
-    const lead = sessions.get(flagSession)?.defaultChat
-      ?? recorded.find((one) => one.default === true)?.uri
-      ?? chatUriFor(ctx.nameOf(id));
-    if (lead === channel) {
+    const running = sessions.get(flagSession);
+    const recorded = running !== undefined || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = running?.defaultChat ?? recorded.find((one) => one.default === true)?.uri ?? chatUriFor(ctx.nameOf(id));
+    const subagent = toolCallOfSubagentChat(channel) !== undefined;
+    /** Where the session has the chat: running, recorded, or nothing for a chat it does not have. */
+    const has = running !== undefined
+      ? subagent || byChat.get(channel)?.uri === flagSession
+      : channel === lead || recorded.some((one) => one.uri === channel);
+    const from = (running !== undefined ? ctx.stateOf(channel)?.origin : recorded.find((one) => one.uri === channel)?.origin) as Bag | undefined;
+    /*
+     * A session's default chat, a chat made by a tool, a subagent's included,
+     * and a chat the session does not have are not archived on their own, and
+     * a chat the session does not have takes no read bit either: the reference
+     * host refuses each, in a session it runs and in one it has not loaded,
+     * before anything wakes the session. A session is archived by its own
+     * `session/isArchivedChanged`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13467-L13483
+     */
+    if (bitOf === Status.IsArchived && (channel === lead || subagent || from?.kind === 'tool' || (running !== undefined && !has))) {
       refuse(connection.peer, channel, action, origin, 'Only a known independently manageable non-default chat can be archived.');
       return;
     }
-  }
-  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
-    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
-    /*
-     * Said again, a bit that did not move keeps the catalogue as it is. The
-     * action is still accepted, and goes to every client of the chat. A read
-     * action moves the session after it all the same: the reference host reads
-     * the chat's bit after every read action, moved or not.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
-     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2968-L2970
-     */
-    const wasRead = (kept.chatFlags(idOf(flagSession), channel) & Status.IsRead) !== 0;
-    const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action, origin);
-    if (!moved) dispatch(channel, action, origin);
-    // A chat whose backend runs it on another host has its bits there too.
-    byChat.get(channel)?.chat.flag?.(bitOf === Status.IsRead ? 'read' : 'archived', on);
-    if (bitOf === Status.IsRead) {
-      sessionFollows(ctx, flagSession, channel, wasRead);
+    if (bitOf === Status.IsRead && running !== undefined && !has) {
+      refuse(connection.peer, channel, action, origin, 'Only a known chat can change its read state.');
       return;
     }
-    /*
-     * A chat filed away is read: nobody is going to come back to it for what
-     * is new in it, and the reference host marks it so, with the read action
-     * that moves its session after it. Taking one back out leaves its read bit
-     * as it is.
-     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
-     */
-    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
-    return;
+    if (running !== undefined || (has && !subagent)) {
+      const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
+      /*
+       * Said again, a bit that did not move keeps the catalogue as it is. The
+       * action is still accepted, and goes to every client of the chat. A read
+       * action moves the session after it all the same: the reference host
+       * reads the chat's bit after every read action, moved or not.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2968-L2970
+       */
+      const wasRead = (kept.chatFlags(id, channel) & Status.IsRead) !== 0;
+      const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action, origin);
+      if (!moved) dispatch(channel, action, origin);
+      // A chat whose backend runs it on another host has its bits there too.
+      byChat.get(channel)?.chat.flag?.(bitOf === Status.IsRead ? 'read' : 'archived', on);
+      if (bitOf === Status.IsRead) {
+        sessionFollows(ctx, flagSession, channel, wasRead);
+        return;
+      }
+      /*
+       * A chat filed away is read: nobody is going to come back to it for what
+       * is new in it, and the reference host marks an unread chat read at every
+       * archive, whether or not its archived bit moved, with the read action
+       * that moves its session after it. Taking one back out leaves its read
+       * bit as it is.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L46-L52
+       */
+      if (on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
+      return;
+    }
   }
   /**
    * A client's start that this host will not send, said on `where` and ended
