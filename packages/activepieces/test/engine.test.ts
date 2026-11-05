@@ -341,6 +341,17 @@ describe('a written file is an attachment', () => {
   });
 });
 
+describe('a connection checked by the piece', () => {
+  /** One `validate` of the fixture piece's auth. */
+  const validating = (auth: Record<string, unknown>): Record<string, unknown> => ({ type: 'validate', piece: fixture('piece-run.mjs'), auth });
+
+  it('answers the piece\'s own verdict on its auth\'s value, as the engine\'s validateAuth asks for it', async () => {
+    expect(await ask(start(), validating({ type: 'SECRET_TEXT', secret_text: 'sk-test' }))).toEqual({ type: 'validated', id: 1, valid: true });
+    expect(await ask(start(), validating({ type: 'SECRET_TEXT', secret_text: 're_wrong' }))).toEqual({ type: 'validated', id: 1, valid: false, error: 'Invalid Api Key' });
+    expect(await ask(start(), validating({ type: 'BASIC_AUTH', username: 'a', password: 'b' }))).toEqual({ type: 'validated', id: 1, valid: false, error: 'No piece auth found for auth value' });
+  });
+});
+
 describe('a connector\'s store', () => {
   /** One call of the fixture piece whose connector's store is kept in `stores`. */
   const stored = (action: string, input: Record<string, unknown>, stores: string): Record<string, unknown> => ({ ...run(action, input), stores });

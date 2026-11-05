@@ -12,7 +12,12 @@
 export const runnable = {
   displayName: 'Runnable',
   description: 'A piece whose calls a test makes.',
-  auth: { type: 'SECRET_TEXT', displayName: 'API Key', required: true },
+  auth: {
+    type: 'SECRET_TEXT',
+    displayName: 'API Key',
+    required: true,
+    validate: async ({ auth }) => (auth.startsWith('sk-') ? { valid: true } : { valid: false, error: 'Invalid Api Key' }),
+  },
   _actions: {
     echo: {
       name: 'echo',

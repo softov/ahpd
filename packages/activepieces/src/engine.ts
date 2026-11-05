@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installSsrfGuard } from './guard.ts';
 import { inputOf } from './props.ts';
 import type { Props } from './props.ts';
-import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store } from './wire.js';
+import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store, ValidateRequest } from './wire.js';
 
 /**
  * The engine: the process that loads Activepieces pieces and runs their
@@ -103,7 +103,13 @@ const describeProps = (props: unknown): Record<string, PropDescription> => {
   return out;
 };
 
-/** One auth, as its type, names, description and fields. */
+/** One field of a basic auth, as its names, or nothing where the piece wrote none. */
+const describeField = (field: unknown): { displayName: string; description?: string } | undefined => {
+  if (!isRecord(field) || typeof field['displayName'] !== 'string') return undefined;
+  return { displayName: field['displayName'], ...(typeof field['description'] === 'string' ? { description: field['description'] } : {}) };
+};
+
+/** One auth, as its type, names, description and fields, and whether the piece validates it. */
 const describeAuthOne = (auth: Record<string, unknown>): AuthDescription => {
   const one: AuthDescription = {
     type: typeof auth['type'] === 'string' ? auth['type'] : 'UNKNOWN',
@@ -111,6 +117,11 @@ const describeAuthOne = (auth: Record<string, unknown>): AuthDescription => {
   };
   if (typeof auth['description'] === 'string') one.description = auth['description'];
   if (isRecord(auth['props'])) one.props = describeProps(auth['props']);
+  const username = describeField(auth['username']);
+  if (username !== undefined) one.username = username;
+  const password = describeField(auth['password']);
+  if (password !== undefined) one.password = password;
+  if (typeof auth['validate'] === 'function') one.validates = true;
   return one;
 };
 
@@ -131,6 +142,7 @@ const describeAction = (name: string, action: Record<string, unknown>): ActionDe
   };
   const ai = action['aiMetadata'];
   if (isRecord(ai) && typeof ai['description'] === 'string') one.aiDescription = ai['description'];
+  if (typeof action['audience'] === 'string') one.audience = action['audience'];
   return one;
 };
 
@@ -577,10 +589,35 @@ const answerRun = async (request: RunRequest): Promise<Answer> => {
 };
 
 /** Answer one request from the parent. */
+/**
+ * Answer a `validate`: the piece's own check of a connection, as the engine's
+ * `validateAuth` runs it. The auth entry is the one of the value's kind; one
+ * with no `validate` is valid; the value is handed over as that kind's
+ * validate takes it, a secret text as its text and a custom auth as its props.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/helper/piece-helper.ts#L223-L307
+ */
+const answerValidate = async (request: ValidateRequest): Promise<Answer> => {
+  const { piece } = await loadedPiece(request.piece, request.installed, request.installedFirst === true);
+  const auth = piece['auth'];
+  if (auth === undefined || auth === null) return { type: 'validated', id: request.id, valid: true };
+  const kind = request.auth['type'];
+  const used = (Array.isArray(auth) ? auth : [auth]).filter(isRecord).find((one) => one['type'] === kind);
+  if (used === undefined) return { type: 'validated', id: request.id, valid: false, error: 'No piece auth found for auth value' };
+  const validate = used['validate'];
+  if (typeof validate !== 'function') return { type: 'validated', id: request.id, valid: true };
+  const value = kind === 'SECRET_TEXT' ? request.auth['secret_text'] : kind === 'CUSTOM_AUTH' ? request.auth['props'] : request.auth;
+  const said: unknown = await (validate as (params: Record<string, unknown>) => unknown)({ auth: value, server: refused('server') });
+  if (isRecord(said) && said['valid'] === true) return { type: 'validated', id: request.id, valid: true };
+  const error = isRecord(said) && typeof said['error'] === 'string' ? said['error'] : undefined;
+  return { type: 'validated', id: request.id, valid: false, ...(error === undefined ? {} : { error }) };
+};
+
 const handle = async (request: Request): Promise<void> => {
   const answer = request.type === 'describe'
     ? await describe(request.id, request.pieces, request.installed, request.installedFirst ?? [])
-    : await answerRun(request);
+    : request.type === 'validate'
+      ? await answerValidate(request)
+      : await answerRun(request);
   process.send?.(answer);
 };
 

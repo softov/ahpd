@@ -17,8 +17,8 @@ import type { ActionDescription, AuthDescription, PieceDescription, PropDescript
 /** What every adapter of this plugin is called before the piece's name. */
 export const PREFIX = 'ap-';
 
-/** The auth types a connector of this plugin can carry. */
-const OFFERED = ['SECRET_TEXT', 'CUSTOM_AUTH'];
+/** The auth kinds a connector of this plugin can carry, as Activepieces' connection types name them. */
+const OFFERED = ['SECRET_TEXT', 'BASIC_AUTH', 'CUSTOM_AUTH'];
 
 /** The name of one action's description, as the capability carries it. */
 const descriptionOf = (action: ActionDescription): string => {
@@ -42,18 +42,22 @@ export function nameOf(spec: string): string | undefined {
   return filed === undefined ? undefined : `${PREFIX}${filed}`;
 }
 
-/** The auth entry a connector fills in: the first of a list that this plugin offers. */
-export function entryOf(auth: AuthDescription | AuthDescription[] | undefined): AuthDescription | undefined {
-  if (auth === undefined) return undefined;
-  const entries = Array.isArray(auth) ? auth : [auth];
-  return entries.find((one) => OFFERED.includes(one.type));
+/**
+ * The auth entries a connector may be one of: each kind of a piece's list
+ * this plugin carries, in the piece's order, as Activepieces lets a person pick
+ * any kind the piece lists.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/build-pieces/piece-reference/authentication.mdx
+ */
+export function entriesOf(auth: AuthDescription | AuthDescription[] | undefined): AuthDescription[] {
+  if (auth === undefined) return [];
+  return (Array.isArray(auth) ? auth : [auth]).filter((one) => OFFERED.includes(one.type));
 }
 
 /**
  * The JSON Schema of one prop, or nothing when the prop is not a value.
  *
  * A `MARKDOWN` prop is text a builder UI shows, so it is not in the input. A
- * `FILE` prop is a string: an `https:` URL, a `data:` URI, or the name of a
+ * `FILE` prop is a string: a URL, a base64 `data:` URI, or the name of a
  * session attachment, which the engine turns into the file a piece reads.
  *
  * An `ARRAY` prop that names the props of one item is an array of objects,
@@ -71,8 +75,8 @@ export function propOf(prop: PropDescription): Record<string, unknown> | undefin
     case 'FILE':
       schema['type'] = 'string';
       schema['description'] = described
-        ? `${prop.description ?? ''} An https: URL, a data: URI or the name of a session attachment.`
-        : 'An https: URL, a data: URI or the name of a session attachment.';
+        ? `${prop.description ?? ''} A URL, a base64 data: URI or the name of a session attachment.`
+        : 'A URL, a base64 data: URI or the name of a session attachment.';
       break;
     case 'NUMBER':
       schema['type'] = 'number';
@@ -99,6 +103,16 @@ export function propOf(prop: PropDescription): Record<string, unknown> | undefin
       schema['type'] = 'string';
       if (prop.options !== undefined) schema['enum'] = prop.options;
       break;
+    case 'STATIC_MULTI_SELECT_DROPDOWN':
+      // Several of the options, as Activepieces collects a multi-select's values.
+      schema['type'] = 'array';
+      schema['items'] = prop.options === undefined ? { type: 'string' } : { enum: prop.options };
+      break;
+    case 'MULTI_SELECT_DROPDOWN':
+      schema['type'] = 'array';
+      schema['items'] = { type: 'string' };
+      schema['description'] = described ? `${prop.description ?? ''} Give the ids.` : 'Give the ids.';
+      break;
     case 'DROPDOWN':
       // A dropdown's options are a call the engine cannot make while it describes.
       schema['type'] = 'string';
@@ -107,7 +121,7 @@ export function propOf(prop: PropDescription): Record<string, unknown> | undefin
     default:
       schema['type'] = 'string';
   }
-  if (described && prop.type !== 'DROPDOWN' && prop.type !== 'FILE') schema['description'] = prop.description;
+  if (described && prop.type !== 'DROPDOWN' && prop.type !== 'MULTI_SELECT_DROPDOWN' && prop.type !== 'FILE') schema['description'] = prop.description;
   return schema;
 }
 
@@ -135,21 +149,29 @@ export function inputOf(props: Record<string, PropDescription>): Record<string, 
 }
 
 /**
- * The schema a connector of one piece fills in, or nothing for an auth that
- * this plugin does not offer.
+ * The fields of one auth kind's form, each secret among them `secret` so the
+ * host keeps its value in the vault, and the fields the kind requires.
  *
  * A `SECRET_TEXT` auth is the one string the piece reads as `auth.secret_text`.
- * A `CUSTOM_AUTH` auth is its own props, each secret among them `secret`, so
- * the host keeps each value in the vault.
+ * A `BASIC_AUTH` auth is a username and a password, the separate fields
+ * Activepieces collects for it, the password secret. A `CUSTOM_AUTH` auth is
+ * its own props.
  */
-export function schemaOf(auth: AuthDescription): Record<string, unknown> | undefined {
+const formOf = (auth: AuthDescription): { properties: Record<string, unknown>; required: string[] } => {
+  const described = (field: Record<string, unknown>, description: string | undefined): Record<string, unknown> =>
+    (description === undefined || description === '' ? field : { ...field, description });
   if (auth.type === 'SECRET_TEXT') {
-    const field: Record<string, unknown> = { type: 'string', secret: true, title: auth.displayName };
-    if (auth.description !== undefined && auth.description !== '') field['description'] = auth.description;
-    return { type: 'object', properties: { secret_text: field }, required: ['secret_text'] };
+    return { properties: { secret_text: described({ type: 'string', secret: true, title: auth.displayName }, auth.description) }, required: ['secret_text'] };
   }
-  if (auth.type !== 'CUSTOM_AUTH') return undefined;
-
+  if (auth.type === 'BASIC_AUTH') {
+    return {
+      properties: {
+        username: described({ type: 'string', title: auth.username?.displayName ?? 'Username' }, auth.username?.description),
+        password: described({ type: 'string', secret: true, title: auth.password?.displayName ?? 'Password' }, auth.password?.description),
+      },
+      required: ['username', 'password'],
+    };
+  }
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   for (const [name, prop] of Object.entries(auth.props ?? {})) {
@@ -162,23 +184,68 @@ export function schemaOf(auth: AuthDescription): Record<string, unknown> | undef
     properties[name] = schema;
     if (prop.required) required.push(name);
   }
-  const schema: Record<string, unknown> = { type: 'object', properties };
-  if (required.length > 0) schema['required'] = required;
-  if (auth.description !== undefined) schema['description'] = auth.description;
-  return schema;
+  return { properties, required };
+};
+
+/** The field that names which kind a connector of a piece with several is, as Activepieces' connection value names it. */
+const KIND = 'type';
+
+/**
+ * The schema a connector of one piece fills in, or nothing for a piece whose
+ * auth this plugin does not carry.
+ *
+ * One kind is that kind's form. Several are a `type` the person picks, as
+ * Activepieces has a person pick the kind of a connection, beside every
+ * kind's fields, and each kind's own fields are required once it is picked.
+ * The fields stay at the top of the schema, which is where the host reads the
+ * secret ones from.
+ */
+export function schemaOf(entries: AuthDescription[]): Record<string, unknown> | undefined {
+  const [only] = entries;
+  if (only === undefined) return undefined;
+  if (entries.length === 1) {
+    const form = formOf(only);
+    return {
+      type: 'object',
+      properties: form.properties,
+      ...(form.required.length === 0 ? {} : { required: form.required }),
+      // A secret text's description is its one field's, and a form of several
+      // fields carries its own.
+      ...(only.type === 'SECRET_TEXT' || only.description === undefined ? {} : { description: only.description }),
+    };
+  }
+  const forms = entries.map((entry) => ({ entry, form: formOf(entry) }));
+  return {
+    type: 'object',
+    properties: {
+      [KIND]: { type: 'string', title: 'Connection', enum: entries.map((entry) => entry.type), enumLabels: entries.map((entry) => entry.displayName) },
+      ...Object.assign({}, ...forms.map(({ form }) => form.properties)) as Record<string, unknown>,
+    },
+    required: [KIND],
+    allOf: forms.map(({ entry, form }) => ({
+      if: { properties: { [KIND]: { const: entry.type } } },
+      then: { required: form.required },
+    })),
+  };
 }
 
 /**
- * The auth value a piece reads, built from the connector's config.
+ * The auth value a piece reads, built from the connector's config, in the
+ * shape of Activepieces' connection value of its kind.
  *
- * The host reads each `secret` field back from the vault before it hands
- * the connector over, so the config holds the values themselves. A secret-text
- * piece reads `auth.secret_text`, and a custom-auth piece reads each field
- * under `auth.props`, by the name the piece declared.
+ * The host reads each `secret` field back from the vault before it hands the
+ * connector over, so the config holds the values themselves. A secret-text
+ * piece reads `auth.secret_text`, a basic-auth piece `auth.username` and
+ * `auth.password`, and a custom-auth piece each field under `auth.props`, by
+ * the name the piece declared. The kind is the one the connector picked, or
+ * the piece's one.
  */
-export function authOf(auth: AuthDescription, connector: Connector): Record<string, unknown> {
+export function authOf(entries: AuthDescription[], connector: Connector): Record<string, unknown> {
   const config = connector.config;
+  const auth = entries.length === 1 ? entries[0] : entries.find((entry) => entry.type === config[KIND]);
+  if (auth === undefined) return { type: config[KIND] };
   if (auth.type === 'SECRET_TEXT') return { type: 'SECRET_TEXT', secret_text: config['secret_text'] };
+  if (auth.type === 'BASIC_AUTH') return { type: 'BASIC_AUTH', username: config['username'], password: config['password'] };
   const props: Record<string, unknown> = {};
   for (const name of Object.keys(auth.props ?? {})) {
     const value = config[name];
@@ -204,6 +271,9 @@ export interface RunCallArgs {
 /** The one who runs a call, which the plugin answers with its engine. */
 export type RunCall = (call: RunCallArgs) => Promise<unknown>;
 
+/** The piece's own check of a connection's auth value: whether it took it, and what it said when not. */
+export type ValidateCall = (auth: Record<string, unknown>) => Promise<{ valid: boolean; error?: string }>;
+
 /** What one piece becomes: its adapter, and one line for each part left out. */
 export interface Mapping {
   /** The adapter the piece makes, or nothing when its auth is not one this plugin offers. */
@@ -212,21 +282,29 @@ export interface Mapping {
   notes: string[];
 }
 
-/** The adapter one piece makes, and what was left out of it. */
-export function adapterOf(piece: PieceDescription, run?: RunCall, icon?: Icon): Mapping {
+/**
+ * The adapter one piece makes, and what was left out of it.
+ *
+ * An action its piece marks for humans alone is left out, as Activepieces
+ * hides it from agent discovery. A connector is checked with the piece's own
+ * `validate`, Activepieces' credential check, where the piece has one.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/build-pieces/piece-reference/ai-metadata.mdx
+ */
+export function adapterOf(piece: PieceDescription, run?: RunCall, icon?: Icon, validate?: ValidateCall): Mapping {
   const name = nameOf(piece.package);
   if (name === undefined) {
     return { notes: [`${piece.package} is not a piece package, so it has no adapter`] };
   }
-  const entry = entryOf(piece.auth);
-  const schema = entry === undefined ? undefined : schemaOf(entry);
-  if (entry === undefined || schema === undefined) {
-    return { notes: [`${name}: the piece's auth is neither a secret text nor a custom auth, so it has no adapter`] };
+  const entries = entriesOf(piece.auth);
+  const schema = schemaOf(entries);
+  if (schema === undefined) {
+    return { notes: [`${name}: the piece's auth is no secret text, basic auth or custom auth, so it has no adapter`] };
   }
 
   const notes: string[] = [];
   const capabilities: Capability[] = [];
   for (const action of piece.actions) {
+    if (action.audience === 'human') continue;
     const input = inputOf(action.props);
     capabilities.push({
       type: 'action',
@@ -242,7 +320,8 @@ export function adapterOf(piece: PieceDescription, run?: RunCall, icon?: Icon): 
   const adapter: Adapter = {
     name,
     title: piece.displayName,
-    description: piece.description ?? `One account of ${piece.displayName}, with its key.`,
+    // The piece's own words, or its name where it wrote none.
+    description: piece.description !== undefined && piece.description.trim() !== '' ? piece.description : piece.displayName,
     schema,
     capabilities,
     // The piece's logo, when it published one the host could read.
@@ -254,10 +333,21 @@ export function adapterOf(piece: PieceDescription, run?: RunCall, icon?: Icon): 
     adapter.run = (connector, action, input, call) => run({
       connector: connector.id,
       action,
-      auth: authOf(entry, connector),
+      auth: authOf(entries, connector),
       input,
       ...(call?.files === undefined ? {} : { files: call.files }),
     });
+  }
+  if (validate !== undefined && entries.some((entry) => entry.validates === true)) {
+    adapter.check = async (connector) => {
+      try {
+        const said = await validate(authOf(entries, connector));
+        return said.valid ? { result: 'ok' } : { result: 'denied', ...(said.error === undefined ? {} : { message: said.error }) };
+      }
+      catch (error) {
+        return { result: 'failed', message: error instanceof Error ? error.message : String(error) };
+      }
+    };
   }
   return { adapter, notes };
 }

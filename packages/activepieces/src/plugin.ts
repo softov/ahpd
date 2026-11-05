@@ -467,7 +467,19 @@ export const apply: Plugin['apply'] = async (host, options) => {
   for (const [at, piece] of answer.pieces.entries()) {
     const logo = logos[at];
     if (logo?.problem !== undefined) host.problem(logo.problem);
-    const mapped = adapterOf(piece, (call) => callAction(channel, piece, call, stores, host.installed, fromInstalled.has(piece.package)), logo?.icon);
+    const installedFirst = fromInstalled.has(piece.package);
+    const validate = async (auth: Record<string, unknown>): Promise<{ valid: boolean; error?: string }> => {
+      const said = await channel.ask({
+        type: 'validate',
+        piece: piece.package,
+        auth,
+        ...(host.installed === undefined ? {} : { installed: host.installed }),
+        ...(installedFirst ? { installedFirst: true } : {}),
+      });
+      if (said.type === 'validated') return { valid: said.valid, ...(said.error === undefined ? {} : { error: said.error }) };
+      throw new Error(said.type === 'failed' ? said.message : `the engine answered a check with ${said.type}`);
+    };
+    const mapped = adapterOf(piece, (call) => callAction(channel, piece, call, stores, host.installed, installedFirst), logo?.icon, validate);
     for (const note of mapped.notes) host.problem(note);
     if (mapped.adapter !== undefined) host.registerAdapter(mapped.adapter);
   }

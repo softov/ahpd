@@ -56,6 +56,12 @@ export interface AuthDescription {
   description?: string;
   /** The fields of a `CUSTOM_AUTH`, each by the name the piece reads it by. */
   props?: Record<string, PropDescription>;
+  /** What a `BASIC_AUTH` calls its username field. */
+  username?: { displayName: string; description?: string };
+  /** What a `BASIC_AUTH` calls its password field. */
+  password?: { displayName: string; description?: string };
+  /** Whether the piece checks a connection of this auth with a `validate` of its own. */
+  validates?: boolean;
 }
 
 /** One action of a piece, as the engine describes it. */
@@ -68,6 +74,8 @@ export interface ActionDescription {
   description: string;
   /** The description the piece wrote for a model, when it wrote one. */
   aiDescription?: string;
+  /** Who the action is for, as the piece marks it: `human`, `ai` or `both`, which it is when the piece says nothing. */
+  audience?: string;
   /** The action's input, each prop by the name the piece reads it by. */
   props: Record<string, PropDescription>;
 }
@@ -153,6 +161,32 @@ export interface RunRequest {
   stores?: string;
 }
 
+/** Ask the engine whether a connection works, by the piece's own `validate`. */
+export interface ValidateRequest {
+  type: 'validate';
+  /** The id this request is answered by. */
+  id: number;
+  /** The package specifier of the piece. */
+  piece: string;
+  /** The auth value, as a call would carry it, its `type` naming its kind. */
+  auth: Record<string, unknown>;
+  /** The plugin's own `installed/` folder, when it has one. */
+  installed?: string;
+  /** Whether this piece is imported from `installed/` first. */
+  installedFirst?: boolean;
+}
+
+/** What the engine answered a `validate` with: the piece's verdict. */
+export interface ValidatedAnswer {
+  type: 'validated';
+  /** The id of the request this answers. */
+  id: number;
+  /** Whether the piece took the connection. */
+  valid: boolean;
+  /** What the piece said of one it did not take. */
+  error?: string;
+}
+
 /** What the engine answered a `describe` with. */
 export interface DescribedAnswer {
   type: 'described';
@@ -183,18 +217,18 @@ export interface FailedAnswer {
 }
 
 /** One request to the engine. */
-export type Request = DescribeRequest | RunRequest;
+export type Request = DescribeRequest | RunRequest | ValidateRequest;
 
 /** One request before its id is given: what a caller sends. */
-export type Question = Omit<DescribeRequest, 'id'> | Omit<RunRequest, 'id'>;
+export type Question = Omit<DescribeRequest, 'id'> | Omit<RunRequest, 'id'> | Omit<ValidateRequest, 'id'>;
 
 /** One answer from the engine. */
-export type Answer = DescribedAnswer | RanAnswer | FailedAnswer;
+export type Answer = DescribedAnswer | RanAnswer | ValidatedAnswer | FailedAnswer;
 
 /** Whether a value came over the channel as an answer, with an id. */
 export const isAnswer = (value: unknown): value is Answer => {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Record<string, unknown>;
-  const known = message['type'] === 'described' || message['type'] === 'ran' || message['type'] === 'failed';
+  const known = message['type'] === 'described' || message['type'] === 'ran' || message['type'] === 'validated' || message['type'] === 'failed';
   return known && typeof message['id'] === 'number';
 };
