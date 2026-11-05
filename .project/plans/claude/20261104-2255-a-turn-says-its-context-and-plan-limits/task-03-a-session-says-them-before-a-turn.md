@@ -1,6 +1,6 @@
 ---
 title: A session says its context, plan limits and plan before a turn
-status: todo
+status: done
 depends: [task-01-a-turn-says-its-context.md, task-02-a-login-says-its-plan-limits.md]
 layer: "agent-claude, sdk"
 refs:
@@ -45,3 +45,10 @@ ahpw reads them before the first message, and each turn refreshes them.
 
 ## Resume
 
+Done: once `initializationResult()` answers, the session asks `accountInfo()`, then the context breakdown and the usage request, and sends `session/metaChanged` when the four keys moved.
+Done: `sessionState()._meta` carries `contextAttribution`, `ahpd.context`, `quotaSnapshots` and `ahpd.account` beside `ahpd.model`, and each turn's end refreshes them.
+Done: `rate_limits_available: false` keeps the events' windows, and only an account with no plan gets `{}`.
+Done: a login's account goes to the host with its limits through `x-ahpd/connectors/note`, and the connector's health keeps it as `account`.
+Left: nothing.
+Found: the `init` frame of step 1's ref comes only with a turn, so the handshake is `initializationResult()`, which the CLI answers at startup.
+Found: `sayUsage` was already a name on the session context, so the new emitter is `sayMeta`.
