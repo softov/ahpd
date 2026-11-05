@@ -22,7 +22,7 @@ pnpm notes:bun -- --port 9201  # the same, on Bun
 ahpc --host ws://127.0.0.1:9201
 ```
 
-Two things it does:
+Two things it does, typed or picked as `/read` and `/write` from the slash menu:
 
 ```
 read <name>            reads one. Leave the name out and it asks which
@@ -31,13 +31,18 @@ write <name> <text>    writes one. It asks before it does
 
 Notes live in `./notes`, made on demand. `--path` puts them somewhere else.
 Set **Ask before** on the composer to `Everything` or `Nothing` and the same
-two commands stop asking, or start.
+two commands stop asking, or start; `help` says which asks under the setting in
+force.
+
+A stop ends the turn and whatever it was waiting on, and nothing more of that
+turn is said. A turn whose work fails ends in `chat/error` with the failure as
+its last part.
 
 ## What is here that echo does not have
 
 `main.ts` is echo's, unchanged - the same `createHost` call with a different
-backend in it. Everything below is in `agent.ts`, and `runTool` and `ask` are
-the two shapes worth taking away.
+backend in it. Everything below is in `agent.ts`, and `runTool` and
+`requestInput` are the two shapes worth taking away.
 
 ### A tool call is held, not announced
 
@@ -146,16 +151,20 @@ schema move something when somebody moves it.
 
 ```ts
 setConfig: (key, value) => {
-  if (key !== 'ask') return false;
-  if (value !== 'writes' && value !== 'always' && value !== 'never') return false;
+  if (key !== 'ask') return `${key} is not a config key this backend takes`;
+  if (value !== 'writes' && value !== 'always' && value !== 'never') {
+    return `ask is one of writes, always or never - not ${String(value)}`;
+  }
   settings.ask = value;
   return true;
 },
 ```
 
-False is a real answer for a key or a value this backend does not have: a setter
-that reported success and changed nothing would leave a client showing a session
-in a mode it is not in.
+A sentence for a key or a value this backend does not have is a real answer,
+and says which of the two it was: a setter that reported success and changed
+nothing would leave a client showing a session in a mode it is not in. A value
+the schema's list does not offer is refused by the host before it gets here,
+in VS Code's words: `Session configuration 'ask' does not offer 'sometimes'.`
 
 ## What keeps it honest
 
