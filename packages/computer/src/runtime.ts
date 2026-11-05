@@ -731,27 +731,32 @@ export interface ComputerRuntime {
 export const roomFor = (held: Machine[], max: number): Machine[] | undefined =>
   held.length >= max ? held : undefined;
 
-/** The turn each runtime takes, which is the last one asked for and not yet over. */
-const turns = new WeakMap<ComputerRuntime, Promise<unknown>>();
+/** The operation each runtime has queued last, which the next one waits on until it settles. */
+const operations = new WeakMap<ComputerRuntime, Promise<unknown>>();
 
 /**
- * One create at a time per runtime.
+ * One create at a time per runtime, queued as VS Code queues one source's dev
+ * container operations: a `SequencerByKey` (devContainerAgentHostService.ts
+ * L224 and L246, and its `queue` in src/vs/base/common/async.ts L338-L363, at
+ * 6b68d3fe), keyed by the runtime.
  *
  * `max` is a count, and a count read and then acted on is read too early: two
  * calls at once both read the same listing, both find room, and one more machine
- * exists than the limit says. So the count and the create it allows go in one
- * turn, and a caller that arrives second counts the first create as one of the
- * machines rather than racing it.
+ * exists than the limit says. So the count and the create it allows are one
+ * operation, and a caller that arrives second counts the first create as one of
+ * the machines.
  *
- * Per runtime rather than per host: two runtimes are two sets of machines, and
- * a limit on one is not a limit on the other. A turn a create fails in is over
- * like any other, and the next one starts.
+ * Keyed by runtime: two runtimes are two sets of machines, each with its own
+ * limit. An operation that fails settles like any other, and the next one runs.
  */
-export const inTurn = <T>(runtime: ComputerRuntime, work: () => Promise<T>): Promise<T> => {
-  const next = (turns.get(runtime) ?? Promise.resolve()).then(work);
-  // What is held is the turn after this one and never its result, so a create
-  // that threw does not refuse every create behind it.
-  turns.set(runtime, next.catch(() => {}));
+export const queue = <T>(runtime: ComputerRuntime, task: () => Promise<T>): Promise<T> => {
+  const next: Promise<T> = (operations.get(runtime) ?? Promise.resolve())
+    .catch(() => {})
+    .then(task)
+    .finally(() => {
+      if (operations.get(runtime) === next) operations.delete(runtime);
+    });
+  operations.set(runtime, next);
   return next;
 };
 

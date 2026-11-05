@@ -3,7 +3,7 @@ import type { HostTool } from '@ahpd/sdk';
 import { allowedImages, isFlag } from './manifest.js';
 import { allowedBy } from './reference.js';
 import type { ComputerRuntime } from './runtime.js';
-import { inTurn, roomFor } from './runtime.js';
+import { queue, roomFor } from './runtime.js';
 
 /**
  * Making a machine, using one, and throwing it away.
@@ -68,12 +68,12 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       effects: { writes: true, network: true },
       advancedPermission: true,
       instruction: 'Ask for one when a task needs a machine of its own - something to install into, break, or run work in that should not touch this host. Release it when the work is done.',
-      run: async (input) => inTurn(runtime, async () => {
+      run: async (input) => queue(runtime, async () => {
         const asked = object(input);
         const name = said(asked.name) ?? `${options.prefix}-${randomUUID().slice(0, 8)}`;
-        // One listing for both questions, in the same turn as the create: a
-        // create in flight is a machine this host holds by the time the next
-        // call counts.
+        // One listing for both questions, in the same queued operation as the
+        // create: a create in flight is a machine this host holds by the time
+        // the next call counts.
         const held = await runtime.list();
         const full = roomFor(held, options.max);
         if (full !== undefined) {

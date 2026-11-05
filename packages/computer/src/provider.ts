@@ -8,7 +8,7 @@ import type { FolderAnswer, Profile } from './manifest.js';
 import { revealed, vaultNamed, withDefaults } from './secrets.js';
 import type { Revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
-import { inTurn, roomFor } from './runtime.js';
+import { queue, roomFor } from './runtime.js';
 
 /**
  * The `computer:` scheme.
@@ -327,9 +327,10 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     if (await runtime.inspect(name) !== undefined) {
       throw new RpcError(-32010, `${name} is already a computer; destroy it or choose another name`);
     }
-    // The count and the create in one turn, so a second write arriving while
-    // this one is making its machine counts the machine being made.
-    await inTurn(runtime, async () => {
+    // The count and the create are one queued operation, so a second write
+    // arriving while this one is making its machine counts the machine being
+    // made.
+    await queue(runtime, async () => {
       const full = roomFor(await runtime.list(), options.max);
       if (full !== undefined) {
         throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${name} would be one more`);

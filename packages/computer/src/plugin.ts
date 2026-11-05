@@ -14,7 +14,7 @@ import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
 import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, machineDirectory, madeUnderBind, profileOf, roomFor, sessionOf, stateVolumeOf, within } from './runtime.js';
+import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, roomFor, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
 import { routed, parseMachineId, spellMachineId } from './router.js';
 import type { Routed } from './router.js';
@@ -2025,9 +2025,10 @@ export const apply: Plugin['apply'] = (host, options) => {
         // Counted before it is made, and with the same count a write to
         // `computer://<name>` passes: a machine made for a session is a machine
         // this host holds.
-        // The count and the create are one turn, so a second session starting
-        // while this one is making its machine counts the machine being made.
-        return inTurn(made, async () => {
+        // The count and the create are one queued operation, so a second
+        // session starting while this one is making its machine counts the
+        // machine being made.
+        return queue(made, async () => {
           const full = roomFor(await made.list(), max);
           if (full !== undefined) {
             throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
@@ -2133,11 +2134,12 @@ export const apply: Plugin['apply'] = (host, options) => {
       // Counted before it is made, and with the same count a write to
       // `computer://<name>` passes: a machine made for a session is a machine
       // this host holds.
-      // The count and the create are one turn, so a second session starting
-      // while this one is making its machine counts the machine being made.
+      // The count and the create are one queued operation, so a second
+      // session starting while this one is making its machine counts the
+      // machine being made.
       // The id the router spells, which names the runtime a machine made on a
       // box's Docker is on: the name alone would be this host's Docker's.
-      const machine = await inTurn(made, async () => {
+      const machine = await queue(made, async () => {
         const full = roomFor(await made.list(), max);
         if (full !== undefined) {
           throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
