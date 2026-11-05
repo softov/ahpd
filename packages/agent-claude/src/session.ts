@@ -19,7 +19,7 @@ import { createWorkers } from './session/workers.js';
 
 export { keptLabel } from './session/asking.js';
 export { INTERNAL_AGENT, agentNameOf, customizationsOf } from './session/customizations.js';
-export { EFFORT_LABELS, EFFORTS } from './session/config.js';
+export { EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session/config.js';
 export type { ClaudeSessionOptions } from './session/context.js';
 export type { Published } from './session/customizations.js';
 

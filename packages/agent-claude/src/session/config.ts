@@ -22,6 +22,26 @@ export const EFFORT_LABELS: Record<typeof EFFORTS[number], string> = {
   low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
 };
 
+/**
+ * The SDK's alias row for the model the CLI is set to use, which names a
+ * model the list already holds, so it is no model of its own to offer, as
+ * VS Code's Claude agent leaves it out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L147-L164
+ */
+export const SDK_DEFAULT_MODEL_VALUE = 'default';
+
+/**
+ * What each effort does, in VS Code's words for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L72-L84
+ */
+export const EFFORT_DESCRIPTIONS: Record<typeof EFFORTS[number], string> = {
+  low: 'Faster responses with less reasoning',
+  medium: 'Balanced reasoning and speed',
+  high: 'Greater reasoning depth but slower',
+  xhigh: 'Highest reasoning depth but slowest',
+  max: 'Absolute maximum capability with no constraints',
+};
+
 /** One client-generated script, sourced before every shell command. */
 interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 

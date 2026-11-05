@@ -104,6 +104,33 @@ describe('what the harness offers', () => {
     expect(models.find((one) => one.id === 'haiku')?.configSchema).toBeUndefined();
   });
 
+  /*
+   * The models as VS Code's Claude agent offers them: the SDK's alias row for
+   * the model the CLI is set to use left out, and each model's effort titled
+   * and described as VS Code's schema titles it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L147-L164
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
+   */
+  it('leaves the SDK\'s default alias out, and titles each model\'s effort as VS Code\'s Claude does', async () => {
+    sdk.init = {
+      models: [
+        { value: 'default', displayName: 'Default (recommended)', supportedEffortLevels: ['low', 'high'] },
+        { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'high'] },
+      ],
+      commands: [], agents: [],
+    };
+    const { client } = await running();
+    const models = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; configSchema?: { properties: Record<string, Record<string, unknown>> } }[] }[] } };
+    }).snapshot.state.agents[0]?.models ?? [];
+    expect(models.map((one) => one.id)).toEqual(['sonnet']);
+    expect(models[0]?.configSchema?.properties.thinkingLevel).toMatchObject({
+      title: 'Effort Level',
+      enumLabels: ['Low', 'High'],
+      enumDescriptions: ['Faster responses with less reasoning', 'Greater reasoning depth but slower'],
+    });
+  });
+
   it('offers one effort control, not the model\'s and the session\'s both', async () => {
     sdk.init = {
       models: [

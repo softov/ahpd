@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { customizationsOf, EFFORT_LABELS, EFFORTS } from './session.js';
+import { customizationsOf, EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session.js';
 import { configDirOf, diskOf, managedDirOf } from './session/disk.js';
 import type { Account, Offered } from '@ahpd/sdk';
 import { bag, isRecord, str } from '@ahpd/sdk';
@@ -26,7 +26,9 @@ const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
  * which is the honest form of "this one does not think harder on request".
  *
  * `thinkingLevel` is the key, because that is the one the reference client's
- * picker writes into `ModelSelection.config` for both of its providers.
+ * picker writes into `ModelSelection.config` for both of its providers, and
+ * the property is VS Code's Claude schema for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
  */
 const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
   if (efforts.length === 0) return {};
@@ -36,10 +38,11 @@ const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown
       properties: {
         thinkingLevel: {
           type: 'string',
-          title: 'Thinking Level',
+          title: 'Effort Level',
           description: 'Controls how much reasoning effort Claude uses.',
           enum: [...efforts],
           enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
+          enumDescriptions: efforts.map((one) => EFFORT_DESCRIPTIONS[one as typeof EFFORTS[number]] ?? ''),
           ...(efforts.includes('high') ? { default: 'high' } : {}),
         },
       },
@@ -122,7 +125,7 @@ export async function probe(cwd: string): Promise<Offered> {
             ...thinkingFor(list(model.supportedEffortLevels).filter((one): one is string => typeof one === 'string')),
           };
         })
-        .filter((model) => model.id !== ''),
+        .filter((model) => model.id !== '' && model.id !== SDK_DEFAULT_MODEL_VALUE),
       commands: list(init.commands)
         .map((raw) => {
           const command = bag(raw);

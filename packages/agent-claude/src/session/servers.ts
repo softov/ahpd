@@ -3,6 +3,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
+import { SDK_DEFAULT_MODEL_VALUE } from './config.js';
 import { customizationsOf, rootOf } from './customizations.js';
 import { configDirOf, diskOf, managedDirOf } from './disk.js';
 import { watchFolders } from './watch.js';
@@ -396,7 +397,7 @@ export function createServers(ctx: SessionContext): Servers {
         // is and leaves a picker that offers nothing.
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
-      .filter((model) => model.id !== '');
+      .filter((model) => model.id !== '' && model.id !== SDK_DEFAULT_MODEL_VALUE);
     if (ctx.options.offerModels) ctx.offered = await ctx.options.offerModels(ctx.offered);
     /*
      * The style the preset names, applied once the CLI is there to take it.
