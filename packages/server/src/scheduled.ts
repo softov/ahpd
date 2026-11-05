@@ -308,8 +308,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   });
   const told = (message: string): void => { options.onProblem?.(message); };
 
-  /** When each automation next fires, by resource. Absent means nothing will fire it. */
-  const nextAt = new Map<string, Date>();
+  /** When each automation next fires, by resource, AHP's `nextRunAt`. Absent means nothing will fire it. */
+  const nextRunAt = new Map<string, Date>();
   /** Written timestamps, kept here so they survive a reload rather than becoming the load time. */
   const stamps = new Map<string, { createdAt: string; modifiedAt: string }>();
   /**
@@ -416,7 +416,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
 
   /** Everything this store knows, with what it added. */
   const dressed = (automation: AutomationEntry): AutomationEntry => {
-    const at = nextAt.get(automation.resource);
+    const at = nextRunAt.get(automation.resource);
     const stamp = stamps.get(automation.resource);
     return {
       ...automation,
@@ -462,7 +462,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
           told(`Could not write ${fileOf(id)}: ${reason(error)}`);
         }
       }
-      const at = nextAt.get(one.resource);
+      const at = nextRunAt.get(one.resource);
       held.automations.push({
         resource: one.resource,
         // Absent while the definition names no allowance, which is what the
@@ -538,10 +538,10 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     for (const automation of inner.list()) {
       const found = soonest(automation, at);
       if (found) {
-        nextAt.set(automation.resource, found.at);
+        nextRunAt.set(automation.resource, found.at);
         if (!first || found.at < first) first = found.at;
       }
-      else nextAt.delete(automation.resource);
+      else nextRunAt.delete(automation.resource);
     }
     // Let go once more, for the same reason: a switch-off above may have armed
     // one through the rearm its own announcement triggered, and two timers
@@ -565,15 +565,23 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
    * time, the second automation due at this same instant was read after the
    * first one's run had already pushed it past the clock, and was passed over:
    * two automations on one schedule, and only one of them ever fired.
+   *
+   * An occurrence reached a minute or more after it was due, a machine that
+   * slept or a timer that ran late, is a catch-up, as VS Code's scheduler
+   * marks one: its run says `catchUp`, and a trigger whose misfire policy is
+   * `skip` does not run it. The rearm after it moves it on either way.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L915-L938
    */
   const fire = (): void => {
     if (closed) return;
     const at = now();
     const ready: { automation: string; when: Date; origin: Bag }[] = [];
     for (const automation of inner.list()) {
-      const when = nextAt.get(automation.resource);
+      const when = nextRunAt.get(automation.resource);
       if (!when || when > at) continue;
       const schedule = soonest(automation, new Date(when.getTime() - 1));
+      const late = at.getTime() - when.getTime() >= 60_000;
+      if (late && schedule?.schedule.catchUp === false) continue;
       ready.push({
         automation: automation.resource,
         when,
@@ -581,6 +589,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
           kind: 'trigger',
           triggerId: schedule?.schedule.triggerId ?? '',
           scheduledFor: when.toISOString(),
+          ...(late ? { catchUp: true } : {}),
         },
       });
     }
@@ -898,7 +907,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       const gone = inner.remove(resource);
       if (!gone) return false;
       stamps.delete(resource);
-      nextAt.delete(resource);
+      nextRunAt.delete(resource);
       save();
       return true;
     },

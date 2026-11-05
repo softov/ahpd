@@ -193,8 +193,8 @@ describe('when the time comes', () => {
    *
    * Found on a second daemon, 2026-10-13 - a copy of a file never fired while
    * the original was on. A run writes the store, that write reaches the clock's
-   * `onChanged` and rearms it, and the second automation's `nextAt` had moved
-   * to the next occurrence before `fire` came to read it.
+   * `onChanged` and rearms it, and the second automation's `nextRunAt` had
+   * moved to the next occurrence before `fire` came to read it.
    */
   describe('two automations due at the same minute', () => {
     it('says both are due, then arms both for the next one', () => {
@@ -233,6 +233,42 @@ describe('when the time comes', () => {
       clock.advance('2026-09-01T09:00:00Z');
 
       expect(seen).toEqual([ONE, TWO]);
+    });
+  });
+
+  /*
+   * An occurrence the running daemon reaches late, as a machine that slept
+   * does: a minute or more past due is a catch-up, as VS Code's scheduler
+   * marks one, and a trigger that skips misfires does not run it.
+   */
+  describe('an occurrence reached a minute or more late', () => {
+    it('says it as a catch-up, and on time when it is under a minute late', () => {
+      const clock = clockwork();
+      store = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+      const seen: Bag[] = [];
+      store.onDue?.((event) => seen.push(event.origin));
+      store.create(ONE, nightly());
+
+      clock.advance('2026-09-01T09:00:59Z');
+      clock.advance('2026-09-02T10:30:00Z');
+
+      expect(seen).toEqual([
+        { kind: 'trigger', triggerId: 't1', scheduledFor: '2026-09-01T09:00:00.000Z' },
+        { kind: 'trigger', triggerId: 't1', scheduledFor: '2026-09-02T09:00:00.000Z', catchUp: true },
+      ]);
+    });
+
+    it('does not run one a trigger that skips misfires reached late, and moves it on', () => {
+      const clock = clockwork();
+      store = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+      const seen: Bag[] = [];
+      store.onDue?.((event) => seen.push(event.origin));
+      store.create(ONE, nightly('0 9 * * *', { misfirePolicy: 'skip' }));
+
+      clock.advance('2026-09-01T09:05:00Z');
+
+      expect(seen).toEqual([]);
+      expect(store.get(ONE)?.nextRunAt).toBe('2026-09-02T09:00:00.000Z');
     });
   });
 
