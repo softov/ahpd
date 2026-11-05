@@ -236,8 +236,11 @@ it('keeps the turn\'s one Plan call while the list goes to the host', async () =
 
 it('draws the Plan call from the host\'s tasks when the tasks plugin holds them', async () => {
   const { client, peer: p, chatUri, heard } = await planning(true);
-  begin(client, chatUri, 't1', 'plan it');
+  // Held open after its plans, so the row is drawn in a turn that still runs.
+  begin(client, chatUri, 't1', 'plan it and wait');
   await until(() => heard.length >= 2);
+  await until(() => planContent(p, chatUri, 't1').length === 2);
+  client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } } });
   await until(() => finished(p, chatUri, 1));
 
   // The bridge draws none of its own: one row, opened once and completed by
@@ -253,24 +256,24 @@ it('draws the Plan call from the host\'s tasks when the tasks plugin holds them'
     '- [x] Read the file',
     '- [ ] Write the answer',
   ]);
+  const all = types(p, chatUri);
+  expect(all.indexOf('chat/toolCallComplete')).toBeLessThan(all.indexOf('chat/turnCancelled'));
 });
 
-it('ends the turn after the cap when a plan update never settles', async () => {
-  const { client, peer: p, chatUri } = await planning(true, true);
+/*
+ * A turn's end is said as its backend says it, with nothing held for a plan
+ * read, as the reference host says an agent's end of a turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
+ */
+it('ends the turn as its backend says it when a plan update never settles', async () => {
+  const { client, peer: p, chatUri, heard } = await planning(true, true);
   begin(client, chatUri, 't1', 'plan it');
+  await until(() => heard.length >= 2);
+  await until(() => finished(p, chatUri, 1), 1000);
 
-  // The tasks plugin drew the row; the stuck one never will settle. The turn
-  // end waits out the cap rather than the turn never ending, and the row is
-  // still completed before it.
-  await until(() => finished(p, chatUri, 1), 8000);
-
-  const calls = planCalls(p, chatUri, 't1');
-  expect(calls.filter((type) => type === 'chat/toolCallStart')).toHaveLength(1);
-  expect(calls.filter((type) => type === 'chat/toolCallComplete')).toHaveLength(1);
-  expect(planContent(p, chatUri, 't1')).toEqual([
-    '- [x] Read the file',
-    '- [ ] Write the answer',
-  ]);
-  const all = types(p, chatUri);
-  expect(all.indexOf('chat/toolCallComplete')).toBeLessThan(all.indexOf('chat/turnComplete'));
-}, 20000);
+  // Nothing of the turn is said after its end: a call for a turn the protocol
+  // has seen end is one no client draws.
+  const all = actions(p, chatUri);
+  const ended = all.findIndex((e) => e.action.type === 'chat/turnComplete');
+  expect(all.slice(ended + 1).filter((e) => e.action.turnId === 't1' && String(e.action.type).startsWith('chat/toolCall'))).toEqual([]);
+});

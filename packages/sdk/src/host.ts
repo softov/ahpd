@@ -947,6 +947,13 @@ export function createHost(options: HostOptions): Host {
        * waiting on a person a stopped turn no longer has.
        */
       asks.cancelTurn(channel, String(action.turnId ?? ''));
+      /*
+       * A Plan call the host drew is closed by the turn ending, the way the
+       * ACP bridge closes its own: the protocol never closes this row, so
+       * nothing else would. Closed here, before the ending is said, whoever
+       * says it: the backend, or this host for a client's stop.
+       */
+      if (ending) ctx.completePlan(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
       // A stopped turn is kept for its send's checks, for as long as the chat's state is held.

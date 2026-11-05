@@ -101,6 +101,8 @@ export interface Spawn {
    * holds an entry nothing has set this on yet.
    */
   wirePlan(): void;
+  /** Complete the Plan call the host drew in a chat's turn, before that turn's end is said. */
+  completePlan(chat: string, turn: string): void;
 }
 
 /**
@@ -1200,16 +1202,6 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         const sender = senderOf(turn);
         /*
-         * A Plan call the host drew is closed by the turn ending, the way the
-         * ACP bridge closes its own: the protocol never closes this row, so
-         * nothing else would. Sent before the ending action, which is what a
-         * client reads as the turn being over.
-         */
-        if (channel === 'chat' && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
-          || action.type === 'chat/error')) {
-          completePlan(chatUri, turn);
-        }
-        /*
          * The bits of a session and a chat whose backend runs them on another
          * host, as that host says them: kept here, where every row and state
          * of the session and the chat reads them. The session's read bit
@@ -1817,6 +1809,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     unstamped, withWorkerUri, stampedCalls, asSentChat,
     sendSubagent, endedWorkers,
     openSubagent, formerChatUri, titleOf, keepTitle, keepProvider,
-    spawn, wirePlan,
+    spawn, wirePlan, completePlan,
   };
 }

@@ -135,6 +135,12 @@ const run = async (
     view.types('chat').filter((type) => type === 'chat/turnComplete' || type === 'chat/turnCancelled').length;
   for (const [index, text] of texts.entries()) {
     const wanted = ends() + 1;
+    // The start is the host's to say, before it hands the turn to the
+    // backend, which says nothing of it.
+    view.emit('chat', {
+      type: 'chat/turnStarted', turnId: `t${index + 1}`, startedAt: new Date().toISOString(),
+      message: { text, origin: { kind: 'user' } },
+    });
     session.sendMessage(`t${index + 1}`, text);
     const limit = Date.now() + 4000;
     while (ends() < wanted) {
