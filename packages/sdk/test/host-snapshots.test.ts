@@ -777,7 +777,7 @@ describe('the fields a client reads by name', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: {} } },
     });
     await settle();
 
@@ -786,11 +786,11 @@ describe('the fields a client reads by name', () => {
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
     expect(refused[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
-    expect(refused[0]?.action.type).toBe('chat/truncated');
+    expect(refused[0]?.action.type).toBe('chat/inputAnswerChanged');
     // The reason names what actually happened rather than the type again:
-    // this chat has no turn by that name, so there is nothing to truncate to.
+    // this chat is waiting on no question by that id.
     expect((refused[0] as { rejectionReason?: string }).rejectionReason)
-      .toContain('not a completed turn');
+      .toContain('not a question this chat is waiting on');
     // An envelope after a snapshot carries a greater number than the one the
     // snapshot was taken at, a refusal included: "Subsequent actions will have
     // `serverSeq > fromSeq`".
@@ -813,7 +813,7 @@ describe('the fields a client reads by name', () => {
     }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
     expect(answer.type).toBe('replay');
     expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
-      .toContain('not a completed turn');
+      .toContain('not a question this chat is waiting on');
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {

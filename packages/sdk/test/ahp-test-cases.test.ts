@@ -536,11 +536,6 @@ const REFUSALS: Record<string, {
     said: (action) => `Workspace trust was not granted for '${resolve(localPath(String(action.directory)))}'`,
     source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
   }],
-  'chat/truncated': [{
-    said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
-    source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
-    holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
-  }],
 };
 
 /** The snapshot the host serves for one channel: its state, and the sequence it was taken at. */

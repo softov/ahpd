@@ -311,9 +311,8 @@ describe('what it will not pretend', () => {
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
-    // A refusal names the particular thing asked for: a turn that is not
-    // there, and a question nobody is waiting on.
-    expect(why({ type: 'chat/truncated', turnId: 't1' })).toContain('not a completed turn');
+    // A refusal names the particular thing asked for: a question nobody is
+    // waiting on.
     expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: {} }))
       .toContain('not a question this chat is waiting on');
     expect(chatUri).toBeTruthy();

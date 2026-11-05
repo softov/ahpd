@@ -2110,10 +2110,15 @@ export function chatAction(
         startOver([]);
         break;
       }
-      // A completed turn of the chat's held state, which is what every
-      // client holds; the backend is cut at its own record of that turn.
+      /*
+       * A completed turn of the chat's held state, which is what every client
+       * holds; the backend is cut at its own record of that turn. One the chat
+       * does not hold is said all the same, and the reducer leaves the chat as
+       * it was, as the reference host says every truncation.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1995
+       */
       if (!(Array.isArray(chatHeld.turns) && chatHeld.turns.some((one) => String((one as Bag).id ?? '') === turnId))) {
-        no(`${turnId} is not a completed turn in ${session.chatUri}`);
+        uncut([], 'the chat holds no such turn');
         break;
       }
       const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);

@@ -194,6 +194,25 @@ describe('dropping the turns after one', () => {
     expect(sdk.queries.length).toBe(queries);
   });
 
+  /*
+   * A truncation at a turn the chat does not hold is said as it was sent, and
+   * the reducer leaves the chat as it was, as VS Code's host says every
+   * truncation.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1995
+   */
+  it('says a truncation at a turn the chat does not hold, and starts no CLI again', async () => {
+    const { client, peer: p, chatUri } = await running();
+    const queries = sdk.queries.length;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 5, action: { type: 'chat/truncated', turnId: 'nowhere' } },
+    });
+    await settle();
+    const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/truncated');
+    expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[5, undefined]]);
+    expect(sdk.queries.length).toBe(queries);
+  });
+
   it('drops the turn that is running, and comes back idle', async () => {
     const { client, peer: p, chatUri } = await twice();
     client.handle({
