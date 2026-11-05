@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -304,6 +305,36 @@ describe('what GitHub knows about the branch', () => {
     expect(state._meta?.github).toBeUndefined();
     expect(state._meta?.githubData).toBeUndefined();
     expect(state._meta?.workingDirectoryKeys).toBeUndefined();
+  });
+
+  /*
+   * A chat that is not the session's default has its git state under the
+   * scope of its folders, as VS Code's host writes one: `gitData` by the
+   * scope's id, the SHA-1 of the folders' sorted keys, and
+   * `workingDirectoryScopeIds` from the folder list to that id.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L959-L972
+   */
+  it('puts the git state of a second chat under the scope of its folders', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('main')),
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/scoped', provider: 'claude' } });
+    await settle();
+    const meta = async () => ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/scoped' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state._meta ?? {});
+    // The default chat alone reads the session's own `git`.
+    expect((await meta()).gitData).toBeUndefined();
+
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/scoped', chat: 'ahp-chat:/second' } });
+    await settle();
+    const scope = createHash('sha1').update(JSON.stringify([HOME])).digest('hex');
+    const now = await meta();
+    expect(now.gitData).toEqual({ [scope]: now.git });
+    expect(now.workingDirectoryScopeIds).toEqual({ [JSON.stringify([HOME])]: scope });
   });
 
   it('has no `_meta` at all for a directory that has answered nothing', async () => {

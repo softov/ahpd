@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
 import { idOf } from '../sessions/catalog.js';
@@ -129,12 +130,33 @@ export function createFacts(ctx: HostContext): Facts {
     // client that derives the key from the working directory arrive at the
     // same entry.
     const folder = uriOf(dir);
+    /*
+     * The git state again for each other chat of the session, under the scope
+     * of the folders it works in, as VS Code's host writes the git state of a
+     * chat that is not the session's default: `gitData` keyed by the scope's
+     * id, the hash of its folders' sorted keys, and `workingDirectoryScopeIds`
+     * naming the id of each folder list as the chat gives it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L959-L972
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkingDirectories.ts#L29-L35
+     */
+    const held = sessions.get(uri);
+    const gitState = (told as { git?: unknown } | undefined)?.git;
+    const scopes = gitState === undefined || held === undefined ? [] : [...held.chats]
+      .filter(([chatUri]) => chatUri !== held.defaultChat)
+      .map(([, chat]) => {
+        const folders = chat.workingDirectories();
+        return [JSON.stringify(folders), createHash('sha1').update(JSON.stringify([...new Set(folders)].sort())).digest('hex')] as const;
+      });
     return {
       // A plugin's keys first, so the directory's facts win a collision: the
       // plugin's key is its own name and this host's answer about where the
       // session is.
       ...added,
       ...told,
+      ...(scopes.length === 0 ? {} : {
+        gitData: Object.fromEntries(scopes.map(([, id]) => [id, gitState])),
+        workingDirectoryScopeIds: Object.fromEntries(scopes),
+      }),
       /*
        * The same state under the three names it is read by: `githubData`
        * keyed by the folder, with `workingDirectoryKeys` saying which folder,
