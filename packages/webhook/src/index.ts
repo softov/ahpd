@@ -1,6 +1,6 @@
 export { apply, defaults, name, title } from './plugin.js';
 export { WEBHOOK_TRIGGER } from './automation.js';
-export { challenge, MAX_AGE_SECONDS, omitted, proves, validation } from './auth.js';
+export { challenge, omitted, proves, validation, WEBHOOK_TOLERANCE_IN_SECONDS } from './auth.js';
 export { botTarget, turnEnds } from './bot.js';
 export type { BotSeams, TurnEnd } from './bot.js';
 export { allows, answer, dataOf, DEFAULT_MAX_BODY_BYTES, readCall } from './call.js';

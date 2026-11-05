@@ -87,7 +87,7 @@ Each connector names one scheme in `config.auth`. Every value is compared in a t
 | `github` | `X-Hub-Signature-256: sha256=<HMAC-SHA256 of the raw body>`, with `secret` as the key |
 | `stripe` | `Stripe-Signature` with a `t` and at least one `v1`: the HMAC-SHA256 of `<t>.<raw body>` with `secret`, hex, within 300 seconds |
 | `slack` | `X-Slack-Request-Timestamp` and `X-Slack-Signature: v0=<HMAC-SHA256 of v0:<timestamp>:<raw body>>`, with `secret` as the key, within 300 seconds |
-| `standard` | `Webhook-Id`, `Webhook-Timestamp` and `Webhook-Signature: v1,<base64>`, where the value is the HMAC-SHA256 of `<id>.<timestamp>.<raw body>` and the key is `secret` without its `whsec_` prefix, base64-decoded, within 300 seconds |
+| `standard` | `Webhook-Id`, `Webhook-Timestamp` and `Webhook-Signature: v1,<base64>`, where the value is the HMAC-SHA256 of `<id>.<timestamp>.<raw body>` and the key is `secret` base64-decoded, its `whsec_` prefix dropped when it has one, as the reference library decodes it; a `secret` that is not base64 proves no call. Within 300 seconds |
 | `meta` | `X-Hub-Signature-256` over the raw body on a `POST`, as `github`, and the `GET` handshake on the URL |
 | `graph` | Every `clientState` in the body's `value` list equal to `secret`, and the `validationToken` handshake on the URL |
 

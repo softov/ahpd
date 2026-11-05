@@ -7,8 +7,8 @@
  * a caller with no proof.
  *
  * A timestamped scheme refuses a call more than five minutes from the host's
- * clock, which is the tolerance Stripe and Slack document, and every value is
- * compared in a time that does not depend on the value.
+ * clock, which is the tolerance Stripe, Slack and Standard Webhooks document,
+ * and every value is compared in a time that does not depend on the value.
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
@@ -16,8 +16,12 @@ import { answer } from './call.js';
 import type { Call } from './call.js';
 import type { Endpoint } from './record.js';
 
-/** How far a timestamped call may be from the host's clock, in seconds. */
-export const MAX_AGE_SECONDS = 300;
+/**
+ * How far a timestamped call may be from the host's clock, in seconds: the
+ * tolerance, named as Standard Webhooks' reference library names it.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+export const WEBHOOK_TOLERANCE_IN_SECONDS = 5 * 60;
 
 /** Two strings are equal, in a time that does not depend on where they differ. */
 const same = (given: string, kept: string): boolean => timingSafeEqual(
@@ -49,8 +53,8 @@ const mac = (algorithm: string, secret: string, data: Buffer, encoding: string):
 };
 
 /** Whether a seconds timestamp is inside the tolerance of `now`. */
-const fresh = (seconds: number, now: number): boolean => Number.isFinite(seconds)
-  && Math.abs(Math.floor(now / 1000) - seconds) <= MAX_AGE_SECONDS;
+const withinTolerance = (seconds: number, now: number): boolean => Number.isFinite(seconds)
+  && Math.abs(Math.floor(now / 1000) - seconds) <= WEBHOOK_TOLERANCE_IN_SECONDS;
 
 /** The `Authorization: Bearer <token>` token, or nothing. */
 const bearerOf = (call: Call): string | undefined => {
@@ -75,10 +79,18 @@ const stripeParts = (header: string): Map<string, string[]> => {
 /** Whether any of the values equals the expected one. */
 const anyIs = (values: string[], expected: string): boolean => values.some((one) => same(one, expected));
 
-/** The Standard Webhooks key: the `whsec_` prefix dropped, and the rest base64. */
-const standardKey = (secret: string): Buffer => (secret.startsWith('whsec_')
-  ? Buffer.from(secret.slice('whsec_'.length), 'base64')
-  : Buffer.from(secret, 'utf8'));
+/**
+ * The Standard Webhooks key: the `whsec_` prefix dropped when it is there, and
+ * the rest decoded from base64, as the reference library decodes a secret
+ * whether or not it carries the prefix. A secret that does not decode, or
+ * decodes to nothing, is a secret the library refuses, and it holds no key.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+const standardKey = (secret: string): Buffer | undefined => {
+  const encoded = secret.startsWith('whsec_') ? secret.slice('whsec_'.length) : secret;
+  const key = Buffer.from(encoded, 'base64');
+  return key.length > 0 && key.toString('base64') === encoded ? key : undefined;
+};
 
 /** Whether the GitHub and Meta signature over the raw body is the one the header carries. */
 const hubSignature = (endpoint: Endpoint, call: Call): boolean => {
@@ -128,14 +140,14 @@ const CHECKS: Record<string, (endpoint: Endpoint, call: Call, now: number) => bo
     if (header === undefined) return false;
     const parts = stripeParts(header);
     const stamp = parts.get('t')?.[0] ?? '';
-    if (!fresh(Number(stamp), now)) return false;
+    if (!withinTolerance(Number(stamp), now)) return false;
     const expected = mac('sha256', endpoint.secret, signed(call, `${stamp}.`), 'hex');
     return anyIs(parts.get('v1') ?? [], expected);
   },
 
   slack: (endpoint, call, now) => {
     const stamp = headerOf(call, 'x-slack-request-timestamp') ?? '';
-    if (!fresh(Number(stamp), now)) return false;
+    if (!withinTolerance(Number(stamp), now)) return false;
     const value = headerOf(call, 'x-slack-signature');
     if (value === undefined) return false;
     const expected = `v0=${mac('sha256', endpoint.secret, signed(call, `v0:${stamp}:`), 'hex')}`;
@@ -146,8 +158,9 @@ const CHECKS: Record<string, (endpoint: Endpoint, call: Call, now: number) => bo
     const id = headerOf(call, 'webhook-id');
     const stamp = headerOf(call, 'webhook-timestamp') ?? '';
     const header = headerOf(call, 'webhook-signature');
-    if (id === undefined || header === undefined || !fresh(Number(stamp), now)) return false;
-    const expected = createHmac('sha256', standardKey(endpoint.secret))
+    const key = standardKey(endpoint.secret);
+    if (id === undefined || header === undefined || key === undefined || !withinTolerance(Number(stamp), now)) return false;
+    const expected = createHmac('sha256', key)
       .update(signed(call, `${id}.${stamp}.`))
       .digest('base64');
     // The header holds space-separated `v1,<base64>` entries; the other
