@@ -111,7 +111,7 @@ function peer(tree: Record<string, string>, gone: Set<string> = new Set()): Peer
  * again is a start, which is the only way a session's rules reach a backend
  * that began before they did.
  */
-function serving(withPort = true) {
+function serving(withPort = true, sessionCustomizations?: Agent['sessionCustomizations']) {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-client-plugins-'));
   dirs.push(dir);
   const toggled: { id: string; enabled: boolean }[] = [];
@@ -120,6 +120,7 @@ function serving(withPort = true) {
   const base = echo({ path: dir, pace: 0 });
   const agent: Agent = {
     ...base,
+    ...(sessionCustomizations === undefined ? {} : { sessionCustomizations }),
     create: (start) => {
       given.push(start.instructions);
       const session = base.create(start);
@@ -250,7 +251,8 @@ it('watches a client plugin load, then reports it beside the backend\'s own', as
    * once, with the plugin in it `loading` before it is copied - a copy is a
    * client's tree read over its connection and the session must not sit
    * empty while that happens - the backend's own entries first and this
-   * host's after them; then the plugin on its own once its copy settled.
+   * host's after them, a backend that projects no order of its own; then
+   * the plugin on its own once its copy settled.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L11243-L11330
    */
   const said = actions(a.peer, URI).filter((one) => String(one.type).startsWith('session/customization'));
@@ -260,6 +262,26 @@ it('watches a client plugin load, then reports it beside the backend\'s own', as
   expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin', load: { kind: 'loading' } });
   expect(listed.some((one) => one.type !== 'plugin')).toBe(true);
   expect(said[1]?.customization).toMatchObject({ type: 'plugin', uri: PLUGIN, name: 'one', clientId: 'plugin', load: { kind: 'loaded' } });
+});
+
+it('lays a client\'s plugin where the session\'s backend projects it, said and in the snapshot', async () => {
+  // A backend whose list has its clients' tier first, as VS Code's Claude agent's does.
+  const { served } = serving(true, (reported, clients) => [...clients, ...reported]);
+  const a = await session(served);
+  const b = await joins(served, 'plugin', TREE);
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', name: 'one' }]);
+  await settle();
+
+  const said = actions(a.peer, URI).find((one) => one.type === 'session/customizationsChanged');
+  const listed = said?.customizations as Record<string, unknown>[];
+  expect(listed[0]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
+  expect(listed.slice(1).some((one) => one.type !== 'plugin')).toBe(true);
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { customizations: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.customizations[0]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
 });
 
 it('lists what a plugin holds, each part named by the file it was read from', async () => {

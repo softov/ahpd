@@ -957,9 +957,9 @@ export function createHost(options: HostOptions): Host {
      *
      * What the backend reports is what the backend loaded; what the session's
      * clients handed it - the plugins this host copied for them - is the other
-     * half. Laid after rather than merged, because nothing a backend says can
-     * take a client's plugin away: a plugin's `id` is the client's own, so no
-     * id is in both halves and the order is the only thing that could differ.
+     * half, laid into the list where the session's backend projects it.
+     * Nothing a backend says can take a client's plugin away: a plugin's `id`
+     * is the client's own, so no id is in both halves.
      */
     if (action.type === 'session/customizationsChanged') {
       const reported = Array.isArray(action.customizations) ? action.customizations : [];
@@ -1071,17 +1071,20 @@ export function createHost(options: HostOptions): Host {
     };
   };
   /**
-   * A session's customizations as a client reads them: a backend's, then its
-   * clients', with nothing said about a session that has no client plugins.
+   * A session's customizations as a client reads them: the backend's and its
+   * clients', in the order the session's backend projects them, with nothing
+   * said about a session that has no client plugins.
    *
    * The backend's half goes through `withEntries`, because the entries a
    * decision about every session or about a folder is read from are this
    * host's, and a customization the backend reported carries none of them.
    */
-  const laid = (channel: string, reported: unknown): Bag[] => [
-    ...(Array.isArray(reported) ? reported : []).map((one) => ctx.withEntries(channel, bag(one))),
-    ...ctx.clientPluginsOf(channel),
-  ];
+  const laid = (channel: string, reported: unknown): Bag[] => {
+    const backend = (Array.isArray(reported) ? reported : []).map((one) => ctx.withEntries(channel, bag(one)));
+    const clients = ctx.clientPluginsOf(channel);
+    const agent = sessions.get(channel)?.agent ?? owners.get(channel);
+    return agent?.sessionCustomizations?.(backend, clients) ?? [...backend, ...clients];
+  };
   /**
    * Tell a plugin channel a client stopped watching it.
    *

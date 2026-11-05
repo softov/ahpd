@@ -712,6 +712,15 @@ export interface Agent {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L2023-L2024
    */
   inheritedChatConfig?(config: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
+  /**
+   * A session's customizations as its clients read them: what this backend
+   * reported, and the plugins the session's clients handed it, in this
+   * backend's order. VS Code's `getSessionCustomizations`, where each agent
+   * projects its own list (Claude's puts the client-pushed tier first).
+   * Absent, the backend's come first and the clients' after them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1499-L1562
+   */
+  sessionCustomizations?(reported: readonly Bag[], clients: readonly Bag[]): Bag[];
 
   /**
    * Answers for a key of this backend's own schema, by key.
