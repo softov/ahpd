@@ -496,7 +496,14 @@ describe('an output a backend keeps', () => {
     expect((rebuilt.claim as Bag).session).toBe('echo:/two');
   });
 
-  it('stays with its chat when the move is refused', async () => {
+  /*
+   * A move starts nothing: the chat's runtime goes on until its next turn
+   * boundary relaunches it under the destination, as VS Code moves only
+   * ownership, so a destination whose backend would not start the chat does
+   * not refuse the move, and the outputs go with the chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
+   */
+  it('goes with its chat on a move to a session whose backend would not start it yet', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
@@ -505,16 +512,13 @@ describe('an output a backend keeps', () => {
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
-    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'stays', 0);
+    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'goes', 0);
     k.refuses = (start) => start.chatUri === PEER && start.uri === TWO;
 
-    await expect(client.handle({
-      method: 'moveChat',
-      params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-    })).rejects.toThrow(/will not work there/);
+    await client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } });
     await settle(20);
-    expect(keptIn(store, 'live').map((one) => one.output)).toEqual(['stays']);
-    expect(keptIn(store, 'two')).toEqual([]);
+    expect(keptIn(store, 'live')).toEqual([]);
+    expect(keptIn(store, 'two').map((one) => one.output)).toEqual(['goes']);
   });
 
   it('is not offered where the store keeps no folder', async () => {

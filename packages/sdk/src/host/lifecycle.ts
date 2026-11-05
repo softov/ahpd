@@ -273,6 +273,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // is gone from here is gone inside its machine as well.
       closing.push(Promise.resolve(chat.close('dispose')).catch(() => {}));
       byChat.delete(chatUri);
+      ctx.chatRelaunches.delete(chatUri);
       drafts.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);
@@ -774,6 +775,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')));
       byChat.drop(chatUri);
+      // Started again below under this session, which is the relaunch a moved
+      // chat owed.
+      ctx.chatRelaunches.delete(chatUri);
     }
     /*
      * The conversation, when this is a restart rather than a re-creation.
@@ -1048,9 +1052,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * for the same reason: the SDK takes its directories when the CLI starts
    * and offers no way to add one after. Resumed, so it is the same
    * conversation - a chat that lost its history because a directory was added
-   * to it would be a worse answer than refusing.
+   * to it would be a worse answer than refusing. `directory` is the folder a
+   * moved chat worked in, which it goes on working in under the session that
+   * holds it now. The chat keeps its place among its session's chats.
    */
-  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void => {
+  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): void => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
@@ -1059,6 +1065,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // resumes.
     const own = chat.agentId();
     const talking = own !== undefined ? { resume: own, seed: chat.allTurns() } : undefined;
+    const order = [...held.chats.keys()];
+    // Started again under this session, which is the relaunch a moved chat owed.
+    ctx.chatRelaunches.delete(chatUri);
     /*
      * Started again rather than removed, which is what the chat coming back
      * resumed needs: told a removal, a backend running nested in a machine
@@ -1075,11 +1084,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       chatIdOf(uri, chatUri, own),
       backendsOwn(chatConfig(held, chatUri)),
       talking,
-      held.workingDirectory,
+      directory ?? held.workingDirectory,
       credentials,
       beside.get(chatUri) ?? held.additional,
       sender,
     );
+    const now = new Map(held.chats);
+    held.chats.clear();
+    for (const one of order) {
+      const back = now.get(one);
+      if (back !== undefined) held.chats.set(one, back);
+    }
     log(`restarted ${chatUri}`);
   };
 
@@ -1545,6 +1560,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * stop, rather than only saying so.
      */
     if (ctx.refusing !== undefined) return ctx.refusing;
+    /*
+     * A chat moved since its runtime was launched starts again under the
+     * session that holds it now, at its next turn boundary, which this is, as
+     * the reference host relaunches a moved chat's runtime there; the turn
+     * then goes to the chat the relaunch brought back.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
+     */
+    const moved = ctx.chatRelaunches.get(session.chatUri);
+    if (moved !== undefined) {
+      ctx.chatRelaunches.delete(session.chatUri);
+      const owner = byChat.get(session.chatUri)?.uri;
+      if (owner !== undefined) restartChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
+      const back = byChat.get(session.chatUri)?.chat;
+      if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
+      return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+    }
     // Carried to another host where this session runs on one, and the host
     // there runs the command a start's text names.
     const relayed = relay !== undefined && session.relay !== undefined;

@@ -315,6 +315,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   relaunches: Map<string, { config: Bag; credentials: Record<string, string>; sender: Connection | undefined; tokensFor: (provider: string) => Record<string, string> }>;
   /**
+   * The relaunch each moved chat owes, by the chat's uri: its runtime goes on
+   * under the session it was launched for until the chat's next turn
+   * boundary starts it again under the session that holds it now, in the
+   * folder it worked in, with the credentials and the connection of the move.
+   */
+  chatRelaunches: Map<string, { credentials: Record<string, string>; sender: Connection | undefined; directory: string | undefined }>;
+  /**
    * The turns a client resumed that run now, by their chat and their id: the
    * time each ran before and when it ran again, which its stop is said with.
    */

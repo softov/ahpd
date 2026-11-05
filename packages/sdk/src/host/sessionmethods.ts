@@ -116,22 +116,25 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   };
 
   /**
-   * A chat taken out of the session it is in and started again under another.
+   * A chat taken out of the session it is in and given to another.
    *
-   * The whole of a move that costs the chat its process, which is the two
-   * destinations the protocol serves beyond a reorder: a session this host is
-   * already running, or one made for the chat. Both are the same act, and the
-   * order the protocol gives for it is the order here - the store and this
-   * host's own maps are changed first, the backend is started under the
-   * destination second, and only then is anything published. So a client that
-   * is told `session/chatRemoved` on the source is looking at a chat the
-   * destination already holds, rather than one that is briefly nowhere.
+   * The two destinations the protocol serves beyond a reorder: a session this
+   * host is already running, or one made for the chat. Both are the same act,
+   * as the reference host moves a chat: its ownership changes in one step,
+   * and the chat keeps its state, its canvases and its runtime, which goes on
+   * under the session it was launched for until the chat's next turn
+   * boundary starts it again under the session that holds it now. The store
+   * and this host's own maps are changed first, and then everything is
+   * published, so a client that is told `session/chatRemoved` on the source
+   * is looking at a chat the destination already holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1893-L1904
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
    *
    * `to` is the destination session, or nothing where the move asked for a
-   * session of the chat's own. That one is allocated here the way
-   * `createSession` allocates one, with one difference: its id is the chat's
-   * own backend id, so the session a restart resumes it by is the name the
-   * conversation is already kept under.
+   * session of the chat's own. That one is made here with the source's agent,
+   * owner and config and the chat's folders, its id the chat's own backend id,
+   * so the session a restart resumes it by is the name the conversation is
+   * already kept under.
    */
   const movedTo = async (
     chatUri: string,
@@ -141,13 +144,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     anchor: string | undefined,
   ): Promise<{ session: string }> => {
     /*
-     * What the chat is, read before its process goes: the name its backend
-     * keeps the conversation under, which is what the destination resumes it
-     * by, and the turns it owns, which seed it there.
+     * The name its backend keeps the conversation under, which a session made
+     * for the chat is named by and which its relaunch resumes.
      */
     const own = found.chat.agentId() as string;
-    const all = found.chat.allTurns() as Bag[];
-    const talking = { resume: own, seed: all };
     /*
      * The folders the chat works in, which travel with it: its root is the
      * session's own and its peers are the ones it was opened with, so a chat
@@ -155,7 +155,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     const folders = beside.get(chatUri) ?? held.additional;
     const into = to ?? uriFor(own);
-    const dest = to === undefined ? undefined : sessions.get(to);
     if (to === undefined) {
       named(into, 'session');
       unheld(into);
@@ -164,14 +163,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       /*
        * The owner and the config are the source session's: a session made for
        * one of its chats is the same person's work under the same settings.
-       * The provider is written down the way a start writes it, and the
-       * folders are the chat's own, which `spawn` is handed below.
        */
       kept.setOwner(idOf(into), kept.owner(idOf(found.uri)));
       kept.setConfig(idOf(into), { ...held.config });
     }
-    const agent = dest?.agent ?? held.agent;
-    const config = dest?.config ?? held.config;
     /*
      * Out of the source, in the store and here: the chat's own record - its
      * title and its entry on the session's chat list - and the two maps that
@@ -182,74 +177,51 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * so a chat that has just left `byChat` still answers as the source's chat
      * until this line puts it where it now belongs.
      */
-    const was = [...held.chats.keys()];
     kept.moveChat(idOf(found.uri), idOf(into), chatUri);
     // And the outputs its terminals kept and its local turns, which are the
     // chat's own.
     ctx.moveChatOutputs(found.uri, into, chatUri);
     ctx.moveChatLocalTurns(found.uri, into, chatUri);
-    // Stopped rather than disposed: the chat is started again below, in the
-    // session it moved to, and it resumes the conversation it had.
-    found.chat.close('stopping');
+    const road = byChat.get(chatUri);
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
     claims.set(chatUri, { kind: 'chat', of: into });
-    let chat: Session;
-    try {
-      chat = spawn(agent, into, chatUri, chatIdOf(into, chatUri, own), backendsOwn(config), talking,
-        held.workingDirectory, conn.tokensFor(agent.provider), folders, connection);
+    if (to === undefined) {
+      const now = options.now?.() ?? new Date();
+      const made: Held = {
+        agent: held.agent,
+        chats: new Map<string, Session>(),
+        defaultChat: chatUri,
+        config: { ...held.config },
+        backends: new Map(),
+        workingDirectory: held.workingDirectory,
+        additional: folders,
+        createdAt: now.toISOString(),
+        quietSince: now.getTime(),
+      };
+      sessions.set(into, made);
+      ctx.births.set(into, made.createdAt);
+      ctx.names.set(idOf(into), into);
+      ctx.asleep.delete(into);
+      ctx.touch(into);
     }
-    catch (error) {
-      /*
-       * A destination that will not start the chat leaves it where it was: the
-       * protocol says a refused move changes nothing, and a chat whose process
-       * is gone while its record says another session owns it is a
-       * conversation nobody can open.
-       *
-       * The backend is the thing that decides this, and it has already been
-       * handed the chat's folders and its conversation - so putting it back is
-       * the same start it would have made, one session over. A start that
-       * fails twice is a logged divergence rather than the client's answer,
-       * which is the refusal it asked for.
-       *
-       * The place it held among its session's chats is put back too: a move
-       * out and back is an append, and a chat that came back at the end of a
-       * list it was in the middle of is a catalogue order this host changed
-       * for a move it refused.
-       */
-      kept.moveChat(idOf(into), idOf(found.uri), chatUri);
-      ctx.moveChatOutputs(into, found.uri, chatUri);
-      ctx.moveChatLocalTurns(into, found.uri, chatUri);
-      byChat.delete(chatUri);
-      claims.set(chatUri, { kind: 'chat', of: found.uri });
-      if (to === undefined) {
-        // The session the chat was to be given, which no backend answered for:
-        // it never existed, so the record of it goes whole - the owner and the
-        // config included, which were written for a session that is not there.
-        sessions.delete(into);
-        claims.delete(into);
-        kept.forget(idOf(into));
-        ctx.forgetSent(into);
-      }
-      try {
-        spawn(held.agent, found.uri, chatUri, chatIdOf(found.uri, chatUri, own), backendsOwn(held.config),
-          talking, held.workingDirectory, conn.tokensFor(held.agent.provider), folders, connection);
-      }
-      catch (back) {
-        log(`could not put ${chatUri} back in ${found.uri}: ${back instanceof Error ? back.message : String(back)}`);
-      }
-      const putBack = new Map(held.chats);
-      const order = was.filter((one) => putBack.has(one));
-      held.chats.clear();
-      for (const one of order) held.chats.set(one, putBack.get(one) as Session);
-      orderChats(found.uri, order);
-      throw error;
-    }
+    const there = sessions.get(into) as Held;
+    there.chats.set(chatUri, found.chat);
+    if (road !== undefined) byChat.set(chatUri, { ...road, uri: into });
+    // Written down as the destination's, which a restart starts it again in,
+    // the default chat of a session made for it.
+    keepChat(into, chatUri, chatIdOf(into, chatUri, own), there.defaultChat === chatUri);
+    // The peers it works beside, which are the chat's own from here on.
+    if (folders !== undefined) beside.set(chatUri, folders);
+    ctx.chatRelaunches.set(chatUri, {
+      credentials: conn.tokensFor(held.agent.provider),
+      sender: connection,
+      directory: ctx.chatRelaunches.get(chatUri)?.directory ?? held.workingDirectory,
+    });
     /*
      * The chat's canvases stay with it, as the reference host's move keeps a
      * chat's state, changesets, canvases and in-progress turn: a canvas's
      * resource names the chat, and the chat keeps its URI.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1893-L1904
      */
     /*
      * A session that did not exist a moment ago, and is running now. Said
@@ -258,7 +230,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * told about something that is not there.
      */
     if (to === undefined) {
-      keepProvider(into, agent, chat);
+      keepProvider(into, held.agent, found.chat);
       dispatch(into, { type: 'session/ready' });
       sessionAdded(into);
       activeSessionsMoved();
@@ -297,7 +269,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * first: an absent `after` means the beginning, and the order the session
      * holds is the one the next process starts its chats again in.
      */
-    const there = sessions.get(into) as Held;
     const order = [...there.chats.keys()].filter((one) => one !== chatUri);
     order.splice(anchor === undefined ? 0 : order.indexOf(anchor) + 1, 0, chatUri);
     const before = new Map(there.chats);
@@ -312,7 +283,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
     for (const one of carried) dispatch(found.uri, { type: 'session/chatRemoved', chat: one });
-    dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, chat) });
+    dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, found.chat) });
     for (const one of carried) {
       const ref = subagents.get(one);
       if (ref !== undefined) dispatch(into, { type: 'session/chatAdded', summary: subagentSummary(one, ref) });
@@ -338,6 +309,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     }
     summaryMoved(found.uri);
     summaryMoved(into);
+    // Whether it may move again, which a chat that became its session's own
+    // chat may not.
+    movableMoved(chatUri);
     log(`moved ${chatUri} from ${found.uri} to ${into}`);
     return { session: into };
   };
@@ -1485,6 +1459,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       forgetSendersIn(found.chat.chatState());
       found.chat.close('dispose');
       byChat.delete(chatUri);
+      ctx.chatRelaunches.delete(chatUri);
       drafts.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);

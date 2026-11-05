@@ -1347,7 +1347,7 @@ export function createHost(options: HostOptions): Host {
     ],
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
-    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, relaunches: new Map(), resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
+    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, relaunches: new Map(), chatRelaunches: new Map(), resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Set<string>(), described, links,

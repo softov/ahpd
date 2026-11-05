@@ -1595,15 +1595,12 @@ describe('more than one chat in a session', () => {
       await flushed();
 
       /*
-       * One start, and it is the chat: the destination resumes the
-       * conversation the backend kept under the chat's own name, seeded with
-       * the turns it had, in the folders it was working in.
+       * No start: the chat's runtime goes on under the session it was
+       * launched for until its next turn boundary, as VS Code's move keeps a
+       * chat's runtime and relaunches it there.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
        */
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
-      const mine = starts.at(-1) as Start;
-      expect(mine.uri).toBe('ahp-session:/two');
-      expect(mine.workingDirectory).toBe(DIR);
-      expect(mine.additional).toEqual([EXTRA, MORE]);
+      expect(starts.slice(before)).toEqual([]);
       // The session it landed in, published under a name a client can ask about.
       expect(answer.session).toBe('ahp-session:/two');
 
@@ -1648,6 +1645,17 @@ describe('more than one chat in a session', () => {
       expect(said(await opened(client, PEER))).toEqual(['over here']);
       await send(client, PEER, 't2', 'and again');
       expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
+      /*
+       * Its next turn is where it starts again, and it is the one start: the
+       * destination resumes the conversation the backend kept under the
+       * chat's own name, seeded with the turns it had, in the folders it was
+       * working in.
+       */
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
+      const mine = starts.at(-1) as Start;
+      expect(mine.uri).toBe('ahp-session:/two');
+      expect(mine.workingDirectory).toBe(DIR);
+      expect(mine.additional).toEqual([EXTRA, MORE]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1778,7 +1786,14 @@ describe('more than one chat in a session', () => {
     }
   });
 
-  it('leaves a chat in its session when the destination will not start it', async () => {
+  /*
+   * A move starts nothing: the chat's runtime goes on until its next turn
+   * boundary relaunches it under the destination, as VS Code moves only
+   * ownership, so a destination whose backend will not start the chat takes
+   * the move, and the relaunch failing ends the turn that waited on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
+   */
+  it('moves a chat to a session whose backend will not start it, and ends its next turn in that start\'s failure', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const starts: Start[] = [];
@@ -1799,24 +1814,17 @@ describe('more than one chat in a session', () => {
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-      })).rejects.toThrow(/will not work there/);
+      })).resolves.toEqual({ session: TWO });
       await settle(20);
-
-      /*
-       * The chat is where it was, with a process behind it again and its turns
-       * read back - and the client was told nothing had moved, so the two have
-       * to agree.
-       */
-      const from = await opened(client, LIVE);
-      expect(listed(from)).toEqual([from.state.defaultChat, PEER]);
-      expect(reorders(p, LIVE)).toEqual([]);
-      expect(reorders(p, TWO)).toEqual([]);
-      await send(client, PEER, 't2', 'and again');
-      expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
-
-      // And nowhere has it arrived: the destination holds its own chat only.
       const there = await opened(client, TWO);
-      expect(listed(there)).toEqual([there.state.defaultChat, TAIL]);
+      expect(listed(there)).toContain(PEER);
+
+      // Its next turn is where it starts again under the destination, which
+      // refuses it, and the turn ends in that failure.
+      await send(client, PEER, 't2', 'and again');
+      await settle(20);
+      const ended = actions(p, PEER).filter((e) => e.action.type === 'chat/error' && e.action.turnId === 't2');
+      expect(JSON.stringify(ended.map((e) => e.action.part))).toContain('will not work there');
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1857,8 +1865,9 @@ describe('more than one chat in a session', () => {
        * offer the same transcript twice.
        */
       expect(answer.session).toBe(`ahp-session:/${UUID}`);
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
-      expect(starts.at(-1)?.uri).toBe(`ahp-session:/${UUID}`);
+      // The chat's runtime goes on until its next turn boundary, as VS Code's
+      // move keeps a chat's runtime and relaunches it there.
+      expect(starts.slice(before)).toEqual([]);
 
       const there = await opened(first.client, answer.session);
       expect(there.state.defaultChat).toBe(PEER);

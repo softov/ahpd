@@ -223,6 +223,9 @@ export function createSleep(ctx: HostContext): Sleep {
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')).catch(() => {}));
       byChat.drop(chatUri);
+      // A wake starts it under this session, which is the relaunch a moved
+      // chat owed.
+      ctx.chatRelaunches.delete(chatUri);
     }
     const dir = dirOf(uri);
     sessions.delete(uri);
