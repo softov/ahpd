@@ -151,6 +151,24 @@ it('lists a machine, reads its status and its capabilities', async () => {
   expect(caps).toMatchObject({ runtime: 'docker', defaultImage: 'debian:bookworm-slim', max: 2 });
 });
 
+/*
+ * A resource's times are given where they are known and left out where they
+ * are not, as the spec gives `mtime` and `ctime`.
+ */
+it('gives a machine\'s times where its runtime says when it was made, and none where it does not', async () => {
+  const { runtime, held } = fake();
+  held.set('box', { name: 'box', image: 'debian:bookworm-slim', Created: '2026-09-22T00:00:00Z' });
+  held.set('bare', { name: 'bare', image: 'debian:bookworm-slim' });
+  const provider = computerProvider(runtime, options);
+
+  expect(await provider.resolve('computer://box')).toEqual({
+    uri: 'computer://box', type: 'directory', mtime: '2026-09-22T00:00:00.000Z', ctime: '2026-09-22T00:00:00.000Z',
+  });
+  expect(await provider.resolve('computer://bare')).toEqual({ uri: 'computer://bare', type: 'directory' });
+  expect(await provider.resolve('computer://bare/status')).not.toHaveProperty('mtime');
+  expect(await provider.resolve('computer://')).toEqual({ uri: 'computer://', type: 'directory' });
+});
+
 it('refuses a machine that is not there, and a directory read', async () => {
   const { runtime } = fake();
   const provider = computerProvider(runtime, options);

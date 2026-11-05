@@ -134,11 +134,14 @@ const at = (uri: string): At => {
   return held;
 };
 
-/** When a machine or a leaf was made, as a URI's metadata wants it. */
-const moment = (created: string | undefined): string => {
-  if (created === undefined) return new Date(0).toISOString();
-  const when = new Date(created);
-  return Number.isNaN(when.getTime()) ? new Date(0).toISOString() : when.toISOString();
+/**
+ * When a machine or a leaf was made, as a resource's `mtime` and `ctime`, or
+ * nothing where the runtime does not say: the spec gives both when known.
+ */
+const times = (created: string | undefined): { mtime?: string; ctime?: string } => {
+  const when = created === undefined ? undefined : new Date(created);
+  if (when === undefined || Number.isNaN(when.getTime())) return {};
+  return { mtime: when.toISOString(), ctime: when.toISOString() };
 };
 
 /*
@@ -424,15 +427,11 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
 
     resolve: async (uri) => {
       const held = at(uri);
-      if (held.id === '') {
-        return { uri, type: 'directory', mtime: moment(undefined), ctime: moment(undefined) };
-      }
+      if (held.id === '') return { uri, type: 'directory' };
       const found = await runtime.inspect(held.id);
       if (found === undefined) throw absentResource('computer', uri);
-      const created = moment(typeof found.Created === 'string' ? found.Created : undefined);
-      if (isDirectory(held)) {
-        return { uri, type: 'directory', mtime: created, ctime: created };
-      }
+      const created = times(typeof found.Created === 'string' ? found.Created : undefined);
+      if (isDirectory(held)) return { uri, type: 'directory', ...created };
       if (!leaves(held.id).some((one) => one.name === held.leaf)) throw absentResource('computer', uri);
       const body = held.leaf === 'status' ? JSON.stringify(found, null, 2)
         : held.leaf === 'stats' ? await statsOf(held.id, found)
@@ -443,8 +442,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         uri,
         type: 'file',
         size: Buffer.byteLength(body, 'utf8'),
-        mtime: created,
-        ctime: created,
+        ...created,
       };
     },
 
