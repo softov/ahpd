@@ -14,7 +14,6 @@ Restart the daemon on main first. Do them from the top down.
 
 - [install-path-checks.md](install-path-checks.md) - 20 min, sudo and a test user. Claude cannot add a system user here.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
-- [session-picker-checks.md](session-picker-checks.md) - 10 min.
 - [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
 - [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min.
 - [host-122-agent-records-checks.md](host-122-agent-records-checks.md) - 15 min, steps 3 and 4.

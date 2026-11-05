@@ -1,6 +1,6 @@
 ---
 title: A harness answers its own setting
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:
