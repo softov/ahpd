@@ -1798,7 +1798,7 @@ it('refuses a run of an automation whose agent has become somebody else\'s', asy
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
   const state = await runState(client, run.resource);
-  expect(state.lifecycle).toMatchObject({ status: 'failed', error: { message: 'No provider called echo' } });
+  expect(state.lifecycle).toMatchObject({ status: 'failed', error: { message: 'No agent provider registered for: echo' } });
   expect(state.sessions).toEqual([]);
 });
 

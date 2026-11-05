@@ -771,15 +771,15 @@ it('refuses a start on an agent while it is being removed', async () => {
   expect(await ownerAgain.call('createSession', { channel: 'ahp-session:/before', provider: 'mine' }))
     .toHaveProperty('result');
   expect(await ka.call('createSession', { channel: 'ahp-session:/elsewhere', provider: 'mine' }))
-    .toEqual({ code: -32002, message: 'No provider called mine' });
+    .toEqual({ code: -32002, message: 'No agent provider registered for: mine' });
 
   armed = true;
   expect(await cy.call('x-ahpd/agents/remove', { id: 'mine' })).toMatchObject({ result: {} });
   // During the removal: refused to the owner, because the agent is going out,
   // and to `ka`, who would otherwise take an unowned id for a host agent.
   expect(during).toEqual({
-    owner: { code: -32002, message: 'No provider called mine' },
-    other: { code: -32002, message: 'No provider called mine' },
+    owner: { code: -32002, message: 'No agent provider registered for: mine' },
+    other: { code: -32002, message: 'No agent provider registered for: mine' },
   });
   await close();
 });

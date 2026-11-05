@@ -6,7 +6,7 @@ import { namesOf } from '../usage/scopes.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
-import { CLOSING, NO_AGENT } from './common.js';
+import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
@@ -943,7 +943,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
       const uri = named(String(params.channel ?? ''), 'session');
       const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
-      if (provider === undefined) throw new RpcError(-32002, NO_AGENT);
+      if (provider === undefined) throw new RpcError(-32002, noProvider(provider));
       /*
        * An agent this caller may not use answers as one this host does not
        * serve, before anything is claimed or made: an id it is refused is an
@@ -953,7 +953,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         root: connection.root === true,
         hasDirectory: options.users !== undefined,
       }))
-        throw new RpcError(-32002, `No provider called ${provider}`);
+        throw new RpcError(-32002, noProvider(provider));
       /*
        * The creator's entry names the creator. The protocol says its
        * `clientId` MUST match the one this connection gave at `initialize`,
@@ -1536,10 +1536,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     resolveSessionConfig: async (params) => {
       const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
-      if (provider === undefined) throw new RpcError(-32002, NO_AGENT);
+      if (provider === undefined) throw new RpcError(-32002, noProvider(provider));
       const agent = agents.get(provider);
       if (!agent)
-        throw new RpcError(-32002, `No provider called ${provider}`);
+        throw new RpcError(-32002, noProvider(provider));
       const answered = (typeof params.config === 'object' && params.config !== null
         ? params.config
         : {}) as Record<string, unknown>;

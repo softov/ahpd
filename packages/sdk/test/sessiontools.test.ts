@@ -864,7 +864,7 @@ describe('a chat opened on a backend of its own', () => {
     const before = (await state(client)).chats.length;
     const refused = await call({ provider: 'nobody', prompt: 'say hi' });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]?.text).toBe('No provider called nobody');
+    expect(refused.content[0]?.text).toBe('No agent provider registered for: nobody');
     expect(starts).toHaveLength(0);
     // Nothing was announced and nothing was started: the session has the chats
     // it had.

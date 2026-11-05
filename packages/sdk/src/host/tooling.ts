@@ -14,7 +14,7 @@ import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { ROOT, chatIdFor, chatUriFor } from './channels.js';
-import { NO_AGENT, need } from './common.js';
+import { need, noProvider } from './common.js';
 import { asksForTool } from './spawn.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
@@ -1627,7 +1627,7 @@ export function createTooling(ctx: HostContext): Tooling {
      * a harness, and one it did not get would be a chat it never asked for.
      */
     const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
-    if (agent === undefined) throw new Error(`No provider called ${asked.provider}`);
+    if (agent === undefined) throw new Error(noProvider(asked.provider));
     const config = chatConfigOf(agent, held, checkedConfig(agent, asked.config));
     const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
     // What the plugins give a chat a tool opens, ahead of the tool's prompt.
@@ -1788,9 +1788,9 @@ export function createTooling(ctx: HostContext): Tooling {
         );
       }
       const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
-      if (provider === undefined) throw new Error(NO_AGENT);
+      if (provider === undefined) throw new Error(noProvider(provider));
       const agent = ctx.agents.get(provider);
-      if (agent === undefined) throw new Error(`No provider called ${provider}`);
+      if (agent === undefined) throw new Error(noProvider(provider));
       /*
        * Named for the client whose turn made it: `<provider>:/<uuid>` when an
        * older VS Code window sent the running turn, so that window sees the
@@ -2019,9 +2019,9 @@ export function createTooling(ctx: HostContext): Tooling {
         // No chain and no tree: a session made here belongs to the caller, has
         // no parent, and spends no budget kept for one.
         const provider = asked.provider ?? ctx.first?.provider;
-        if (provider === undefined) throw new Error(NO_AGENT);
+        if (provider === undefined) throw new Error(noProvider(provider));
         const agent = ctx.agents.get(provider);
-        if (agent === undefined) throw new Error(`No provider called ${provider}`);
+        if (agent === undefined) throw new Error(noProvider(provider));
         const made = uriFor(crypto.randomUUID());
         // The backend's own settings, checked, and the two keys this call owns
         // over them, as a session made from a turn builds them.

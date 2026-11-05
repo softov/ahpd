@@ -5,22 +5,26 @@ export { reason } from '../utils/values.js';
 /**
  * A port this host was not given.
  *
- * Refused the way anything else it does not have is refused, and with the same
- * words: a host without a filesystem does not serve `resourceRead`, and saying
- * so is what lets a client draw the screen it can rather than wait for one it
- * cannot.
+ * Refused as a method the host does not have, in the reference host's words
+ * for one: a host without a filesystem has no `resourceRead`, and saying so is
+ * what lets a client draw the screen it can.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2763
  */
 export const need = <T>(port: T | undefined, method: string): T => {
   if (port === undefined)
-    throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
+    throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${method}`);
   return port;
 };
 
 /** What a request that would start something is refused with once the host is closing. */
 export const CLOSING = 'This host is closing, so nothing new starts on it';
 
-/** What a session start without a provider hears on a host that serves no agent yet. */
-export const NO_AGENT = 'This host serves no agent yet, so no session can start. Install or enable an agent plugin';
+/**
+ * What a session start hears for a provider this host does not hold, in the
+ * reference host's words, the provider named or `(none)`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6180
+ */
+export const noProvider = (provider: string | undefined): string => `No agent provider registered for: ${provider ?? '(none)'}`;
 
 /** The actions that end a chat's active turn. */
 export const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);

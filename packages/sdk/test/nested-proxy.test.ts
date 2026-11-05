@@ -1090,7 +1090,7 @@ it.each([['0.9.0'], ['1.0.0']])('a host that answers %s, which it was offered, i
     }
     if (message.method === 'subscribe') return listing(message.id);
     if (message.method === 'createSession') {
-      return { jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'No provider called cofold' } };
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'No agent provider registered for: cofold' } };
     }
     return undefined;
   });
@@ -1099,7 +1099,7 @@ it.each([['0.9.0'], ['1.0.0']])('a host that answers %s, which it was offered, i
   const session = agent.create(start(emit));
   await until(() => seen.some(({ action }) => action.type === 'session/creationFailed'));
   const failure = seen.find(({ action }) => action.type === 'session/creationFailed')?.action;
-  expect(failure?.error?.message).toMatch(/No provider called cofold/);
+  expect(failure?.error?.message).toMatch(/No agent provider registered for: cofold/);
   session.close();
 });
 

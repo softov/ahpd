@@ -9,7 +9,7 @@ import { createRuleEngine } from '../automations/triggers.js';
 import { wakeMessage } from '../automations/wakemessage.js';
 import { bag } from '../utils/values.js';
 import { AUTOMATIONS, chatUriFor } from './channels.js';
-import { CLOSING, NO_AGENT, need } from './common.js';
+import { CLOSING, need, noProvider } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
 import type { AutomationEntry, AutomationRun, AutomationRunState, RunEnding, StartSession } from '../types/automations.js';
@@ -709,7 +709,7 @@ export function createAutomations(ctx: HostContext): Automations {
    */
   const beginSession = async (wanted: StartSession, named?: (uri: string) => void): Promise<string> => {
     const provider = wanted.provider ?? ctx.first?.provider;
-    if (provider === undefined) throw new Error(NO_AGENT);
+    if (provider === undefined) throw new Error(noProvider(provider));
     // Named the way a client's `createSession` names a session.
     const uri = uriFor(crypto.randomUUID());
     unheld(uri);

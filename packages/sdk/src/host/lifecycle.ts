@@ -12,7 +12,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { HOSTS_OWN, bangCommand } from './common.js';
+import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -1877,7 +1877,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.unheld(uri);
     const agent = ctx.agents.get(provider);
     if (!agent)
-      throw new RpcError(-32002, `No provider called ${provider}`);
+      throw new RpcError(-32002, noProvider(provider));
     /*
      * And an agent the caller may not use answers the same way, so a start it
      * is refused names no agent it was not told about. A run nobody's window
@@ -1890,7 +1890,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const allowed = by?.sender !== undefined
       ? mayUseAgent(by.principal, owned, { ...checked, root: by.sender.root === true })
       : mayUseAgentFor(by, owned, checked);
-    if (!allowed) throw new RpcError(-32002, `No provider called ${provider}`);
+    if (!allowed) throw new RpcError(-32002, noProvider(provider));
     /*
      * A binding names a connector, so a start that carries one is checked
      * here, before anything is written down: the connector has to be one this

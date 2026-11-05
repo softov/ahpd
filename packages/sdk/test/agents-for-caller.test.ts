@@ -143,8 +143,8 @@ it('answers a start on another person\'s agent as it does an agent it does not s
   // Somebody else's agent, refused, and an id nobody has, refused the same way.
   const notOurs = await cy.call('createSession', { channel: 'ahp-session:/one', provider: 'mine' });
   const nobody = await cy.call('createSession', { channel: 'ahp-session:/two', provider: 'nobody' });
-  expect(notOurs).toEqual({ code: -32002, message: 'No provider called mine' });
-  expect(nobody).toEqual({ code: -32002, message: 'No provider called nobody' });
+  expect(notOurs).toEqual({ code: -32002, message: 'No agent provider registered for: mine' });
+  expect(nobody).toEqual({ code: -32002, message: 'No agent provider registered for: nobody' });
 
   // A team agent takes a membership, and the member starts on it.
   expect(await bo.call('createSession', { channel: 'ahp-session:/three', provider: 'crew' })).toHaveProperty('result');
@@ -166,7 +166,7 @@ it('refuses an agent a record holds with no owner, to every caller', async () =>
   // `session:write` is what a host agent takes, and it is not enough here.
   expect((await ana.agents()).sort()).toEqual(['base', 'mine']);
   expect(await ana.call('createSession', { channel: 'ahp-session:/nameless', provider: 'nameless' }))
-    .toEqual({ code: -32002, message: 'No provider called nameless' });
+    .toEqual({ code: -32002, message: 'No agent provider registered for: nameless' });
   // An id no record holds is still the host's, and `ana` starts on it.
   expect(await ana.call('createSession', { channel: 'ahp-session:/base', provider: 'base' }))
     .toHaveProperty('result');

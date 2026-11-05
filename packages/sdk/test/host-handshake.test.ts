@@ -244,9 +244,9 @@ describe('the handshake', () => {
     const client = open();
     await client.handle(hello(['0.9.0']));
     // Re-agreeing the version would re-key every subscription this connection
-    // is holding, so the reference host does not serve `initialize` twice
-    // either.
-    await expect(client.handle(hello(['0.9.0']))).rejects.toMatchObject({ code: -32601 });
+    // is holding, and the reference host's request table holds no handler for
+    // a second one.
+    await expect(client.handle(hello(['0.9.0']))).rejects.toMatchObject({ code: -32601, message: 'Method not found: initialize' });
   });
 });
 
@@ -259,16 +259,16 @@ describe('what it will not pretend', () => {
     // `otlp` is telemetry export, which this daemon has no opinion about and
     // is unlikely ever to serve - so it stays a fair example.
     await expect(client.handle({ method: 'otlp', params: { channel: 'ahp-root://' } }))
-      .rejects.toMatchObject({ code: -32601 });
+      .rejects.toMatchObject({ code: -32601, message: 'Method not found: otlp' });
   });
 
-  it('refuses a provider it does not have', async () => {
+  it('refuses a provider it does not have, in VS Code\'s words', async () => {
     const client = open();
     await client.handle(hello(['0.9.0']));
     await expect(client.handle({
       method: 'createSession',
       params: { channel: 'ahp-session:/x', provider: 'copilot' },
-    })).rejects.toMatchObject({ code: -32002 });
+    })).rejects.toMatchObject({ code: -32002, message: 'No agent provider registered for: copilot' });
   });
 
   it('refuses an action a client is not allowed to originate, and says which', async () => {

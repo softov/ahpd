@@ -224,9 +224,9 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     const port = need(options.containers, method);
     const folder = devFolder(params);
     const act = verb === 'stop' ? port.stop : port.remove;
-    // A launcher that cannot reach the runtime's own stop answers nothing, and
-    // is refused the way an absent launcher is rather than serving a false.
-    if (act === undefined) throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
+    // A launcher that cannot reach the runtime's own stop is refused as an
+    // absent launcher is, a method this host does not have.
+    if (act === undefined) throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${method}`);
     if (relayedByAnother(folder) || placedOn(folder)) return false;
     const here = atPath(folder);
     for (const [id, held] of [...conn.containers]) {
@@ -453,7 +453,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      */
     shutdown: async () => {
       const stop = options.diagnostics?.shutdown;
-      if (stop === undefined) throw new RpcError(METHOD_NOT_FOUND, 'This host does not serve shutdown');
+      if (stop === undefined) throw new RpcError(METHOD_NOT_FOUND, 'Method not found: shutdown');
       setTimeout(() => { void Promise.resolve(logs.close()).then(() => stop()); }, 0);
       return {};
     },

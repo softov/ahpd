@@ -113,7 +113,7 @@ It is one value for the whole host: the last push from any client sets it, and e
 
 It reaches one of the three ways in: a client's terminal uses it, and a `!` command and a backend's terminal do not, for the reason above.
 
-The rest of the root config is [HOST.md](HOST.md#root-config), and the daemon's own keys are [HOST.md](HOST.md#configuration-keys). Nothing in either turns terminals off: a host built without a terminal store answers `This host does not serve createTerminal yet` and advertises no `terminalCommandPrefix`, and a plugin's `registerTerminals` is what puts one there - [BUILD-A-HOST.md](BUILD-A-HOST.md#terminals), [PLUGINS.md](../plugins/PLUGINS.md).
+The rest of the root config is [HOST.md](HOST.md#root-config), and the daemon's own keys are [HOST.md](HOST.md#configuration-keys). Nothing in either turns terminals off: a host built without a terminal store answers `Method not found: createTerminal` and advertises no `terminalCommandPrefix`, and a plugin's `registerTerminals` is what puts one there - [BUILD-A-HOST.md](BUILD-A-HOST.md#terminals), [PLUGINS.md](../plugins/PLUGINS.md).
 
 ## Commands
 

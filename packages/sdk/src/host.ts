@@ -2143,21 +2143,23 @@ export function createHost(options: HostOptions): Host {
           const handler = ownIn(handlers, request.method) ?? (served === undefined
             ? undefined
             : async (params: Record<string, unknown> | undefined) => served.method.handle(params ?? {}, connection.principal, connection.clientId, ownerFor(connection)));
+          /*
+           * A method this host does not have is said, in the reference host's
+           * words: a host that answered an empty success to it would leave the
+           * client waiting for state that is never coming.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2763
+           */
           if (!handler) {
-            // Said, not silently accepted. A host that answers an empty
-            // success to a method it does not have leaves the client waiting
-            // for state that is never coming.
-            throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${request.method} yet`);
+            throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
           }
-          // Everything before the handshake is `-32601`, which reads oddly
-          // for a method this host plainly has and is what the protocol
-          // leaves for it: there is no code for "not yet", and the reference
-          // host answers exactly this. `ping` is the one exception the spec
-          // states outright - the round trip is a liveness check, and a
-          // liveness check that needs a handshake first cannot tell a
-          // half-open socket from a busy one.
+          // Everything before the handshake is `-32601`, in the same words, as
+          // the reference host answers a transport that has not introduced
+          // itself. `ping` is the one exception the spec states outright: the
+          // round trip is a liveness check, and a liveness check that needs a
+          // handshake first cannot tell a half-open socket from a busy one.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L896-L899
           if (!conn.handshook && !GREETINGS.has(request.method)) {
-            throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${request.method} before initialize`);
+            throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
           }
           /*
            * The one gate.
@@ -2175,11 +2177,12 @@ export function createHost(options: HostOptions): Host {
            */
           const gate = admit(request.method, (request.params ?? {}) as Record<string, unknown>);
           if (gate !== undefined) await gate;
-          // And a second `initialize` is no longer one of them: the version
-          // is agreed, and re-agreeing it would re-key every subscription
-          // this connection is holding.
+          // A second `initialize` is a method the handshake took: the version
+          // is agreed, and re-agreeing it would re-key every subscription this
+          // connection is holding. Answered as the reference host's request
+          // table answers it, which holds no handler for one.
           if (conn.handshook && request.method === 'initialize') {
-            throw new RpcError(METHOD_NOT_FOUND, `${connection.clientId || 'This client'} has already initialized`);
+            throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
           }
           /*
            * A URI another client published is that client's to answer.
