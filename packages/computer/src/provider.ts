@@ -448,11 +448,17 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
 
     read: async (uri) => {
       const held = at(uri);
-      if (isDirectory(held)) {
-        throw new RpcError(-32008, `${uri} is a directory; read ${uri}/status`);
-      }
-      const found = await runtime.inspect(held.id);
+      const found = held.id === '' ? {} : await runtime.inspect(held.id);
       if (found === undefined) throw absentResource('computer', uri);
+      /*
+       * A directory that is there is not content, and its read fails as VS
+       * Code's file resources fail one: an internal error naming the URI and
+       * its file service's words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L30-L48
+       */
+      if (isDirectory(held)) {
+        throw new RpcError(-32603, `Failed to read content: ${uri}: Unable to read file '${uri}' that is actually a directory`);
+      }
       if (held.leaf === 'status') return asFile(JSON.stringify(found, null, 2));
       if (held.leaf === 'capabilities') return asFile(capabilities());
       if (held.leaf === 'stats') return asFile(await statsOf(held.id, found));

@@ -170,12 +170,19 @@ it('gives a machine\'s times where its runtime says when it was made, and none w
 });
 
 it('refuses a machine that is not there, and a directory read', async () => {
-  const { runtime } = fake();
+  const { runtime, held } = fake();
   const provider = computerProvider(runtime, options);
   await expect(provider.read('computer://nope/status')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.resolve('computer://nope')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.list('computer://nope')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.read('computer://nope')).rejects.toMatchObject({ code: -32008 });
+  // A directory that is there fails as VS Code's file resources fail a read of one.
+  held.set('box', { name: 'box', image: 'debian:bookworm-slim' });
+  await expect(provider.read('computer://box')).rejects.toMatchObject({
+    code: -32603,
+    message: 'Failed to read content: computer://box: Unable to read file \'computer://box\' that is actually a directory',
+  });
+  await expect(provider.read('computer://')).rejects.toMatchObject({ code: -32603 });
 });
 
 it('refuses a URI of another scheme as a bad parameter, not as a denial', async () => {
