@@ -318,7 +318,12 @@ describe('a canvas whose chat goes', () => {
     await refusedCanvas(client, resource);
   });
 
-  it('goes when the chat moves, and the chat is told its list is now empty', async () => {
+  /*
+   * A move keeps a chat's canvases, as the reference host's keeps its state,
+   * changesets, canvases and in-progress turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1893-L1904
+   */
+  it('stays with its chat when the chat moves, and the list is said nothing', async () => {
     const { made, calls } = withCanvases();
     const { client, seen } = await at(made, 'canvas');
     await sessionAt(client);
@@ -326,20 +331,21 @@ describe('a canvas whose chat goes', () => {
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });
     await client.handle({ method: 'subscribe', params: { channel: 'peer:/spare' } });
     const resource = await calls.open('peer:/spare', STATE);
+    const lists = () => seen.seen.filter((one) => one.method === 'action'
+      && one.params.channel === 'peer:/spare'
+      && one.params.action?.type === 'chat/canvasesChanged').length;
+    const before = lists();
 
     await client.handle({
       method: 'moveChat',
       params: { channel: 'peer:/spare', destination: { kind: 'session', session: 'ahp-session:/two' } },
     });
 
-    // The chat is still live in the session it moved to, so it is told.
-    const lists = seen.seen.filter((one) => one.method === 'action'
-      && one.params.channel === 'peer:/spare'
-      && one.params.action?.type === 'chat/canvasesChanged');
-    const last = lists.at(-1);
-    expect(Object.hasOwn(last?.params.action ?? {}, 'canvases')).toBe(true);
-    expect(last?.params.action.canvases).toBeUndefined();
-    await refusedCanvas(client, resource);
+    expect(lists()).toBe(before);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: resource } }) as { snapshot: { state: CanvasState } };
+    expect(opened.snapshot.state).toEqual(STATE);
+    const chat = await client.handle({ method: 'subscribe', params: { channel: 'peer:/spare' } }) as { snapshot: { state: Record<string, unknown> } };
+    expect(chat.snapshot.state.canvases).toEqual([{ resource }]);
   });
 });
 

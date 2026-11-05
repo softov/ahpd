@@ -246,15 +246,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       throw error;
     }
     /*
-     * The chat's canvases do not move with it.
-     *
-     * A canvas belongs to the chat as one session shows it: its resource names
-     * the chat, and the destination has no claim on the URL a source plugin's
-     * canvas points at. The chat is still here, so it is told its list is now
-     * empty - the client drawing one stops rather than keeps a canvas that a
-     * subscribe would refuse.
+     * The chat's canvases stay with it, as the reference host's move keeps a
+     * chat's state, changesets, canvases and in-progress turn: a canvas's
+     * resource names the chat, and the chat keeps its URI.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1893-L1904
      */
-    ctx.canvases.forgetChat(chatUri);
     /*
      * A session that did not exist a moment ago, and is running now. Said
      * ready before it is announced, which is `openSession`'s order and for its
