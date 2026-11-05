@@ -1433,7 +1433,7 @@ it('gives a Compose definition its labels and limits in a Compose override of it
   expect(files[0]).toBe('compose.yml');
   const compose = devHeld(devState).composes?.[0];
   expect(compose?.where).toBe(files[1]);
-  expect(compose?.mode).toBe(0o600);
+  if (posix) expect(compose?.mode).toBe(0o600);
   expect(compose?.config).toEqual({
     version: '3.8',
     services: { app: { labels: { 'ahpd.name': 'box' }, cpus: '2', mem_limit: '2g' } },
@@ -2003,8 +2003,11 @@ const relayed = (devState: string, dockerState: string): Record<string, unknown>
  * another, and the second connect finds the container the first made running.
  * The `up` is slowed by its log, so a second connect that did not wait would
  * be asking the CLI while it was still making the container.
+ *
+ * POSIX-only, as the connect case above: the scripted docker stands in for a
+ * Linux container by running the command with `/bin/sh` on this host.
  */
-it('runs one folder\'s connects one after the other', async () => {
+it.skipIf(!posix)('runs one folder\'s connects one after the other', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
