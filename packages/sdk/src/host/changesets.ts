@@ -55,7 +55,8 @@ export interface Changesets {
   /** The invocation in flight for each identical request, which another one shares, by its key. */
   inFlightOperations: Map<string, Promise<unknown>>;
   lastError: Map<string, string>;
-  shown: Map<string, { files: ChangesetFile[]; status: string }>;
+  /** What every client watching a changeset was last told it holds, by channel, an error status with its error. */
+  shown: Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string } }>;
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
@@ -508,7 +509,7 @@ export function createChangesets(ctx: HostContext): Changesets {
    * of them: a snapshot is taken at a `serverSeq` and every action after it
    * goes to everyone, so what one subscriber has is what all of them have.
    */
-  const shown = new Map<string, { files: ChangesetFile[]; status: string }>();
+  const shown = new Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string } }>();
 
   /** Two file lists, same order-independent contents. */
   const sameFiles = (a: ChangesetFile[], b: ChangesetFile[]): boolean => {
@@ -613,18 +614,32 @@ export function createChangesets(ctx: HostContext): Changesets {
         }
         catch (error) {
           /*
-           * A read that threw is a computation that failed, and the protocol
-           * names the status for it, with the cause beside it: the files are
-           * kept as they were, and nobody is left holding a spin that ended.
-           * The failure goes on to the caller.
-           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-changeset/state.ts#L119-L141
+           * A read that threw is a computation that ended with no new result,
+           * which the reference ends as it ends every such computation: an
+           * earlier ready or error result is kept, its status said again, and
+           * `computeFailed` with the cause is said only where there is none,
+           * once. The files are kept as they were, and nobody is left holding
+           * a spin that ended. The failure goes on to the caller.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2251-L2271
            */
+          const message = error instanceof Error ? error.message : String(error);
           if (was && marked) {
-            const message = error instanceof Error ? error.message : String(error);
-            dispatch(channel, { type: 'changeset/statusChanged', status: 'error', error: { errorType: 'computeFailed', message } });
-            shown.set(channel, { files: was.files, status: 'error' });
-            settled = true;
+            dispatch(channel, {
+              type: 'changeset/statusChanged',
+              status: was.status,
+              ...(was.status === 'error' && was.error !== undefined ? { error: was.error } : {}),
+            });
+            shown.set(channel, was);
           }
+          else {
+            const now = shown.get(channel);
+            if (now?.status !== 'error' || now.error?.errorType !== 'computeFailed' || now.error.message !== message) {
+              const failed = { errorType: 'computeFailed', message };
+              dispatch(channel, { type: 'changeset/statusChanged', status: 'error', error: failed });
+              shown.set(channel, { files: now?.files ?? [], status: 'error', error: failed });
+            }
+          }
+          settled = true;
           throw error;
         }
         finally {

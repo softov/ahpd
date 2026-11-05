@@ -319,7 +319,13 @@ const reReadAnswering = (source: ChangesetSource, next: () => Promise<undefined>
   };
 };
 
-it('says a re-read that fails as the error the protocol names, with its cause', async () => {
+/*
+ * A read that fails ends a computation with no new result, as the reference
+ * ends one: the earlier result kept and its status said again, and
+ * `computeFailed` with the cause only where there is no earlier result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2251-L2271
+ */
+it('keeps the earlier result when a re-read fails, saying its status again', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
   const { calls, source } = reReads();
@@ -330,15 +336,12 @@ it('says a re-read that fails as the error the protocol names, with its cause', 
   const before = channelActions(p, CHANGESET).length;
 
   calls.watched?.();
-  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:error'));
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
-  // `error` is the status of a computation that failed, its cause beside it,
-  // and the files stay the last completed result.
-  // https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-changeset/state.ts#L119-L141
   const after = channelActions(p, CHANGESET).slice(before);
   expect(reads()).toBeGreaterThan(1);
-  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:error']);
-  expect(after.find((one) => one.status === 'error')?.error).toEqual({ errorType: 'computeFailed', message: 'the read failed' });
+  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  expect(kindsOf(after)).not.toContain('status:error');
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
 

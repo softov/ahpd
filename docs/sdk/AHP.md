@@ -339,7 +339,7 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. `recomputing` goes out before a changeset is read again, so a client keeps the files it has. `ready` follows when the read comes back, and a read that gives nothing puts the previous status back. |
+| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. `recomputing` goes out before a changeset is read again, so a client keeps the files it has. `ready` follows when the read comes back, and a read that gives nothing puts the previous status back. A read that fails keeps the earlier result and says its status again, and says `error` with `computeFailed` and the cause only where there is no earlier result, as VS Code's host ends a computation with no new result. |
 | `changeset/fileSet` | host | ✅ | Chosen when fewer actions than files moved. |
 | `changeset/fileRemoved` | host | ✅ | The same choice, for a file that left the set. |
 | `changeset/filesReviewChanged` | client | ✅ | A client marking files reviewed. The one changeset action a client originates. Applied as the protocol's reducer applies it, to the files the changeset holds; a changeset that keeps no review, the working tree's among them, is refused. A turn that changes a file again takes the tick off its row in the session's changeset, the branch's and the turn's own. |
