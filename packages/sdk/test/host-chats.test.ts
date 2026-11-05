@@ -550,6 +550,25 @@ describe('a chat made out of another', () => {
       params: { channel: uri, chat: 'ahp-chat:/bad', source: { kind: 'fork', chat: 'ahp-chat:/elsewhere', turnId: 't1' } },
     })).rejects.toThrow(/is not a chat in/);
   });
+
+  /*
+   * A fork at a turn the chat does not hold, as after another window cut the
+   * chat back, is a fresh chat, as VS Code's host drops a fork whose point it
+   * cannot find rather than seed nothing under a fork.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7427-L7433
+   */
+  it('makes a fresh chat for a fork at a turn the chat does not hold, as VS Code\'s host', async () => {
+    const { client, uri, chatUri } = await running();
+    expect(await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/fresh', source: { kind: 'fork', chat: chatUri, turnId: 'gone' } },
+    })).toBeNull();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/fresh' } }) as {
+      snapshot: { state: { turns: unknown[]; origin?: { kind?: string } } };
+    }).snapshot.state;
+    expect(state.turns).toEqual([]);
+    expect(state.origin?.kind).not.toBe('fork');
+  });
 });
 
 describe('more than one chat in a session', () => {

@@ -1273,62 +1273,70 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const turnId = String(source.turnId ?? '');
         const all = from.chat.allTurns();
         const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
-        if (at < 0)
+        if (at < 0 && kind !== 'fork')
           throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn in ${String(source.chat ?? '')}`);
         /*
-         * The backend that serves the chat this one is cut from, which is the
-         * one that has to be able to cut it: a chat of another backend is a
-         * conversation in that backend's own format, and the session's
-         * backend has never seen it.
+         * A fork at a turn the chat does not hold is a fresh chat on the
+         * source chat's backend, as the reference host drops a fork whose
+         * point it cannot find rather than seed nothing under a fork.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7427-L7433
          */
-        const sourceAgent = chatAgent(held, from.chat.chatUri);
-        if (kind === 'fork') {
-          if (sourceAgent.chats?.fork !== true)
-            throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot fork a chat from a turn`);
-          // The backend's own name for where that turn ended, which is
-          // the only one it can be asked to continue from. For a local
-          // turn, which the backend never saw, it is the nearest earlier
-          // turn's, as the reference forks at a local turn.
-          // https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L7183-L7195
-          const concrete = ctx.concreteTurnOf(uri, from.chat.chatUri, all as Bag[], at);
-          const point = concrete === undefined ? undefined : from.chat.forkPoint?.(concrete);
-          const started = from.chat.agentId();
+        if (at >= 0) {
           /*
-           * A turn the backend names no point for, one read back by a backend
-           * that names only the turns it watched, is forked all the same: the
-           * new chat holds the turns up to it and its backend begins a
-           * conversation of its own, as the reference host hands its provider
-           * the host's turns and forks what the provider can.
-           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7424-L7476
+           * The backend that serves the chat this one is cut from, which is
+           * the one that has to be able to cut it: a chat of another backend
+           * is a conversation in that backend's own format, and the session's
+           * backend has never seen it.
            */
-          if (point === undefined || started === undefined) {
-            ctx.log(`${String(source.chat ?? '')}: its backend names no point for ${turnId}, so the fork begins a conversation of its own`);
-            made = { seed: all.slice(0, at + 1) as Bag[] };
+          const sourceAgent = chatAgent(held, from.chat.chatUri);
+          if (kind === 'fork') {
+            if (sourceAgent.chats?.fork !== true)
+              throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot fork a chat from a turn`);
+            // The backend's own name for where that turn ended, which is
+            // the only one it can be asked to continue from. For a local
+            // turn, which the backend never saw, it is the nearest earlier
+            // turn's, as the reference forks at a local turn.
+            // https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L7183-L7195
+            const concrete = ctx.concreteTurnOf(uri, from.chat.chatUri, all as Bag[], at);
+            const point = concrete === undefined ? undefined : from.chat.forkPoint?.(concrete);
+            const started = from.chat.agentId();
+            /*
+             * A turn the backend names no point for, one read back by a
+             * backend that names only the turns it watched, is forked all the
+             * same: the new chat holds the turns up to it and its backend
+             * begins a conversation of its own, as the reference host hands
+             * its provider the host's turns and forks what the provider can.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7424-L7476
+             */
+            if (point === undefined || started === undefined) {
+              ctx.log(`${String(source.chat ?? '')}: its backend names no point for ${turnId}, so the fork begins a conversation of its own`);
+              made = { seed: all.slice(0, at + 1) as Bag[] };
+            }
+            else made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
           }
-          else made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
-        }
-        else {
-          if (sourceAgent.chats?.sideChat !== true)
-            throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot start a side chat from a turn`);
-          const message = (all[at] as Bag | undefined)?.message;
-          const said = typeof message === 'object' && message !== null
-            ? (message as { text?: unknown }).text
+          else {
+            if (sourceAgent.chats?.sideChat !== true)
+              throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot start a side chat from a turn`);
+            const message = (all[at] as Bag | undefined)?.message;
+            const said = typeof message === 'object' && message !== null
+              ? (message as { text?: unknown }).text
+              : undefined;
+            made = { context: typeof said === 'string' ? said : '' };
+          }
+          /*
+           * What the new chat says it was made from, kept for as long as it
+           * is: the summary is re-sent whole on every change, so an origin
+           * given only on `session/chatAdded` would be said once and then
+           * overwritten with `user`. A selection is kept as the protocol
+           * declares it, and only when it has text.
+           */
+          const picked = (source as { selection?: unknown }).selection as { text?: unknown; responsePartId?: unknown } | undefined;
+          const selection = kind === 'sideChat' && typeof picked === 'object' && picked !== null
+            && typeof picked.text === 'string' && picked.text !== ''
+            ? { text: picked.text, ...(typeof picked.responsePartId === 'string' ? { responsePartId: picked.responsePartId } : {}) }
             : undefined;
-          made = { context: typeof said === 'string' ? said : '' };
+          origin = { kind, chat: String(source.chat ?? ''), turnId, ...(selection !== undefined ? { selection } : {}) };
         }
-        /*
-         * What the new chat says it was made from, kept for as long as it
-         * is: the summary is re-sent whole on every change, so an origin
-         * given only on `session/chatAdded` would be said once and then
-         * overwritten with `user`. A selection is kept as the protocol
-         * declares it, and only when it has text.
-         */
-        const picked = (source as { selection?: unknown }).selection as { text?: unknown; responsePartId?: unknown } | undefined;
-        const selection = kind === 'sideChat' && typeof picked === 'object' && picked !== null
-          && typeof picked.text === 'string' && picked.text !== ''
-          ? { text: picked.text, ...(typeof picked.responsePartId === 'string' ? { responsePartId: picked.responsePartId } : {}) }
-          : undefined;
-        origin = { kind, chat: String(source.chat ?? ''), turnId, ...(selection !== undefined ? { selection } : {}) };
       }
       /*
        * The directories this chat is about, when it is about fewer.
