@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
-import { getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
 /**
@@ -355,15 +355,17 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
          */
         const ok = block.is_error !== true;
         call.status = 'completed';
-        // The past tense the call was built with stands: a failure is `success`.
         call.success = ok;
         const text = resultText(block.content);
+        // A failed call's line and its `error`, as the live call words them.
+        if (!ok) call.pastTenseMessage = pastLineOf(str(call.toolName) ?? '', {}, str(call.displayName) ?? str(call.toolName) ?? 'the tool', false);
+        const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
         // `Bag` and so outside the literal the call was built as.
         if (text !== undefined)
           call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
-        if (!ok) call.error = { message: text ?? 'The tool failed' };
+        if (denial !== undefined && text !== undefined) call.error = { message: text, code: denial };
         /*
          * What an answered question ran with, for a result that says so.
          *

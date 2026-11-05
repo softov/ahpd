@@ -271,11 +271,18 @@ it('reduces a whole turn - prose, a tool that ran, and a tool that failed', asyn
   expect(ran.content[0]).toEqual({ type: 'text', text: 'one two' });
 
   // And a tool that went wrong is `completed` too. `ToolCallStatus` has no
-  // `failed`, so a status of this host's invention is one a reducer drops.
-  const broke = parts[2]?.toolCall as { status: string; success: boolean; error?: { message: string } };
+  // `failed`, so a status of this host's invention is one a reducer drops. Its
+  // line says it failed and its output says why, as VS Code's Claude mapper
+  // completes one; `error` is a refusal's alone.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L393-L422
+  const broke = parts[2]?.toolCall as {
+    status: string; success: boolean; displayName: string; pastTenseMessage: string; error?: unknown; content: { text: string }[];
+  };
   expect(broke.status).toBe('completed');
   expect(broke.success).toBe(false);
-  expect(broke.error?.message).toContain('no such file');
+  expect(broke.pastTenseMessage).toBe(`"${broke.displayName}" failed`);
+  expect(broke.content[0]?.text).toBe('no such file');
+  expect(broke.error).toBeUndefined();
 });
 
 it('reduces a tool call somebody had to allow', async () => {

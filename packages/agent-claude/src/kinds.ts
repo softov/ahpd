@@ -115,3 +115,20 @@ export const getClaudeConfirmationTitle = (toolName: string): string => {
   const server = toolName.startsWith(MCP_TOOL_PREFIX) ? toolName.slice(MCP_TOOL_PREFIX.length).split('__')[0] : undefined;
   return server ? `Allow tool from ${server}?` : 'Allow tool call?';
 };
+
+/**
+ * What the model is told of a call refused, in VS Code's words: a person's
+ * decline, and a question nobody answered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L14
+ */
+export const CLAUDE_USER_DECLINED_MESSAGE = 'User declined';
+export const CLAUDE_QUESTION_CANCELLED_MESSAGE = 'The user cancelled the question';
+
+/**
+ * A failed call's result read as VS Code reads it: the decline denied, the
+ * unanswered question cancelled, and anything else the tool's own failure,
+ * which carries no `error`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L16-L30
+ */
+export const claudeToolDenialCode = (message: string): 'denied' | 'cancelled' | undefined =>
+  (message === CLAUDE_USER_DECLINED_MESSAGE ? 'denied' : message === CLAUDE_QUESTION_CANCELLED_MESSAGE ? 'cancelled' : undefined);

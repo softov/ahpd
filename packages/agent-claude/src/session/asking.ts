@@ -4,7 +4,7 @@ import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
-import { getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
+import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
   entry: Bag;
@@ -42,7 +42,7 @@ interface PendingInput {
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L108
  */
-const DECLINED = 'User declined';
+const DECLINED = CLAUDE_USER_DECLINED_MESSAGE;
 
 /**
  * What the model is told about a call the SDK had already abandoned when it
@@ -56,7 +56,7 @@ const ABORTED = 'SDK aborted the tool request';
 const NO_TURN = 'No turn is running to ask in';
 
 /** What the model is told about a question nobody answered, in VS Code's words. */
-const QUESTION_CANCELLED = 'The user cancelled the question';
+const QUESTION_CANCELLED = CLAUDE_QUESTION_CANCELLED_MESSAGE;
 
 /** Where a kept permission lands, as a person reads it. */
 const KEPT_IN: Record<string, string> = {

@@ -261,8 +261,9 @@ it('gives a call confirmed while it streams its whole input', async () => {
 /** Calls whose row lines mirror VS Code's, each with its line and past tense. */
 const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
   {
+    // The one that failed, whose past tense says so in VS Code's words.
     block: { type: 'tool_use', id: 'toolu_said', name: 'Bash', input: { command: 'ls -la /tmp/scratch', description: 'Check scratch directory' } },
-    line: { markdown: 'Running `ls -la /tmp/scratch`' }, past: { markdown: 'Ran `ls -la /tmp/scratch`' },
+    line: { markdown: 'Running `ls -la /tmp/scratch`' }, past: '"Run shell command" failed',
   },
   {
     block: { type: 'tool_use', id: 'toolu_plain', name: 'Bash', input: { command: 'ls -la' } },

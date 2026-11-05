@@ -5,7 +5,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
 import { lineOf, pastLineOf, titleOf, toolInputOf, writeOf } from '../input.js';
-import { getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
 /**
@@ -617,13 +617,19 @@ export function createStream(ctx: SessionContext): Stream {
        * and `pastTenseMessage` are required; `content` blocks are MCP's, and
        * carry a `type`.
        *
-       * The past-tense line is made from the call's input when it was known,
-       * the same line whether the call succeeded or failed: a failure is
-       * `success`. The row line is read back only as plain text, for a call
-       * whose input never arrived.
+       * The past-tense line as VS Code's Claude mapper words it: a client's
+       * tool its name, a failed call `"<display name>" failed`, and one that
+       * ran the line made from its input when it was known, the row line read
+       * back as plain text for a call whose input never arrived. `error` only
+       * for a call refused, classified as VS Code classifies the refusal.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L393-L422
        */
-      const said = ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      const displayName = str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      const said = bag(call.contributor).kind === 'client' ? displayName
+        : !ok ? pastLineOf(str(call.toolName) ?? '', {}, displayName, false)
+          : ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? displayName;
       ctx.pastLines.delete(id);
+      const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
       /*
        * The link survives the result.
        *
@@ -677,7 +683,7 @@ export function createStream(ctx: SessionContext): Stream {
         success: ok,
         pastTenseMessage: said,
         ...(shown.length > 0 ? { content: shown } : {}),
-        ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
+        ...(denial === undefined || text === undefined ? {} : { error: { message: text, code: denial } }),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;
       /*
        * Onto the call *and* into the action, from one object.

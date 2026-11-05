@@ -302,14 +302,14 @@ export function lineOf(name: string, input: Bag, displayName: string): StringOrM
 }
 
 /**
- * The line a call's row draws once it has ended, whether it succeeded or not:
- * a failure is the result's `success`, not its line.
- *
- * VS Code's past tense for the tools `getClaudePastTenseMessage` maps, and the
+ * The line a call's row draws once it has ended, as VS Code's
+ * `getClaudePastTenseMessage` words it: a failed call `"<display name>"
+ * failed`, and one that ran the past tense for the tools it maps and the
  * running line for the rest.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L536
  */
-export function pastLineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
+export function pastLineOf(name: string, input: Bag, displayName: string, success = true): StringOrMarkdown {
+  if (!success) return `"${displayName}" failed`;
   switch (name) {
     case 'Bash': {
       const first = filled(input.command)?.split('\n')[0];
