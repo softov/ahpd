@@ -60,7 +60,7 @@ const project = (): string => {
   return dir;
 };
 
-/** The `query()` options one session in that folder is built with. */
+/** The `query()` options one session in that folder starts its CLI with at its first send. */
 const created = async (
   dir: string,
   trusted: ((folder: string) => boolean) | undefined,
@@ -77,7 +77,7 @@ const created = async (
     clientToolTimeoutMs: 0,
     schema: () => ({ type: 'object', properties: {} }),
     emit: () => {},
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

@@ -517,14 +517,19 @@ it('fails a turn whose result is an error during execution, typed by it, in its 
 it('opens no turn for a lead frame no prompt is pending for, and refuses its question', async () => {
   sdk.reset();
   const { chat, session } = live();
+  // The CLI the first turn started, that turn over.
+  session.sendMessage('t1', 'one');
   await settle();
+  sdk.push(step('a0'), worked);
+  await settle();
+  const before = chat.length;
   sdk.push(step('a1'), worked);
   await settle();
-  expect(chat).toEqual([]);
+  expect(chat.slice(before)).toEqual([]);
   expect((session.chatState() as Bag).activeTurn).toBeUndefined();
   const canUseTool = sdk.queries.at(-1)?.options.canUseTool as (name: string, input: Bag, about: Bag) => Promise<Bag>;
   expect(await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'toolu_alone', signal: new AbortController().signal }))
     .toMatchObject({ behavior: 'deny' });
-  expect(chat).toEqual([]);
+  expect(chat.slice(before)).toEqual([]);
 });
 

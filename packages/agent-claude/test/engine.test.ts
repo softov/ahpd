@@ -182,12 +182,12 @@ it('opens one backend per record, with the record\'s own id, name and values', a
   expect([one.provider, one.displayName]).toEqual(['claude-one', 'One']);
   expect([two.provider, two.displayName]).toEqual(['claude-two', 'Two']);
 
-  one.create(startOf('one'));
+  startedNow(one.create(startOf('one'))).sendMessage('t1', 'hello');
   await settle();
-  two.create(startOf('two'));
+  startedNow(two.create(startOf('two'))).sendMessage('t1', 'hello');
   await settle();
 
-  // Each query is built from its own record: the first has thinking off, the
+  // Each query its first send started is built from its own record: the first has thinking off, the
   // second the fallback and its own sandbox.
   expect(sdk.options.map((held) => held['thinking'])).toEqual([{ type: 'disabled' }, { type: 'adaptive' }]);
   expect(sdk.options.map((held) => held['settings'])).toEqual([undefined, { sandbox: { enabled: true } }]);
@@ -200,10 +200,10 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   const agent = engine.open(viewOf('claude-live', () => held));
   const session = startedNow(agent.create(startOf('live')));
   await settle();
-  expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
 
   session.sendMessage('t1', 'first');
   await settle();
+  expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
   // The turn already running stays on the CLI it started on, even after the
   // record changes under it.
   held = { thinking: 'adaptive' };

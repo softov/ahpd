@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open,
-  peer, sdk, serving, sessionQueries, settle, running, wrote,
+  peer, sdk, sendTurn, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 
@@ -87,10 +87,11 @@ describe('a session a client names', () => {
     await client.handle(hello(['0.9.0']));
     const uri = 'claude:/d65884b6-d15e-4bec-b4b8-ae44d17765dd';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await sendTurn(client, uri);
 
     /*
-     * The backend invents an id of its own unless it is given one, and writes
-     * the transcript under that. A session created here then lived on disk
+     * The CLI the first send starts invents an id of its own unless it is
+     * given one, and writes the transcript under that. A session created here then lived on disk
      * under a name its client had never heard of: while this daemon ran it
      * answered to both, and the moment it restarted the client's own URI was
      * dead - `No agent for session`, for ever, about a session that was there.
@@ -129,7 +130,8 @@ describe('a session a client names', () => {
     expect(opened.snapshot.resource).toBe(`ahp-session:/${id}`);
     expect(opened.snapshot.state.defaultChat)
       .toBe(`ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
-    // And the backend is handed the id, never the scheme.
+    // And the CLI its first send starts is handed the id, never the scheme.
+    await sendTurn(client, `ahp-session:/${id}`);
     expect(sessionQueries()[0]?.options.sessionId).toBe(id);
   });
 

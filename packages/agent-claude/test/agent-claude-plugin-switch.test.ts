@@ -86,7 +86,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createSession } = await import('../src/session.js');
 
-/** One session over a CLI with the two built-ins, once its handshake is in. */
+/** One session over a CLI with the two built-ins, once its first send started the CLI and its handshake is in. */
 const opened = async (): Promise<{ session: ReturnType<typeof createSession>; said: Bag[] }> => {
   const said: Bag[] = [];
   let handshook = (): void => {};
@@ -101,6 +101,7 @@ const opened = async (): Promise<{ session: ReturnType<typeof createSession>; sa
     preset: { outputStyle: 'Concise' },
     onHandshake: () => { handshook(); },
   } as never);
+  session.sendMessage('t1', 'hello');
   await shook;
   // The handshake reloads the plugins to find out what there is, which is not
   // a switch: what a case reads here is what a switch asked for.

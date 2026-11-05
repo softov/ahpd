@@ -189,12 +189,14 @@ export function createTurns(ctx: SessionContext): Turns {
    * One turn's prompt to the CLI, once no yielded entry is in front of it.
    *
    * Prepared first, named in `preparingTurn` so a turn handed meanwhile waits and
-   * steering is declined: a CLI the last stop or a stream that ended put away
-   * is started again on the conversation, as the reference rebinds its query at
-   * the next send; the tools the session was handed land; the agent and the
-   * model the turn picked are taken, and one the CLI will not take is logged
-   * while the turn runs on the one it has, as the reference logs a model or an
-   * agent that would not change. A stop while it prepares sends nothing.
+   * steering is declined: a session's first CLI is started, and a CLI the last
+   * stop or a stream that ended put away is started again on the conversation,
+   * as the reference rebinds its query at the next send; the tools the session
+   * was handed land; the agent and the model the turn picked are taken, and one
+   * the CLI will not take is logged while the turn runs on the one it has, as
+   * the reference logs a model or an agent that would not change; the servers
+   * the session switched are switched on the CLI. A stop while it prepares
+   * sends nothing.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L415-L421
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L351-L360
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2238
@@ -210,12 +212,30 @@ export function createTurns(ctx: SessionContext): Turns {
     const began = Date.now();
     const stopped = stops;
     ctx.preparingTurn = turnId;
+    /*
+     * The session's first CLI, which its first send starts before anything
+     * else, as VS Code's first send materializes its provisional session and
+     * then sends: on the tools the session holds, the record's values and its
+     * login read now, and the agent this message picked. A record whose logins
+     * are none of them ready refuses the turn, and the session stays as it was
+     * for the next send.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1766-L1776
+     */
+    if (ctx.query === undefined) {
+      ctx.buildClientMcpServers();
+      const unready = ctx.rebindForSyncedState();
+      if (unready !== undefined) {
+        ctx.preparingTurn = undefined;
+        refuseTurn(turnId, text, unready, began, from, attachments);
+        return;
+      }
+      ctx.rebindForRestart(from?.agent?.uri);
+      ctx.startQuery(ctx.appliedAgent, true);
+    }
     if (ctx.rebind !== undefined) {
       ctx.rebind = undefined;
-      ctx.gone = undefined;
       ctx.buildClientMcpServers();
-      ctx.query = ctx.startQuery(ctx.appliedAgent, false);
-      void ctx.consume();
+      ctx.startQuery(ctx.appliedAgent, false);
     }
     /*
      * The tools the session was handed since the CLI was last given a set,
@@ -262,6 +282,20 @@ export function createTurns(ctx: SessionContext): Turns {
     // The agent this message picked, which decides which CLI the model is switched on.
     const unbound = ctx.rebindForRestart(from?.agent?.uri);
     if (unbound !== undefined) console.warn(`@ahpd/agent-claude: ${unbound}; the turn runs on the agent it has`);
+    /*
+     * The servers the session switched, which a CLI is brought to before each
+     * prompt, as VS Code's send reconciles them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1084
+     */
+    let unswitched: string | undefined;
+    try { await ctx.reconcileMcpServerEnablement(); }
+    catch (error: unknown) { unswitched = error instanceof Error ? error.message : String(error); }
+    if (ctx.disposed || stops !== stopped) return;
+    if (unswitched !== undefined) {
+      ctx.preparingTurn = undefined;
+      refuseTurn(turnId, text, unswitched, began, from, attachments);
+      return;
+    }
     // The model this turn names, before the prompt goes out and before the turn is credited to it.
     if (model !== undefined && model.id !== ctx.chosen) {
       const unmoved = await ctx.take(model.id);
@@ -285,7 +319,7 @@ export function createTurns(ctx: SessionContext): Turns {
     const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
     if (level !== ctx.appliedEffort) {
       ctx.appliedEffort = level;
-      void ctx.query.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
+      void ctx.query?.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});
     }
     ctx.preparingTurn = undefined;
     // The turn this session runs from now, as the host said it.
@@ -435,8 +469,8 @@ export function createTurns(ctx: SessionContext): Turns {
         }
         // The SDK's own request for the control the CLI names
         // `cancel_async_message`, which the SDK's types leave undeclared.
-        const handle = ctx.query as typeof ctx.query & { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
-        void handle.cancelAsyncMessage(uuid).then((cancelled) => {
+        const handle = ctx.query as (typeof ctx.query & { cancelAsyncMessage(messageUuid: string): Promise<boolean> }) | undefined;
+        void handle?.cancelAsyncMessage(uuid).then((cancelled) => {
           if (cancelled && ctx.query === handle) ctx.yielded.delete(uuid);
         }, () => {});
       }
@@ -553,10 +587,17 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.noteBackgroundTasks({ tasks: [] });
       // The files the turn's edit calls began changing, as the stop leaves them.
       ctx.editsStopped();
+      /*
+       * A session with no CLI yet has none to close, as VS Code's abort of a
+       * chat it has not materialized reaches no SDK.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2470-L2473
+       */
       const was = ctx.query;
-      ctx.rebind = was;
-      try { was.close(); }
-      catch { /* A CLI already closing is stopped all the same. */ }
+      if (was !== undefined) {
+        ctx.rebind = was;
+        try { was.close(); }
+        catch { /* A CLI already closing is stopped all the same. */ }
+      }
       ctx.toYield.length = 0;
       ctx.yielded.clear();
       ctx.parentSdkUuid = undefined;

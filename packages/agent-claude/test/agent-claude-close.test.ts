@@ -47,6 +47,8 @@ it('settles its close once the query has cleaned up, and not before', async () =
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-close-')),
     emit: () => {},
   });
+  // The CLI its first send started.
+  session.sendMessage('t1', 'hello');
   const closing = session.close();
   expect(sdk.closed).toBe(true);
   expect(sdk.exited).toBe(false);

@@ -319,18 +319,15 @@ export function createLogins(ctx: SessionContext): Logins {
       ctx.login = login;
       if (cut.over === true) {
         // Stopped before the delete, so nothing writes the conversation back.
-        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
+        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.();
         if (ctx.sdkSessionId !== undefined) {
           failed = await forgetSession(ctx.sdkSessionId, ctx.options.cwd).then(() => undefined, reason);
         }
         if (ctx.disposed) return { started: false, ...(failed === undefined ? {} : { failed }) };
       }
       if (failed === undefined) ctx.ends.delete(turn);
-      ctx.gone = undefined;
-      ctx.query = cut.over !== true
-        ? ctx.startQuery(ctx.appliedAgent, false, cut.at)
-        : ctx.startQuery(ctx.appliedAgent, failed === undefined);
-      void ctx.consume();
+      if (cut.over !== true) ctx.startQuery(ctx.appliedAgent, false, cut.at);
+      else ctx.startQuery(ctx.appliedAgent, failed === undefined);
       return { started: true, ...(failed === undefined ? {} : { failed }) };
     }
     finally {

@@ -161,6 +161,13 @@ const open = (preset: Bag, logins: Logins, extra: Record<string, unknown> = {}, 
   return { session, chat };
 };
 
+/** A session as `open` makes it, whose first send started its CLI. */
+const started = (...args: Parameters<typeof open>): ReturnType<typeof open> => {
+  const made = open(...args);
+  made.session.sendMessage('t0', 'hello');
+  return made;
+};
+
 /** The environment the CLI started `at` (the last by default) was given, when it was given one. */
 const envOf = (at = -1): Bag | undefined => sdk.queries.at(at)?.options.env as Bag | undefined;
 
@@ -196,23 +203,23 @@ const turn = async (session: { sendMessage: (id: string, text: string) => unknow
 
 describe("a turn's login", () => {
   it("starts the CLI on the record's first login, with its token", async () => {
-    open({ logins: ['personal', 'work'] }, twoLogins());
+    started({ logins: ['personal', 'work'] }, twoLogins());
     await settle();
     expect(tokenOf()).toBe('token-personal');
-    open({ logins: ['work', 'personal'] }, twoLogins());
+    started({ logins: ['work', 'personal'] }, twoLogins());
     await settle();
     expect(tokenOf()).toBe('token-work');
   });
 
   it("takes the next login in the record's order when the first is not open", async () => {
-    open({ logins: ['gone', 'work', 'personal'] }, twoLogins());
+    started({ logins: ['gone', 'work', 'personal'] }, twoLogins());
     await settle();
     expect(tokenOf()).toBe('token-work');
   });
 
   it('sets no token for a record that names no login', async () => {
     for (const preset of [{}, { logins: [] }]) {
-      open(preset, twoLogins());
+      started(preset, twoLogins());
       await settle();
       expect(tokenOf(), JSON.stringify(preset)).toBeUndefined();
     }
@@ -234,16 +241,16 @@ describe("a turn's login", () => {
     opened(logins, 'ana-login', 'token-ana', 'user:ana');
     opened(logins, 'cy-login', 'token-cy', 'user:cy');
     opened(logins, 'host-login', 'token-host');
-    open({ logins: ['ana-login', 'host-login'] }, logins, {}, 'user:cy');
+    started({ logins: ['ana-login', 'host-login'] }, logins, {}, 'user:cy');
     await settle();
     expect(tokenOf()).toBe('token-host');
-    open({ logins: ['ana-login', 'cy-login', 'host-login'] }, logins, {}, 'user:cy');
+    started({ logins: ['ana-login', 'cy-login', 'host-login'] }, logins, {}, 'user:cy');
     await settle();
     expect(tokenOf()).toBe('token-cy');
   });
 
   it("gives a CLI on a login no key and no cloud switch from the record's env or the daemon's", async () => {
-    open({
+    started({
       logins: ['work'],
       env: { ANTHROPIC_API_KEY: 'key', ANTHROPIC_AUTH_TOKEN: 'bearer', CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BASE_URL: 'https://example.invalid' },
     }, twoLogins());
@@ -255,7 +262,7 @@ describe("a turn's login", () => {
     const before = process.env.CLAUDE_CODE_USE_VERTEX;
     process.env.CLAUDE_CODE_USE_VERTEX = '1';
     try {
-      open({ logins: ['work'] }, twoLogins());
+      started({ logins: ['work'] }, twoLogins());
       await settle();
       expect(tokenOf()).toBe('token-work');
       expect(envOf()?.['CLAUDE_CODE_USE_VERTEX']).toBeUndefined();
@@ -267,14 +274,14 @@ describe("a turn's login", () => {
   });
 
   it('runs a session a client pushed a key for on the key, and on no login', async () => {
-    open({ logins: ['personal', 'work'] }, twoLogins(), { env: { ANTHROPIC_API_KEY: 'pushed' } });
+    started({ logins: ['personal', 'work'] }, twoLogins(), { env: { ANTHROPIC_API_KEY: 'pushed' } });
     await settle();
     expect(tokenOf()).toBeUndefined();
     expect(envOf()?.['ANTHROPIC_API_KEY']).toBe('pushed');
   });
 
   it("lays the login's token over the record's env", async () => {
-    open({ logins: ['work'], env: { CLAUDE_CODE_OAUTH_TOKEN: 'the-record-s', ANTHROPIC_BASE_URL: 'https://example.invalid' } }, twoLogins());
+    started({ logins: ['work'], env: { CLAUDE_CODE_OAUTH_TOKEN: 'the-record-s', ANTHROPIC_BASE_URL: 'https://example.invalid' } }, twoLogins());
     await settle();
     expect(tokenOf()).toBe('token-work');
     expect(envOf()?.['ANTHROPIC_BASE_URL']).toBe('https://example.invalid');
@@ -329,8 +336,8 @@ describe("a turn's login", () => {
     let values: Bag = { logins: ['personal', 'work'] };
     const { session } = open({}, logins, { presetOf: () => values });
     await settle();
-    expect(tokenOf()).toBe('token-personal');
     await turn(session, 't1', 'one');
+    expect(tokenOf()).toBe('token-personal');
 
     values = { logins: ['work'] };
     session.sendMessage('t2', 'two');
@@ -373,7 +380,7 @@ describe("a turn's login", () => {
       emit: () => {},
       workingDirectory: (host as unknown as { paths: string[] }).paths[0] as string,
     };
-    engine.open(view).create(start);
+    startedNow(engine.open(view).create(start)).sendMessage('t1', 'hello');
     await settle();
     expect(tokenOf()).toBe('token-work');
   });
@@ -416,8 +423,8 @@ const inAnHour = (): number => Math.floor(Date.now() / 1000) + 3600;
 const answeredOnce = async (logins: Logins, names = ['work', 'personal'], extra: Record<string, unknown> = {}) => {
   const session = open({ logins: names }, logins, extra);
   await settle();
-  expect(tokenOf()).toBe('token-work');
   await turn(session.session, 't1', 'one');
+  expect(tokenOf()).toBe('token-work');
   return session;
 };
 
@@ -630,9 +637,9 @@ describe('a failed login', () => {
     const id = randomUUID();
     const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });
     await settle();
-    expect(sdk.queries.at(-1)?.options.sessionId).toBe(id);
     session.sendMessage('t1', 'one');
     await settle();
+    expect(sdk.queries.at(-1)?.options.sessionId).toBe(id);
     sdk.push(...failure('rate_limit').map((frame) => ({ ...frame, session_id: id })));
     await until(() => sdk.queries.length === 2);
 
@@ -948,8 +955,8 @@ describe('the plugin', () => {
     };
     const session = startedNow(engine.open(view).create(start));
     await settle();
-    expect(tokenOf()).toBe('token-work');
     await turn(session, 't1', 'one');
+    expect(tokenOf()).toBe('token-work');
 
     try {
       const denied = 'Failed to authenticate. API Error: 401 OAuth access token is invalid.';

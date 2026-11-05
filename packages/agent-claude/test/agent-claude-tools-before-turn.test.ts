@@ -46,7 +46,9 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }> }) => {
+  query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }>; options: { mcpServers?: Record<string, { tools?: unknown[] }> } }) => {
+    // The servers a CLI starts with, as it is handed them.
+    sdk.landed = { ...(given.options.mcpServers ?? {}) };
     let closed = false;
     const textOf = (content: unknown): string => typeof content === 'string'
       ? content

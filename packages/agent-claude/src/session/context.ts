@@ -404,13 +404,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   offering: BoundTool[];
   /**
    * The query this session is reading, once there is one: the SDK's `Query`,
-   * named as the SDK and VS Code's Claude name it.
-   *
-   * Typed as the query and not as the query or nothing: it exists from the
-   * start of the session, nothing reads it before the query is built, and the
-   * identity checks that follow it want the query either way.
+   * named as the SDK and VS Code's Claude pipeline name it, which holds none
+   * before its first bind. A session's first send starts its first CLI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L187-L193
    */
-  query: ReturnType<typeof query>;
+  query: ReturnType<typeof query> | undefined;
   /**
    * What somebody is part-way through typing.
    *

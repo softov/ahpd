@@ -1012,6 +1012,14 @@ it('still starts the harness on what the schema says', async () => {
     method: 'createSession',
     params: { channel: 'ahp-session:/one', provider: 'claude', config: { permissionMode: 'bypassPermissions' } },
   });
+  // The CLI its first send starts.
+  const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state.defaultChat;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
   await settle();
   expect(sessionQueries().at(-1)?.options.permissionMode).toBe('bypassPermissions');
 });

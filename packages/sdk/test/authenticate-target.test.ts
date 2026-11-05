@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
-import { claude, createHost, hello, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { claude, createHost, hello, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
 
 /*
@@ -75,7 +75,9 @@ const twoSessions = async () => {
       params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
     });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
-    // `describe` answers on its own clock; the servers' states arrive with it.
+    // The CLI its first send starts, whose `describe` answers on its own
+    // clock; the servers' states arrive with it.
+    await sendAnswered(client, uri);
     await settle(8);
     const cli = sessionQueries().at(-1);
     if (cli === undefined) throw new Error(`no CLI runs for ${uri}`);
@@ -191,6 +193,7 @@ it('withdraws a targeted token and keeps the one pushed for the resource', async
     method: 'createSession',
     params: { channel: THREE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
+  await sendAnswered(client, THREE);
   await settle(8);
   // Revoked "limited to `target`", so the client's token for the backend stands.
   expect(spent()).toBe('sk-agent');

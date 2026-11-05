@@ -159,6 +159,12 @@ export const sdk = {
    * a reason that has nothing to do with the code under it.
    */
   queries: [] as Fake[],
+  /**
+   * Every in-process server a session built, in order: what a session hands
+   * the CLI it starts, which a case calls a tool's handler from as the model
+   * would, whether or not a CLI has started yet.
+   */
+  built: [] as { type: string; name: string; tools: { name: string; handler: (input: unknown, extra?: unknown) => unknown }[] }[],
 };
 
 /**
@@ -182,14 +188,18 @@ export const fake = {
    * and the request's `extra`, and a test calling one has to be calling the
    * same thing.
    */
-  createSdkMcpServer: (given: Record<string, unknown>) => ({
-    type: 'sdk',
-    name: given.name,
-    tools: (given.tools as { handler: (input: unknown, extra?: unknown) => unknown }[]).map((one) => ({
-      ...one,
-      handler: (input: unknown, extra?: unknown) => one.handler(input, extra ?? extraFor()),
-    })),
-  }),
+  createSdkMcpServer: (given: Record<string, unknown>) => {
+    const server = {
+      type: 'sdk',
+      name: given.name as string,
+      tools: (given.tools as { name: string; handler: (input: unknown, extra?: unknown) => unknown }[]).map((one) => ({
+        ...one,
+        handler: (input: unknown, extra?: unknown) => one.handler(input, extra ?? extraFor()),
+      })),
+    };
+    sdk.built.push(server);
+    return server;
+  },
   listSessions: async () => {
     sdk.listed += 1;
     // A tick, so callers meant to share one listing really do overlap: a
@@ -325,6 +335,7 @@ export function resetSdk(): void {
   sdk.effortsSet.length = 0;
   sdk.sandboxSet.length = 0;
   sdk.queries.length = 0;
+  sdk.built.length = 0;
   sdk.init = {};
   sdk.interrupted = 0;
   sdk.mcpToggled.length = 0;

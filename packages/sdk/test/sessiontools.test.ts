@@ -11,7 +11,7 @@ import {
   filterSessions, openLink, serializeContext, serializeSession, sessionMeant, sessionTools, statusWords,
 } from '../src/tools/session.js';
 import { directory, hello, root, signIn } from './users-gate-helpers.js';
-import { claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { builtCount, builtServer, claude, echo, machine, peer, resetSdk, sdk, settle } from './support/host.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Summary } from '../src/types/catalog.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -282,8 +282,8 @@ describe('what a session tool asks of the turn it runs in', () => {
 
   /** One session's tools, as the model reaches them. */
   const toolsOf = (index = -1): Record<string, Tool> => {
-    const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+    const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+    return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index = -1): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -420,7 +420,7 @@ describe('what a session tool asks of the turn it runs in', () => {
 
     // The child's turn is the member's, so the child may do what the member
     // may: it reads the host, and it writes a chat of its own session.
-    const child = sessionQueries().length - 1;
+    const child = builtCount('host') - 1;
     const rows = JSON.parse(said(await call('list_sessions', {}, child))) as { sessions: unknown[] };
     expect(rows.sessions).toHaveLength(3);
     expect(said(await call('create_session', { relationship: 'currentSession', title: 'Grandchild', prompt: 'go' }, child)))
@@ -505,7 +505,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     // Due only now, and the member is here to carry it.
     time.pass(2);
     await settle(8);
-    const woken = sessionQueries().length - 1;
+    const woken = builtCount('host') - 1;
     // The turn the wake began is the member's: a write the member may make is
     // made, and one the member may not is refused as the member is refused it.
     expect(said(await call('rename_chat', { title: 'Woken' }, woken))).toBe('Renamed chat to "Woken".');
@@ -560,8 +560,8 @@ describe("VS Code's limits on spawning and messaging", () => {
 
   /** One session's tools, as the model of the session at `index` reaches them. */
   const toolsOf = (index: number): Record<string, Tool> => {
-    const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+    const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+    return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index: number): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -586,14 +586,14 @@ describe("VS Code's limits on spawning and messaging", () => {
   /**
    * A session on this host, and the tools its own model reaches.
    *
-   * `at` is the CLI that session was handed, which is how a case says whose
-   * tools are making a call: one CLI per session started, in the order they
-   * were started, so the newest is `sessionQueries().length - 1`.
+   * `at` is the host server that session built, which is how a case says
+   * whose tools are making a call: one per session made, in the order they
+   * were made, so the newest is `builtCount('host') - 1`.
    */
   const started = async (client: Client, name: string): Promise<{ held: string; at: number }> => {
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${name}`, provider: 'claude' } });
     await settle(8);
-    return { held: `ahp-session:/${name}`, at: sessionQueries().length - 1 };
+    return { held: `ahp-session:/${name}`, at: builtCount('host') - 1 };
   };
 
   /** One session's tools make another, whose own tools are then the newest. */
@@ -614,14 +614,14 @@ describe("VS Code's limits on spawning and messaging", () => {
     const first = await started(client, 'first');
     /*
      * Three links down. The session asked is the one whose tools make the call,
-     * so each step moves to the newest CLI: `first` at depth 0 makes `second`
+     * so each step moves to the newest session's: `first` at depth 0 makes `second`
      * at 1, that one makes `third` at 2, and `fourth` at 3 is the last one
      * allowed - a session three deep may not make another.
      */
     let at = first.at;
     for (const title of ['second', 'third', 'fourth']) {
       expect(said(await spawn(at, title)), title).toMatch(/^New session created \(/);
-      at = sessionQueries().length - 1;
+      at = builtCount('host') - 1;
     }
 
     const refused = await spawn(at, 'fifth');
@@ -826,8 +826,8 @@ describe('a chat opened on a backend of its own', () => {
       params: { channel: 'ahp-session:/mine', provider: 'claude', config: { computer: '', permissionMode: 'plan' } },
     });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const tool = served?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
     if (tool === undefined) throw new Error('no make_chat');
     return { client, call: (input) => tool.handler(input) };
   };
@@ -1025,8 +1025,8 @@ describe('a tool a person calls with no session', () => {
     await settle(8);
     // The session's own tools run in the turn that message began, so a write
     // through them is allowed only where the turn's sender is the member.
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const rename = servers?.host?.tools.find((one) => one.name === 'rename_chat');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const rename = served?.tools.find((one) => one.name === 'rename_chat');
     if (rename === undefined) throw new Error('no rename_chat');
     const answered = await rename.handler({ title: 'Woken by a person' });
     expect(answered.isError).toBeFalsy();
@@ -1131,8 +1131,8 @@ describe('a tool a person calls with no session', () => {
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const create = servers?.host?.tools.find((one) => one.name === 'create_session');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const create = served?.tools.find((one) => one.name === 'create_session');
     if (create === undefined) throw new Error('no create_session');
     const made = await create.handler({
       relationship: 'currentSession', prompt: 'say hi', title: 'Another backend', agent: 'other',

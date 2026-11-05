@@ -49,12 +49,13 @@ export interface Query {
    */
   toYield: SDKUserMessage[];
   /**
-   * A query for this session, on the agent named.
+   * Start a CLI for this session on the agent named, and read it: the query
+   * this session reads from then on, asked what it has until one answers.
    *
    * `cut` is the chain entry a query that is not the first resumes at, which
    * drops what came after it, as a rewind drops it.
    */
-  startQuery: (agent: string | undefined, first: boolean, cut?: string) => ReturnType<typeof query>;
+  startQuery: (agent: string | undefined, first: boolean, cut?: string) => void;
   /** The backend's id for the *last* thing in each turn, by this host's turn id. */
   ends: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
@@ -62,7 +63,8 @@ export interface Query {
   /**
    * Start this session's CLI again on the agent a message picked, when it is
    * running another: VS Code's pipeline's `rebindForRestart`, which its
-   * session's send runs for state that moved.
+   * session's send runs for state that moved. Before the first send the pick
+   * is the agent the first CLI starts on.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L321-L323
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1141-L1145
    */
@@ -70,15 +72,14 @@ export interface Query {
   /**
    * Read a record's values again, find the turn's login, and start the CLI
    * again on them when either changed: VS Code's session's rebind for synced
-   * state, at the send.
+   * state, at the send. Before the first send they are what the first CLI
+   * starts from.
    *
    * A preset's values stay as they were read, and only its login can change. A
    * refusal is a sentence for the turn that asked.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
    */
   rebindForSyncedState: () => string | undefined;
-  /** Read one CLI's frames until it ends. */
-  consume: () => Promise<void>;
   /** End the turn now running as one that failed, and leave the session as it is. */
   failTurn: (why: string) => void;
   /**
@@ -183,6 +184,31 @@ export function createQuery(ctx: SessionContext): Query {
    * again, so what is here is what this CLI was told when it began.
    */
   const denied = ctx.options.deniedMcpServers ?? [];
+
+  /**
+   * The CLI's own settings a query starts with, where this session adds to
+   * the preset's.
+   *
+   * The servers of a plugin that a client switched off, which the CLI is told
+   * not to run: a plugin is loaded from a directory the CLI reads itself, so a
+   * server the host left out of `mcpServers` can still be found there, and the
+   * CLI's settings are the only place it takes such a list from. And the
+   * plugins this session switched, as `enabledPlugins`, which the CLI reads
+   * when it loads its plugins, so a CLI starts with each switch a client made,
+   * the first CLI with those made before it. Merged with whatever a preset
+   * already put there, so a declared value is added to rather than replaced.
+   */
+  const settingsOption = (): Bag => {
+    const plugins = ctx.enabledPlugins();
+    if (denied.length === 0 && Object.keys(plugins).length === 0) return {};
+    return {
+      settings: {
+        ...bag(fromPreset().settings),
+        ...(denied.length === 0 ? {} : { deniedMcpServers: denied.map((serverName) => ({ serverName })) }),
+        ...(Object.keys(plugins).length === 0 ? {} : { enabledPlugins: plugins }),
+      },
+    };
+  };
 
   /**
    * An environment the CLI starts with, with what it signs in with laid over:
@@ -509,23 +535,7 @@ export function createQuery(ctx: SessionContext): Query {
        * inherits the daemon's environment, as an automation's does.
        */
       ...fromPreset(),
-      /*
-       * The servers of a plugin that a client switched off, which the CLI is
-       * told not to run.
-       *
-       * A plugin is loaded from a directory the CLI reads itself, so a server
-       * the host left out of `mcpServers` can still be found there. Named in
-       * the CLI's own settings rather than left to the host's word alone,
-       * which is the only place the CLI takes such a list from. Merged with
-       * whatever a preset already put there, so a declared value is added to
-       * rather than replaced.
-       */
-      ...(denied.length === 0 ? {} : {
-        settings: {
-          ...bag(fromPreset().settings),
-          deniedMcpServers: denied.map((serverName) => ({ serverName })),
-        },
-      }),
+      ...settingsOption(),
       ...(ctx.login !== undefined || ctx.options.env ? { env: signedIn(fromPreset().env as Bag | undefined ?? process.env) } : {}),
       // In a machine, the env above is replaced by the variant's own alone.
       ...(ctx.options.spawn === undefined ? {} : { env: inMachine() }),
@@ -649,7 +659,7 @@ export function createQuery(ctx: SessionContext): Query {
     JSON.stringify({ values, login: login?.id ?? null, token: login?.token ?? null });
 
   /**
-   * A query for this session, and what it was built from.
+   * A CLI for this session, what it was built from, and its reader.
    *
    * The values and the login are recorded here rather than at each call site,
    * because every query a session builds is one of these: `begin` is where the
@@ -663,8 +673,13 @@ export function createQuery(ctx: SessionContext): Query {
    * query is aborted and gives the next binding a deferred of its own.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L518-L522
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L626-L629
+   *
+   * It is bound as the query this session talks to, as the reference binds
+   * the stream it builds, and read until it ends; and until a CLI has answered
+   * what it has, this one is asked.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L175-L185
    */
-  const startQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => {
+  const startQuery = (agent: string | undefined, first: boolean, cut?: string): void => {
     ctx.appliedValues = startedFrom(ctx.values, ctx.login);
     bound += 1;
     const replaced = ctx.pendingPromptDeferred;
@@ -675,7 +690,11 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.yielded.clear();
     ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
-    return buildQuery(agent, first, cut);
+    ctx.gone = undefined;
+    const handle = buildQuery(agent, first, cut);
+    ctx.query = handle;
+    void consume(handle);
+    void ctx.describe().catch(() => {});
   };
 
   /**
@@ -704,7 +723,7 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const take = async (id: string): Promise<string | undefined> => {
     try {
-      await ctx.query.setModel(id === 'default' ? undefined : id);
+      await ctx.query?.setModel(id === 'default' ? undefined : id);
       return undefined;
     }
     catch (error: unknown) {
@@ -724,20 +743,23 @@ export function createQuery(ctx: SessionContext): Query {
    * sends the same agent on every message.
    *
    * No agent named means the CLI's own default, which is also what a query
-   * built without one runs on.
+   * built without one runs on. A session with no CLI yet starts its first on
+   * the agent picked, as VS Code's provisional session keeps the agent its
+   * first send materializes with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L645
    */
   const rebindForRestart = (uri: string | undefined): string | undefined => {
     const name = uri === undefined ? undefined : resolveClaudeAgentName(uri);
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
-    try { was.close(); }
-    catch (error: unknown) {
-      return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
+    if (was !== undefined) {
+      try { was.close(); }
+      catch (error: unknown) {
+        return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
+      }
     }
     ctx.appliedAgent = name;
-    ctx.gone = undefined;
-    ctx.query = startQuery(name, false);
-    void consume();
+    if (was !== undefined) startQuery(name, false);
     return undefined;
   };
 
@@ -747,11 +769,10 @@ export function createQuery(ctx: SessionContext): Query {
    * One call per query rather than one for the session, because a message that
    * picks another agent replaces the query and this has to be reading whichever
    * one is current. A loop that ended because it was replaced says nothing:
-   * `handle` is not the query it was reading, so its ending is this host's own
-   * doing and the session is exactly where it was.
+   * `mine` is not the query this session reads, so its ending is this host's
+   * own doing and the session is exactly where it was.
    */
-  const consume = async (): Promise<void> => {
-    const mine = ctx.query;
+  const consume = async (mine: ReturnType<typeof query>): Promise<void> => {
     try {
       for await (const raw of mine) {
         // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
@@ -1191,7 +1212,11 @@ export function createQuery(ctx: SessionContext): Query {
    * resumes the id the CLI gave this session, so the transcript, the model and
    * everything the SDK said are still there. A CLI that will not stop, and a
    * record whose logins are none of them ready, are the turn's own refusal,
-   * which is why each comes back as a sentence; the session goes on.
+   * which is why each comes back as a sentence; the session goes on. A session
+   * with no CLI yet takes the values and the login for its first, and one whose
+   * logins are none of them ready stays without one, as VS Code's provisional
+   * session stays for the next send when its sign-in fails.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1266-L1273
    */
   const rebindForSyncedState = (): string | undefined => {
     const live = ctx.options.presetOf;
@@ -1199,19 +1224,19 @@ export function createQuery(ctx: SessionContext): Query {
     const unready = ctx.unready(now);
     if (unready !== undefined) return unready;
     const login = ctx.loginFor(now);
-    if (startedFrom(now, login) === ctx.appliedValues) return undefined;
     const was = ctx.query;
-    try { was.close(); }
-    catch (error: unknown) {
-      return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
+    if (was !== undefined && startedFrom(now, login) === ctx.appliedValues) return undefined;
+    if (was !== undefined) {
+      try { was.close(); }
+      catch (error: unknown) {
+        return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
+      }
     }
     ctx.values = now;
     ctx.login = login;
-    ctx.gone = undefined;
-    ctx.query = startQuery(ctx.appliedAgent, false);
-    void consume();
+    if (was !== undefined) startQuery(ctx.appliedAgent, false);
     return undefined;
   };
 
-  return { toYield, startQuery, ends, take, rebindForRestart, consume, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }

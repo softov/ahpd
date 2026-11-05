@@ -101,7 +101,7 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** The `query()` options of a session in `FOLDER` that `create` built from these start fields. */
+/** The `query()` options the first send of a session in `FOLDER` that `create` built from these start fields started its CLI with. */
 const started = async (start: Record<string, unknown>): Promise<Record<string, unknown>> => {
   sdk.options = [];
   claude({ paths: [FOLDER] }).create({
@@ -113,7 +113,7 @@ const started = async (start: Record<string, unknown>): Promise<Record<string, u
     schema: () => ({ type: 'object', properties: {} }),
     emit: () => {},
     ...start,
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

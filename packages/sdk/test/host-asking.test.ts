@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions, claude, resetSdk, running, sessionQueries, settle } from './support/host.js';
+import { actions, builtServer, claude, resetSdk, running, settle } from './support/host.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { AskedQuestion, HostTool } from '../src/types/host.js';
@@ -74,8 +74,8 @@ async function serving() {
 
   /** The tool as the backend was handed it. */
   const tool = (): Tool => {
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const found = servers?.host?.tools.find((one) => one.name === 'inquire');
+    const host = builtServer('host') as { tools: Tool[] } | undefined;
+    const found = host?.tools.find((one) => one.name === 'inquire');
     if (found === undefined) throw new Error('the backend was handed no inquire tool');
     return found;
   };

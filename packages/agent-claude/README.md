@@ -187,6 +187,8 @@ A `Bash` result too large to send shows its whole output in a terminal, as VS Co
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 
+A session starts no CLI until its first send, as VS Code's Claude agent keeps a session provisional until its first send materializes it. Until a CLI answers what it has, the session lists the agent's own models and customizations, which the host seeds it with, and what its disk scan finds: each file of its scopes, under the name the CLI knows it by, and each MCP server a settings file declares, `stopped`. A switch of a server or a plugin made before then is the first CLI's: it starts with the plugins switched in its settings, and its servers are switched before the first prompt goes out, as VS Code's send brings a CLI to a session's switches. A start or a stop of a server is refused, there being none running. A CLI that does not answer what it has leaves the lists as they were, and the next CLI the session starts is asked.
+
 A question somebody answered reads back answered, in the session and in a subagent's chat. The CLI writes the answers as the `toolUseResult` of the transcript entry that holds the question's result. The SDK's `getSessionMessages` leaves that field out, so a session's own file is read for it, one line at a time.
 
 A turn that failed on a model call can be resumed. The turn reopens with its message and its parts, the conversation is cut back to the end of the turn before with `resumeSessionAt`, and the prompt is sent again. A conversation whose first turn failed has nothing to cut back to, so it is deleted and started over under its id. The calls the failed turn ran run again, because the cut drops them with the prompt. Only the latest turn, in error, whose last part is a resumable error, can be resumed, and only while the conversation has a turn to cut back to. A turn refused before the CLI, a turn whose CLI went under it and a login the CLI refused end with no resumable error, and a resume whose conversation cannot be started over ends the turn with the reason and no resumable error either.
@@ -195,7 +197,7 @@ A session the host resumes picks up the conversation the CLI wrote under that id
 
 ## Where a customization comes from
 
-The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri, in the tree VS Code's Claude discovery lays out. A command is a skill: its file in `commands` is listed among the skills of its scope.
+The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri, in the tree VS Code's Claude discovery lays out. A command is a skill: its file in `commands` is listed among the skills of its scope. Before a session's first send the names are those of the files themselves, and an entry with no description from the CLI takes its file's own.
 
 | Scope | Directories | A person writes there |
 | --- | --- | --- |
@@ -219,7 +221,7 @@ The rules are the `CLAUDE.md` files and every `*.md` under a `rules` folder: `<c
 
 A session in a machine has its CLI read the machine's own config volume. Its entries are listed with no file: its skills and commands in the `builtin` skills directory, its agents in a read-only `builtin` agents directory, `claude-internal:/agents`. No writable directory is sent.
 
-A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders and asks the CLI for its lists again, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
+A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders from the moment it is made, reads them again before its first CLI has answered and asks the CLI for its lists again after, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
 
 ## The agent a message picks
 
@@ -227,7 +229,7 @@ A client sends the agent on every message, as `message.agent`, and the turn runs
 
 A uri becomes the name the SDK is given: an agent's own file, `file://…/agents/reviewer.md`, gives its frontmatter `name`, or the file's own name when it has none or has been deleted since the listing was made; a built-in agent's `claude-internal:/agent/Explore` gives its last segment; any other uri names no agent, rather than naming one the CLI does not have.
 
-The SDK reads the agent when its query is built and has no way to change it on a CLI already running, so a message picking a different agent closes the query and starts another resumed into the same conversation, before that turn's prompt goes out. The send that switches pays a restart; a client that sends the same agent on every message, which is the usual case, pays nothing.
+The SDK reads the agent when its query is built and has no way to change it on a CLI already running, so a session's first send starts its CLI on the agent its message picked, and a later message picking a different agent closes the query and starts another resumed into the same conversation, before that turn's prompt goes out. The send that switches pays a restart; a client that sends the same agent on every message, which is the usual case, pays nothing.
 
 A session is not tied to an agent: nothing is stored per session, because the next message carries the pick again.
 

@@ -3,7 +3,7 @@ import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
-  serving, settle, running,
+  sendAnswered, serving, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -14,7 +14,15 @@ beforeEach(resetSdk);
 const serverId = (name: string): string => `claude-internal:/mcp/${name}#mcp=${name}`;
 
 describe('what the harness offers', () => {
-  it('reads models, commands and servers with no turn having happened', async () => {
+  /*
+   * A composer offers the slash menu *before* the conversation starts, so
+   * what the agent offers is there with no turn having happened: the agent's
+   * own, which the boot probe read, as VS Code's Claude session lists its
+   * agent's own before its first send. The servers a CLI connects are that
+   * CLI's, listed once the first send starts it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1499-L1533
+   */
+  it("offers the agent's own commands and agents with no turn having happened, and its CLI's servers once a send starts it", async () => {
     sdk.init = {
       models: [
         { value: 'default', displayName: 'Default (recommended)' },
@@ -30,27 +38,26 @@ describe('what the harness offers', () => {
     );
 
     const { client, uri } = await running();
-    // Nothing has been said. A composer has to offer the models and the slash
-    // menu *before* the conversation starts, so waiting for the message
-    // stream's `init` would be exactly too late.
     expect(sdk.said).toEqual([]);
-
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const listed = async () => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
-    }).snapshot.state;
+    }).snapshot.state.customizations;
 
     // A leaf lives in a container; an MCP server is the one kind that does
     // not, and is published bare.
-    const leaves = state.customizations
-      .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
+    const before = await listed();
+    const leaves = before.flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
     const kinds = leaves.map((c) => c.type);
     expect(kinds).toContain('skill');
     expect(kinds).toContain('agent');
-    expect(state.customizations.map((c) => c.type)).toContain('mcpServer');
+    expect(before.map((c) => c.type)).not.toContain('mcpServer');
 
     // A command is a skill, as VS Code's Claude discovery lists one.
     const command = leaves.find((c) => c.id === 'skill:advisor');
     expect(command).toMatchObject({ type: 'skill', name: 'advisor', description: 'Read support tickets', enabled: true });
+
+    await sendAnswered(client, uri);
+    expect((await listed()).map((c) => c.type)).toContain('mcpServer');
   });
 
   it('advertises the models on the root channel, keyed by `value`', async () => {
@@ -269,6 +276,8 @@ describe('what the harness offers', () => {
       { name: 'off', status: 'disabled' },
     );
     const { client, uri } = await running();
+    // The servers the CLI its first send started reports.
+    await sendAnswered(client, uri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: {
         state: {
@@ -656,11 +665,12 @@ describe('what goes after a slash', () => {
 });
 
 describe('turning a customization on and off', () => {
-  /** A live session that has heard what its CLI offers. */
+  /** A live session that has heard what the CLI its first send started offers. */
   const withServers = async (status: string) => {
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status }];
     const started = await running();
+    await sendAnswered(started.client, started.uri);
     // `describe` answers on its own clock; the customizations arrive with it.
     await settle(8);
     return started;
@@ -697,6 +707,7 @@ describe('turning a customization on and off', () => {
     sdk.init = { commands: [] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }, { name: 'host', status: 'connected' }, { name: 'client', status: 'connected' }];
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     await settle(8);
     const listed = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { id: string; type: string }[] } };
@@ -816,6 +827,7 @@ describe('turning a customization on and off', () => {
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
+    await sendAnswered(client, 'ahp-session:/live');
     await settle(8);
 
     client.handle({

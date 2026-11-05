@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   actions, resetSdk, claude, createHost, hello, machine, open, peer,
- sdk, sessionQueries, serving, settle, running,
+ sdk, sendAnswered, sendTurn, sessionQueries, serving, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -104,6 +104,8 @@ describe('choosing a model', () => {
     await client.handle(hello(['0.9.0']));
     const made = async (channel: string, provider: string) => {
       await client.handle({ method: 'createSession', params: { channel, provider, config: {} } });
+      // The CLI its first send starts.
+      await sendTurn(client, channel);
       await settle();
       return sessionQueries().at(-1)?.options as Record<string, unknown>;
     };
@@ -119,6 +121,7 @@ describe('choosing a model', () => {
 
   it('sources the client\'s shell init script before every shell command, while one is in force', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     const options = sessionQueries().at(-1)?.options as {
       hooks?: { PreToolUse?: { matcher?: string; hooks: ((input: unknown) => Promise<{ hookSpecificOutput?: { updatedInput?: { command?: string } } }>)[] }[] };
     };
@@ -172,6 +175,8 @@ describe('choosing a model', () => {
         config: { permissions: { allow: ['Read', 'Grep'], deny: ['Bash'] } },
       },
     });
+    // The CLI its first send starts.
+    await sendTurn(client, 'ahp-session:/listed');
     await settle();
     // The SDK takes both natively, which is what makes advertising the key
     // the smallest thing that works - and it is the half that only applies to
@@ -183,6 +188,7 @@ describe('choosing a model', () => {
 
   it('answers a tool from the list instead of asking, once one is set', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: {
@@ -212,6 +218,7 @@ describe('choosing a model', () => {
 
   it('lets a denial win over an approval, because they answer different questions', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: {
@@ -301,6 +308,7 @@ describe('choosing a model', () => {
    */
   it('switches no model for a model a client sets as config', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { model: 'default' } } },
@@ -311,6 +319,7 @@ describe('choosing a model', () => {
 
   it('refuses a permission mode the CLI does not know', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'bypass' } } },

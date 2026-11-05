@@ -373,9 +373,10 @@ export function createWorkers(ctx: SessionContext): Workers {
     const known = stops.get(id);
     if (known !== undefined) return known;
     const stop = async (): Promise<boolean> => {
-      if (!backgroundTasks.has(id)) return false;
+      const to = ctx.query;
+      if (!backgroundTasks.has(id) || to === undefined) return false;
       try {
-        await ctx.query.stopTask(id);
+        await to.stopTask(id);
         return true;
       }
       catch {
@@ -682,7 +683,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   const stopWorker = (toolCallId: string): void => {
     const task = tasks.get(toolCallId);
     if (task === undefined) return;
-    void ctx.query.stopTask(task).catch(() => {});
+    void ctx.query?.stopTask(task).catch(() => {});
   };
 
   /** End every output terminal this session made, and the polls behind them. */

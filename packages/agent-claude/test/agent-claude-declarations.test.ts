@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { env, extraArgs, optionDefaults, outputStyle, sandbox, thinking } from '../src/options.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -72,7 +73,7 @@ const viewOf = (id: string, held: () => Bag, name = id): AgentView => ({
   get config() { return held(); },
 });
 
-/** One session's `query()` options, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with, on a record holding the given values. */
 const queried = async (
   config: Bag,
   settings?: Record<string, unknown>,
@@ -81,7 +82,7 @@ const queried = async (
   sdk.options = [];
   sdk.flags = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config)).create({
+  startedNow(engine.open(viewOf('claude', () => config)).create({
     uri: 'ahp-session:/declared',
     chatUri: 'ahp-chat:/declared',
     settings: settings ?? {},
@@ -90,7 +91,7 @@ const queried = async (
     emit: () => {},
     workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
     ...extra,
-  });
+  })).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

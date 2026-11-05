@@ -807,11 +807,15 @@ describe('a Claude chat', () => {
     wrote('forked', DIR);
     const after = await shelled(dir);
     await stateOf(after.client, uri);
-    // Nothing has woken it: the fork does, and the turn read back names where it ended.
+    // Nothing has woken it: the fork does, and the turn read back names where
+    // it ended, to the CLI the new chat's first send starts.
     await after.client.handle({
       method: 'createChat',
       params: { channel: uri, chat: 'ahp-chat:/forked-copy', source: { kind: 'fork', chat, turnId: 't2' } },
     });
+    await stateOf(after.client, 'ahp-chat:/forked-copy');
+    say(after.client, 'ahp-chat:/forked-copy', 't3', 'go on');
+    await settle();
     const forked = sdk.queries.find((one) => one.options.forkSession === true);
     expect(forked?.options).toMatchObject({ resume: 'forked', forkSession: true, resumeSessionAt: 'reply-1' });
     await after.host.close();

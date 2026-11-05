@@ -460,10 +460,9 @@ const submitted = async (): Promise<unknown[]> => {
 it('gives a turn the instructions the host asked for, and nothing once it ends', async () => {
   const { session } = await open(true, false);
   const words = ['<remote_session_origin>', 'report back', '</remote_session_origin>'];
-  // Registered from the start and nothing to give: no turn has begun.
-  expect(await submitted()).toEqual([{}]);
 
-  // A turn the host said nothing about, which is every ordinary one.
+  // A turn the host said nothing about, which is every ordinary one: the hook
+  // is registered with the CLI that turn starts, and has nothing to give.
   session.sendMessage('t-plain', 'hello');
   await settle();
   expect(await submitted()).toEqual([{}]);

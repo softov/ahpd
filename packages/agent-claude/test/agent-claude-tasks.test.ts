@@ -58,7 +58,7 @@ const taskAdd = (): BoundTool => ({
   run: async () => '',
 }) as unknown as BoundTool;
 
-/** One session's `query()` options, over the tools and values given here. */
+/** The `query()` options one session's first send started its CLI with, over the tools and values given here. */
 const queried = async (given: {
   preset?: Record<string, unknown>;
   tools?: BoundTool[];
@@ -84,7 +84,7 @@ const queried = async (given: {
         spawnConfigDir: '/ahpd/claude',
       }
       : {}),
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Agent, Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -91,28 +92,28 @@ const modelsOf = async (agent: Agent | undefined) => (await agent?.probe?.())?.m
 /** The resource a pushed credential is for. */
 const ANTHROPIC = 'https://api.anthropic.com';
 
-/** One session's `query()` options, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with, on a record holding the given values. */
 const queried = async (config: Bag | undefined, credential?: string): Promise<Record<string, unknown>> => {
   sdk.options = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config ?? {})).create(startOf('preset', {
+  startedNow(engine.open(viewOf('claude', () => config ?? {})).create(startOf('preset', {
     ...(credential === undefined ? {} : { credentials: { [ANTHROPIC]: credential } }),
-  }));
+  }))).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
 };
 
-/** One session's `query()` options in a machine, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with in a machine, on a record holding the given values. */
 const queriedInside = async (config: Bag | undefined, credential?: string): Promise<Record<string, unknown>> => {
   sdk.options = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config ?? {})).create(startOf('inside', {
+  startedNow(engine.open(viewOf('claude', () => config ?? {})).create(startOf('inside', {
     settings: { computer: 'computer://box' },
     computers: { how: async () => ({ command: 'true' }) } as never,
     ...(credential === undefined ? {} : { credentials: { [ANTHROPIC]: credential } }),
-  }));
+  }))).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
@@ -254,6 +255,7 @@ it('offers the models the harness names once a session has started', async () =>
     settings: {},
     offerModels: async (cli) => [...cli, { id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }],
   });
+  session.sendMessage('t1', 'hello');
   await settle();
   expect(session.models?.()).toEqual([{ id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }]);
 });
@@ -303,10 +305,10 @@ it('gives two records on one machine only their own keys on their docker exec', 
     ];
     for (const agent of agents) {
       sdk.options = [];
-      agent.create(startOf(agent.provider, {
+      startedNow(agent.create(startOf(agent.provider, {
         settings: { computer: 'computer://box' },
         computers: computers as never,
-      }));
+      }))).sendMessage('t1', 'hello');
       await settle();
       const options = sdk.options.at(0) as { spawnClaudeCodeProcess: (asked: unknown) => unknown; env: Record<string, string> };
       options.spawnClaudeCodeProcess({ command: 'claude', args: [], env: options.env });

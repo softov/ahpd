@@ -78,7 +78,7 @@ const declared = async (
     clientToolTimeoutMs: 0,
     schema: () => ({ type: 'object', properties: {} }),
     emit: () => {},
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

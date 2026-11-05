@@ -11,6 +11,7 @@
  * suites that are.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Peer } from '../../src/types/rpc.js';
 import type { HostOptions } from '../../src/types/host.js';
 import { sdk, resetSdk, wrote } from './claude-sdk.js';
@@ -19,6 +20,16 @@ export { sdk, resetSdk, wrote };
 
 /** The CLIs that belong to a session. The boot probe is not one of them. */
 export const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
+
+/**
+ * The `index`-th in-process server named `name` the sessions built, the last
+ * by default: the server a session hands its CLI, whose tools a case calls as
+ * the model would.
+ */
+export const builtServer = (name: string, index = -1) => sdk.built.filter((one) => one.name === name).at(index);
+
+/** How many in-process servers named `name` the sessions built: the index after the newest one's. */
+export const builtCount = (name: string): number => sdk.built.filter((one) => one.name === name).length;
 
 export const { createHost } = await import('../../src/host.js');
 export const { fileResources, list, read, resolve, complete } = await import('../../src/resources/resources.js');
@@ -113,4 +124,30 @@ export async function emit(...frames: Record<string, unknown>[]): Promise<void> 
   fake.wake?.();
   fake.wake = undefined;
   await settle();
+}
+
+/**
+ * A turn sent on a chat, the chat a session's default when the channel names
+ * a session, with no wait for what follows.
+ *
+ * A Claude session starts its CLI at its first send, as VS Code's Claude
+ * session materializes at its first, so a case about the CLI a session runs
+ * sends one first.
+ */
+export async function sendTurn(client: { handle(request: { method: string; params: unknown }): unknown }, channel: string, text = 'hello'): Promise<void> {
+  const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { defaultChat?: string } } };
+  const chat = opened.snapshot.state.defaultChat ?? channel;
+  if (chat !== channel) await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  });
+}
+
+/** A turn sent as `sendTurn` sends one, and answered, so the case's own turns are sends of their own. */
+export async function sendAnswered(client: { handle(request: { method: string; params: unknown }): unknown }, channel: string, text = 'hello'): Promise<void> {
+  await sendTurn(client, channel, text);
+  await settle(8);
+  await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle(8);
 }

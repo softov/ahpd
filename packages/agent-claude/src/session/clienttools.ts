@@ -491,6 +491,12 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   };
 
   const rebindForClientTools = async (): Promise<void> => {
+    const to = ctx.query;
+    // A session with no CLI yet declares the set its first CLI starts with.
+    if (to === undefined) {
+      buildClientMcpServers();
+      return;
+    }
     const handed = ctx.toolDiff;
     if (handed === undefined) return;
     ctx.toolDiff = undefined;
@@ -501,13 +507,13 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const declared = declaring(next);
     try {
       if (ctx.offering.length > 0) {
-        await ctx.query.setMcpServers(removed as never);
+        await to.setMcpServers(removed as never);
         // Gone from the CLI now, so what this session holds is the set
         // without them, whatever the second declaration answers.
         ctx.offering = [];
         ctx.mcpServers = removed;
       }
-      if (next.length > 0) await ctx.query.setMcpServers(declared as never);
+      if (next.length > 0) await to.setMcpServers(declared as never);
     }
     catch (error: unknown) {
       // The CLI holds what it held, so the set waits for the next send, as

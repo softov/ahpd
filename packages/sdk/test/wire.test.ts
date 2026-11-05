@@ -255,6 +255,11 @@ const REFERENCE: { key: string; at: string; from: string }[] = [
   { key: 'description', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
   // The ghost text a menu shows after an accepted command.
   { key: 'argumentHint', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
+  // What keeps a skill in an automation's text in the reference client's editor.
+  { key: 'isSkill', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
+  // A question's purpose, which VS Code's agents mark the request they raise
+  // for one with, and its window reads.
+  { key: 'purpose', at: 'request/_meta', from: 'docs/sdk/AHP.md' },
   // The version the reference client writes in its Output channel, and the key
   // it reads to decide this host is a native one - its own name, un-prefixed,
   // and not the protocol's - decision `ahpd-says-it-is-a-native-host`.
@@ -734,7 +739,8 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   };
 
   /*
-   * The one declaration this host widens on purpose, keyed by the finding.
+   * The declarations this host widens on purpose, keyed by the finding, each
+   * to the heading in `docs/sdk/AHP.md` that records why.
    *
    * A partial is spread over the row a client holds, so a key left off is a
    * field that did not move and an idled row would keep saying what its last
@@ -743,6 +749,14 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    */
   const WIDENED: Record<string, string> = {
     'SessionSummaryChangedParams /changes/activity type must be string': 'Server notifications',
+    // A question's request, marked with its purpose as VS Code's agents mark it,
+    // wherever the request rides.
+    'ActionEnvelope /action/request undeclared key `_meta`': 'Being asked',
+    'ActionEnvelope /action/request/request undeclared key `_meta`': 'Being asked',
+    'ChatInputRequestedAction /request undeclared key `_meta`': 'Being asked',
+    'CommandMap.reconnect.result /actions/N/action/request undeclared key `_meta`': 'Being asked',
+    'CommandMap.reconnect.result /actions/N/action/request/request undeclared key `_meta`': 'Being asked',
+    'SessionInputNeededSetAction /request/request undeclared key `_meta`': 'Being asked',
   };
 
   /*

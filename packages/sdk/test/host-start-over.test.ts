@@ -147,9 +147,9 @@ describe('a chat truncated whole', () => {
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
     const chat = String(((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }) as { snapshot: { state: Bag } }).snapshot.state).defaultChat);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
-    expect(sessionQueries().at(-1)?.options.sessionId).toBe(id);
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
     await settle();
+    expect(sessionQueries().at(-1)?.options.sessionId).toBe(id);
     await emit({ type: 'system', subtype: 'init', session_id: id });
     await emit({ type: 'assistant', uuid: 'reply-1', session_id: id, message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1, session_id: id });
@@ -160,11 +160,14 @@ describe('a chat truncated whole', () => {
 
     expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
     expect(sdk.deleted).toEqual([id]);
+    expect(await turnsOf(client, chat)).toEqual([]);
+    // The CLI the next send starts, fresh under the same id.
+    void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } } });
+    await settle();
     expect(sessionQueries().length).toBe(before + 1);
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.resume).toBeUndefined();
     expect(fresh?.options.sessionId).toBe(id);
-    expect(await turnsOf(client, chat)).toEqual([]);
   });
 
   it('comes back on the conversation it had when the delete fails, and says why', async () => {

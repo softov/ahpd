@@ -10,8 +10,8 @@ import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import {
-  resetSdk, actions, claude, complete, createHost, emit, hello, hostTools, list, machine, open,
-  peer, read, resolve, serving, sessionQueries, settle, running, wrote,
+  resetSdk, actions, builtServer, claude, complete, createHost, emit, hello, hostTools, list, machine, open,
+  peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -45,7 +45,7 @@ describe('where the agent works', () => {
         workingDirectories: ['file:///brb_main/src'],
       },
     });
-    await settle();
+    await sendAnswered(client, 'ahp-session:/a');
     // `file://` comes off on the way in: a backend handed a URI would open a
     // directory called `file:`.
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/brb_main/src');
@@ -83,7 +83,7 @@ describe('where the agent works', () => {
         workingDirectories: ['file:///etc'],
       },
     });
-    await settle();
+    await sendAnswered(client, 'ahp-session:/a');
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/etc');
   });
 
@@ -107,7 +107,7 @@ describe('where the agent works', () => {
       method: 'createSession',
       params: { channel: 'ahp-session:/a', provider: 'claude' },
     });
-    await settle();
+    await sendAnswered(client, 'ahp-session:/a');
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
   });
 });
@@ -615,6 +615,7 @@ describe('more than one directory', () => {
         workingDirectories: [uriOf(ONE), uriOf(TWO)],
       },
     });
+    await sendAnswered(client, 'ahp-session:/wide');
     // The first is the process root; the rest are its peers, which the SDK
     // takes at startup as `additionalDirectories`.
     expect(sessionQueries().at(-1)?.options.cwd).toBe(ONE);
@@ -631,8 +632,9 @@ describe('more than one directory', () => {
     // untrusted until a client says otherwise and this case is about the
     // restart rather than about the question.
     p.request = async () => ({ trusted: true });
-    // The CLI names the conversation, and that name is what a resume asks for,
-    // once the CLI has written it.
+    // The CLI its first send started names the conversation, and that name is
+    // what a resume asks for, once the CLI has written it.
+    await sendAnswered(client, uri);
     await emit({ type: 'system', subtype: 'init', session_id: 'sdk-wide' });
     wrote('sdk-wide', String(sessionQueries().at(-1)?.options.cwd));
     const before = sessionQueries().length;
@@ -644,8 +646,9 @@ describe('more than one directory', () => {
       },
     });
     await settle();
+    await sendAnswered(client, uri);
     /*
-     * A new CLI, on the same conversation.
+     * A new CLI, on the same conversation, started by the next send.
      *
      * The SDK takes its directories when the process starts and offers no way
      * to add one after, so the honest implementation is to start it again and
@@ -713,6 +716,7 @@ describe('more than one directory', () => {
       method: 'createChat',
       params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
     });
+    await sendAnswered(client, chat);
     // The first entry is the session's process root and is not a choice; what
     // a chat picks among is the peers, and the CLI takes those at startup.
     expect(sessionQueries().at(-1)?.options.cwd).toBe(ONE);
@@ -738,14 +742,18 @@ describe('more than one directory', () => {
       method: 'createChat',
       params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
     });
+    await sendAnswered(client, uri);
+    await sendAnswered(client, chat);
     const before = sessionQueries().length;
     client.handle({
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(TWO) } },
     });
     await settle();
-    // One CLI, not the session's every chat: the session's own set has not
-    // moved, so the default chat is still running where it was.
+    await sendAnswered(client, chat);
+    // One CLI, the chat's next send's, not the session's every chat: the
+    // session's own set has not moved, so the default chat is still running
+    // where it was.
     expect(sessionQueries().length).toBe(before + 1);
     expect(sessionQueries().at(-1)?.options.additionalDirectories)
       .toEqual([THREE, TWO]);
@@ -755,6 +763,7 @@ describe('more than one directory', () => {
       params: { channel: chat, action: { type: 'chat/workingDirectoryRemoved', directory: uriOf(THREE) } },
     });
     await settle();
+    await sendAnswered(client, chat);
     expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([TWO]);
 
     // And the same rule as `createChat`, said rather than silently widening.
@@ -800,6 +809,7 @@ describe('more than one directory', () => {
     const watching = host.accept(other);
     await watching.handle(hello(['0.9.0']));
     await watching.handle({ method: 'subscribe', params: { channel: uri } });
+    await sendAnswered(client, uri);
     const before = sessionQueries().length;
     await send(client, uri, 4, { type: 'session/workingDirectorySet', directory: uriOf(TWO) });
     await send(client, uri, 5, { type: 'session/workingDirectoryRemoved', directory: uriOf(ELSEWHERE) });
@@ -825,6 +835,7 @@ describe('more than one directory', () => {
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     await send(client, uri, 7, { type: 'session/workingDirectoryReplaced', directory: uriOf(ONE), replacement: uriOf(EXTRA) });
     await settle(8);
+    await sendAnswered(client, uri);
 
     expect(sessionQueries().at(-1)?.options.cwd).toBe(EXTRA);
     expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([TWO, THREE]);
@@ -841,6 +852,7 @@ describe('more than one directory', () => {
     const { client, uri } = await watched();
     await send(client, uri, 8, { type: 'session/workingDirectoryReplaced', directory: uriOf(TWO), replacement: uriOf(EXTRA) });
     await settle(8);
+    await sendAnswered(client, uri);
 
     expect(sessionQueries().at(-1)?.options.cwd).toBe(ONE);
     expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([EXTRA, THREE]);
@@ -853,6 +865,7 @@ describe('more than one directory', () => {
     p.request = async (method) => { asked.push(method); return { trusted: true }; };
     await send(client, uri, 9, { type: 'session/workingDirectoryReplaced', directory: uriOf(ONE), replacement: uriOf(THREE) });
     await settle(8);
+    await sendAnswered(client, uri);
 
     // The protocol's own example: [A, B, C] with A -> C becomes [C, B].
     expect(await foldersOf(client, uri)).toEqual([uriOf(THREE), uriOf(TWO)]);
@@ -882,6 +895,7 @@ describe('more than one directory', () => {
       params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
     });
     await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await sendAnswered(client, chat);
     const before = sessionQueries().length;
     await send(client, chat, 12, { type: 'chat/workingDirectorySet', directory: uriOf(THREE) });
     await send(client, chat, 13, { type: 'chat/workingDirectoryRemoved', directory: uriOf(TWO) });
@@ -1090,10 +1104,10 @@ describe('a session entering a folder nobody vouched for', () => {
         params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: `work in ${folder}` } } },
       });
       await settle();
-      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+      const host = builtServer('host') as {
         tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
-      }> | undefined;
-      const tool = servers?.host?.tools.find((one) => one.name === 'set_workspace');
+      } | undefined;
+      const tool = host?.tools.find((one) => one.name === 'set_workspace');
       if (!tool) throw new Error('the host offered no set_workspace');
       await tool.handler({ workspaceFolder: folder, isolation });
       // The move is made when the turn that asked for it is over, and not

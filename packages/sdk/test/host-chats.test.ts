@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk, serving,
+  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk, sendAnswered, serving,
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -129,8 +129,21 @@ describe('dropping the turns after one', () => {
     });
     await settle();
 
+    // The history through that turn is still here: a truncation that emptied
+    // the chat is not what the action asks for.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+
     // A CLI that still remembered the dropped turn would answer the edited
-    // message with the one it replaced still in front of it.
+    // message with the one it replaced still in front of it. The next send
+    // starts one on the cut.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
     expect(sessionQueries().length).toBe(before + 1);
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.resume).toBe('sdk-1');
@@ -141,13 +154,6 @@ describe('dropping the turns after one', () => {
     // the turns from, so the id has to survive it - a new one would leave
     // every later resume reaching the transcript that still has them.
     expect(fresh?.options.forkSession).toBeUndefined();
-
-    // The history through that turn is still here: a truncation that emptied
-    // the chat is not what the action asks for.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { id: string }[] } };
-    }).snapshot.state;
-    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
   /*
@@ -277,19 +283,24 @@ describe('dropping the turns after one', () => {
      * `turnId` is optional and its absence means "clear everything", which as
      * a rewind is a cut before the first prompt, with no entry to name. The
      * CLI forgets it instead, as the reference's agent does: its conversation
-     * is deleted and a new CLI starts with nothing to resume.
+     * is deleted and the next send starts a CLI with nothing to resume.
      */
     expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
     expect(sdk.deleted).toEqual(['sdk-1']);
-    expect(sessionQueries().length).toBe(before + 1);
-    const fresh = sessionQueries().at(-1);
-    expect(fresh?.options.resume).toBeUndefined();
-    expect(fresh?.options.resumeSessionAt).toBeUndefined();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(true);
     const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: unknown[] } };
     }).snapshot.state;
     expect(state.turns).toEqual([]);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
+    expect(sessionQueries().length).toBe(before + 1);
+    const fresh = sessionQueries().at(-1);
+    expect(fresh?.options.resume).toBeUndefined();
+    expect(fresh?.options.resumeSessionAt).toBeUndefined();
   });
 
   it('says a conversation started over back with the origin of the client that asked', async () => {
@@ -329,19 +340,25 @@ describe('a chat made out of another', () => {
         source: { kind: 'fork', chat: chatUri, turnId: 't1' },
       },
     });
+    // The conversation through that turn is visible in the new chat: a fork
+    // that starts empty is a new chat, not a fork.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+
+    // The new chat's first send starts its CLI, on the conversation forked there.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } } },
+    });
+    await settle();
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.forkSession).toBe(true);
     // The turn's *last* entry, not the prompt it began with: a fork copies the
     // conversation through the chosen turn, answer included, so cutting at the
     // prompt would leave the new chat showing an answer its agent never gave.
     expect(fresh?.options.resumeSessionAt).toBe('sdk-reply-1');
-
-    // And the conversation through that turn is visible in the new chat: a
-    // fork that starts empty is a new chat, not a fork.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
-      snapshot: { state: { turns: { id: string }[] } };
-    }).snapshot.state;
-    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
   /*
@@ -560,6 +577,9 @@ describe('more than one chat in a session', () => {
   it('spreads a session-scoped key across every chat', async () => {
     const { client, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    // The CLI each chat's first send starts.
+    await sendAnswered(client, uri);
+    await sendAnswered(client, second);
     const before = sdk.modesSet.length;
     await client.handle({
       method: 'dispatchAction',
@@ -648,7 +668,7 @@ describe('more than one chat in a session', () => {
     });
     await settle();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    await settle();
+    await sendAnswered(client, second);
     // Config belongs to the session, not to whichever chat happened to be
     // open when it was answered.
     expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');

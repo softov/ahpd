@@ -236,7 +236,12 @@ it('reads the plugins the control protocol reports, and projects one as a contai
   // `initializationResult()` carries no plugins, so the session has to ask
   // `reloadPlugins()` for them; a session that did not would list a plugin's
   // children as if the person had written them under `~/.claude`.
-  const { peer: p } = await running([{ name: 'acme', path: '/plugins/acme', version: '1.0.0' }]);
+  const { client, peer: p } = await running([{ name: 'acme', path: '/plugins/acme', version: '1.0.0' }]);
+  // The CLI its first send starts, which is the one asked.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
   await settle(10);
   const changed = actions(p).filter((one) => one.action.type === 'session/customizationsChanged').at(-1);
   const customizations = changed?.action.customizations as { type: string; uri: string; name: string; version?: string }[] | undefined;

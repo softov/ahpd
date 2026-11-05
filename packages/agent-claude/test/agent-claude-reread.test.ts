@@ -89,7 +89,7 @@ const settle = async (times = 30): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-/** A session whose first list has been said, with what it says from then on. */
+/** A session whose first send started its CLI and whose first list has been said, with what it says from then on. */
 async function open(extra: Record<string, unknown> = {}) {
   const said: Bag[] = [];
   const session = createSession({
@@ -99,6 +99,7 @@ async function open(extra: Record<string, unknown> = {}) {
     emit: (_channel, action) => { said.push(action as Bag); },
     ...extra,
   });
+  session.sendMessage('t1', 'hello');
   await settle();
   return { session, said };
 }

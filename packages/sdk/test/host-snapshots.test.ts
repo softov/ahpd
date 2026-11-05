@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools, machine, open, peer,
+  resetSdk, actions, builtServer, claude, createHost, echo, emit, hello, hostTools, machine, open, peer,
  sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
@@ -1315,8 +1315,8 @@ describe('a chat another backend serves', () => {
     const session = 'ahp-session:/mine';
     await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const tool = served?.tools.find((one) => one.name === 'make_chat');
     if (tool === undefined) throw new Error('no make_chat');
     const made = await tool.handler({ provider: 'other', prompt: 'say hi' });
     if (made.isError === true) throw new Error(made.content[0]?.text ?? 'make_chat failed');

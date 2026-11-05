@@ -46,7 +46,8 @@ export const rootOf = (plugin: Bag): string => {
  * needs **before** anybody says anything - the models to pick from, the
  * commands behind a slash. Waiting for the `init` message would mean a
  * composer that can only offer them once the conversation has started, which
- * is exactly too late.
+ * is exactly too late. A session no CLI has answered yet hands in the names
+ * its disk scan found, in the same shapes.
  */
 export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = [], ours?: Set<string>, off: Bag[] = [], disk?: Disk, stopRequested?: Set<string>): Bag[] {
   const out: Bag[] = [];
@@ -252,10 +253,11 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      */
     if (handedOf(name) !== undefined) continue;
     const command = offered.get(name);
-    const described = str(skill.description) ?? str(bag(command).description);
-    const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
     const plugin = pluginOf(name);
     const file = plugin === undefined ? skillFileOf(name) : undefined;
+    // The CLI's words for it, or its file's own where the CLI said none.
+    const described = str(skill.description) ?? str(bag(command).description) ?? file?.description;
+    const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
     const own = plugin === undefined ? name : bare(plugin, name);
     const inPlugin = plugin === undefined ? '' : `${str(plugin.path) ?? ''}/skills/${own}/SKILL.md`;
     const leaf: Bag = {
@@ -288,6 +290,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const plugin = pluginOf(name);
     const file = plugin === undefined ? skillFileOf(name) : undefined;
     const own = plugin === undefined ? name : bare(plugin, name);
+    const described = str(command.description) ?? file?.description;
     const leaf: Bag = {
       type: 'skill',
       id: `skill:${name}`,
@@ -296,7 +299,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
         ? `${str(plugin.path) ?? ''}/commands/${own}.md`
         : (file !== undefined ? uriOf(file.path) : builtin(name)),
       enabled: true,
-      ...(str(command.description) ? { description: str(command.description) as string } : {}),
+      ...(described ? { description: described } : {}),
       ...(str(command.argumentHint) ? { _meta: { 'ahpd.argumentHint': str(command.argumentHint) as string } } : {}),
     };
     if (plugin === undefined) place(file?.scope ?? 'builtin', 'skill', leaf);
@@ -327,6 +330,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const at = file !== undefined ? uriOf(file.path)
       : inPlugin !== undefined && existsSync(inPlugin) ? inPlugin
         : undefined;
+    const described = str(found.description) ?? file?.description;
     const leaf: Bag = {
       type: 'agent',
       id: `agent:${name}`,
@@ -343,7 +347,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
        */
       uri: at ?? `${INTERNAL_AGENT}${encodeURIComponent(own)}`,
       enabled: true,
-      ...(str(found.description) ? { description: str(found.description) as string } : {}),
+      ...(described ? { description: described } : {}),
     };
     /*
      * An agent with no file among the personal agents, where VS Code's Claude
@@ -427,10 +431,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * authorization server is announced. A stdio server has no URL and so no
      * resource to describe, and stays an error - which is the honest answer
      * for a thing a client cannot sign into over the network.
+     *
+     * A server no CLI has reported on is one a file declares and nothing has
+     * started, `stopped`, as VS Code's scan lists one before its session starts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeMcpScan.ts#L43-L51
      */
     const published = wanted?.get(name);
     const state: OnWire<McpServerState> = reported === 'connected' ? { kind: 'ready' }
-      : reported === 'disabled' ? { kind: 'stopped' }
+      : reported === 'disabled' || reported === undefined ? { kind: 'stopped' }
         : reported === 'failed'
           ? {
             kind: 'error',

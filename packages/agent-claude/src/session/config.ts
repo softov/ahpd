@@ -208,8 +208,9 @@ export function createConfig(ctx: SessionContext): Config {
       const modes = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
+      // The CLI running takes it now, and a session's first CLI starts on it.
       ctx.config.permissionMode = found;
-      void ctx.query.setPermissionMode(found).catch(() => {});
+      void ctx.query?.setPermissionMode(found).catch(() => {});
       return true;
     },
 

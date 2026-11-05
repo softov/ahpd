@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
-import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
 
 /*
@@ -52,7 +52,9 @@ const opened = async (client: Client, uri: string): Promise<Fake> => {
     params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
-  // `describe` answers on its own clock; the server's state arrives with it.
+  // The CLI its first send starts, whose `describe` answers on its own clock;
+  // the server's state arrives with it.
+  await sendAnswered(client, uri);
   await settle(8);
   const cli = sessionQueries().at(-1);
   if (cli === undefined) throw new Error(`no CLI runs for ${uri}`);
@@ -130,6 +132,7 @@ it('asks a client watching the session to sign in under its one URI, and refuses
     params: { channel: ONE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
   await ana.client.handle({ method: 'subscribe', params: { channel: ONE } });
+  await sendAnswered(ana.client, ONE);
   await settle(8);
 
   // The server starts asking for a sign-in, read when somebody asks it to start.

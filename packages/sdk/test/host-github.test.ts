@@ -6,8 +6,8 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, emit, gitChanges, hello, hostTools, machine,
- peer, sdk, sessionQueries, settle,
+  resetSdk, actions, builtServer, claude, createHost, emit, gitChanges, hello, hostTools, machine,
+ peer, sdk, sendAnswered, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
 
@@ -286,7 +286,7 @@ describe('what a session recorded', () => {
   };
   const add = (index: number, label: string, link: string) => toolsOf(index)['add_artifact_or_reference']?.handler({ items: [{ type: 'website', label, isArtifact: false, link }] });
   const toolsOf = (index: number) => Object.fromEntries(
-    ((sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
+    ((builtServer('host', index) as { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] } | undefined)?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 
@@ -299,7 +299,9 @@ describe('what a session recorded', () => {
   };
 
   it('tells the model when to record one, in the reference host\'s words, beside each prompt', async () => {
-    await withTools();
+    const { client, uri } = await withTools();
+    // The CLI its first send starts.
+    await sendAnswered(client, uri);
     const prompt = sessionQueries().at(-1)?.options.systemPrompt as { type: string; preset: string; append?: string } | undefined;
     expect(prompt).toEqual({ type: 'preset', preset: 'claude_code' });
     expect(await toldOnPrompt()).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
@@ -307,6 +309,7 @@ describe('what a session recorded', () => {
 
   it('gives the long wording whatever a client pushes, and offers every tool the same', async () => {
     const { client, uri } = await withTools({ telemetryLevel: 'off' });
+    await sendAnswered(client, uri);
     const told = await toldOnPrompt();
     expect(told).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
     expect(told).not.toContain('Artifact registration is optional; default to none.');
@@ -486,7 +489,7 @@ describe('the pull request a create-pr recorded', () => {
   }
 
   const toolsOf = () => Object.fromEntries(
-    ((sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
+    ((builtServer('host') as { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] } | undefined)?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 

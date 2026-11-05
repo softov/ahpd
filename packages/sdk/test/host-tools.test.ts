@@ -24,8 +24,8 @@ import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
-  machine, peer, sdk, serving, sessionQueries, settle, running,
+  resetSdk, actions, builtServer, claude, createHost, echo, emit, hello, hostTools,
+  machine, peer, sdk, sendAnswered, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -112,12 +112,12 @@ describe('tools the host contributes', () => {
 
   it('hands them to the backend as a server it can call', async () => {
     const { held } = await withTools();
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    // On the host's in-process server, which the session hands the CLI it starts.
+    const host = builtServer('host') as { tools: {
       name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    // On the host's in-process server, beside whatever the settings files declared.
-    expect(Object.keys(servers)).toContain('host');
-    const listing = servers.host?.tools.find((one) => one.name === 'list_sessions');
+    }[] } | undefined;
+    expect(host).toBeDefined();
+    const listing = host?.tools.find((one) => one.name === 'list_sessions');
     expect(listing?.description).toContain('List sessions');
 
     // And calling one answers about this host, which is the whole reason a
@@ -141,8 +141,8 @@ describe('tools the host contributes', () => {
   describe('the session tools', () => {
     type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
     const toolsOf = (index = -1): Record<string, Tool> => {
-      const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-      return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+      const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+      return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
     };
     // A refusal is a tool result too: the backend hands the model the message
     // as text, marked as an error, which is how a model learns what it got wrong.
@@ -313,8 +313,8 @@ describe('tools the host contributes', () => {
       // Deferred is the strategy a session runs under whatever was pushed, and
       // the hint that says so is the host's own: the backend turns it into the
       // eager flag a harness reads, and the published definition never carries it.
-      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
-      expect(servers.host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
+      const host = builtServer('host') as { tools: { name: string; _meta?: Record<string, unknown> }[] } | undefined;
+      expect(host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
       // Every other tool is offered, the artifact one included: the strategy
       // shapes rename_chat alone.
       expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
@@ -486,10 +486,10 @@ describe('tools the host contributes', () => {
     const client = served.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reads', provider: 'claude' } });
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    const host = builtServer('host') as { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    const said = await servers.host?.tools.find((one) => one.name === 'ahp_resource')
+    }[] } | undefined;
+    const said = await host?.tools.find((one) => one.name === 'ahp_resource')
       ?.handler({ uri: 'virtual://plugin/notes.md' });
     // Decoded, because a tool result is text and the model reads it.
     expect(said?.content[0]?.text).toBe('done');
@@ -504,10 +504,10 @@ describe('tools the host contributes', () => {
       params: { channel: 'ahp-terminal:/t1', cwd: 'file:///home/softov', command: 'echo' },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/asks', provider: 'claude' } });
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    const host = builtServer('host') as { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    const said = await servers.host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    }[] } | undefined;
+    const said = await host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
     expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
   });
 
@@ -533,10 +533,10 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
       await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
       const person = async (): Promise<string | undefined> => {
-        const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+        const host = builtServer('host') as {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
-        }> | undefined;
-        const tool = servers?.host?.tools.find((one) => one.name === 'who');
+        } | undefined;
+        const tool = host?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
       return { client, person };
@@ -1248,16 +1248,15 @@ describe('tools a client contributes', () => {
 
   it('offers what a client announced to the model, under a name of its own', async () => {
     const { client, chatUri } = await providing();
-    // Given to the running CLI at the next send: a client announces what it
-    // provides when it opens the session, which is after the agent has
-    // started.
-    expect(sdk.mcpDeclared).toHaveLength(0);
+    // In the options of the CLI the first send starts: a client announces what
+    // it provides when it opens the session, before anything is sent, and the
+    // session declares nothing to a CLI it has not started.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
-    expect(sdk.mcpDeclared).toHaveLength(1);
+    expect(sdk.mcpDeclared).toHaveLength(0);
     // Named for the client as well as the tool. Two clients in one session may
     // both provide `openFile`, and the model is offered one list.
     const one = offered().find((tool) => tool.name === 'probe__openFile');

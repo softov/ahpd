@@ -37,9 +37,8 @@ const until = async (check: () => boolean, times = 4000): Promise<void> => {
 /**
  * One session over a spawn hook, and the message its turn failed with.
  *
- * The CLI has to have given up before the turn is asked for, which is the case
- * a person reaches by watching a session open and then typing: a turn started
- * beside a live-looking CLI would take the other road to the same message.
+ * The session starts its CLI at its first send, so the turn is what meets the
+ * spawn's failure, and it says it in the SDK's own words.
  */
 const failureUnder = async (spawn: (asked: Asked) => SpawnedProcess): Promise<string> => {
   const said: string[] = [];
@@ -54,7 +53,6 @@ const failureUnder = async (spawn: (asked: Asked) => SpawnedProcess): Promise<st
       if (String(what.type) === 'chat/error' && typeof error.message === 'string') said.push(error.message);
     },
   });
-  await until(() => session.status() === 2);
   session.sendMessage('t1', 'hello');
   await until(() => said.length > 0);
   session.close();

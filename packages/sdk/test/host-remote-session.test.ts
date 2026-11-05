@@ -350,6 +350,7 @@ describe('telling each turn of a session another window sent here to report back
     // session, so the backend is started without them either way.
     expect(started()).toBeUndefined();
     await says(client, chat, 'first');
+    await settle();
     expect(await told()).toEqual([REPORT_BACK]);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 3 });
 

@@ -18,8 +18,8 @@ const sdk = vi.hoisted(() => {
   const feed: Feed = { held: [], wake: undefined };
   return {
     feed,
-    /** The stream the session pushes prompts onto, which nothing else reads. */
-    prompt: undefined as AsyncGenerator<Bag> | undefined,
+    /** The text of every prompt the CLI read, in order. */
+    prompts: [] as string[],
     /** Every model the CLI was asked for, in the order it was asked. */
     asked: [] as string[],
     /** What the CLI says about a model it will not take. */
@@ -29,6 +29,7 @@ const sdk = vi.hoisted(() => {
     reset() {
       feed.held = [];
       feed.wake = undefined;
+      sdk.prompts = [];
       sdk.asked = [];
       sdk.refuses = {};
       sdk.takes = {};
@@ -48,7 +49,12 @@ const sdk = vi.hoisted(() => {
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { prompt: AsyncGenerator<Bag> }) => {
-    sdk.prompt = given.prompt;
+    // Read by one reader, as the SDK reads a CLI's input: a second `next()` on
+    // the same generator queues behind the first, which would make an absent
+    // prompt look like a late one.
+    void (async () => {
+      for await (const one of given.prompt) sdk.prompts.push(String(((one as Bag).message as Bag).content));
+    })();
     return {
       async *[Symbol.asyncIterator]() {
         for (;;) yield await sdk.next();
@@ -88,16 +94,12 @@ const ended = (): Record<string, unknown> => ({ type: 'result', subtype: 'succes
 
 /**
  * A real session over a CLI that answers nothing, and the two things it says:
- * what it emitted, and what it pushed at the CLI.
- *
- * The prompts are read by one reader for the whole session, because a second
- * `next()` on the same generator queues behind the first - which would make an
- * absent prompt look like a late one.
+ * what it emitted, and what its CLI read, the CLI its first send starts.
  */
 async function open() {
   sdk.reset();
   const said: Bag[] = [];
-  const prompts: string[] = [];
+  const prompts = sdk.prompts;
   const session = createSession({
     uri: 'ahp-session:/model',
     chatUri: 'ahp-chat:/model',
@@ -105,14 +107,6 @@ async function open() {
     emit: (_channel, action) => { said.push(action as Bag); },
   });
   await settle();
-  const stream = sdk.prompt as AsyncGenerator<Bag>;
-  void (async () => {
-    for (;;) {
-      const one = await stream.next();
-      if (one.done === true) return;
-      prompts.push(String(((one.value as Bag).message as Bag).content));
-    }
-  })();
   /** The kinds of the actions the chat received, in order. */
   const chat = (): string[] => said.filter((one) => String(one.type).startsWith('chat/')).map((one) => String(one.type));
   /** The message of one turn, as the session holds the turn. */

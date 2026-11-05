@@ -93,12 +93,13 @@ const settle = async (times = 30): Promise<void> => {
 };
 
 /**
- * A session over a CLI that reports the id it was given, which is what a
- * rebuild has to resume into.
+ * A session over a CLI its first turn started, which reports the id it was
+ * given: what a rebuild has to resume into.
  *
- * The id arrives with the message stream's own init, so it is pushed as soon
- * as the query exists rather than assumed: a session that had never been told
- * its id is a different case and is not what these tests are about.
+ * The id arrives with the message stream's own init, so it is pushed once the
+ * query exists rather than assumed: a session that had never been told its id
+ * is a different case and is not what these tests are about. The first turn
+ * ends, so each turn a case sends is a send of its own.
  */
 async function open() {
   sdk.reset();
@@ -109,9 +110,10 @@ async function open() {
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-agent-')),
     emit: (_channel, action) => { said.push(action as Bag); },
   });
+  session.sendMessage('t0', 'hello');
   await settle();
-  sdk.push({ type: 'system', subtype: 'init', session_id: 'cli-1' });
-  await settle();
+  sdk.push({ type: 'system', subtype: 'init', session_id: 'cli-1' }, { type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle(40);
   return { session, said, prompts: () => sdk.built.length };
 }
 

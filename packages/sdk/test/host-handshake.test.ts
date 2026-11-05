@@ -4,7 +4,7 @@ import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { sdkVersion } from '../src/version.js';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk, serving, sessionQueries,
+  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk, sendTurn, serving, sessionQueries,
   settle, running,
 } from './support/host.js';
 import type { Start } from '../src/types/agent.js';
@@ -797,6 +797,8 @@ describe('authenticating', () => {
         method: 'createSession',
         params: { channel: 'ahp-session:/kept', provider: 'claude', workingDirectories: [`file://${DIR}`] },
       });
+      // The CLI its first send starts.
+      await sendTurn(client, 'ahp-session:/kept');
       await vi.advanceTimersByTimeAsync(10);
       expect((sessionQueries().at(-1)?.options.env as Record<string, string> | undefined)?.ANTHROPIC_API_KEY).toBe('sk-second');
 
@@ -835,6 +837,8 @@ describe('authenticating', () => {
       method: 'createSession',
       params: { channel: 'ahp-session:/authed', provider: 'claude', workingDirectories: [`file://${DIR}`] },
     });
+    // The CLI its first send starts.
+    await sendTurn(client, 'ahp-session:/authed');
     await settle();
 
     const env = sessionQueries().at(-1)?.options.env as Record<string, string> | undefined;

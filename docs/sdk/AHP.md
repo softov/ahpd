@@ -555,6 +555,12 @@ All four are held in a map keyed by id, never in one slot: the CLI calls
 `canUseTool` per tool call, and an agent that fires two in parallel asks twice
 before either is answered.
 
+A `chatInput` request raised for a question the agent itself asked carries
+`_meta.purpose`, `askUser`, as VS Code's agents mark the request they raise
+for one; the window reads the purpose there. `ChatInputRequest` declares no
+`_meta`, and the request rides every action and snapshot that carries it.
+https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentChatInputRequestMeta.ts#L47-L53
+
 An entry is taken down by the chat's state, as VS Code's host keeps a session's
 entries by its chats: once a chat action said on the chat leaves an entry's call
 or question no longer waiting, the host says its `session/inputNeededRemoved`.

@@ -214,7 +214,7 @@ const cli = vi.hoisted(() => ({ options: [] as Record<string, unknown>[] }));
 
 const { createSession } = await import('../src/session.js');
 
-/** The `query()` options one session was built with, given these plugins. */
+/** The `query()` options one session's first send started its CLI with, given these plugins. */
 const queriedWith = (plugins?: { path: string }[]): Record<string, unknown> => {
   cli.options = [];
   createSession({
@@ -223,7 +223,7 @@ const queriedWith = (plugins?: { path: string }[]): Record<string, unknown> => {
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-plugins-')),
     emit: () => {},
     ...(plugins === undefined ? {} : { plugins }),
-  });
+  }).sendMessage('t1', 'hello');
   const one = cli.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
@@ -251,7 +251,7 @@ it('passes no plugins to a session that has none', () => {
  * to pick up already, so nothing of this is sent beside it.
  */
 
-/** The `query()` options one session was built with, given these start fields. */
+/** The `query()` options one session's first send started its CLI with, given these start fields. */
 const startedWith = (start: Record<string, unknown>): Record<string, unknown> => {
   cli.options = [];
   createSession({
@@ -260,7 +260,7 @@ const startedWith = (start: Record<string, unknown>): Record<string, unknown> =>
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-chatid-')),
     emit: () => {},
     ...start,
-  });
+  }).sendMessage('t1', 'hello');
   const one = cli.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
@@ -292,7 +292,7 @@ it('sends no sessionId when the conversation is resumed by name', () => {
 /** One hook input, as the CLI sends it. */
 interface HookInput { hook_event_name: string; tool_input: Record<string, unknown> }
 
-/** The callback the CLI runs before a Bash command, in a session built with `start`. */
+/** The callback the CLI runs before a Bash command, in a session built with `start`, once its first send started one. */
 const bashHook = (start: Record<string, unknown>): ((input: HookInput) => Promise<unknown>) => {
   cli.options = [];
   createSession({
@@ -301,7 +301,7 @@ const bashHook = (start: Record<string, unknown>): ((input: HookInput) => Promis
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-shellenv-')),
     emit: () => {},
     ...start,
-  });
+  }).sendMessage('t1', 'hello');
   const built = cli.options.at(0) as { hooks?: { PreToolUse?: { hooks?: unknown[] }[] } } | undefined;
   const hook = built?.hooks?.PreToolUse?.at(0)?.hooks?.at(0);
   if (typeof hook !== 'function') throw new Error('no Bash hook was registered');

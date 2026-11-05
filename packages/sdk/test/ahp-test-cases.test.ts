@@ -389,18 +389,22 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '232-chat-turnsloaded-prepends-older-turns': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],
+  // A client's announcement is answered with the session's whole list, the
+  // backend's own, which replaces the case's.
+  '035-session-activeclientset-adds-client': [{ reduced: ['customizations'], because: CUSTOMIZED }],
+  '036-session-activeclientset-replaces-client': [{ reduced: ['customizations'], because: CUSTOMIZED }],
   '263-chat-turn-resume-reopens-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
   '269-chat-turn-resume-completes-one-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
 };
 
 /**
  * What a session the driver creates says as it comes up, after its state
- * opened with the case's `initial` and before the case's first action: the
- * customizations its backend offers, in place of the case's, and
- * `session/ready` for a session that starts `creating`.
+ * opened with the case's `initial` and before the case's first action:
+ * `session/ready` for a session that starts `creating`. A Claude session's
+ * backend says the customizations its CLI offers once its first send starts
+ * one, which no case here makes.
  */
 const cameUp = (one: HostCase): (Differs & { because: string })[] => (one.reducer !== 'session' ? [] : [
-  { start: ['customizations'], because: CUSTOMIZED },
   ...(one.initial.lifecycle === 'ready' ? [] : [{ start: ['lifecycle'], because: READY }]),
 ]);
 

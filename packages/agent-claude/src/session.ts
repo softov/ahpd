@@ -68,7 +68,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     chosen: undefined as string | undefined,
     appliedEffort: undefined as string | undefined,
     offering: [] as BoundTool[],
-    query: undefined as unknown as ReturnType<typeof query>,
+    query: undefined as ReturnType<typeof query> | undefined,
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
@@ -89,8 +89,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
     sdkSessionId: options.resume as string | undefined,
     init: undefined as Bag | undefined,
     gone: undefined as string | undefined,
-    customizations: [...(options.seedCustomizations ?? [])] as Bag[],
-    models: [] as { id: string; name: string }[],
+    customizations: [] as Bag[],
+    // The agent's own, which the host seeds a session with, until a CLI answers.
+    models: [...(options.seedModels ?? [])] as { id: string; name: string }[],
     /*
      * A preset that says the sandbox is off, which a stored `on` does not
      * override.
@@ -161,13 +162,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   ctx.buildClientMcpServers();
 
-  // ------------------------------------------------------------------ the run
-  // The login the first CLI signs in with, which the query's environment reads.
+  /*
+   * The session before its first send, which starts its CLI: VS Code's
+   * provisional session, made with no SDK contact. Until a CLI answers, its
+   * lists are the agent's own with the disk scan, and the login a CLI would
+   * sign in with is the first the record names that is ready, which each send
+   * chooses again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1543-L1556
+   */
+  ctx.customizations = ctx.provisionalCustomizations();
   ctx.login = ctx.loginFor(ctx.values);
-  ctx.query = ctx.startQuery(ctx.appliedAgent, true);
-  void ctx.describe().catch(() => {});
-
-  void ctx.consume();
 
   /*
    * Everything this session is waiting on a person or a client for.
@@ -342,12 +346,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
       ctx.releaseCalls('The session was disposed');
       try { rmSync(ctx.initScript, { force: true }); }
       catch { /* a script that was never written */ }
-      ctx.query.close();
+      ctx.query?.close();
       /*
        * The query's cleanup, which `close` starts and does not return: it
        * settles once the CLI's process has exited, or after the SDK's own bound.
+       * A session whose first send never came has no CLI to wait for.
        */
-      const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
+      const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.();
       return Promise.resolve(disposed).catch(() => undefined);
     },
   };

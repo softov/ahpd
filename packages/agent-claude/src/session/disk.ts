@@ -29,7 +29,7 @@ export interface DiskFile {
   scope: DiskScope;
   /** The absolute path of the file. */
   path: string;
-  /** A rule's own description, from its frontmatter. */
+  /** A skill's, an agent's or a rule's own description, from its frontmatter. */
   description?: string;
   /** A rule's `paths`, the files it applies to. */
   globs?: string[];
@@ -158,7 +158,8 @@ function skillsIn(dir: string, scope: DiskScope): DiskFile[] {
     const path = join(dir, folder, 'SKILL.md');
     const front = frontmatterOf(path);
     if (front === undefined) continue;
-    out.push({ kind: 'skill', name: text(front.name) ?? folder, scope, path });
+    const description = text(front.description);
+    out.push({ kind: 'skill', name: text(front.name) ?? folder, scope, path, ...(description !== undefined ? { description } : {}) });
   }
   return out;
 }
@@ -198,8 +199,9 @@ function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope): Dis
     const front = frontmatterOf(path);
     if (front === undefined) continue;
     const own = file.slice(0, -3);
+    const description = text(front.description);
     // An agent is run by the name its frontmatter gives; a command by its file's.
-    out.push({ kind, name: kind === 'agent' ? (text(front.name) ?? own) : own, scope, path });
+    out.push({ kind, name: kind === 'agent' ? (text(front.name) ?? own) : own, scope, path, ...(description !== undefined ? { description } : {}) });
   }
   return out;
 }
