@@ -224,15 +224,16 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * resource names the chat, and the chat keeps its URI.
      */
     /*
-     * A session that did not exist a moment ago, and is running now. Said
-     * ready before it is announced, which is `openSession`'s order and for its
-     * reason: a client told about a session it cannot subscribe to yet has been
-     * told about something that is not there.
+     * A session that did not exist a moment ago, and is running now with the
+     * moved chat's turns: announced, then said ready, as VS Code's host
+     * announces a session made with its conversation and then says it ready.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6398-L6411
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6488-L6490
      */
     if (to === undefined) {
       keepProvider(into, held.agent, found.chat);
-      dispatch(into, { type: 'session/ready' });
       sessionAdded(into);
+      dispatch(into, { type: 'session/ready' });
       activeSessionsMoved();
     }
     /*

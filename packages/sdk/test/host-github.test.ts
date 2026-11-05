@@ -6,7 +6,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, emit, flushed, gitChanges, hello, hostTools, machine,
+  resetSdk, actions, claude, createHost, emit, firstMessage, flushed, gitChanges, hello, hostTools, machine,
  peer, sdk, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
@@ -384,6 +384,8 @@ describe('what a session recorded', () => {
 
   it('publishes them on the session and its row, and says the change as the whole map', async () => {
     const { client, peer: p, uri } = await withTools();
+    // A session has a row from its first message.
+    await firstMessage(client, chatUriFor(uri));
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: [0-9a-f-]+$/);

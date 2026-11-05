@@ -10,7 +10,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, echo, flushed, machine, resetSdk, actions, emit, hello, open, peer,
+  claude, createHost, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
   sdk, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
@@ -42,6 +42,48 @@ describe('the catalogue', () => {
      * so the same conversation drew or did not depending on which it picked.
      */
     expect(listed.items[0]?.resource).toBe('ahp-session:/new');
+  });
+
+  /*
+   * A session made fresh is provisional until its first message: its state is
+   * there for the client that made it, creating, and nobody is told of it or
+   * handed it in a listing; its first turn announces it and then says it
+   * ready, as VS Code's host keeps a provisional session unannounced until it
+   * materializes, and one never announced goes without a word.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+   */
+  it('keeps a session it made unannounced and unlisted until its first message, which announces it and then says it ready', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const listed = async (): Promise<string[]> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+      items: { resource: string }[];
+    }).items.map((one) => one.resource);
+    const added = () => p.notes.filter((n) => n.method === 'root/sessionAdded'
+      && (n.params as { summary: { resource: string } }).summary.resource === uri);
+    expect(added()).toEqual([]);
+    expect(await listed()).not.toContain(uri);
+    const before = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { lifecycle: string } } };
+    expect(before.snapshot.state.lifecycle).toBe('creating');
+
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } } });
+    await settle();
+    expect(added()).toHaveLength(1);
+    const order = p.notes.flatMap((n): string[] => {
+      if (n.method === 'root/sessionAdded') return ['added'];
+      const sent = n.params as { channel?: string; action?: { type?: string } };
+      if (n.method === 'action' && sent.channel === uri && sent.action?.type === 'session/ready') return ['ready'];
+      if (n.method === 'action' && sent.channel === chatUri && sent.action?.type === 'chat/turnStarted') return ['started'];
+      return [];
+    });
+    expect(order).toEqual(['started', 'added', 'ready']);
+    expect(await listed()).toContain(uri);
+  });
+
+  it('removes a session it never announced without a word', async () => {
+    const { client, peer: p, uri } = await running();
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    await settle();
+    expect(p.notes.filter((n) => n.method === 'root/sessionRemoved')).toEqual([]);
   });
 
   /*
@@ -1104,7 +1146,8 @@ describe("a row lists the session's chats", () => {
   const resourcesOf = (p: ReturnType<typeof peer>, session: string) => chatsOf(p, session).map((one) => one.resource);
 
   it("lists a session's chats and the one a client gets when it names none", async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
 
@@ -1150,7 +1193,8 @@ describe("a row lists the session's chats", () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
    */
   it('says a burst of a running session\'s moves as one notification, once they are quiet', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     await flushed();
     const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
       && (n.params as { session?: string }).session === uri);
@@ -1165,7 +1209,8 @@ describe("a row lists the session's chats", () => {
   });
 
   it('says the row again when a chat opens and when one closes', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const second = 'ahp-chat:/second';
     const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
       && (n.params as { session?: string }).session === 'ahp-session:/live').length;
@@ -1315,16 +1360,20 @@ describe('a summary that did not change', () => {
     .filter((n) => n.session === session)
     .map((n) => n.changes);
 
-  /** The same title again, which is a move of nothing. */
+  /**
+   * A title, and the row it moves once the moves are quiet: a session a turn
+   * has run in is said on VS Code's 100 ms debounce.
+   */
   const retitle = async (client: { handle(request: Request): Promise<unknown> }, channel: string, title: string) => {
     await client.handle({ method: 'dispatchAction', params: { channel, action: { type: 'session/titleChanged', title } } });
-    await settle();
+    await flushed();
   };
 
   it('sends one summary for however many calls moved nothing', async () => {
-    const { client, peer: p } = await running();
-    // The row a session sends once its customizations arrive comes first.
-    await settle();
+    const { client, peer: p, chatUri } = await running();
+    // The row a session sends once its customizations arrive comes first, and
+    // a session is said at all from its first message.
+    await firstMessage(client, chatUri);
     const opened = rowsMoved(p, 'ahp-session:/live').length;
     await retitle(client, 'ahp-session:/live', 'Paging');
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
@@ -1339,7 +1388,9 @@ describe('a summary that did not change', () => {
 
   it('sends again for a title that moved, and for an activity that moved', async () => {
     const { client, peer: p, chatUri } = await running();
-    await settle();
+    // Said from its first message, which ends before the turn below starts.
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     const opened = rowsMoved(p, 'ahp-session:/live').length;
     await retitle(client, 'ahp-session:/live', 'Paging');
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
@@ -1356,7 +1407,7 @@ describe('a summary that did not change', () => {
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'read it' } } },
     });
-    await settle();
+    await flushed();
     const busy = rowsMoved(p, 'ahp-session:/live');
     expect(busy.length).toBeGreaterThan(said);
     expect(busy.at(-1)?.activity).toEqual(expect.any(String));
@@ -1465,14 +1516,14 @@ describe('a summary that did not change', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
     try {
-      const { client, peer: p, uri } = await running();
-      await settle();
+      const { client, peer: p, uri, chatUri } = await running();
+      await firstMessage(client, chatUri);
 
       await client.handle({ method: 'disposeSession', params: { channel: uri } });
       await settle();
       const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-      await settle();
+      await firstMessage(client, chatUri);
       // The same conversation, under the same name, added whole: what a client
       // that watched it go now holds, and what the next move is a change from.
       expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);

@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, flushed, hello, hostTools, machine, open, peer,
+  resetSdk, actions, claude, createHost, echo, emit, firstMessage, flushed, hello, hostTools, machine, open, peer,
  sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
@@ -200,11 +200,12 @@ describe('what it says it is doing', () => {
 
   it('takes a title from a client, for the row or for one chat, a blank one as sent', async () => {
     const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: 'Paging' } } });
     await settle();
     await flushed();
-    expect(actions(p, uri).find((e) => e.action.type === 'session/titleChanged')?.action.title).toBe('Paging');
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').at(-1)?.action.title).toBe('Paging');
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     expect((row?.params as { changes: { title?: string } }).changes.title).toBe('Paging');
     // On a chat channel it names the chat; the default chat is the session,
@@ -381,14 +382,17 @@ describe('the fields a client reads by name', () => {
     .map((n) => ({ method: n.method, params: n.params as Record<string, unknown> }));
 
   it('adds a session before any change to its row, which a client holds only once it is added', async () => {
-    const { peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
+    await flushed();
     const about = catalogue(p).filter((n) => n.params.session === uri
       || (n.params.summary as { resource?: string } | undefined)?.resource === uri);
     expect(about[0]?.method).toBe('root/sessionAdded');
   });
 
   it('names the session in root/sessionRemoved', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
 
     const gone = catalogue(p).find((n) => n.method === 'root/sessionRemoved');
@@ -418,10 +422,11 @@ describe('the fields a client reads by name', () => {
       expect(changes).not.toHaveProperty('provider');
       expect(changes).not.toHaveProperty('createdAt');
     }
-    // What moved is in there under its own name: the row a client holds, each
+    // What moved is in there under its own name: the row a client holds, the
+    // one the session was added with at this, its first message, and each
     // change spread over the one before, says the session is running, the read
     // bit beside it the person's and not the turn's.
-    const row = moves.reduce<Record<string, unknown>>((held, moved) => ({ ...held, ...(moved.params.changes as Record<string, unknown>) }), {});
+    const row = rowOf(p, 'ahp-session:/live') ?? {};
     expect(Number(row.status) & (Status.IsRead - 1)).toBe(Status.InProgress);
     expect(row.title).toEqual(expect.any(String));
   });
@@ -835,6 +840,7 @@ describe('the fields a client reads by name', () => {
 
   it('leaves createdAt where it was while the session goes on', async () => {
     const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
     const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
     expect(born).toEqual(expect.any(String));
@@ -889,8 +895,21 @@ describe('the fields a client reads by name', () => {
   const sessionStatus = (p: ReturnType<typeof peer>, session: string) =>
     rowOf(p, session)?.status as number | undefined;
 
+  /**
+   * A session's first turn, answered, and its default chat read: the session
+   * is announced at its first message, and its turn's end leaves the chat and
+   * the session unread until the chat is read.
+   */
+  const settledIn = async (client: Awaited<ReturnType<typeof running>>['client'], chatUri: string): Promise<void> => {
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/isReadChanged', isRead: true } } });
+    await settle();
+  };
+
   it("marks one chat read without moving its other chats", async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     // Subscribed, because a notification goes to the connections watching a
@@ -1046,7 +1065,8 @@ describe('the fields a client reads by name', () => {
   });
 
   it('archives one chat, and restores it, without archiving the session', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const archive = (on: boolean) => client.handle({
@@ -1075,6 +1095,7 @@ describe('the fields a client reads by name', () => {
    */
   it('refuses an archive of the default chat, and archives a session without its chats', async () => {
     const { host, client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     // A second client on the same session and chat.
     const q = peer();
     const other = host.accept(q);

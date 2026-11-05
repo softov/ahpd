@@ -378,7 +378,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
-const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const AGENTS = 'types/channels-root/actions.ts, root/agentsChanged: "Fired when available agent backends or their models change."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
 const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
@@ -424,16 +423,12 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
  * with the case's `initial` and before the case's first action: on the root,
  * the agents the session the driver creates reported at its handshake, in
  * place of the case's; on a session, the customizations its backend offers,
- * in place of the case's, and `session/ready` for a session that starts
- * `creating`.
+ * in place of the case's. A session made fresh says nothing of its lifecycle
+ * until its first message, so it starts with the one the case's state names.
  */
 const cameUp = (one: HostCase): (Differs & { because: string })[] => {
   if (one.reducer === 'root') return [{ start: ['agents'], because: AGENTS }];
-  if (one.reducer !== 'session') return [];
-  return [
-    { start: ['customizations'], because: CUSTOMIZED },
-    ...(one.initial.lifecycle === 'ready' ? [] : [{ start: ['lifecycle'], because: READY }]),
-  ];
+  return one.reducer === 'session' ? [{ start: ['customizations'], because: CUSTOMIZED }] : [];
 };
 
 /** Where a refusal happened, in the terms the host's words use. */

@@ -37,6 +37,27 @@ beforeEach(resetSdk);
  * in `host.test.ts`, where the backend is faked.
  */
 
+/**
+ * A session's first turn, answered by the CLI it was made with, so it is
+ * announced and at rest: a session made fresh is provisional until its first
+ * message, and a tool names only a session the host has announced, as VS
+ * Code's host keeps one. Called right after the session is made, while its CLI
+ * is the newest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+ */
+const answeredFirst = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<void> => {
+  const cli = sessionQueries().at(-1);
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await settle(8);
+  cli?.frames.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  cli?.wake?.();
+  if (cli !== undefined) cli.wake = undefined;
+  await settle(8);
+};
+
 const row = (over: Partial<Summary> & Record<string, unknown> = {}): Summary => ({
   resource: 'ahp-session:/s1',
   provider: 'claude',
@@ -413,6 +434,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     // a member may write a session and may not delete one that is not theirs.
     const { client: other } = await signing(host, 'other');
     const theirs = await opening(other, 'theirs');
+    await answeredFirst(other, theirs.uri);
     await saying(client, lead.chat, 't1', 'start something else');
     expect(said(await call('create_session', {
       relationship: 'independent', workspace: root, title: 'Child', prompt: 'go', worktree: false,
@@ -467,6 +489,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     const { host } = hosting({ member: MEMBER });
     const { client } = await signing(host, 'member');
     const idle = await opening(client, 'idle');
+    await answeredFirst(client, idle.uri);
     // Nothing is running in this chat. A window outlives the turn it sent, so a
     // tool can be reached now that the turn that asked for it has ended - and
     // no turn is what carries a person, so the call is nobody's. The danger is a
@@ -502,6 +525,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     // a member may write a session and may not delete another person's.
     const { client: other } = await signing(after, 'other');
     const theirs = await opening(other, 'theirs');
+    await answeredFirst(other, theirs.uri);
 
     // Due only now, and the member is here to carry it.
     time.pass(2);
@@ -594,7 +618,9 @@ describe("VS Code's limits on spawning and messaging", () => {
   const started = async (client: Client, name: string): Promise<{ held: string; at: number }> => {
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${name}`, provider: 'claude' } });
     await settle(8);
-    return { held: `ahp-session:/${name}`, at: sessionQueries().length - 1 };
+    const at = sessionQueries().length - 1;
+    await answeredFirst(client, `ahp-session:/${name}`);
+    return { held: `ahp-session:/${name}`, at };
   };
 
   /** One session's tools make another, whose own tools are then the newest. */
@@ -1143,6 +1169,7 @@ describe('a tool a person calls with no session', () => {
     await signIn(client, 'member');
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/inbox', provider: 'claude' } });
     await settle(8);
+    await answeredFirst(client, 'ahp-session:/inbox');
     await run(host, { principal: member }, 'send_message', { session: 'ahp-session:/inbox', message: 'take a look' });
     await settle(8);
     // The session's own tools run in the turn that message began, so a write

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open,
-  peer, sdk, serving, sessionQueries, settle, running, wrote,
+  peer, sdk, serving, sessionQueries, settle, running, wrote, firstMessage,
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 
@@ -112,6 +112,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
 
     // Listed and announced under the name it was made with.
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
@@ -138,6 +139,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
@@ -159,6 +161,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `pi:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`pi:/${id}`, 'utf8').toString('base64url')}`);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
@@ -219,6 +222,7 @@ describe('a session a client names', () => {
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
     // The id is what everything kept about a session is stored by, so a
     // second one under it would share the first one's flags, config and marks.
     await expect(client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'codex' } }))
@@ -576,6 +580,7 @@ describe('a session asked for by the name its creator used', () => {
 
   it('disposes it, and says so under the name it is held by', async () => {
     const { client, peer: p } = await created();
+    await firstMessage(client, chatOfSession(given));
     await client.handle({ method: 'disposeSession', params: { channel: given } });
     const removed = p.notes.filter((n) => n.method === 'root/sessionRemoved')
       .map((n) => (n.params as { session: string }).session);
@@ -740,6 +745,8 @@ describe('an older VS Code window', () => {
     await maker.handle(hello(['1.0.0'], { clientId: 'maker', initialSubscriptions: ['ahp-root://'] }));
     await maker.handle({ method: 'createSession', params: { channel: AHP, provider: 'claude' } });
     await maker.handle({ method: 'createSession', params: { channel: NAMED, provider: 'claude' } });
+    await firstMessage(maker, derived(AHP));
+    await firstMessage(maker, derived(NAMED));
     return { host, maker };
   };
   const listed = async (client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> }) =>
@@ -801,7 +808,8 @@ describe('an older VS Code window', () => {
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://'] }));
     await maker.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
     await maker.handle({ method: 'createSession', params: { channel: 'claude:/latest', provider: 'claude' } });
-    await settle();
+    await firstMessage(maker, derived('ahp-session:/later'));
+    await firstMessage(maker, derived('claude:/latest'));
     await maker.handle({ method: 'disposeSession', params: { channel: AHP } });
     await settle();
     const said = (method: string) => p.notes.filter((n) => n.method === method).map((n) => {
@@ -845,6 +853,7 @@ describe('an older VS Code window', () => {
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
     const made = 'claude:/9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f';
     await window.handle({ method: 'createSession', params: { channel: made, provider: 'claude' } });
+    await firstMessage(window, derived(made));
     const other = host.accept(peer());
     await other.handle(hello(['1.0.0'], { clientId: 'other' }));
     expect(await listed(window)).toEqual([made]);

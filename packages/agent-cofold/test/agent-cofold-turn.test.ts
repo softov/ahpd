@@ -1429,9 +1429,14 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
   const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  const command = 't1';
+  // A first message the model answers, which announces the session: one made
+  // fresh is provisional until its first send, as VS Code's host keeps it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  begin(client, chatUri, 't1', 'hi');
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete', 't1')).toBe(Status.Idle);
+  const command = 't2';
   begin(client, chatUri, command, '!echo cofold-ran-it');
-  await until(() => ended(p, chatUri), 4000);
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2, 4000);
   expect(types(p, chatUri)).toContain('chat/toolCallComplete');
   /*
    * The status a client's list holds once the command's moves were quiet:

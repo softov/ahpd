@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk,
+  resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
   serving, settle, running,
 } from './support/host.js';
 
@@ -443,7 +443,9 @@ describe('what the harness offers', () => {
 
   it('opens the session even when the CLI will not answer yet', async () => {
     sdk.init = {};
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
+    // Ready from its first message, as a session made fresh is.
+    await firstMessage(client, chatUri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { type: string; children?: unknown[] }[]; lifecycle: string } };
     }).snapshot.state;

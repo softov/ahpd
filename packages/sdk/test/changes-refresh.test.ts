@@ -11,6 +11,7 @@ import { gitChanges } from '../src/sessions/changes.js';
 import { gitBranches } from '../src/repo/git.js';
 import { gitWorktrees } from '../src/repo/worktrees.js';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileResources, uriOf } from '../src/resources/resources.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -899,7 +900,7 @@ const firstOperations = async (dir: string, github?: ReturnType<typeof noRequest
   const answer = await client.handle({ method: 'subscribe', params: { channel: CHANGESET } }) as {
     snapshot: { state: { files: unknown[]; operations?: { id: string }[] } };
   };
-  return { peer: p, state: answer.snapshot.state, ids: (answer.snapshot.state.operations ?? []).map((one) => one.id) };
+  return { client, peer: p, state: answer.snapshot.state, ids: (answer.snapshot.state.operations ?? []).map((one) => one.id) };
 };
 
 it('offers the pull request pair on the first subscribe in a directory outside the path', async () => {
@@ -922,11 +923,19 @@ it('offers no pull request on the first subscribe when there is no GitHub to ask
 
 it('announces the session\'s counts on the first subscribe in a directory outside the path', async () => {
   const dir = onGitHub();
-  const { peer: p } = await firstOperations(dir);
-  // The row is published under its provider's name, and its last move holds
-  // the counts once the folder was read.
-  const counted = rowsMoved(p, 'ahp-session:/s').at(-1);
-  expect((counted?.changes as { files?: number } | undefined)?.files).toBe(1);
+  const { client, peer: p } = await firstOperations(dir);
+  // Announced at its first message, its row holding the counts the first
+  // subscribe read, under its provider's name.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await vi.waitFor(() => { expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true); }, { timeout: WAIT_MS });
+  const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
+    .map((n) => (n.params as { summary: Record<string, unknown> }).summary)
+    .find((one) => one.resource === 'ahp-session:/s');
+  const held = rowsMoved(p, 'ahp-session:/s').reduce((row, changes) => ({ ...row, ...changes }), added ?? {});
+  expect((held.changes as { files?: number } | undefined)?.files).toBe(1);
 });
 
 it('answers a subscribe in a directory that is not a repository, when its facts fail', async () => {
@@ -1145,8 +1154,14 @@ it('moves a session row at a tool call, from its baseline, before the turn ends'
   const dir = repository();
   const { held, agent } = endable(dir);
   const { client, peer: p } = await open(dir, gitChanges(), agent, dir);
-  // The baseline is written and read before the row can move from it.
-  await waitFor(() => rowsMoved(p, SESSION).length > 0);
+  // Announced at its first message, and the baseline written and read before
+  // the row can move from it.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await waitFor(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  await settle(8);
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(dir, 'from-tool.txt'), 'made\n');

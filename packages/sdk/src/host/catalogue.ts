@@ -66,6 +66,10 @@ export interface Catalogue {
   /** A session this host is making, which no client has a row for until `sessionAdded` says it. */
   sessionComing(uri: string): void;
   sessionAdded(uri: string): void;
+  /** Whether a session is made and not yet announced: a fresh one before its first message. */
+  provisional(uri: string): boolean;
+  /** A session's first message: a provisional one announced, then ready. */
+  materialized(uri: string): void;
   /** A session's row moved: said with the rest on the 100 ms debounce. */
   summaryMoved(uri: string): void;
   /** Every row that moved, said now, as the debounce would. */
@@ -613,8 +617,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     };
   };
   /**
-   * The sessions this host is making, each held from before its backend
-   * starts until `root/sessionAdded` says it.
+   * The sessions this host is making and has not announced, each held from
+   * before its backend starts until `root/sessionAdded` says it. A session
+   * made fresh is provisional until its first message, as VS Code's host keeps
+   * one unannounced until it materializes: listed to nobody, counted nowhere,
+   * and removed without a word.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1004-L1056
    *
    * A change to a row is a change to one a client holds, so a session's row
    * moves on the wire only once it has been added; what moved while it was
@@ -632,6 +640,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
     lastSent.set(uri, mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
+  };
+  /**
+   * A provisional session's first message: announced, then ready, as VS
+   * Code's host persists a session that materialized and then says it ready.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+   */
+  const materialized = (uri: string): void => {
+    if (!coming.has(uri) || !sessions.has(uri)) return;
+    sessionAdded(uri);
+    ctx.dispatch(uri, { type: 'session/ready' });
+    activeSessionsMoved();
   };
   /**
    * What each session's row said last, as its mutable fields.
@@ -1273,11 +1292,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const liveRows = (): Summary[] => {
     // Sessions this host started are real and are not listed by a backend yet.
-    // A catalogue that dropped them would lose the one being looked at.
+    // A catalogue that dropped them would lose the one being looked at. One
+    // not yet announced is nobody's row, as VS Code's host lists no idle
+    // provisional session.
     const live: Summary[] = [];
     for (const [uri, held] of sessions) {
       const lead = leadOf(held);
-      if (!lead)
+      if (!lead || coming.has(uri))
         continue;
       const started = origins.get(uri);
       live.unshift({
@@ -1312,11 +1333,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * answer: `listSessions` pages over this and so does the `list_sessions`
    * tool. A session this host is running is dropped out of the held rows by
    * its id, since it is in the first half and a row twice is a row a client
-   * has to reconcile.
+   * has to reconcile, and so is one not yet announced.
    */
   const allRows = async (): Promise<Summary[]> => {
     const running = liveRows();
-    const claimed = new Set(running.map((row) => idFor(row.resource)));
+    const claimed = new Set([...running.map((row) => idFor(row.resource)), ...[...coming].map(idFor)]);
     const listed = await ctx.held();
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
@@ -1646,7 +1667,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, chatMoved, answerMirrored, askedLeft, syncToolAuthenticationNeeded, factsMoved, activeCount,
-    activityOf, sessionComing, sessionAdded, summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
+    activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized,
+    summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
 }

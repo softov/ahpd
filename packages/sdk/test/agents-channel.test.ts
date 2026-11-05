@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentsChannel } from '../src/agents/channel.js';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileUsers } from '../src/access/users.js';
 import { fileResources } from '../src/resources/resources.js';
 import { memoryRecords } from '../src/resources/records.js';
@@ -114,7 +115,8 @@ beforeEach(() => {
     teams: [{ id: 'backend' }],
     roles: {
       lister: ['agent:list'],
-      writer: ['agent:list', 'agent:put', 'agent:remove', 'session:create'],
+      // A session's first message is a write of it, which announces it.
+      writer: ['agent:list', 'agent:put', 'agent:remove', 'session:create', 'session:write'],
       teamer: ['agent:list', 'agent:put', 'agent:remove', 'session:create'],
       reader: ['agent:list'],
       'host-maker': ['agent:list', 'agent:put', 'agent:remove', 'agent:host', 'session:create'],
@@ -731,6 +733,12 @@ it('ends the sessions of a removed agent', async () => {
   const uri = 'ahp-session:/on-mine';
   await cy.call('createSession', { channel: uri, provider: 'mine' });
   await cy.call('subscribe', { channel: uri });
+  // Its first message, which announces it, so its end is said.
+  await cy.call('dispatchAction', {
+    channel: chatUriFor(uri),
+    action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } },
+  });
+  await until(() => cy.seen.some((one) => one.method === 'root/sessionAdded'));
 
   await cy.call('x-ahpd/agents/remove', { id: 'mine' });
   // The removal is a root method, not a root action: what a client reads as a

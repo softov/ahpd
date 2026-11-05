@@ -10,9 +10,10 @@ import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import {
-  resetSdk, actions, claude, complete, createHost, emit, hello, hostTools, list, machine, open,
+  resetSdk, actions, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -63,6 +64,8 @@ describe('where the agent works', () => {
         workingDirectories: [uriOf(REPO)],
       },
     });
+    // Listed from its first message.
+    await firstMessage(client, chatUriFor('ahp-session:/a'));
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { workingDirectories: string[] }[];
     };

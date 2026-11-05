@@ -1000,9 +1000,14 @@ it('announces the session failed with the chat/error that ends its turn', async 
 
 it('announces the session idle with the turnComplete that ends a !command', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
-  const command = 't1';
+  // A first message the agent answers, which announces the session: one made
+  // fresh is provisional until its first send, as VS Code's host keeps it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  begin(client, chatUri, 't1', 'hi');
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete', 't1')).toBe(Status.Idle);
+  const command = 't2';
   begin(client, chatUri, command, '!echo acp-ran-it');
-  await until(() => ended(p, chatUri));
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
   /*
    * The status a client's list holds once the command's moves were quiet:
    * idle, whether the command's running was said or its moves were coalesced

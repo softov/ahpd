@@ -24,7 +24,7 @@ import { asCreatedBy, asOrigin, depthOf, readOrigin } from '../src/sessions/remo
 import { fileSessions } from '../src/sessions/sessions.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, emit, hello, machine, peer, resetSdk, sdk, sessionQueries, settle,
+  claude, createHost, emit, firstMessage, hello, machine, peer, resetSdk, sdk, sessionQueries, settle,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -157,6 +157,9 @@ const made = async (
   const state = (await client.handle({ method: 'subscribe', params: { channel: SESSION } }) as {
     snapshot: { state: { _meta?: Record<string, unknown>; defaultChat: string } };
   }).snapshot.state;
+  // Its first turn, answered: a session is listed from its first message.
+  await firstMessage(client, state.defaultChat);
+  await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; _meta?: Record<string, unknown> }[];
   };

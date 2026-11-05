@@ -1365,9 +1365,17 @@ async function twoOwners() {
     method: 'initialize',
     params: { clientId: 'ben', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
   });
-  await anaClient.handle({ method: 'createSession', params: { channel: 'ahp-session:/ana-one', provider: 'echo' } });
-  await anaClient.handle({ method: 'createSession', params: { channel: 'ahp-session:/ana-two', provider: 'echo' } });
-  await benClient.handle({ method: 'createSession', params: { channel: 'ahp-session:/ben-one', provider: 'echo' } });
+  const made = [[anaClient, 'ahp-session:/ana-one'], [anaClient, 'ahp-session:/ana-two'], [benClient, 'ahp-session:/ben-one']] as const;
+  for (const [client, uri] of made) {
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    // Its first message, which lists it: a session made fresh is provisional
+    // until then, as VS Code's host keeps one.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+  }
+  await new Promise((tick) => { setTimeout(tick, 100); });
   return { anaClient, benClient };
 }
 

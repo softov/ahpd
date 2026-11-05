@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Status } from '../src/sessions/catalog.js';
 import {
   resetSdk, actions, emit, hello, peer, sdk, sessionQueries, settle,
-  running,
+  running, firstMessage,
 } from './support/host.js';
 import { undeclaredIn } from './support/wire.js';
 import { callsIn, openedFrom, replayed } from './support/replay.js';
@@ -23,22 +23,26 @@ const pastWindow = async (): Promise<void> => {
 };
 
 describe('driving a turn', () => {
-  it('announces the session, and answers for it once it exists', async () => {
+  it('announces the session at its first message, and answers for it once it exists', async () => {
     const { client, peer: p, uri, chatUri } = await running();
-    // The catalogue moved, and every client watching the root hears it.
-    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true);
+    // The session the client made is there for it before anything is said.
+    const made = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { lifecycle: string; defaultChat: string } };
+    };
+    expect(made.snapshot.state.lifecycle).toBe('creating');
+    expect(made.snapshot.state.defaultChat).toBe(chatUri);
+    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(false);
 
-    // `session/ready` is dispatched at creation, which is before any client
-    // can be watching that channel - so it is for *other* clients if creation
-    // ever becomes asynchronous, and the creating client learns readiness
-    // from the snapshot it gets when it subscribes. That snapshot is the
-    // contract worth pinning.
+    // Its first message announces it to every client watching the root, and
+    // says it ready on its own channel.
+    await firstMessage(client, chatUri);
+    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true);
+    expect(actions(p, uri).some((e) => e.action.type === 'session/ready')).toBe(true);
     const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { lifecycle: string; defaultChat: string; status: number } };
+      snapshot: { state: { lifecycle: string; status: number } };
     };
     expect(opened.snapshot.state.lifecycle).toBe('ready');
-    expect(opened.snapshot.state.defaultChat).toBe(chatUri);
-    expect(opened.snapshot.state.status).toBe(Status.Idle | Status.IsRead);
+    expect(opened.snapshot.state.status & Status.InProgress).toBe(Status.InProgress);
   });
 
   it('passes the client\'s turn to the agent', async () => {
@@ -558,7 +562,8 @@ describe('driving a turn', () => {
     expect(failure?.error?.message).toContain('error_max_turns');
   });
   it('tells every client when a session goes', async () => {
-    const { host, client, peer: p, uri } = await running();
+    const { host, client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const other = peer();
     const b = host.accept(other);
     await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));

@@ -1581,11 +1581,19 @@ describe('more than one chat in a session', () => {
         });
         await settle(20);
       }
+      // The destination's first message, which announces it, so its row moves
+      // are said, and then the chat's newer one.
+      await send(client, TWO, 'w1', 'over there');
       await send(client, PEER, 't1', 'over here');
       // Each row's moves said before the next, past the catalogue's debounce.
       await flushed();
       const before = starts.length;
       const lead = (await opened(client, TWO)).state.defaultChat as string;
+      // The source's row as it stands with the chat in it, which a client
+      // listing the sessions holds.
+      const held = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items.find((one) => one.resource === LIVE)?.modifiedAt as string;
 
       const answer = await client.handle({
         method: 'moveChat',
@@ -1638,8 +1646,7 @@ describe('more than one chat in a session', () => {
       const wentFrom = rows.filter((one) => one.session === 'ahp-session:/live');
       expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
       expect(wentFrom.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect((wentFrom.at(-1) as { changes: { modifiedAt: string } }).changes.modifiedAt
-        < (wentFrom.at(-2) as { changes: { modifiedAt: string } }).changes.modifiedAt).toBe(true);
+      expect(String(wentFrom.at(-1)?.changes.modifiedAt) < held).toBe(true);
 
       // Its turns came with it, and it goes on from there.
       expect(said(await opened(client, PEER))).toEqual(['over here']);

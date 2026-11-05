@@ -188,13 +188,18 @@ const hosting = async (setup: Setup = {}) => {
     }
     throw new Error(`never logged "${text}" ${times} times in:\n${lines.join('\n')}`);
   };
-  /** Open a session in the served folder, or in a tree of its own. */
+  /**
+   * Open a session in the served folder, or in a tree of its own, and run its
+   * first turn to its end: a session made fresh is provisional until its first
+   * message, and a pass looks at the sessions this host has announced.
+   */
   const open = async (name: string, config: Record<string, unknown> = {}, where = dir) => {
     const channel = `ahp-session:/${name}`;
     await client.handle({
       method: 'createSession',
       params: { channel, provider: 'echo', workingDirectories: [fileUriOf(where)], config },
     });
+    await (await say(channel)).done;
     return channel;
   };
   /** Start a turn on a session's default chat, answering once it is over. */

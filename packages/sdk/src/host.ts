@@ -1005,6 +1005,9 @@ export function createHost(options: HostOptions): Host {
       return;
     }
     emit(channel, action, origin, requestAudience(channel, action, origin));
+    // A session's first message materializes it: one still provisional is
+    // announced, then said ready.
+    if (action.type === 'chat/turnStarted') ctx.materialized(sessionFor(channel));
     // What the chat's state moved, said on its session: a streamed delta moves
     // nothing a session reads, which is why only this road says it, and an
     // action of another kind moves no chat state at all.

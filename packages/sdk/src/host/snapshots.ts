@@ -155,6 +155,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const customizations = ctx.laidCustomizations(channel, reported);
     return {
       ...theirs,
+      // Creating until it is said ready, which a provisional session is at its
+      // first message, as VS Code's host holds a session it has not said ready.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6422-L6426
+      ...(ctx.provisional(channel) ? { lifecycle: 'creating' } : {}),
       ...(customizations === undefined ? {} : { customizations }),
       // What this host answered, beside what the backend did. Its own keys
       // never reached the backend, so this is the only place they can be

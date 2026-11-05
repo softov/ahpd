@@ -90,6 +90,22 @@ export async function running(over: Partial<HostOptions> = {}) {
   return { host, client, peer: p, uri, chatUri };
 }
 
+/**
+ * A session's first message, sent on the chat named.
+ *
+ * A session made fresh is provisional until its first message, which announces
+ * it: until then no listing holds it, no count includes it and nobody is told
+ * of it, as VS Code's host keeps a session its provider made provisional.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+ */
+export async function firstMessage(client: ReturnType<ReturnType<typeof createHost>['accept']>, chatUri: string, text = 'hi'): Promise<void> {
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text } } },
+  });
+  await settle();
+}
+
 export const actions = (p: ReturnType<typeof peer>, channel?: string) => p.notes
   .filter((n) => n.method === 'action')
   .map((n) => n.params as {

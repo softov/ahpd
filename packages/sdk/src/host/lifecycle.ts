@@ -224,7 +224,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
     spawn, keepTitle, keepProvider, forgetChats,
-    sessionComing, sessionAdded, forgetSent, activeSessionsMoved,
+    sessionComing, provisional, forgetSent, activeSessionsMoved,
   } = ctx;
 
   const respawning = new Map<string, Held>();
@@ -698,8 +698,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * store. A client told a session is gone and then handed it by the next
      * `listSessions` is the same half answer, one layer down - and the row is
      * dropped before the broadcast, so the pass behind the answer that
-     * followed it cannot bring the row back.
+     * followed it cannot bring the row back. A session never announced goes
+     * without a word, as VS Code's host removes a provisional one silently.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2403-L2440
      */
+    const announced = !provisional(uri);
     ctx.drop(uri);
     forgetSent(uri);
     /*
@@ -711,7 +714,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     }
     ctx.asleep.delete(uri);
     activeSessionsMoved();
-    broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
+    if (announced) broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
     if (failure !== undefined) throw failure;
   };
@@ -2100,12 +2103,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     if (dirOf(uri) !== undefined && githubFacts.has(dirOf(uri) as string)) captureBaseline(uri);
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
-    // Ready, then announced. A client that hears about a session before
-    // it can be subscribed to has been told about something that is not
-    // there yet.
-    dispatch(uri, { type: 'session/ready' });
-    sessionAdded(uri);
-    activeSessionsMoved();
+    /*
+     * Provisional until its first message: its state is here for the client
+     * that made it to subscribe to, and it is announced and then said ready
+     * when its first turn starts, as VS Code's host keeps a session its
+     * provider made provisional unannounced until it materializes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+     */
     // Named and in the map, which is the moment a handler can act on it.
     // The client that asked is named where one did: an automation carries a
     // name rather than a connection, and a session found on disk was started

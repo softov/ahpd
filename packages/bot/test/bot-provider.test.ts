@@ -1004,20 +1004,6 @@ it('lets the host make a bot for a team it holds no membership of', async () => 
  * somebody says something.
  */
 
-/**
- * The row a client reads for one session, or the failure of it not being there.
- *
- * A session is in the listing when this host has it, so an empty listing is
- * what a host that started nothing answers with.
- */
-const row = async (client: Client, uri: string): Promise<Bag> => {
-  const answer = got(await call(client, 'listSessions', { channel: ROOT }));
-  const items = (answer['items'] ?? []) as Bag[];
-  const found = items.find((one) => one['resource'] === uri);
-  if (found === undefined) throw new Error(`${uri} is in no listing`);
-  return found;
-};
-
 /** Every session this host holds, by URI. */
 const allSessions = async (client: Client): Promise<string[]> => {
   const answer = got(await call(client, 'listSessions', { channel: ROOT }));
@@ -1280,8 +1266,10 @@ it('answers a read with the reader\'s own chat, and the same chat again', async 
   const chat = String(first['chat']);
   expect(chat).toMatch(/^ahp-session:\//);
   // A session of the plugin's own provider, in the bot's folder, named after
-  // the bot, and hers: it is the same session she would have started herself.
-  expect(await row(ana, chat)).toMatchObject({
+  // the bot, and hers: it is the same session she would have started herself,
+  // and listed from its first message as hers would be.
+  const opened = got(await call(ana, 'subscribe', { channel: chat }))['snapshot'] as { state: Bag };
+  expect(opened.state).toMatchObject({
     title: 'Motion',
     workingDirectories: [uriOf(join(bots, 'motion'))],
   });

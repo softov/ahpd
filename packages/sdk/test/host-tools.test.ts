@@ -24,7 +24,7 @@ import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
+  resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, hostTools,
   machine, peer, sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
@@ -41,6 +41,15 @@ beforeEach(resetSdk);
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 describe('tools the host contributes', () => {
+  /**
+   * A session's first turn, answered, so the session is announced and at rest:
+   * a tool reaches a session a turn has run in, and one made fresh is
+   * provisional until its first message.
+   */
+  const atRest = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, uri: string): Promise<void> => {
+    await firstMessage(client, chatUriFor(uri));
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  };
   const withTools = async (tools = hostTools()) => {
     const host = createHost({
       path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools,
@@ -50,6 +59,7 @@ describe('tools the host contributes', () => {
     await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/served';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await atRest(client, uri);
     // The name the session is held and listed by, which is the one a tool
     // answers with and is asked by.
     const held = 'ahp-session:/served';
@@ -168,11 +178,12 @@ describe('tools the host contributes', () => {
         snapshot: { state: { defaultChat: string } };
       }).snapshot.state.defaultChat;
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      await atRest(client, 'ahp-session:/other');
       // From the first session's tools, at the second, by its link.
       const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
       expect(said).toBe('Message sent (agent-host-session://claude/other).');
       await settle();
-      const started = actions(p, chatUri).find((one) => one.action.type === 'chat/turnStarted');
+      const started = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
       expect(started?.action.message).toMatchObject({
         text: 'check the makefile',
         origin: { kind: 'agent' },
@@ -326,6 +337,7 @@ describe('tools the host contributes', () => {
       const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
+      await firstMessage(client, chatUriFor('ahp-session:/doomed'));
       expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
       expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
         .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
@@ -364,7 +376,10 @@ describe('tools the host contributes', () => {
         openLink: string; transcript: { turn: number; state: string; user?: string; assistant?: string }[];
       };
       expect(said.openLink).toBe('agent-host-session://claude/served');
-      expect(said.transcript).toEqual([{ turn: 1, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' }]);
+      expect(said.transcript).toEqual([
+        { turn: 1, state: 'complete', user: 'hi' },
+        { turn: 2, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' },
+      ]);
       expect(await call('get_session_context', { session: 'ahp-session:/served', detail: 'everything' })).toContain('detail must be');
     });
 
