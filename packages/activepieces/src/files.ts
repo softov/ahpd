@@ -244,8 +244,10 @@ export const fileProcessor = async (prop: Prop, value: unknown, folder: string |
   if (typeof value !== 'string') return null;
   const streaming = prop.type === 'FILE' && prop.streaming === true;
   try {
-    // A value that is no URL names an attachment; a `data:` URI is a URL.
-    if (!URL.canParse(value)) return await attachmentOf(value, folder, streaming);
+    // A value that is no URL names an attachment; a `data:` URI is a URL. An
+    // absolute path names one too, read first because a Windows drive such as
+    // `C:` parses as a URL scheme.
+    if (isAbsolute(value) || !URL.canParse(value)) return await attachmentOf(value, folder, streaming);
     if (streaming) return await handleStreamingFile(value);
     const parsed = parseBase64File(value);
     if (parsed !== undefined) return apFile(`unknown.${parsed.extension}`, parsed.buffer, parsed.extension);

@@ -151,7 +151,16 @@ describe('an action runs in the engine', () => {
     process.env['AHPD_TOKEN'] = 'daemon-token';
     try {
       const plain = await started();
-      expect(await running(plain)(connector('work'), 'env', {})).toEqual({ token: null, home: tmpdir(), path: null });
+      /*
+       * No path on POSIX. On Windows libuv puts `PATH` back into a child's
+       * environment from the parent's, as one of the variables it requires.
+       * https://github.com/libuv/libuv/blob/v1.x/src/win/process.c#L50-L62
+       */
+      expect(await running(plain)(connector('work'), 'env', {})).toEqual({
+        token: null,
+        home: tmpdir(),
+        path: process.platform === 'win32' ? process.env['PATH'] ?? process.env['Path'] ?? null : null,
+      });
       const listed = await started({ sandboxPropagatedEnvVars: ['AHPD_TOKEN'] });
       expect(await running(listed)(connector('work'), 'env', {})).toMatchObject({ token: 'daemon-token' });
     } finally {
