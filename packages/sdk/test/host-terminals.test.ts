@@ -5,7 +5,8 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
-import type { OpenedTerminal, SpawnPty } from '../src/types/terminals.js';
+import type { OpenedTerminal, SpawnPty, SpawnScreen } from '../src/types/terminals.js';
+import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS } from '../src/machines/shellcommand.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
 import { chatUriFor } from '../src/host/channels.js';
@@ -33,13 +34,13 @@ beforeEach(resetSdk);
  * transcript that lost the command would be a conversation with a gap in it.
  */
 describe('a command typed into the conversation', () => {
-  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds. */
-  const shelled = async (pty?: SpawnPty) => {
+  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds, with `screen` where one is given. */
+  const shelled = async (pty?: SpawnPty, screen?: SpawnScreen) => {
     const host = createHost({
       path: tmpdir(),
       agents: [claude({ paths: [tmpdir()] })],
       ...machine(),
-      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
+      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty, ...(screen === undefined ? {} : { screen }) }) }),
     });
     const p = peer();
     const client = host.accept(p);
@@ -147,37 +148,177 @@ describe('a command typed into the conversation', () => {
     await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
   });
 
-  it('names its terminal while it runs, and says a pseudoterminal runs it', async () => {
-    const pty = fakePty();
-    const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
+  /** Every terminal the root's last list names, with its lifecycle. */
+  const rootList = (p: ReturnType<typeof peer>): { resource: string; lifecycle?: { status: string } }[] =>
+    (actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)?.action.terminals as
+      { resource: string; lifecycle?: { status: string } }[] | undefined) ?? [];
+
+  /** Run `!<command>` as turn t1 of the chat, without waiting on it. */
+  const bang = (client: Awaited<ReturnType<typeof shelled>>['client'], chatUri: string, command: string): void => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: `!${command}`, origin: { kind: 'user' } } } },
     });
-    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
-    for (const until = Date.now() + WAIT_MS; changed() === undefined && Date.now() < until;) {
+  };
+
+  /** Wait, a few milliseconds at a time, for `ready` to hold. */
+  const until = async (ready: () => boolean): Promise<void> => {
+    for (const end = Date.now() + WAIT_MS; !ready() && Date.now() < end;) {
       await new Promise((r) => { setTimeout(r, 5); });
     }
-    // Before the command has printed anything, and with no `_meta`, which the
-    // reducer would put in place of the call's own.
+  };
+
+  /*
+   * As the reference host's `!` command runs one: the shell opens to sit in,
+   * and is listed and named once it has printed; the command is typed into
+   * it, kept out of the shell's history by its leading space; and the shell
+   * integration's mark that it finished ends the call, with the command's own
+   * part of the output. The shell sits on at its prompt after it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+   */
+  it('names its terminal once its shell has printed, types the command in, and ends it when the shell marks it finished', async () => {
+    const pty = fakePty();
+    const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
+    bang(client, chatUri, 'make preview');
+    await until(() => pty.started.length > 0);
+    await settle();
+    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+    // A shell to sit in, and neither named nor listed before it has printed.
+    expect(pty.started.at(-1)?.args).toEqual([]);
+    expect(changed()).toBeUndefined();
+    expect(rootList(p)).toEqual([]);
+
+    pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+    await until(() => changed() !== undefined && pty.typed.length > 0);
+    // With no `_meta`, which the reducer would put in place of the call's own.
     const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
     expect(changed()?.content).toEqual([named]);
     expect(changed()).not.toHaveProperty('_meta');
+    expect(rootList(p).map((one) => one.resource)).toEqual([(changed()?.content as { resource: string }[])[0]?.resource]);
+    expect(pty.typed).toEqual([' make preview\r']);
     // A client that subscribes while the command runs reads what a watching one holds.
     const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
     expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-    pty.say('built\r\n');
-    pty.exit(0);
+    pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
     const said = await ended(p, chatUri, 't1');
-    const done = said.find((one) => one.type === 'chat/toolCallComplete');
-    expect((done?.result as { content: unknown[] }).content).toEqual([
-      { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-      { type: 'text', text: 'built\r\n' },
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: unknown[] };
+    expect(done).toMatchObject({ success: true, pastTenseMessage: 'Ran command' });
+    expect(done.content).toEqual([
+      { ...named, result: { exitCode: 0, preview: 'built' } },
+      { type: 'text', text: 'built' },
     ]);
+    expect(rootList(p).map((one) => one.lifecycle)).toEqual([{ status: 'running' }]);
     const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
     expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  });
+
+  /*
+   * A command still running after VS Code's two minutes is a call that timed
+   * out, and its terminal's block says no ending, since the command has not
+   * exited.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L271-L276
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L149-L150
+   */
+  it('says a command still running after two minutes timed out', async () => {
+    const pty = fakePty();
+    const { client, peer: p, chatUri } = await shelled(pty.spawn);
+    bang(client, chatUri, 'sleep 300');
+    await until(() => pty.started.length > 0);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      pty.say('$ ');
+      for (let turns = 0; pty.typed.length === 0 && turns < 100; turns += 1) await vi.advanceTimersByTimeAsync(0);
+      expect(pty.typed.length).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(DEFAULT_SHELL_COMMAND_TIMEOUT_MS - 1);
+      expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallComplete')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: false, pastTenseMessage: 'Command timed out' });
+    expect(done.content[0]).not.toHaveProperty('result');
+  });
+
+  /*
+   * A client that takes the call off the terminal's claim lets the command go
+   * on in the background, and the call ends there, as the reference host
+   * reads a narrowed claim.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L264-L269
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L153-L154
+   */
+  it('says a command a client let go on in the background is running in the background', async () => {
+    const pty = fakePty();
+    const { client, peer: p, uri, chatUri } = await shelled(pty.spawn);
+    bang(client, chatUri, 'sleep 300');
+    await until(() => pty.started.length > 0);
+    pty.say('$ ');
+    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+    await until(() => changed() !== undefined && pty.typed.length > 0);
+    const terminal = (changed()?.content as { resource: string }[])[0]?.resource ?? '';
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: terminal, action: { type: 'terminal/claimed', claim: { kind: 'session', session: uri, chat: chatUri } } },
+    });
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: true, pastTenseMessage: 'Command is running in the background' });
+    expect(done.content).toEqual([{ type: 'terminal', resource: terminal, title: 'Terminal', isPty: true }]);
+  });
+
+  /*
+   * A command that switches to the alternate screen opened a full-screen
+   * program, and the call ends there, as the reference host reads one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L211-L222
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L155-L156
+   */
+  it('says a command that opened a full-screen program opened an interactive terminal', async () => {
+    let alternate = false;
+    let show: () => void = () => {};
+    const shown = new Promise<void>((done) => { show = () => { alternate = true; done(); }; });
+    const screen: SpawnScreen = () => ({
+      write: async () => {},
+      resize: () => {},
+      isInAltBuffer: () => alternate,
+      isBracketedPasteMode: () => false,
+      whenAltBuffer: () => shown,
+      dispose: () => {},
+    });
+    const pty = fakePty();
+    const { client, peer: p, chatUri } = await shelled(pty.spawn, screen);
+    bang(client, chatUri, 'vim notes');
+    await until(() => pty.started.length > 0);
+    pty.say('$ ');
+    await until(() => pty.typed.length > 0);
+    show();
+    const said = await ended(p, chatUri, 't1');
+    expect(said.find((one) => one.type === 'chat/toolCallComplete')?.result).toMatchObject({
+      success: true,
+      pastTenseMessage: 'Command opened an interactive terminal',
+    });
+  });
+
+  /*
+   * A command that ends the shell it was typed into is a shell that exited,
+   * which the reference host says failed, with the shell's code.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L341-L346
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L151-L152
+   */
+  it('says a command that ended its shell is a shell that exited unexpectedly', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    bang(client, chatUri, 'exit 3');
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: false, pastTenseMessage: 'Shell exited unexpectedly' });
+    expect(done).not.toHaveProperty('error');
+    expect(done.content[0]).toMatchObject({ result: { exitCode: 3 } });
   });
 
   /*
@@ -235,20 +376,22 @@ describe('a command typed into the conversation', () => {
   /*
    * A command that ran and exited with a code is a call that failed with no
    * error, since nothing went wrong running it, and its turn is complete, as
-   * the reference host completes the call and ends every local command's turn.
+   * the reference host completes the call and ends every local command's turn;
+   * the shell it was typed into sits on, as the reference keeps it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L141-L148
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L212
    */
-  it('says a command that exited with a code failed, with no error, and holds its turn complete', async () => {
+  it('says a command that exited with a code failed, with no error, holds its turn complete, and keeps its shell', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!exit 3' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: "!sh -c 'exit 3'" } } },
     });
     const said = await ended(p, chatUri, 't1');
     const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as Record<string, unknown> | undefined;
     expect(result).toMatchObject({ success: false, pastTenseMessage: 'Command exited with code 3' });
     expect(result).not.toHaveProperty('error');
+    expect(rootList(p).map((one) => one.lifecycle)).toEqual([{ status: 'running' }]);
     const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: { id: string; state: string }[] } };
     }).snapshot.state.turns;

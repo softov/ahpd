@@ -177,15 +177,16 @@ describe('a command typed into the conversation', () => {
 
   it('says a terminal ran under a pseudoterminal when it did', async () => {
     // A shell under a pty prints VT sequences, and a client reads `isPty` to
-    // know to parse them.
+    // know to parse them. This one prints them as its prompt and exits on
+    // the first line it is given.
     const printing: SpawnPty = () => {
       let data: ((text: string) => void) | undefined;
       let exit: ((ended: { exitCode: number }) => void) | undefined;
-      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); exit?.({ exitCode: 0 }); }, 20);
+      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); }, 20);
       return {
         onData: (listen) => { data = listen; },
         onExit: (listen) => { exit = listen; },
-        write: () => {},
+        write: () => { exit?.({ exitCode: 0 }); },
         resize: () => {},
         kill: () => {},
       };
@@ -229,12 +230,15 @@ describe('a command typed into the conversation', () => {
     await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     await ran(client, p, chatUri, 't2', 'echo dropped-one');
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim()).sort()).toEqual(['dropped-one', 'kept-one']);
+    // The first line of each: a shell on pipes marks no command's end, so the
+    // line it echoes after the command is in what it printed too.
+    const printed = (): string[] => keptIn(store, 'banged').map((one) => String(one.output).split('\n')[0] ?? '');
+    expect(printed().sort()).toEqual(['dropped-one', 'kept-one']);
 
     void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(true);
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim())).toEqual(['kept-one']);
+    expect(printed()).toEqual(['kept-one']);
   });
 });
 

@@ -931,8 +931,10 @@ it('runs a !command in a shell rather than asking a model', async () => {
 
 /*
  * The reference host's own `!` command: a `terminal` call whose content names
- * the terminal as soon as it opens.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L65-L117
+ * the terminal once its shell has printed, the command typed into that shell
+ * and ended by the shell integration's mark that it finished.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
  */
 it('names a !command\'s terminal while it runs, and holds the call a watching client holds', async () => {
   const pty = fakePty();
@@ -957,7 +959,10 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   const changed = (): Note['action'] | undefined => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
-  await until(() => changed() !== undefined);
+  await until(() => pty.started.length > 0);
+  // The shell's prompt, which names its terminal, and the command typed in.
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => changed() !== undefined && pty.typed.length > 0);
 
   // The command as the call's intention and its line, as the reference starts its own.
   expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart')?.action.intention).toBe('make preview');
@@ -971,13 +976,14 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
-  await until(() => ended(p, chatUri));
+  expect(pty.typed).toEqual([' make preview\r']);
+
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
+  await until(() => ended(p, chatUri), 4000);
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   expect((done?.action.result as { content: unknown[] }).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));

@@ -1004,7 +1004,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             no('a claim names a client by its id, or a session and its chat');
             break;
           }
-          terminal.setClaim(claimed);
+          ctx.setTerminalClaim(channel, claimed);
           dispatch(channel, action, origin);
           break;
         }

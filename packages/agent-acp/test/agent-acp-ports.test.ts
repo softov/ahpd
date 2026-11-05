@@ -345,8 +345,11 @@ it('sends calls as the protocol declares them, and a late client reads them the 
 
 /*
  * A terminal shown as what it is: a server's, and a person's command's while
- * it runs, as the reference host names its own.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+ * it runs, as the reference host names its own once its shell has printed, the
+ * command typed into that shell and ended by the shell integration's mark that
+ * it finished.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
  */
 it('says a pseudoterminal runs a terminal, and names a command\'s while it runs', async () => {
   const pty = fakePty();
@@ -366,23 +369,26 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   const painted = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 'call-paint');
   expect(((painted?.action.result as Bag).content as Bag[])[0]).toEqual(named);
 
-  // A person's command names its terminal as soon as it opens.
+  // A person's command names its terminal once its shell has printed its
+  // prompt, and the command is typed in.
+  const shells = pty.started.length;
   begin('t2', '!make preview');
   const changed = (): Bag | undefined => actions(p, chatUri)
     .find((e) => e.action.type === 'chat/toolCallContentChanged' && e.action.turnId === 't2')?.action;
-  await until(() => changed() !== undefined);
+  await until(() => pty.started.length > shells);
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => changed() !== undefined && pty.typed.at(-1) === ' make preview\r');
   expect(changed()?.content).toEqual([named]);
   expect(changed()).not.toHaveProperty('_meta');
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
   await endedTurn(p, chatUri, 2);
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.turnId === 't2');
   expect((done?.action.result as Bag).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
