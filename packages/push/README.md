@@ -63,19 +63,19 @@ A device is addressed by its install id, which is the URI path:
 | --- | --- |
 | `resourceWrite push://devices/<id>` | Registers a device, replacing what the id held |
 | `resourceRead push://devices/<id>` | The record, as JSON, without its credential: no token, and for a browser no endpoint or keys |
-| `resourceResolve push://devices/<id>` | Its metadata. A device that is not there resolves to the shape of one, so a client can draw the form before it writes |
+| `resourceResolve push://devices/<id>` | Its size and its `etag`. A device that is not there is refused `-32008`. No `mtime` or `ctime` is answered, because the file keeps no times |
 | `resourceList push://devices` | The registered device ids |
 | `resourceDelete push://devices/<id>` | Unregisters. A device that is not there is refused `-32008` |
 
 The body is JSON. A phone has a non-empty `token` and a `platform` of `ios` or `android`. A browser has `platform: "web"`, an `endpoint` and `keys: { p256dh, auth }`, which are the fields of a subscription's `toJSON()`. `lang` is optional and kept with the device. `audience` is optional on every platform. Anything else is refused `-32602`.
 
-A browser's `endpoint` must be an `https:` URL on a host that `webPushHosts` allows. A write with another endpoint is refused `-32602`. The endpoint and the keys are never read back, because an endpoint is a capability URL to the device. A write with `createOnly` against an id that is already there is refused `-32010`, and a URI of another scheme is refused `-32602` rather than read as a path.
+A browser's `endpoint` must be an `https:` URL on a host that `webPushHosts` allows. A write with another endpoint is refused `-32602`. The endpoint and the keys are never read back, because an endpoint is a capability URL to the device. A write with `createOnly` against an id that is already there is refused `-32010`. A write whose `ifMatch` is not the device's `etag` is refused `-32011`, and so is one with an `ifMatch` naming an id that is not there. A URI of another scheme is refused `-32602`.
 
-`push://` and `push://devices` are directories, and nothing below `push://devices/<id>` names anything.
+`push://` and `push://devices` are directories, and nothing below `push://devices/<id>` names anything. A write or a delete of either is refused `-32009`.
 
 ### `push://vapid`
 
-`push://vapid` is one read-only record, `{ "publicKey": "<base64url>" }`. It is the host's VAPID public key, which a browser passes as `applicationServerKey` when it subscribes. The key pair is made at the first load and kept in `push-vapid.json`, written `0600`. A host with no pair refuses the read `-32008`, and a write or delete against it is refused `-32602`.
+`push://vapid` is one read-only record, `{ "publicKey": "<base64url>" }`. It is the host's VAPID public key, which a browser passes as `applicationServerKey` when it subscribes. The key pair is made at the first load and kept in `push-vapid.json`, written `0600`. A host with no pair refuses the read `-32008`, and a write or delete against it is refused `-32009`.
 
 A registration is gated like any other write, so it needs `file:write`: a guest with read only cannot register. A client finds out whether a host can push from `_meta.ahpd.resourceProviders`, the same way it finds `computer`.
 

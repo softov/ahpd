@@ -184,6 +184,16 @@ it('tells every device whose client created or opened the session, and no other'
   ]);
 });
 
+it('logs a kept record that is not a device, and raises no problem for it', async () => {
+  const world = up(accepted, {
+    'phone-1': { token: 'ExponentPushToken[phone]', platform: 'ios', client: 'phone' },
+    'phone-2': { platform: 'ios' },
+  });
+  expect(world.problems).toEqual([]);
+  expect(world.logged).toHaveLength(1);
+  expect(world.logged[0]).toContain('phone-2 is not a device; its registration was left out');
+});
+
 it('names the daemon in the title, or what the option says', async () => {
   const world = up(accepted, devices({ 'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' } }), { title: 'Build box' }, 'Echo');
   await openedBy(world, 'echo:/one', 'phone');

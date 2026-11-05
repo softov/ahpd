@@ -64,7 +64,10 @@ interface Reachable {
 }
 
 export const apply: Plugin['apply'] = (host, options) => {
-  const store: DeviceStore = deviceStore(host.configDir, (line) => { host.problem(`${name}: ${line}`); });
+  // A record that is not a device is left out with a line to the log, as VS
+  // Code's host drops a malformed stored entry with a warning.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1298-L1299
+  const store: DeviceStore = deviceStore(host.configDir, (line) => { host.log(`${name}: ${line}`); });
   const vapid = loadVapid(host.configDir, (line) => { host.log(`${name}: ${line}`); });
   const webPushHosts = Array.isArray(options['webPushHosts'])
     ? options['webPushHosts'].filter((one): one is string => typeof one === 'string' && one.trim() !== '')

@@ -1,4 +1,4 @@
-import { ECDH } from 'node:crypto';
+import { ECDH, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { RpcError, absentResource, bodyText, readJsonObject, splitResource, writeJsonAtomic } from '@ahpd/sdk';
 import type { Entry, Metadata, Owner, Principal, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
@@ -49,15 +49,6 @@ export const WEB_PUSH_HOSTS = [
   'updates.push.services.mozilla.com',
   '*.notify.windows.com',
 ] as const;
-
-/**
- * When a device was registered, which this file does not keep.
- *
- * A record here is a token and a platform rather than a thing with a history,
- * and answering this read's own clock would tell a client a device changed when
- * nothing did. The epoch is the answer every store without a clock gives.
- */
-const EPOCH = '1970-01-01T00:00:00.000Z';
 
 /** The part of a registration both kinds of device share. */
 interface Kept {
@@ -231,6 +222,16 @@ const shownOf = (device: Device): Record<string, unknown> => {
   const { token: _token, ...shown } = device;
   return shown;
 };
+
+/**
+ * A device's version token, which a write's `ifMatch` is checked against.
+ *
+ * The hash of the record as it is kept, token and keys included, so a device
+ * registered again with a rotated token has a new one; the digest does not
+ * give the credential back.
+ */
+const etagOf = (device: Device): string =>
+  createHash('sha256').update(JSON.stringify(device), 'utf8').digest('base64url');
 
 /** Whether a string is base64url, which is how both browser keys arrive. */
 const BASE64URL = /^[A-Za-z0-9_-]+={0,2}$/;
@@ -480,37 +481,28 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
     },
 
     /**
-     * A device that is not there still has the shape of one.
+     * What one place is, as the spec's `resourceResolve` answers it.
      *
-     * What a client drawing a registration form needs before it writes
-     * anything, and the same answer the records of `people` and `policy` give:
-     * the URI names a device whether or not one has been registered under it
-     * yet, and a write is what makes the difference.
+     * A device that is not registered is `NotFound`, which the spec makes a
+     * MUST over any success standing in for one. The file keeps no times, so
+     * none is answered: the spec gives `mtime` and `ctime` only when known.
+     * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L1022-L1024
      */
     resolve: async (uri) => {
       const place = placeOf(uri);
       if (place.at === 'vapid') {
         if (vapid === undefined) throw absentResource(SCHEME, uri);
-        return {
-          uri,
-          type: 'file',
-          size: Buffer.byteLength(vapidFile(), 'utf8'),
-          mtime: EPOCH,
-          ctime: EPOCH,
-        } as Metadata;
+        return { uri, type: 'file', size: Buffer.byteLength(vapidFile(), 'utf8') };
       }
-      if (place.at !== 'device') return { uri, type: 'directory', mtime: EPOCH, ctime: EPOCH } as Metadata;
+      if (place.at !== 'device') return { uri, type: 'directory' };
       const held = store.get(place.id);
-      const body = held === undefined ? '' : JSON.stringify(shownOf(held), null, 2);
+      if (held === undefined) throw absentResource(SCHEME, uri);
       return {
         uri,
         type: 'file',
-        size: Buffer.byteLength(body, 'utf8'),
-        // No etag: a device is registered whole and re-registering one is how a
-        // rotated token arrives, so there is no lost update to guard against.
-        mtime: EPOCH,
-        ctime: EPOCH,
-      } as Metadata;
+        size: Buffer.byteLength(JSON.stringify(shownOf(held), null, 2), 'utf8'),
+        etag: etagOf(held),
+      };
     },
 
     read: async (uri) => {
@@ -533,19 +525,24 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * what makes a device the property of the client that wrote it. `createOnly`
      * is the protocol's own word for refusing a device that is already there,
      * and it is honoured because a client that asked for it is a client that
-     * did not mean to overwrite a sibling's registration.
+     * did not mean to overwrite a sibling's registration. `ifMatch` is the
+     * other: a device whose version token is not the one named is refused
+     * `Conflict`, and so is one that is not there, because the caller believed
+     * it held the token of one that is, as VS Code's file resources refuse it.
+     * The public key and the scheme's two directories are no device, and a
+     * write to one is `PermissionDenied` in those resources' words.
+     * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L724-L726
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L201-L207
      */
     write: async (uri, content, owner, client) => {
       const place = placeOf(uri);
-      if (place.at === 'vapid') {
-        throw new RpcError(-32602, `${uri} is the host's public key and cannot be written; write a device to ${SCHEME}://${DEVICES}/<id>`);
-      }
-      if (place.at !== 'device') {
-        throw new RpcError(-32602, `${uri} is not a device; write to ${SCHEME}://${DEVICES}/<id>`);
-      }
+      if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       const held = store.get(place.id);
       if (content.createOnly === true && held !== undefined) {
         throw new RpcError(-32010, `${place.id} is already a device here; edit it or choose another id`);
+      }
+      if (content.ifMatch !== undefined && (held === undefined || etagOf(held) !== content.ifMatch)) {
+        throw new RpcError(-32011, `ifMatch precondition failed for: ${uri}`);
       }
       const device = deviceOf(uri, content, webPushHosts);
       store.put(place.id, {
@@ -560,16 +557,12 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      *
      * The other road that changes what this scheme holds, and the one a client
      * takes when a person turns notifications off, so it is a device's whole id
-     * or nothing: there are no children to take with a flag.
+     * or nothing: there are no children to take with a flag. The public key
+     * and the two directories are `PermissionDenied`, as a write to them is.
      */
     remove: async (uri) => {
       const place = placeOf(uri);
-      if (place.at === 'vapid') {
-        throw new RpcError(-32602, `${uri} is the host's public key and cannot be deleted; delete ${SCHEME}://${DEVICES}/<id>`);
-      }
-      if (place.at !== 'device') {
-        throw new RpcError(-32602, `${uri} is not a device to delete; delete ${SCHEME}://${DEVICES}/<id>`);
-      }
+      if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       if (!store.remove(place.id)) throw absentResource(SCHEME, uri);
     },
   };

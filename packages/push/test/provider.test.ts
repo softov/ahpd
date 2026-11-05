@@ -160,8 +160,8 @@ it('serves the host public key at push://vapid, and refuses to write or delete i
   expect(JSON.parse(read.data)).toEqual({ publicKey: vapid?.publicKey });
   expect((await provider.resolve('push://vapid')).type).toBe('file');
 
-  await expect(provider.write('push://vapid', body({ platform: 'web' }))).rejects.toMatchObject({ code: -32602 });
-  await expect(provider.remove('push://vapid')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.write('push://vapid', body({ platform: 'web' }))).rejects.toMatchObject({ code: -32009, message: 'Permission denied: push://vapid' });
+  await expect(provider.remove('push://vapid')).rejects.toMatchObject({ code: -32009, message: 'Permission denied: push://vapid' });
 });
 
 it('serves no push://vapid when the host has no pair', async () => {
@@ -204,8 +204,8 @@ it('refuses a body that is not a device', async () => {
 
 it('refuses a write that names no device, and one to a device already there', async () => {
   const provider = over();
-  await expect(provider.write('push://', body({ token: TOKEN, platform: 'ios' }))).rejects.toMatchObject({ code: -32602 });
-  await expect(provider.write('push://devices', body({ token: TOKEN, platform: 'ios' }))).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.write('push://', body({ token: TOKEN, platform: 'ios' }))).rejects.toMatchObject({ code: -32009, message: 'Permission denied: push://' });
+  await expect(provider.write('push://devices', body({ token: TOKEN, platform: 'ios' }))).rejects.toMatchObject({ code: -32009, message: 'Permission denied: push://devices' });
   await expect(provider.write('push://devices/a/b', body({ token: TOKEN, platform: 'ios' }))).rejects.toMatchObject({ code: -32008 });
 
   await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios' }), undefined, 'phone');
@@ -221,7 +221,43 @@ it('removes a device, and answers nothing is there the second time', async () =>
   expect(await provider.list('push://devices')).toEqual([]);
   await expect(provider.read('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.remove('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
-  await expect(provider.remove('push://devices')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.remove('push://devices')).rejects.toMatchObject({ code: -32009, message: 'Permission denied: push://devices' });
+});
+
+it('refuses to resolve a device that is not there, and answers no times the file does not keep', async () => {
+  const where = dir();
+  const vapid = loadVapid(where, () => {});
+  const provider = pushProvider({ store: deviceStore(where, () => {}), ...(vapid === undefined ? {} : { vapid }) });
+  await expect(provider.resolve('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
+
+  await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios' }), undefined, 'phone');
+  for (const uri of ['push://', 'push://devices', 'push://devices/phone-1', 'push://vapid']) {
+    const resolved = await provider.resolve(uri);
+    expect(resolved).not.toHaveProperty('mtime');
+    expect(resolved).not.toHaveProperty('ctime');
+  }
+});
+
+it('answers a device\'s etag, and refuses a write whose ifMatch is not it', async () => {
+  const provider = over();
+  await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios' }), undefined, 'phone');
+  const first = (await provider.resolve('push://devices/phone-1')).etag ?? '';
+  expect(first).not.toBe('');
+
+  // The token the write read is the current one, so the rotated token is kept.
+  await provider.write('push://devices/phone-1', { ...body({ token: 'ExponentPushToken[rotated]', platform: 'ios' }), ifMatch: first }, undefined, 'phone');
+  const second = (await provider.resolve('push://devices/phone-1')).etag;
+  expect(second).not.toBe(first);
+
+  // A write that read the device before that one is refused, and changes nothing.
+  await expect(provider.write('push://devices/phone-1', { ...body({ token: TOKEN, platform: 'ios' }), ifMatch: first }, undefined, 'phone'))
+    .rejects.toMatchObject({ code: -32011, message: 'ifMatch precondition failed for: push://devices/phone-1' });
+  expect((await provider.resolve('push://devices/phone-1')).etag).toBe(second);
+
+  // An ifMatch on a device that is not there names one the caller believed was.
+  await expect(provider.write('push://devices/phone-2', { ...body({ token: TOKEN, platform: 'ios' }), ifMatch: 'anything' }, undefined, 'phone'))
+    .rejects.toMatchObject({ code: -32011 });
+  expect(await provider.list('push://devices')).toEqual([{ name: 'phone-1', type: 'file' }]);
 });
 
 it('keeps a device whose writer named no client, and it belongs to none', async () => {
