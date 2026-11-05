@@ -4,10 +4,12 @@ import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
-import { toolMetaOf } from '../kinds.js';
+import { getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
   entry: Bag;
+  /** The tool a confirmation is for, by the CLI's own name for it. */
+  toolName?: string;
   /** `AskUserQuestion` needs its own payload echoed back verbatim. */
   questions?: unknown[];
   /** Question id to the question text the SDK keys answers by. */
@@ -103,10 +105,6 @@ interface Question {
   signal?: AbortSignal;
   /** What the SDK suggested be kept, which the question offers as "always". */
   suggestions: unknown[];
-  /** The confirmation's title, when the SDK gave one. */
-  title?: string;
-  /** What the call is called on the card, when the SDK gave a name. */
-  displayName?: string;
 }
 
 /**
@@ -377,11 +375,14 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // The card shows the call as the model wrote it; the CLI runs `raw`.
       const written = asked.shown ?? raw;
       const input = toolInputOf(toolName, written);
-      const displayName = asked.displayName ?? toolName;
-      // The card reads the row's line; the CLI's own sentence is its title.
+      // Named and titled from Claude's tables, as VS Code's Claude agent puts
+      // its confirmation, a client's tool by the name its client announced.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
+      const shownName = ctx.clientToolOf(toolName)?.name ?? toolName;
+      const displayName = ctx.displayNameOf(toolName);
       const invocationMessage = lineOf(toolName, written);
       ctx.pastLines.set(id, pastLineOf(toolName, written));
-      const confirmationTitle = asked.title ?? `Run ${displayName}?`;
+      const confirmationTitle = getClaudeConfirmationTitle(toolName);
 
       // The call the assistant message opened, if it arrived first. Which of
       // the two comes first is the CLI's business; either order is one call.
@@ -391,7 +392,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const contributor = ctx.contributorOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
-        toolName,
+        toolName: shownName,
         displayName,
         ...(contributor ? { contributor } : {}),
         ...(input !== undefined ? { toolInput: input } : {}),
@@ -431,7 +432,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         scope.parts.set(id, part);
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {
-          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
+          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: shownName, displayName,
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
@@ -453,6 +454,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       pending.set(id, {
         id,
         entry,
+        toolName,
         asked: new Map(),
         answers: new Map(),
         ...(options !== undefined ? { options, suggestions } : {}),
@@ -524,8 +526,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * so both the bound tools and the call are read under that name. Nothing
        * is announced for a call nobody was asked about, as with an allow list.
        */
-      const offered = ctx.offering.find((one) => one.owner === undefined && `mcp__ahp__${one.definition.name}` === toolName);
-      if (offered?.confirm === false) return { behavior: 'allow', updatedInput: raw };
+      if (ctx.hostToolOf(toolName)?.confirm === false) return { behavior: 'allow', updatedInput: raw };
     }
     /*
      * The SDK's own abort for this call, which is the one thing that says the
@@ -539,8 +540,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const signal = about.signal as AbortSignal | undefined;
     if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
     const agentId = str(about.agentID);
-    const title = str(about.title);
-    const displayName = str(about.displayName);
     /*
      * The command the model wrote, which `sourceFirst` kept under this call's
      * id when it put the operator's environment in front of it: what a rule
@@ -569,8 +568,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         suggestions: [],
         ...(agentId !== undefined ? { agentId } : {}),
         ...(signal !== undefined ? { signal } : {}),
-        ...(title !== undefined ? { title } : {}),
-        ...(displayName !== undefined ? { displayName } : {}),
       });
     }
     /*
@@ -598,8 +595,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       suggestions: list(about.suggestions),
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),
-      ...(title !== undefined ? { title } : {}),
-      ...(displayName !== undefined ? { displayName } : {}),
     });
   };
 
@@ -715,7 +710,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
        */
       const call = bag(held.entry.toolCall);
-      const name = str(call.toolName) ?? '';
+      // The CLI's own name, which is the one a client's tool is offered under;
+      // the call's row names the tool as its client announced it.
+      const name = held.toolName ?? '';
       if (approved) {
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }

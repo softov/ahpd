@@ -216,7 +216,7 @@ it('keeps the output Claude saved for the chat, and names its terminal after the
     {
       type: 'terminal',
       resource: 'ahp-terminal://shell/chat/toolu_1',
-      title: 'Bash',
+      title: 'Run shell command',
       isPty: false,
       result: { exitCode: 0, preview: 'FULL_OUTPUT_BEGIN', truncated: true },
     },
@@ -244,7 +244,7 @@ it('keeps no exit code for a command that failed', async () => {
   expect((result.content as Bag[]).at(-1)).toEqual({
     type: 'terminal',
     resource: 'ahp-terminal://shell/chat/toolu_1',
-    title: 'Bash',
+    title: 'Run shell command',
     isPty: false,
     result: { preview: 'FULL_OUTPUT_BEGIN', truncated: true },
   });

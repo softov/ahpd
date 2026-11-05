@@ -177,7 +177,7 @@ export function createServers(ctx: SessionContext): Servers {
        * running against this server is blocked when it starts asking, and
        * unblocked when it is ready again. `chat/toolCallAuthRequired` is a
        * no-op in the reducer unless the call carries an MCP contributor,
-       * which is why one is put on every `mcp__…` call.
+       * which a call of a server this session lists carries from its start.
        */
       const asking = str(fresh.state === undefined ? undefined : bag(fresh.state).kind) === 'authRequired';
       for (const [callId, running] of ctx.onServer) {

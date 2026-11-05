@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
-import { toolMetaOf } from './kinds.js';
+import { getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
 /**
@@ -502,7 +502,9 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const call: Bag = {
           toolCallId: id,
           toolName: name,
-          displayName: name,
+          // From Claude's display table, as VS Code's replay names a call.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393
+          displayName: getClaudeToolDisplayName(name),
           // Completed as its result says, once one is read; a call no result
           // was written for is read back cancelled at the end.
           status: 'completed',

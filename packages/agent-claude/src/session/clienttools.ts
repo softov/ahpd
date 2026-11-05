@@ -152,6 +152,8 @@ export interface ClientTools {
    * a call the harness runs itself, which is nobody else's to answer.
    */
   clientToolOf: (toolName: string) => { owner: string; name: string } | undefined;
+  /** The host's own tool the CLI is calling, as this session offers it: nothing for a client's tool or the harness's. */
+  hostToolOf: (toolName: string) => BoundTool | undefined;
   /**
    * The call the CLI has just reported running, held for the client that owns it.
    *
@@ -210,6 +212,11 @@ export function createClientTools(ctx: SessionContext): ClientTools {
      * and every sentence about the call uses.
      */
     return { owner, name: tool.definition.name.slice(owner.length + 2) };
+  };
+
+  const hostToolOf = (toolName: string): BoundTool | undefined => {
+    const tool = offered(toolName);
+    return tool?.owner === undefined ? tool : undefined;
   };
 
   /*
@@ -585,5 +592,5 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
   };
 
-  return { clientToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, calls, methods };
+  return { clientToolOf, hostToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, calls, methods };
 }

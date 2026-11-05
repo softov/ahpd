@@ -442,7 +442,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
     {
       type: 'terminal',
       resource: expect.stringMatching(/^ahp-terminal:\/\/shell\//),
-      title: 'Bash',
+      title: 'Run shell command',
       isPty: false,
       result: { exitCode: 0, preview: 'BEGIN', truncated: true },
     },

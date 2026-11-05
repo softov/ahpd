@@ -127,7 +127,7 @@ it('names the terminal again on the call read back after a restart, and rebuilds
   const call = callsOf(chat).find((one) => one.toolCallId === 'toolu_big');
   expect(call?.content).toEqual([
     { type: 'text', text: before.notice },
-    { type: 'terminal', resource, title: 'Bash', isPty: false, result: { exitCode: 0, preview: 'BEGIN', truncated: true } },
+    { type: 'terminal', resource, title: 'Run shell command', isPty: false, result: { exitCode: 0, preview: 'BEGIN', truncated: true } },
   ]);
 
   const terminal = await stateOf(client, resource);

@@ -5,7 +5,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
 import { lineOf, pastLineOf, titleOf, toolInputOf } from '../input.js';
-import { toolMetaOf } from '../kinds.js';
+import { getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
 /**
@@ -39,6 +39,8 @@ export interface Stream {
   pastLines: Map<string, StringOrMarkdown>;
   /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
   contributorOf: (toolName: string) => Contributor | undefined;
+  /** The name a call's row is drawn under. */
+  displayNameOf: (toolName: string) => string;
   /** Every file an edit call began changing, recorded as it is now: a stop closes the CLI that would have ended the call. */
   editsStopped: () => void;
 }
@@ -52,15 +54,20 @@ export function createStream(ctx: SessionContext): Stream {
    * The MCP server a tool belongs to, out of its name.
    *
    * `mcp__<server>__<tool>` is the CLI's own naming, and it is the only thing
-   * that says a call is somebody else's server's rather than the harness's -
-   * which is what `ToolCallMcpContributor` records and what makes a call
-   * blocked on a sign-in tellable from one blocked on its own work.
+   * that says a call is somebody else's server's rather than the harness's,
+   * which is what makes a call blocked on a sign-in tellable from one blocked
+   * on its own work. The server is the name's second segment, as VS Code's
+   * Claude session reads it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L432-L435
    */
-  const serverOf = (toolName: string): string | undefined => /^mcp__(.+?)__/.exec(toolName)?.[1];
+  const serverOf = (toolName: string): string | undefined =>
+    (toolName.startsWith('mcp__') ? toolName.split('__')[1] || undefined : undefined);
 
   /**
    * Whose tool a call runs, as the call's start says it: the client whose own
-   * tool it is, or else the MCP server whose it is.
+   * tool it is, or else the MCP server of this session's customizations whose
+   * it is, by the customization's id, as VS Code's Claude session stamps it.
+   * A call of a server the session lists no customization for names none.
    *
    * A client's own beats the server it is offered through: the tools a client
    * provides reach the model on this host's in-process server, so by name they
@@ -68,13 +75,29 @@ export function createStream(ctx: SessionContext): Stream {
    * is where the protocol establishes who runs a call; a later contributor may
    * refine an MCP server's but never make a call a client's.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L427-L441
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/mcpCustomizationController.ts#L692-L710
    */
   const contributorOf = (toolName: string): Contributor | undefined => {
     const own = ctx.clientToolOf(toolName);
     if (own !== undefined) return { kind: 'client', clientId: own.owner };
     const from = serverOf(toolName);
-    return from === undefined ? undefined : { kind: 'mcp', customizationId: `mcp:${from}` };
+    if (from === undefined) return undefined;
+    const server = [...ctx.customizations, ...ctx.customizations.flatMap((one) => list(one.children).map(bag))]
+      .find((one) => str(one.type) === 'mcpServer' && str(one.name) === from);
+    const customizationId = str(server?.id);
+    return customizationId === undefined ? undefined : { kind: 'mcp', customizationId };
   };
+
+  /**
+   * The name a call's row is drawn under, as VS Code's Claude agent draws it:
+   * a client's tool by the name its client announced, the host's own tool by
+   * its title, and the CLI's tools from Claude's display table.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L672
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L142-L146
+   */
+  const displayNameOf = (toolName: string): string =>
+    ctx.clientToolOf(toolName)?.name ?? ctx.hostToolOf(toolName)?.definition.title ?? getClaudeToolDisplayName(toolName);
 
   /**
    * What each model round being streamed has said so far, by scope.
@@ -237,10 +260,11 @@ export function createStream(ctx: SessionContext): Stream {
         // takes the client server's prefix off; the CLI keeps its own name.
         // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
         const shown = ctx.clientToolOf(name)?.name ?? name;
+        const displayName = displayNameOf(name);
         const call: Bag = {
           toolCallId: id,
           toolName: shown,
-          displayName: shown,
+          displayName,
           status: 'streaming',
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
@@ -253,7 +277,7 @@ export function createStream(ctx: SessionContext): Stream {
           turnId: turn.id,
           toolCallId: id,
           toolName: shown,
-          displayName: shown,
+          displayName,
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
@@ -398,10 +422,11 @@ export function createStream(ctx: SessionContext): Stream {
         const meta = kindOf === undefined && Object.keys(described).length === 0 ? undefined : { ...kindOf, ...described };
         // A client's own tool by the name it announced.
         const shown = ctx.clientToolOf(name)?.name ?? name;
+        const displayName = displayNameOf(name);
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: shown,
-          displayName: shown,
+          displayName,
           status: 'running',
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
@@ -453,7 +478,7 @@ export function createStream(ctx: SessionContext): Stream {
             turnId: turn.id,
             toolCallId: id,
             toolName: shown,
-            displayName: shown,
+            displayName,
             ...(contributor ? { contributor } : {}),
             ...(meta ? { _meta: meta } : {}),
           });
@@ -684,5 +709,5 @@ export function createStream(ctx: SessionContext): Stream {
     for (const id of [...editing.keys()]) edited(id);
   };
 
-  return { streamed, assistant, results, rounds, pastLines, contributorOf, editsStopped };
+  return { streamed, assistant, results, rounds, pastLines, contributorOf, displayNameOf, editsStopped };
 }

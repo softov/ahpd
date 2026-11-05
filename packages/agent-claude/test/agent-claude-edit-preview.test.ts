@@ -300,7 +300,7 @@ it('sends the confirmation as it was, on a host with no changeset source', async
   expect(ready).toBeDefined();
   expect(ready).not.toHaveProperty('edits');
   expect(held.get('toolu_edit')).not.toHaveProperty('edits');
-  // Everything else about the card is what it always was.
-  expect(ready?.confirmationTitle).toBe('Run Edit?');
+  // The rest of the card, which a host with no changeset source still sends.
+  expect(ready?.confirmationTitle).toBe('Edit file?');
   expect(held.get('toolu_edit')?.status).toBe('pending-confirmation');
 });

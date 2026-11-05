@@ -27,6 +27,8 @@ const sdk = vi.hoisted(() => ({
   /** What the stream waits on after its frames, so a test can keep it open. */
   hold: Promise.resolve() as Promise<void>,
   canUseTool: undefined as undefined | ((name: string, input: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
+  /** The MCP servers the CLI reports. */
+  mcp: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -56,7 +58,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       reconnectMcpServer: async () => {},
       setMcpServers: async () => {},
       initializationResult: async () => ({}),
-      mcpServerStatus: async () => [],
+      mcpServerStatus: async () => sdk.mcp,
       reloadSkills: async () => ({ skills: [] }),
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
@@ -388,7 +390,7 @@ it('cuts a subject over 80 characters to its first line', async () => {
   }
 });
 
-it('gives a confirmation card the row line, not the CLI\'s title', async () => {
+it('gives a confirmation card the row line, and the title of its tool\'s permission', async () => {
   sdk.hold = new Promise(() => {});
   const input = { command: 'rm -rf /tmp/scratch', description: 'Clear scratch directory' };
   const { held, ready } = await live([], () => {
@@ -397,8 +399,72 @@ it('gives a confirmation card the row line, not the CLI\'s title', async () => {
   sdk.hold = Promise.resolve();
   expect(held.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
   expect(ready.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
-  expect(held.get('toolu_card')?.confirmationTitle).toBe('Claude wants to run rm -rf /tmp/scratch');
+  expect(held.get('toolu_card')?.confirmationTitle).toBe('Run in terminal?');
   expect(held.get('toolu_card')?.toolInput).toBe('rm -rf /tmp/scratch');
+});
+
+/*
+ * A call's name and its card's title, as VS Code's Claude agent draws them:
+ * the CLI's own tools from Claude's display table, an MCP call by its server
+ * and tool, a tool the table lacks by its own name, and a card titled by the
+ * kind of permission its tool needs, whatever the SDK called them. An MCP call
+ * names as its contributor the customization of a server the session lists.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L142-L244
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L427-L441
+ */
+it('names each call from Claude\'s display table, live and read back', async () => {
+  const names: Record<string, string> = {
+    toolu_long: 'Update todo list',
+    toolu_bash: 'Run shell command',
+    toolu_ask: 'Ask user a question',
+    toolu_fetch: 'Fetch URL',
+    toolu_search: 'WebSearch',
+    toolu_mcp: 'Run MCP tool docs__search',
+  };
+  const { held, sent, session } = await live();
+  const back = await restored();
+  for (const [id, name] of Object.entries(names)) {
+    expect(actionOf(sent, 'chat/toolCallStart', id)?.displayName, id).toBe(name);
+    expect(held.get(id)?.displayName, id).toBe(name);
+    expect(back.get(id)?.displayName, id).toBe(name);
+  }
+  await session.close();
+});
+
+it('titles a confirmation card by the permission its tool needs, and names it from the table', async () => {
+  sdk.hold = new Promise(() => {});
+  const asked: [string, string, Bag, string][] = [
+    ['toolu_t_bash', 'Bash', { command: 'ls' }, 'Run in terminal?'],
+    ['toolu_t_edit', 'Edit', { file_path: '/tmp/none', old_string: 'a', new_string: 'b' }, 'Edit file?'],
+    ['toolu_t_fetch', 'WebFetch', { url: 'https://example.com', prompt: 'read it' }, 'Fetch URL?'],
+    ['toolu_t_skill', 'Skill', { skill: 'review' }, 'Run skill?'],
+    ['toolu_t_mcp', 'mcp__docs__search', { topic: 'kqueue' }, 'Allow tool from docs?'],
+    ['toolu_t_other', 'Monitor', { command: 'tail -f log' }, 'Allow tool call?'],
+  ];
+  const { held, ready, session } = await live([], () => {
+    for (const [toolUseID, name, input] of asked) {
+      void sdk.canUseTool?.(name, input, { toolUseID, title: 'Claude wants to', displayName: 'Something' });
+    }
+  });
+  sdk.hold = Promise.resolve();
+  for (const [id, , , title] of asked) {
+    expect(ready.get(id)?.confirmationTitle, id).toBe(title);
+    expect(held.get(id)?.confirmationTitle, id).toBe(title);
+  }
+  expect(held.get('toolu_t_bash')?.displayName).toBe('Run shell command');
+  expect(held.get('toolu_t_other')?.displayName).toBe('Monitor');
+  await session.close();
+});
+
+it('names an MCP call\'s contributor by its server\'s customization, and none for a server the session does not list', async () => {
+  sdk.mcp = [{ name: 'docs', status: 'connected' }];
+  const { held, sent, session } = await live();
+  sdk.mcp = [];
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_numbers')?.contributor).toBeUndefined();
+  expect(held.get('toolu_numbers')?.contributor).toBeUndefined();
+  await session.close();
 });
 
 /*
