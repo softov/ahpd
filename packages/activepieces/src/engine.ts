@@ -534,11 +534,14 @@ const cannotSuspend = (): never => {
  *
  * A piece reads `auth` and `propsValue`, and may keep a value in `store`. The
  * run cannot pause, so `canPause` is false and a waitpoint is refused; the
- * step is `step_1`. The rest is a stub: the plugin runs one action, not a flow,
- * so a piece that reaches for a connection or the server is told that it is
- * not here. `files` writes into the call's folder, and a call with no folder
- * refuses it.
- * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/handler/piece-executor.ts#L91-L141
+ * step is `step_1`. What the action says with `output.update` goes to the
+ * plugin as it says it, the running call's partial content: the engine's
+ * action run drops it because its run has no live channel, and a tool call
+ * here has one, AHP's `chat/toolCallContentChanged`. The rest is a stub: the
+ * plugin runs one action, not a flow, so a piece that reaches for a connection
+ * or the server is told that it is not here. `files` writes into the call's
+ * folder, and a call with no folder refuses it.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/handler/piece-executor.ts#L75-L141
  */
 const contextOf = (request: RunRequest, input: Record<string, unknown>): Record<string, unknown> => ({
   auth: request.auth,
@@ -552,7 +555,11 @@ const contextOf = (request: RunRequest, input: Record<string, unknown>): Record<
     current: { id: request.connector, version: { id: request.action } },
   },
   tags: { add: async () => undefined },
-  output: { update: async () => undefined },
+  output: {
+    update: async (params: unknown): Promise<void> => {
+      process.send?.({ type: 'output', id: request.id, data: isRecord(params) ? params['data'] ?? null : null });
+    },
+  },
   run: {
     id: `run-${request.id}`,
     canPause: false,

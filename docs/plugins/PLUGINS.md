@@ -650,7 +650,10 @@ host.registerAdapter({
   read back; `input` is what the model passed, without the `connector` argument
   when it named one. `call.files` is the folder where the calling session's
   attachments are kept, when its store keeps one; it is absent on a session
-  with no folder. It answers a promise of the result, which the host hands the
+  with no folder. `call.setContent(content)` replaces what the running call
+  has produced so far, which a client is shown as the call's partial content,
+  `chat/toolCallContentChanged`; it is there where the host can say it. A call
+  with neither is handed no `call`. It answers a promise of the result, which the host hands the
   model as the tool's answer. An adapter with no `run` offers no action tool,
   and a `run` that throws is what the model is told, under the alias it named.
 - `check(connector)` is optional, and says whether the connector works with a call that needs its key. `connector` is the row `open` got. It answers `{ result, message? }`: `ok` when the service accepted the key, `denied` when it refused the credentials, `unreachable` when the service did not answer, or `failed` for anything else. The host runs it after each open: a put waits for the answer, so a put says whether the key is right, and a start does not, so a slow service cannot hold it. A check that has not answered in 10 seconds counts as `unreachable`, and one that throws is `failed` with its message. An adapter with no `check` leaves its connectors with no check.

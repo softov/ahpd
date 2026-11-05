@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { logoOf } from './logos.js';
 import type { NetworkMode } from './guard.js';
 import { adapterOf, nameOf } from './mapping.js';
-import { isAnswer } from './wire.js';
+import { isAnswer, isOutput } from './wire.js';
 import type { ChildProcess } from 'node:child_process';
 import type { Logo } from './logos.js';
 import type { RunCallArgs } from './mapping.js';
 import type { Answer, PieceDescription, Question } from './wire.js';
-import type { Plugin, PluginHost } from '@ahpd/sdk';
+import type { ActionCall, Plugin, PluginHost } from '@ahpd/sdk';
 
 /**
  * The package as a plugin.
@@ -209,16 +209,17 @@ export const sandboxEnv = (settings: EngineSettings = {}, env: NodeJS.ProcessEnv
 /** One answer waiting for its request, by the request's id. */
 type Waiting = Map<number, (answer: Answer) => void>;
 
-/** The engine process, and the answers it still owes. */
+/** The engine process, the answers it still owes, and who hears each running action's output. */
 interface Running {
   process: ChildProcess;
   waiting: Waiting;
+  outputs: Map<number, (data: unknown) => void>;
 }
 
 /** The engine, started on demand and started again after it exits, five times at most. */
 export interface Engine {
-  /** Ask one question, and answer its answer. */
-  ask(request: Question): Promise<Answer>;
+  /** Ask one question, and answer its answer; `output` hears what a running action says before it. */
+  ask(request: Question, output?: (data: unknown) => void): Promise<Answer>;
   /** Close the channel, which the engine exits on. */
   stop(): void;
 }
@@ -262,20 +263,27 @@ export function engine(host: PluginHost, settings: EngineSettings = {}): Engine 
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     });
     const waiting: Waiting = new Map();
-    const opened: Running = { process: forked, waiting };
+    const outputs = new Map<number, (data: unknown) => void>();
+    const opened: Running = { process: forked, waiting, outputs };
 
     const fail = (message: string): void => {
       for (const [id, done] of waiting) {
         waiting.delete(id);
+        outputs.delete(id);
         done({ type: 'failed', id, message });
       }
     };
 
     forked.on('message', (message: unknown) => {
+      if (isOutput(message)) {
+        outputs.get(message.id)?.(message.data);
+        return;
+      }
       if (!isAnswer(message)) return;
       const done = waiting.get(message.id);
       if (done === undefined) return;
       waiting.delete(message.id);
+      outputs.delete(message.id);
       done(message);
     });
     forked.on('error', (error: unknown) => {
@@ -302,7 +310,7 @@ export function engine(host: PluginHost, settings: EngineSettings = {}): Engine 
   };
 
   return {
-    ask: (request) => {
+    ask: (request, output) => {
       if (limitReached) {
         return Promise.resolve({ type: 'failed', id: 0, message: `The engine process stopped after ${MAX_RESTARTS} restarts.` });
       }
@@ -310,11 +318,13 @@ export function engine(host: PluginHost, settings: EngineSettings = {}): Engine 
       const id = ++seq;
       return new Promise<Answer>((resolve) => {
         opened.waiting.set(id, resolve);
+        if (output !== undefined) opened.outputs.set(id, output);
         opened.process.send({ ...request, id }, undefined, undefined, (error) => {
           if (error === null) return;
           const done = opened.waiting.get(id);
           if (done === undefined) return;
           opened.waiting.delete(id);
+          opened.outputs.delete(id);
           done({ type: 'failed', id, message: reason(error) });
         });
       });
@@ -362,7 +372,20 @@ const awaited = async (answer: Promise<Answer>, action: string): Promise<Answer>
 };
 
 /** Run one action in the engine, its connector's store kept in `stores`, and answer its result. */
-const callAction = async (channel: Engine, piece: PieceDescription, call: RunCallArgs, stores: string | undefined, installed: string | undefined, installedFirst: boolean): Promise<unknown> => {
+const callAction = async (
+  channel: Engine,
+  piece: PieceDescription,
+  call: RunCallArgs,
+  setContent: ActionCall['setContent'],
+  stores: string | undefined,
+  installed: string | undefined,
+  installedFirst: boolean,
+): Promise<unknown> => {
+  // What the action says with `output.update` is the call's partial content,
+  // its `data` as JSON text, each update replacing the last.
+  const output = setContent === undefined
+    ? undefined
+    : (data: unknown): void => { setContent([{ type: 'text', text: JSON.stringify(data) }]); };
   const answer = await awaited(channel.ask({
     type: 'run',
     piece: piece.package,
@@ -370,7 +393,7 @@ const callAction = async (channel: Engine, piece: PieceDescription, call: RunCal
     ...(stores === undefined ? {} : { stores }),
     ...(installed === undefined ? {} : { installed }),
     ...(installedFirst ? { installedFirst: true } : {}),
-  }), piece.actions.find((one) => one.name === call.action)?.displayName ?? call.action);
+  }, output), piece.actions.find((one) => one.name === call.action)?.displayName ?? call.action);
   if (answer.type === 'ran') return answer.result;
   throw new Error(answer.type === 'failed' ? answer.message : 'the engine answered a call with a description');
 };
@@ -479,7 +502,7 @@ export const apply: Plugin['apply'] = async (host, options) => {
       if (said.type === 'validated') return { valid: said.valid, ...(said.error === undefined ? {} : { error: said.error }) };
       throw new Error(said.type === 'failed' ? said.message : `the engine answered a check with ${said.type}`);
     };
-    const mapped = adapterOf(piece, (call) => callAction(channel, piece, call, stores, host.installed, installedFirst), logo?.icon, validate);
+    const mapped = adapterOf(piece, (call, setContent) => callAction(channel, piece, call, setContent, stores, host.installed, installedFirst), logo?.icon, validate);
     for (const note of mapped.notes) host.problem(note);
     if (mapped.adapter !== undefined) host.registerAdapter(mapped.adapter);
   }

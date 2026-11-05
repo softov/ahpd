@@ -225,6 +225,18 @@ export type Question = Omit<DescribeRequest, 'id'> | Omit<RunRequest, 'id'> | Om
 /** One answer from the engine. */
 export type Answer = DescribedAnswer | RanAnswer | ValidatedAnswer | FailedAnswer;
 
+/**
+ * What a running action said with `output.update`, before its answer: the
+ * `data` it handed over, which replaces what it said before.
+ */
+export interface OutputMessage {
+  type: 'output';
+  /** The id of the `run` request the action is running for. */
+  id: number;
+  /** The `data` the action handed `output.update`. */
+  data: unknown;
+}
+
 /** Whether a value came over the channel as an answer, with an id. */
 export const isAnswer = (value: unknown): value is Answer => {
   if (typeof value !== 'object' || value === null) return false;
@@ -232,3 +244,8 @@ export const isAnswer = (value: unknown): value is Answer => {
   const known = message['type'] === 'described' || message['type'] === 'ran' || message['type'] === 'validated' || message['type'] === 'failed';
   return known && typeof message['id'] === 'number';
 };
+
+/** Whether a value came over the channel as a running action's output, with an id. */
+export const isOutput = (value: unknown): value is OutputMessage =>
+  typeof value === 'object' && value !== null && (value as Record<string, unknown>)['type'] === 'output'
+  && typeof (value as Record<string, unknown>)['id'] === 'number';

@@ -88,6 +88,7 @@ An action its piece marks for humans alone, with `audience: 'human'`, is not off
 
 - An action runs in the engine with the connector's auth and the call's input, as Activepieces runs a single action outside a flow: its step is `step_1`, and `run.canPause` is false, so a waitpoint is refused in the engine's words. An action the piece lacks is refused as the engine refuses it, `Action not found for piece <package>@<version>`.
   The result comes back as the tool's answer, and a thrown error comes back as its message only.
+  What the action hands `output.update` while it runs is the call's partial content, its `data` as JSON text, each update in place of the last, which a client is shown as `chat/toolCallContentChanged` where the host can say it.
 - A call may run for 600 seconds, Activepieces' single action run timeout. One that runs longer fails, saying the action may have partially completed and is not to be run again blindly, and the engine stays up for the next one.
   An engine that exits starts again on the next call, five times, as VS Code restarts its agent host. After that, every call is refused: `The engine process stopped after 5 restarts.`
 - A call's input is diagnosed, filled, made its props' types and validated as Activepieces makes an action run's, and refused in its words when it cannot run.

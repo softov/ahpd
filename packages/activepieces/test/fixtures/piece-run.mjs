@@ -5,7 +5,8 @@
  * the engine built: `echo` reads `auth` and `propsValue`, `remember` and
  * `recall` read the connector's `store`, `env` reads the engine's environment,
  * `read` reads the file a `FILE` prop was turned into, `write` writes into the
- * call's folder, `context` answers the run and the step, `pause` and `wait` ask
+ * call's folder, `progress` says its steps with `output.update`, `context`
+ * answers the run and the step, `pause` and `wait` ask
  * for a waitpoint, `fail` throws, `crash` ends the engine, and `slow` answers
  * after the timeout a call gives up at.
  */
@@ -133,6 +134,17 @@ export const runnable = {
       description: 'Answers the daemon token the engine can read, if any, and its home and path.',
       props: {},
       run: async () => ({ token: process.env.AHPD_TOKEN ?? null, home: process.env.HOME ?? null, path: process.env.PATH ?? null }),
+    },
+    progress: {
+      name: 'progress',
+      displayName: 'Progress',
+      description: 'Says two steps with output.update, then answers.',
+      props: {},
+      run: async (context) => {
+        await context.output.update({ data: { step: 1 } });
+        await context.output.update({ data: { step: 2 } });
+        return { done: true };
+      },
     },
     context: {
       name: 'context',

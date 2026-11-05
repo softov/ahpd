@@ -13,7 +13,8 @@
  * secrets - and the input of one call.
  */
 
-import type { Icon } from '@microsoft/agent-host-protocol';
+import type { Icon, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { OnWire } from './wire.js';
 
 /**
  * What a capability is, as a client files it.
@@ -459,13 +460,25 @@ export interface Adapter {
    * action's result, which the host passes on. An adapter with no `run` offers
    * no action tool, and an adapter with `run` and no `action` capability runs
    * nothing either.
-   *
-   * `call.files` is the folder where one session's attachments are kept, when
-   * its store keeps one. An adapter that reads or writes a file reads it there.
-   * It is absent on a session with no folder, and on every call from a host
-   * that keeps none.
    */
-  run?(connector: Connector, action: string, input: Record<string, unknown>, call?: { files?: string }): Promise<unknown>;
+  run?(connector: Connector, action: string, input: Record<string, unknown>, call?: ActionCall): Promise<unknown>;
+}
+
+/** What one action call carries beside its input. */
+export interface ActionCall {
+  /**
+   * The folder where one session's attachments are kept, when its store keeps
+   * one. An adapter that reads or writes a file reads it there. It is absent
+   * on a session with no folder, and on every call from a host that keeps
+   * none.
+   */
+  files?: string;
+  /**
+   * Replace what the running call has produced so far, which a client is
+   * shown as the call's partial content, the spec's
+   * `chat/toolCallContentChanged`. Given where the host can say it.
+   */
+  setContent?(content: OnWire<ToolResultContent>[]): void;
 }
 
 /** One adapter as the fold keeps it, with the plugin that registered it. */

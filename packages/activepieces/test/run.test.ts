@@ -100,6 +100,18 @@ describe('an action runs in the engine', () => {
     expect((failed as Error).message).not.toContain('sk-test');
   });
 
+  it('says what the action hands output.update as the running call\'s partial content, each update in place of the last', async () => {
+    const one = await started();
+    const said: unknown[] = [];
+    const answer = await running(one)(connector('work'), 'progress', {}, { setContent: (content) => { said.push(content); } });
+
+    expect(answer).toEqual({ done: true });
+    expect(said).toEqual([
+      [{ type: 'text', text: '{"step":1}' }],
+      [{ type: 'text', text: '{"step":2}' }],
+    ]);
+  });
+
   it('fails a call that runs past Activepieces\' 600 seconds in its words, and answers the next one', async () => {
     const one = await started();
     const run = running(one);

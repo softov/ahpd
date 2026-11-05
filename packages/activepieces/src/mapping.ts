@@ -1,4 +1,4 @@
-import type { Adapter, Capability, Connector, Icon } from '@ahpd/sdk';
+import type { ActionCall, Adapter, Capability, Connector, Icon } from '@ahpd/sdk';
 import type { ActionDescription, AuthDescription, PieceDescription, PropDescription } from './wire.js';
 
 /**
@@ -268,8 +268,12 @@ export interface RunCallArgs {
   files?: string;
 }
 
-/** The one who runs a call, which the plugin answers with its engine. */
-export type RunCall = (call: RunCallArgs) => Promise<unknown>;
+/**
+ * The one who runs a call, which the plugin answers with its engine;
+ * `setContent` is where the running call's partial content is said, when the
+ * host can say it.
+ */
+export type RunCall = (call: RunCallArgs, setContent?: ActionCall['setContent']) => Promise<unknown>;
 
 /** The piece's own check of a connection's auth value: whether it took it, and what it said when not. */
 export type ValidateCall = (auth: Record<string, unknown>) => Promise<{ valid: boolean; error?: string }>;
@@ -336,7 +340,7 @@ export function adapterOf(piece: PieceDescription, run?: RunCall, icon?: Icon, v
       auth: authOf(entries, connector),
       input,
       ...(call?.files === undefined ? {} : { files: call.files }),
-    });
+    }, call?.setContent);
   }
   if (validate !== undefined && entries.some((entry) => entry.validates === true)) {
     adapter.check = async (connector) => {
