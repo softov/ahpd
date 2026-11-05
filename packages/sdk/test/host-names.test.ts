@@ -641,7 +641,7 @@ describe('a session asked for by the name its creator used', () => {
     // it resolved under its own name.
     vscode.handle({
       method: 'dispatchAction',
-      params: { channel: chatOfSession(held), action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, confirmed: 'user-action' } },
+      params: { channel: chatOfSession(held), action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c1', approved: true, confirmed: 'user-action' } },
     });
     expect(await decision).toMatchObject({ behavior: 'allow' });
     await settle();

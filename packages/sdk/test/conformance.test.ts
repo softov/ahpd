@@ -294,7 +294,7 @@ it('reduces a tool call somebody had to allow', async () => {
   const open = (waiting[chatUri] as Chat).activeTurn?.responseParts ?? [];
   expect((open[0]?.toolCall as { status: string }).status).toBe('pending-confirmation');
 
-  dispatch(client, chatUri, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' });
+  dispatch(client, chatUri, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' });
   await settle();
   await expect(asked).resolves.toMatchObject({ behavior: 'allow' });
   await said({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'gone' }] } });

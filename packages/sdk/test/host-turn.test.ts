@@ -767,7 +767,7 @@ describe('one tool call, one row', () => {
     const started = await running({ terminalAutoApproveDefaults: 'none' });
     started.client.handle({
       method: 'dispatchAction',
-      params: { channel: started.uri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
     });
     await settle();
     await emit({
@@ -843,7 +843,7 @@ describe('one tool call, one row', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' } },
     });
     await settle();
 
@@ -886,7 +886,7 @@ describe('one tool call, one row', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' } },
     });
     await settle();
 
@@ -1001,6 +1001,8 @@ describe('running a failed turn again', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
     });
     await settle();
+    // A first run long enough that a second run timed alone ends sooner.
+    await new Promise((r) => { setTimeout(r, 40); });
     await emit({
       type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 5,
       usage: { input_tokens: 10, output_tokens: 2 }, modelUsage: { 'claude-x': { costUSD: 0.5 } },
@@ -1017,12 +1019,18 @@ describe('running a failed turn again', () => {
 
     const said = actions(p, chatUri).map((e) => e.action);
     const both = { inputTokens: 4, outputTokens: 1, _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' } } };
-    expect(said.filter((one) => one.type === 'chat/turnComplete').map((one) => one.duration)).toEqual([12]);
+    // Timed on this host, as VS Code's host times a turn: the first run's time
+    // is what its failure said, and the resumed end adds the second run's.
+    const first = Number(said.find((one) => one.type === 'chat/error')?.duration);
+    expect(first).toBeGreaterThanOrEqual(30);
+    const ended = said.filter((one) => one.type === 'chat/turnComplete').map((one) => Number(one.duration));
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toBeGreaterThanOrEqual(first);
     expect(said.filter((one) => one.type === 'chat/usage').at(-1)?.usage).toMatchObject(both);
     const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: { id: string; duration?: number; usage?: unknown }[] } };
     }).snapshot.state;
-    expect(state.turns.map((one) => [one.id, one.duration])).toEqual([['t1', 12]]);
+    expect(state.turns.map((one) => [one.id, one.duration])).toEqual([['t1', ended[0]]]);
     expect(state.turns[0]?.usage).toMatchObject(both);
   });
 

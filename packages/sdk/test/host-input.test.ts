@@ -47,7 +47,7 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: callId, approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: callId, approved: true, confirmed: 'user-action' } },
     });
     expect(await decision).toMatchObject({ behavior: 'allow' });
     expect(actions(p, uri).map((e) => e.action.type)).toContain('session/inputNeededRemoved');
