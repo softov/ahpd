@@ -67,15 +67,18 @@ const namesItsValues = (schema: Record<string, unknown>): boolean => {
  * Whether a schema names its own shape without a `type`.
  *
  * JSON Schema reads `properties` as an object and `items` as an array, and a
- * `$ref` names a schema written elsewhere. Those are named values, so they are
- * not the "field with no type" this walk reports. A `oneOf`, `anyOf`, `enum` or
- * `const` is named the same way, in the caller.
+ * `$ref` names a schema written elsewhere. An `if` is a condition on a value
+ * the schema around it names, such as a field required for one kind of a
+ * connection. Those are named values, so they are not the "field with no type"
+ * this walk reports. A `oneOf`, `anyOf`, `enum` or `const` is named the same
+ * way, in the caller.
  */
 const namedWithoutType = (schema: Record<string, unknown>): boolean =>
   schema['properties'] !== undefined
   || schema['additionalProperties'] !== undefined
   || schema['items'] !== undefined
-  || schema['$ref'] !== undefined;
+  || schema['$ref'] !== undefined
+  || schema['if'] !== undefined;
 
 /** One path below another, with a dot only when there is a parent. */
 const under = (base: string, tail: string): string => (base === '' ? tail : `${base}.${tail}`);

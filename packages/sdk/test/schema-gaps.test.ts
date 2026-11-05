@@ -55,6 +55,14 @@ describe('the gaps in one schema', () => {
     expect(schemaGaps({ anyOf: [{ type: 'string' }, { type: 'number' }] })).toEqual([]);
   });
 
+  it('takes a condition on the value around it, such as a field one kind requires', () => {
+    expect(schemaGaps({
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['a', 'b'] }, key: { type: 'string' } },
+      allOf: [{ if: { properties: { kind: { const: 'a' } } }, then: { required: ['key'] } }],
+    })).toEqual([]);
+  });
+
   it('takes an empty schema as any JSON value', () => {
     expect(schemaGaps({})).toEqual([]);
     expect(schemaGaps(undefined)).toEqual([]);
@@ -169,6 +177,28 @@ describe('a registration with a gap', () => {
 
     expect(recorded.contribution.adapters['acme']).toBeDefined();
     expect(lines).toEqual(['acme: adapter acme apiKey: writeOnly kept in the vault; mark it secret']);
+  });
+
+  it('says a nested writeOnly field of an adapter stays in the record, masked', () => {
+    const lines: string[] = [];
+    const recorded = pluginHost('acme', context(), { alert: (alert) => { lines.push(alert.text); } });
+    recorded.host.registerAdapter({
+      name: 'acme', title: 'Acme', description: 'One adapter.',
+      schema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string', writeOnly: true },
+          auth: { type: 'object', properties: { token: { type: 'string', writeOnly: true } } },
+        },
+      },
+      capabilities: [],
+      open: () => undefined,
+    });
+
+    expect(lines).toEqual([
+      'acme: adapter acme apiKey: writeOnly kept in the vault; mark it secret',
+      'acme: adapter acme auth.token: writeOnly below the top stays in the record, masked; only a top-level field is kept in the vault',
+    ]);
   });
 
   it('says nothing about a vault field that says secret, at the top or under env', () => {

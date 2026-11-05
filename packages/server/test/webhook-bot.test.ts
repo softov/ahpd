@@ -98,7 +98,9 @@ async function started(grants: string[] = GRANTS) {
     users: directory(),
   };
   const { options, problems, routes } = await loadPlugins([
-    { name: BOT, options: { root: join(dir, 'bots') } },
+    // What the bot's wake needs to start its back session in the bot's trusted
+    // folder and hand the message on; a wake that cannot ends the turn failed.
+    { name: BOT, options: { root: join(dir, 'bots') }, grants: ['session:trust', 'session:state', 'chat:turns', 'chat:send'] },
     { name: WEBHOOK, grants },
   ], { base, configDir: join(dir, 'config'), cwd: REPO, log: (line) => { lines.push(line); } });
   const host = createHost(options);
@@ -154,12 +156,12 @@ it('answers a sync call with the turn status and no text, in the plugin chat', a
   const first = await call('hello there');
   const said = await first.json() as Bag;
   expect({ status: first.status, said }).toMatchObject({ status: 200, said: { thread: 'pr-12', status: 'complete' } });
-  // A `bot-chat` turn is complete and carries no response part, so there is no text to answer with.
-  expect(said['text']).toBe('');
+  // The echo bot's answer, said back through the plugin chat.
+  expect(said['text']).toContain('hello there');
 
   const second = await call('once more');
   expect(second.status).toBe(200);
-  expect((await second.json() as Bag)['text']).toBe('');
+  expect((await second.json() as Bag)['text']).toContain('once more');
 
   // One thread and one chat: both calls are turns in the one chat the plugin's
   // read of the bot answered, which is where the bot answers through.

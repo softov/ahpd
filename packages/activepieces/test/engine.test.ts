@@ -112,6 +112,7 @@ describe('the engine asks for pieces', () => {
         type: 'SECRET_TEXT',
         displayName: 'API Key',
         description: 'The key the simple API takes.',
+        validates: true,
       },
       actions: [
         {

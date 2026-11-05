@@ -290,9 +290,10 @@ describe('ahpd automation export', () => {
   });
 
   it('refuses with --vscode an automation VS Code\'s file cannot hold, and writes nothing', async () => {
-    kept([schedule('*/5 * * * *', zone)]);
+    // Two schedules, where VS Code's file holds one.
+    kept([schedule('0 9 * * 1-5', zone), schedule('0 18 * * 1-5', zone)]);
     const out = join(home, 'out.automation.md');
-    await expect(run({ id: ID, out, vscode: true })).rejects.toThrow(`${ID} runs on "*/5 * * * *"`);
+    await expect(run({ id: ID, out, vscode: true })).rejects.toThrow('has more than one schedule, and a VS Code automation file holds one.');
     expect(existsSync(out)).toBe(false);
   });
 
@@ -337,10 +338,10 @@ describe('ahpd automation export', () => {
     });
 
     it('refuses one it cannot hold as a conflict', async () => {
-      store.create('ahp-automation:/other', entry([schedule('*/5 * * * *', zone)]).definition);
+      store.create('ahp-automation:/other', entry([schedule('0 9 * * 1-5', zone), schedule('0 18 * * 1-5', zone)]).definition);
       const answer = await call('/automation/export/other?vscode=true');
       expect(answer.status).toBe(409);
-      expect((await answer.json() as { message: string }).message).toContain('runs on "*/5 * * * *"');
+      expect((await answer.json() as { message: string }).message).toContain('has more than one schedule');
     });
   });
 });

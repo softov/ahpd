@@ -316,10 +316,10 @@ describe('a first-party plugin', () => {
    * imported for them.
    */
   const schemas: [string, string[]][] = [
-    ['activepieces', ['pieces']],
+    ['activepieces', ['pieces', 'networkMode', 'ssrfAllowList', 'sandboxPropagatedEnvVars']],
     ['agent-acp', ['hostTools', 'toolsChanged']],
     ['agent-claude', [
-      'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir', 'workerStop',
+      'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir',
       'handshakeTimeoutMs',
     ]],
     ['agent-cofold', [
@@ -333,7 +333,7 @@ describe('a first-party plugin', () => {
       'prefix', 'sessionSetting', 'sessionDefault', 'needs', 'mounts', 'profiles', 'bodyMounts', 'imageMounts',
       'images', 'devcontainer',
     ]],
-    ['push', ['title', 'accessToken', 'webPushHosts', 'contact']],
+    ['push', ['accessToken', 'webPushHosts', 'contact']],
     ['tasks', ['requireApproval', 'sweepAfterDays']],
     ['tunnel-devtunnel', ['connector', 'name', 'keep', 'anonymous', 'allowAccountChange']],
     ['webhook', ['syncTimeoutSeconds', 'maxBodyBytes']],
