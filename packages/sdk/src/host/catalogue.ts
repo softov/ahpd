@@ -1584,11 +1584,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         if ((now.movable === true) !== (row.movable === true)) changes.movable = now.movable === true;
         if (Object.keys(changes).length > 0) ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes });
       }
+      /*
+       * The session's state holds its chats' aggregate, its status and the
+       * activity of the chat that drives it, beside its own read and archived
+       * bits, as VS Code's state manager keeps a session's derived fields in
+       * its state; no action of the protocol's says them, so a snapshot is
+       * where a client reads them.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3301-L3325
+       */
       const activity = activityOf(held);
       const open = ctx.heldStates.get(session);
-      if (open !== undefined && activity !== open.state.activity) {
-        const { activity: _was, ...rest } = open.state;
-        open.state = activity === undefined ? rest : { ...rest, activity };
+      if (open !== undefined) {
+        const status = (statusOf(session) & (Status.IsRead - 1)) | (Number(open.state.status ?? 0) & ~(Status.IsRead - 1));
+        if (activity !== open.state.activity || status !== open.state.status) {
+          const { activity: _was, ...rest } = open.state;
+          open.state = activity === undefined ? { ...rest, status } : { ...rest, status, activity };
+        }
       }
     }
     summaryMoved(session);

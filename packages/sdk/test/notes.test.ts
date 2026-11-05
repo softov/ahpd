@@ -321,13 +321,14 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
     snapshot: { state: { status: number; inputNeeded?: unknown[] } };
   };
   expect(opened.snapshot.state.inputNeeded).toBeUndefined();
-  // The session's status is what its reducer made of the actions it was
-  // sent, so a client subscribing now reads the bits a watching client holds,
+  // The session's status is its chats' aggregate as the host keeps it, as
+  // VS Code's state manager does, so a client subscribing now reads it idle,
   // and the input-needed bit left with the question. Its activity is read
   // without the read bit, which is the person's and not the turn's.
   const activity = (status: number): number => status & (Status.IsRead - 1);
-  expect(activity(opened.snapshot.state.status)).toBe(activity(session.status));
+  expect(activity(opened.snapshot.state.status)).toBe(Status.Idle);
   expect(opened.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
+  expect(session.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
   // And the session's row, which aggregates its chats, says it is idle.
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; status: number }[];

@@ -539,6 +539,28 @@ describe('a session row\'s status', () => {
     expect((row?.chats?.find((one) => one.resource === second)?.status ?? 0) & 31).toBe(Status.Error);
     expect((row?.status ?? 0) & 31).toBe(Status.Idle);
   });
+
+  /*
+   * The session's state holds the chats' aggregate as its row does, as VS
+   * Code's state manager keeps a session's derived status in its state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3301-L3325
+   */
+  it('says in the session\'s state that a chat of it runs, and that it no longer does', async () => {
+    const { client, uri, chatUri } = await running();
+    const status = async (): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+      snapshot: { state: { status: number } };
+    }).snapshot.state.status & 31;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    expect(await status()).toBe(Status.InProgress);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+    expect(await status()).toBe(Status.Idle);
+  });
 });
 
 describe('the flags a client sets', () => {

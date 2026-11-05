@@ -60,7 +60,7 @@ A session's `status` is a bitset, and the low bits are what it is doing now:
 | `IsRead` | 32 | This host's own, shared by every client, and the reason a row marked read comes back read |
 | `IsArchived` | 64 | The same, and what gives a row with no agent running a status to report |
 
-A session of several chats reads as VS Code's host aggregates one: `InputNeeded` while any chat waits on somebody, else `InProgress` while any chat runs, a worker's chat included, else the default chat's bits. A chat that failed says so on its own row in the session's list of chats, and the session's `activity` is the activity of the chat that decided its status.
+A session of several chats reads as VS Code's host aggregates one: `InputNeeded` while any chat waits on somebody, else `InProgress` while any chat runs, a worker's chat included, else the default chat's bits. A chat that failed says so on its own row in the session's list of chats, and the session's `activity` is the activity of the chat that decided its status. The session's row and its state both carry the aggregate, with the session's own read and archived bits.
 
 `createdAt` is when the session was first started and never moves; a resumed session takes the catalogue's value rather than the moment it was resumed. `modifiedAt` is the last change, and `activity` is what the session is doing in one line, absent when it is idle.
 

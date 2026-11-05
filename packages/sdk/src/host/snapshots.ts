@@ -108,24 +108,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return { ...rest, turns: window.turns, ...(window.turnsNextCursor === undefined ? {} : { turnsNextCursor: window.turnsNextCursor }) };
   };
 
-  /**
-   * A session's status as its own reducer keeps it, from the flags this host
-   * keeps and the input it waits on.
-   *
-   * The protocol's session reducer moves `status` through `IsRead`,
-   * `IsArchived` and the input-needed list, and through nothing else, so the
-   * activity a seed starts from is idle, raised to input-needed while the list
-   * holds an entry a person answers. What the session's chats are doing is
-   * their own status, carried on each row of `chats`; the catalogue row is
-   * where the session-wide answer is drawn.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-session/reducer.ts#L44-L62
-   */
-  const seedStatus = (uri: string, inputNeeded: unknown): number => {
-    const waiting = Array.isArray(inputNeeded)
-      && inputNeeded.some((one) => (one as Bag | undefined)?.kind !== 'toolClientExecution');
-    return (waiting ? Status.InputNeeded : Status.Idle) | kept.flags(idOf(uri));
-  };
-
   const sessionSeed = (channel: string): Bag => {
     const held = sessions.get(channel);
     const lead = held === undefined ? undefined : leadOf(held);
@@ -179,7 +161,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // any - and then the field is absent rather than an empty list.
       ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(channel) } : {}),
       ...(inputNeeded.length > 0 ? { inputNeeded } : {}),
-      status: seedStatus(channel, inputNeeded),
+      // The chats' aggregate with the session's own bits, as VS Code's state
+      // manager seeds and keeps a session's status.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3301-L3325
+      status: ctx.statusOf(channel),
       // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
       // does not, and the catalogue row is where a client reads it.
       defaultChat: held.defaultChat,
