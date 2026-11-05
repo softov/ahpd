@@ -1634,23 +1634,16 @@ export function chatAction(
         else no('Cannot change a steering message while it is being processed.');
         break;
       }
-      // Read now rather than when the turn comes round: a message waiting
-      // behind another is still a message this host has to be able to answer
-      // for, and the chat it points at may be gone by the time it runs.
-      const read = messageAttachments(message, connection);
-      if (read.refusal !== undefined) {
-        refuse(connection.peer, channel, action, origin, read.refusal);
-        break;
-      }
       /*
        * Said, and then the queue drain's: steering is handed to the turn the
        * chat runs, and the queue's head starts once the chat runs nothing,
        * steering first, as the reference host drains a chat's pending
-       * messages. Its checks are the turn's own, run when the drain admits it.
+       * messages. Its checks are the turn's own, run when the drain admits it,
+       * the chats it attaches read out among them.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
        */
       dispatch(session.chatUri, action, origin);
-      ctx.pendingSet(session.chatUri, id, connection, read.attachments);
+      ctx.pendingSet(session.chatUri, id, connection);
       break;
     }
     /**

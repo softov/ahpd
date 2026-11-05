@@ -24,14 +24,13 @@ import type { HostContext } from './context.js';
 
 /**
  * Who sent a pending message, kept by this host beside the chat's state and
- * put in no action: the window that set it, the owner a message of this
- * host's is for, and the files this host wrote for what it attached.
+ * put in no action: the window that set it, and the owner a message of this
+ * host's is for.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L77-L83
  */
 interface Sender {
   connection?: Connection | undefined;
   owner?: Owner | undefined;
-  attachments?: MessageAttachment[] | undefined;
 }
 
 /** What the drain keeps of one chat. */
@@ -46,7 +45,7 @@ interface Kept {
 
 export interface QueueDrain {
   /** A pending message a client set, said already, kept with who sent it and then handed on or drained. */
-  pendingSet(chat: string, id: string, connection: Connection | undefined, attachments: MessageAttachment[] | undefined): void;
+  pendingSet(chat: string, id: string, connection: Connection | undefined): void;
   /** A pending message a client took back, said already: steering the backend holds is withdrawn. */
   pendingRemoved(chat: string, id: string, kind: 'queued' | 'steering'): void;
   /** The queue reordered by a client, said already. */
@@ -105,11 +104,12 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     submitted.add(id);
     const message = (steering.message ?? {}) as Bag;
     const from = ctx.messageFrom(message);
-    const sender = senders.get(id);
+    // The message as the chat holds it, as the reference host hands steering on.
+    const attachments = Array.isArray(message.attachments) ? message.attachments as MessageAttachment[] : undefined;
     const handoff = session.sendSteeringMessage({
       id,
       text: String(message.text ?? ''),
-      ...(sender?.attachments === undefined ? {} : { attachments: sender.attachments }),
+      ...(attachments === undefined ? {} : { attachments }),
       ...(from === undefined ? {} : { from }),
     });
     if (handoff === false) submitted.delete(id);
@@ -173,18 +173,29 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     const provider = lead === undefined ? 'This provider' : ctx.chatAgent(lead, chat).provider;
     // A message of this host's is the turn of the owner it was queued for.
     if (sender?.owner !== undefined) ctx.senders.set(turnId, sender.owner);
+    /*
+     * The chats the message attaches, read out as the turn is sent, as a
+     * client's start's are: one that cannot be read ends the turn, as the
+     * reference host's send resolves a turn's attachments.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2380-L2409
+     */
+    const attached = ctx.messageAttachments(message, sender?.connection);
+    if (attached.refusal !== undefined) {
+      ended('sendFailed', attached.refusal);
+      return;
+    }
     // Its start is the drain's, said above, so nothing more is said for it.
     ctx.beginTurn(
       () => ctx.beginOrRun(owner.chat, provider, turnId, String(message.text ?? ''), ctx.modelIn(message.model), ctx.messageFrom(message),
-        sender?.connection, sender?.attachments, () => undefined, () => ctx.cancelledTurns.get(chat)?.has(turnId) === true),
+        sender?.connection, attached.attachments, () => undefined, () => ctx.cancelledTurns.get(chat)?.has(turnId) === true),
       (why) => { ended('rejected', why); },
       (why) => { ended('sendFailed', why); },
     );
   };
 
   return {
-    pendingSet: (chat, id, connection, attachments) => {
-      keptOf(chat).senders.set(id, { connection, attachments });
+    pendingSet: (chat, id, connection) => {
+      keptOf(chat).senders.set(id, { connection });
       handSteering(chat);
       tryConsume(chat);
     },

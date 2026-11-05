@@ -493,15 +493,21 @@ describe('a message typed while a turn is running', () => {
     expect(sdk.said).toEqual(['first']);
   });
 
-  it('refuses to take back a message the chat never queued', async () => {
+  /*
+   * A removal of a message the chat never queued is said as the client sent
+   * it, and the reducer leaves the chat as it was, as the reference host
+   * applies any removal it does not refuse.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13520-L13537
+   */
+  it('says a removal of a message the chat never queued, as it was sent', async () => {
     const { client, peer: p, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
+      params: { channel: chatUri, clientSeq: 31, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('nobody');
+    const said = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 31);
+    expect(said.map((e) => [e.action.type, e.rejectionReason])).toEqual([['chat/pendingMessageRemoved', undefined]]);
   });
 
   /*
