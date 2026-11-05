@@ -529,16 +529,16 @@ describe('a credential in a plugin key', () => {
 
 describe('one Claude entry', () => {
   it('is keyed by its name, with its own options under it', async () => {
-    const root = await withPlugins([{ name: CLAUDE, options: { workerStop: 'session' } }], undefined, repo);
+    const root = await withPlugins([{ name: CLAUDE, options: { computerCli: 'host' } }], undefined, repo);
     const values = await root.values() as Record<string, { options: Record<string, unknown> }>;
     expect(Object.keys(values)).toEqual(['plugins.agent-claude']);
-    expect(values[`plugins.${pluginIdOf(CLAUDE)}`]?.options).toEqual({ workerStop: 'session' });
+    expect(values[`plugins.${pluginIdOf(CLAUDE)}`]?.options).toEqual({ computerCli: 'host' });
   });
 
   it('is a write that edits its own entry', async () => {
-    const root = await withPlugins([{ name: CLAUDE, options: { workerStop: 'session' } }], undefined, repo);
-    await root.write({ [`plugins.${pluginIdOf(CLAUDE)}`]: { options: { workerStop: 'worker' } } });
-    expect(held().plugins).toEqual([{ source: CLAUDE, options: { workerStop: 'worker' } }]);
+    const root = await withPlugins([{ name: CLAUDE, options: { computerCli: 'host' } }], undefined, repo);
+    await root.write({ [`plugins.${pluginIdOf(CLAUDE)}`]: { options: { computerCli: 'part' } } });
+    expect(held().plugins).toEqual([{ source: CLAUDE, options: { computerCli: 'part' } }]);
   });
 
   it('is refused by key when no entry holds that one', async () => {

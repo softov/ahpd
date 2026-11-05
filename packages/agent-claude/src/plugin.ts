@@ -74,7 +74,6 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
     ...(said.computerConfigDir === undefined ? {} : { computerConfigDir: said.computerConfigDir }),
     ...(said.computerCli === undefined ? {} : { computerCli: said.computerCli }),
     ...(said.computerCliFallback === undefined ? {} : { computerCliFallback: said.computerCliFallback }),
-    ...(said.workerStop === undefined ? {} : { workerStop: said.workerStop }),
     ...(said.handshakeTimeoutMs === undefined ? {} : { handshakeTimeoutMs: said.handshakeTimeoutMs }),
   };
   return { paths, shared };

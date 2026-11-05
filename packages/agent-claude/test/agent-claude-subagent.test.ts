@@ -101,7 +101,7 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), extra: { workerStop?: 'worker' | 'session' } = {}) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name)) {
   sdk.reset();
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
@@ -128,7 +128,6 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-sub-')),
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
-    ...extra,
   });
   await settle();
   // The turn the frames answer.
@@ -582,25 +581,19 @@ it('completes a worker\'s chat whose task failed', async () => {
   expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
-it('cancels the lead turn instead when configured to stop the session', async () => {
+/*
+ * A stop in a worker's chat never cancels the lead turn: VS Code's Claude
+ * agent, asked to stop a subagent's chat, stops nothing else.
+ */
+it('stops nothing for a worker the CLI named no task for, and leaves the lead turn running', async () => {
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6), { workerStop: 'session' });
+  const { main, session } = await replay('claude-subagent.jsonl', lines.slice(0, 2));
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
-});
-
-it('cancels the lead turn when the worker has no task id yet', async () => {
-  const lines = fixture('claude-subagent.jsonl');
-  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { session } = await replay('claude-subagent.jsonl', lines.slice(0, 2));
-  session.stopWorker?.(call);
-  await settle();
-  expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
+  expect(sdk.interrupted).toBe(0);
+  expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
 });
 
 /** A session with a lead turn open, and the asks and frames a test drives it with. */

@@ -101,7 +101,6 @@
           "anyOf": [{ "type": "string" }, { "const": false }],
           "description": "The configuration directory the CLI reads inside a machine. /ahpd/<id> by default, /ahpd/claude for the built-in; false leaves the image's own."
         },
-        "workerStop": { "type": "string", "enum": ["worker", "session"], "description": "What a stop given in a subagent's chat stops. worker by default." },
         "handshakeTimeoutMs": {
           "type": "integer",
           "minimum": 1,

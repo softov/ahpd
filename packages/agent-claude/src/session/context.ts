@@ -80,11 +80,6 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
   /**
-   * What a stop given in a worker's chat stops: that worker, by default, or
-   * with `session` the lead turn that runs it.
-   */
-  workerStop?: 'worker' | 'session';
-  /**
    * Where each turn of `seed` ended, in the CLI's own names, by turn id.
    *
    * What the read of the transcript named for the conversation this session

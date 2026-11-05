@@ -708,16 +708,13 @@ export function createWorkers(ctx: SessionContext): Workers {
    *
    * By the task id its `task_started` named, through the SDK's own
    * per-task stop, which answers with a `stopped` notification that ends
-   * the worker's chat. Configured with `workerStop: 'session'`, or for a
-   * worker the harness has not named a task for yet, it stops the lead
-   * turn instead, which is the only stop there is then.
+   * the worker's chat. A worker the harness has not named a task for has
+   * nothing to stop it by, and nothing else is stopped: VS Code's Claude
+   * agent, asked to stop a subagent's chat, leaves the lead turn running.
    */
   const stopWorker = (toolCallId: string): void => {
     const task = tasks.get(toolCallId);
-    if (ctx.options.workerStop === 'session' || task === undefined) {
-      void ctx.self.abort();
-      return;
-    }
+    if (task === undefined) return;
     void ctx.handle.stopTask(task).catch(() => {});
   };
 

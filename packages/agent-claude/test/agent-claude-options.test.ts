@@ -57,7 +57,6 @@ it.each<[string, unknown]>([
   ['paths', 'x'],
   ['computerExecutable', 5],
   ['computerConfigDir', true],
-  ['workerStop', 'all'],
   ['computerCli', 'image'],
   ['computerCliFallback', 'skip'],
 ])('reports %s of the wrong type and skips the plugin', async (key, value) => {

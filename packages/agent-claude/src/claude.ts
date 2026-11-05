@@ -121,14 +121,6 @@ export interface ClaudeOptions {
    */
   computerConfigDir?: string | false;
   /**
-   * What a stop given in a subagent's chat stops.
-   *
-   * `worker`, the default, stops that subagent alone and the turn that
-   * started it goes on; `session` cancels that turn, and every subagent it
-   * runs with it.
-   */
-  workerStop?: 'worker' | 'session';
-  /**
    * How long the CLI has to answer its handshake before it is a CLI that died.
    *
    * A cold start with several MCP servers is slow, and this is the option that
@@ -654,7 +646,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readEnds.get(resumed);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
-      ...(options.workerStop !== undefined ? { workerStop: options.workerStop } : {}),
       uri: start.uri,
       chatUri: start.chatUri,
       ...(chatId === undefined ? {} : { chatId }),
