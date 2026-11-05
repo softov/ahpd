@@ -2,8 +2,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
-import { isShellName } from '@ahpd/sdk';
-import type { ConfigTaken, Session, ShellEnv } from '@ahpd/sdk';
+import type { ConfigTaken, Session } from '@ahpd/sdk';
 import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -76,33 +75,6 @@ const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
 const sourcing = (path: string): string => `{ . '${path.replaceAll("'", "'\\''")}'; } 2>/dev/null || printf 'shell init script exited %s\\n' "$?"`;
 
 /**
- * One word, quoted for a POSIX shell, by the rule `terminals.ts` uses.
- *
- * Single quotes make everything literal except the quote itself, which is
- * written by closing, escaping and reopening: `it's` becomes `'it'\''s'`.
- */
-const quoted = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
-
-/**
- * The operator's environment, as the lines that give a shell it.
- *
- * One `export` for each name the operator set the value of and one `unset` for
- * each name they removed. A name that is not a shell variable name is left
- * out: `export 2FA=on` is a syntax error, and a session whose every command
- * failed to parse would be worse than one variable a deployment cannot set
- * this way. The daemon refuses such a name in its config as well; this is what
- * keeps a session built by hand from writing the line.
- */
-const shellEnvLines = (shellEnv?: ShellEnv): string => {
-  const lines: string[] = [];
-  for (const [name, value] of Object.entries(shellEnv ?? {})) {
-    if (!isShellName(name)) continue;
-    lines.push(value === null ? `unset ${name}` : `export ${name}=${quoted(value)}`);
-  }
-  return lines.join('\n');
-};
-
-/**
  * A `permissions` value, if it is one.
  *
  * `undefined` for anything else, which is what makes `setConfig` able to
@@ -124,11 +96,11 @@ export interface Config {
   initScript: string;
   /** Take a `shellInitScripts` value, or say why it is not one. */
   setShellInit: (value: unknown) => true | string;
-  /** The `PreToolUse` hook that puts the operator's environment and that script in front of a command. */
+  /** The `PreToolUse` hook that puts that script in front of a command. */
   sourceFirst: HookCallback;
   /**
-   * The command a call was written as, before `sourceFirst` put the operator's
-   * lines in front of it, by the call's id.
+   * The command a call was written as, before `sourceFirst` put the script's
+   * line in front of it, by the call's id.
    *
    * The owner's rules match the line the model wrote, and `canUseTool` is
    * handed the rewritten input: this is where the original is kept for it.
@@ -150,16 +122,14 @@ export function createConfig(ctx: SessionContext): Config {
    * this file in front of every command. One path for the session's life,
    * rewritten on each change, because the hook is built once with the query
    * and reads the file by name. The bash entry only: the CLI's shell tool is
-   * bash on every platform it runs on.
-   *
-   * The operator's `shellEnv` goes through the same hook and ahead of the
-   * script, because a Bash command is the one place this session reaches a
-   * shell at all - the CLI starts no other.
+   * bash on every platform it runs on. The operator's environment reaches the
+   * same shells through the CLI's own environment (`query.ts`), so the script
+   * sourced here can still change what the operator set.
    */
   const initScript = join(tmpdir(), `ahpd-shell-init-${crypto.randomUUID()}.sh`);
   let sourced = false;
   /*
-   * What each rewritten command was before the operator's lines were put in
+   * What each rewritten command was before the script's line was put in
    * front of it, by the call's id.
    *
    * The hook is told the id of the call it is rewriting, and `canUseTool` is
@@ -168,17 +138,6 @@ export function createConfig(ctx: SessionContext): Config {
    * session runs.
    */
   const unprefixed = new Map<string, string>();
-  /*
-   * The operator's environment, as the lines that go in front of every
-   * command.
-   *
-   * Built once, when the session starts: the map is the operator's and cannot
-   * move under a running session, the way the session's own `shellInitScripts`
-   * can. The operator's lines come before a client's script, so a script can
-   * still change what the operator set - which is what `shellInitScripts` is
-   * for.
-   */
-  const environment = shellEnvLines(ctx.options.shellEnv);
   const setShellInit = (value: unknown): true | string => {
     const list = shellInitScripts(value);
     /*
@@ -207,14 +166,11 @@ export function createConfig(ctx: SessionContext): Config {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const given = bag(input.tool_input);
     const command = str(given.command);
-    if (command === undefined) return {};
-    // The operator's lines, then the client's script, then the command.
-    const before = [environment, sourced ? sourcing(initScript) : ''].filter((one) => one !== '').join('\n');
-    // Nothing to put in front of it: the command goes as the client wrote it.
-    if (before === '') return {};
+    // No script in force: the command goes as the model wrote it.
+    if (command === undefined || !sourced) return {};
     // Kept for the question the CLI asks about this call after the hook runs.
     unprefixed.set(input.tool_use_id, command);
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${before}\n${command}` } } };
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${sourcing(initScript)}\n${command}` } } };
   };
 
   const methods: Config['methods'] = {

@@ -384,9 +384,35 @@ export function createQuery(ctx: SessionContext): Query {
    * Every query built here goes out with the bound on its handshake, which is
    * this one place rather than the two a session starts one from.
    */
+  /**
+   * The operator's environment for the session's shells, handed to the CLI as
+   * VS Code's Claude hands its own: a name set goes in the CLI's
+   * `settings.env`, which the CLI layers onto the commands it runs, and a name
+   * removed comes out of the environment the CLI is spawned with, which those
+   * commands inherit. Each command runs as the model wrote it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L178
+   */
+  const withShellEnv = (options: Bag): Bag => {
+    const entries = Object.entries(ctx.options.shellEnv ?? {});
+    const set = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    const removed = entries.filter(([, value]) => value === null).map(([name]) => name);
+    const out: Bag = { ...options };
+    if (Object.keys(set).length > 0) {
+      const settings = bag(options.settings);
+      out.settings = { ...settings, env: { ...bag(settings.env), ...set } };
+    }
+    if (removed.length > 0) {
+      const env: Bag = { ...bag(options.env ?? process.env) };
+      for (const name of removed) delete env[name];
+      out.env = env;
+    }
+    return out;
+  };
+
   const buildQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => bounded(query({
     prompt: input(bound),
-    options: {
+    options: withShellEnv({
       cwd: ctx.options.cwd,
       /*
        * Where the CLI runs, when it is not here.
@@ -508,10 +534,10 @@ export function createQuery(ctx: SessionContext): Query {
        * exactly as `take` leaves it off.
        */
       ...(ctx.chosen && ctx.chosen !== 'default' ? { model: ctx.chosen } : {}),
-      // Before every shell command, the operator's environment and any client
-      // script in force; before every call, the question for a tool the
-      // operator's rule names; on every prompt, what the host asked said on
-      // that turn; and at the end of each turn, what the CLI still has in hand.
+      // Before every shell command, any client script in force; before every
+      // call, the question for a tool the operator's rule names; on every
+      // prompt, what the host asked said on that turn; and at the end of each
+      // turn, what the CLI still has in hand.
       hooks: {
         PreToolUse: [
           { matcher: 'Bash', hooks: [ctx.sourceFirst] },
@@ -601,7 +627,7 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...(agent === undefined ? {} : { agent }),
       canUseTool: ctx.canUseTool,
-    },
+    }),
   } as Parameters<typeof query>[0]));
 
   /**

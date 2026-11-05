@@ -59,10 +59,9 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /**
    * The environment the operator names for the shells this session runs.
    *
-   * Carried from `Start.shellEnv`, and written into the same hook the session's
-   * own `shellInitScripts` go through: an `export` line for each name the
-   * operator set and an `unset` for each one they removed. Absent when the
-   * operator named none, and then the hook says nothing about the environment.
+   * Carried from `Start.shellEnv` and handed to the CLI: each name the
+   * operator set in its `settings.env`, each one they removed out of the
+   * environment the CLI is spawned with.
    */
   shellEnv?: ShellEnv;
   /**

@@ -181,19 +181,22 @@ it('runs a command the owner\'s rules allow, without asking', async () => {
   expect(sent.filter((one) => one.type === 'chat/toolCallReady')).toEqual([]);
 });
 
+/** A client's shell init script in force, which is what puts a line in front of a command. */
+const SCRIPTED = { shellInitScripts: [{ shell: 'bash', script: 'export SAY=b\n' }] };
+
 it('matches the line the model wrote, not the one the shell prefix made', async () => {
   const { asked, check } = approving(['make test']);
-  const { canUseTool, options } = await sessionWith(check, {}, { SAY: 'b' });
+  const { canUseTool, options } = await sessionWith(check, SCRIPTED);
 
   /*
-   * What the CLI does first: the hook puts the operator's environment in
-   * front of the command, and the rewritten input is what `canUseTool` is
-   * handed. The rules are the owner's about the command, and the command is
-   * the one the model wrote.
+   * What the CLI does first: the hook puts the client's script in front of
+   * the command, and the rewritten input is what `canUseTool` is handed. The
+   * rules are the owner's about the command, and the command is the one the
+   * model wrote.
    */
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_env', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
-  expect(rewritten.command).toBe("export SAY='b'\nmake test");
+  expect(String(rewritten.command)).toMatch(/ahpd-shell-init-[^']*\.sh.*\nmake test$/u);
 
   expect(await canUseTool('Bash', rewritten, { toolUseID: 'toolu_env' }))
     .toEqual({ behavior: 'allow', updatedInput: rewritten });
@@ -211,7 +214,7 @@ it('matches the line the model wrote, not the one the shell prefix made', async 
  */
 it('asks about a command as the model wrote it, and runs it with the shell prefix', async () => {
   const { check } = approving([]);
-  const { session, canUseTool, options, sent } = await sessionWith(check, {}, { SAY: 'b' });
+  const { session, canUseTool, options, sent } = await sessionWith(check, SCRIPTED);
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_shown', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
   const asking = canUseTool('Bash', rewritten, { toolUseID: 'toolu_shown' });
@@ -219,7 +222,7 @@ it('asks about a command as the model wrote it, and runs it with the shell prefi
   const ready = readyOf(sent, 'toolu_shown');
   const entry = sent.find((one) => one.type === 'session/inputNeededSet');
   expect(JSON.stringify([ready, entry])).toContain('make test');
-  expect(JSON.stringify([ready, entry])).not.toContain('export');
+  expect(JSON.stringify([ready, entry])).not.toContain('ahpd-shell-init');
   session.confirm('toolu_shown', true);
   expect(await asking).toEqual({ behavior: 'allow', updatedInput: rewritten });
 });
@@ -365,7 +368,7 @@ it('does not let an allow list answer for a matched tool', async () => {
 
 it('runs a matched Bash command with the input sourceFirst wrote', async () => {
   const { check } = naming(['Bash']);
-  const { session, canUseTool, options } = await sessionWith(check, {}, { SAY: 'b' });
+  const { session, canUseTool, options } = await sessionWith(check, SCRIPTED);
 
   const hooked = await shellHook(options)({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_bash', tool_input: { command: 'make test' } });
   const rewritten = bag(bag(hooked.hookSpecificOutput).updatedInput);
