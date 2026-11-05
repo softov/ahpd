@@ -480,10 +480,19 @@ export async function offerConfigure(options: OfferOptions): Promise<boolean> {
   return true;
 }
 
-/** Whether a folder is one of the folders, or is under one of them. */
-export const under = (folder: string, served: string): boolean => {
-  const inside = resolve(folder);
-  const above = resolve(served);
+/**
+ * Whether a folder is one of the folders, or is under one of them, compared as
+ * VS Code's agent host compares a folder with a trusted one: the case of a
+ * letter ignored except on Linux, whose file systems tell cases apart, as
+ * VS Code's `extUriBiasedIgnorePathCase` and `startsWithIgnoreCase` ignore an
+ * ASCII letter's case.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L29
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/extpath.ts#L227-L273
+ */
+export const under = (folder: string, served: string, ignoreCase = process.platform !== 'linux'): boolean => {
+  const folded = (path: string): string => (ignoreCase ? path.replace(/[A-Z]/gu, (one) => one.toLowerCase()) : path);
+  const inside = folded(resolve(folder));
+  const above = folded(resolve(served));
   return inside === above || inside.startsWith(above.endsWith(sep) ? above : `${above}${sep}`);
 };
 
