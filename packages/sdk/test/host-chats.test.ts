@@ -388,6 +388,29 @@ describe('a chat made out of another', () => {
     expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
+  /*
+   * The turn still running bounds a side chat as a completed one does, as VS
+   * Code's host takes either.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7715-L7720
+   */
+  it('makes a side chat of the turn still running', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'the weather' } } },
+    });
+    await settle();
+
+    expect(await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/side', source: { kind: 'sideChat', chat: chatUri, turnId: 't1' } },
+    })).toBeNull();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/side' } }) as {
+      snapshot: { state: { origin?: unknown } };
+    }).snapshot.state;
+    expect(state.origin).toEqual({ kind: 'sideChat', chat: chatUri, turnId: 't1' });
+  });
+
   it('tells a side chat what the turn said, and keeps it out of the history', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({

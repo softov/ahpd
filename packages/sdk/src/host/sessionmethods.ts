@@ -1279,7 +1279,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const turnId = String(source.turnId ?? '');
         const all = from.chat.allTurns();
         const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
-        if (at < 0 && kind !== 'fork')
+        /*
+         * A side chat's turn is a completed one or the one running, taken as
+         * it stands, as the reference host bounds a side chat by either.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7715-L7720
+         */
+        const running = kind === 'sideChat' && at < 0 ? ctx.stateOf(from.chat.chatUri)?.activeTurn as Bag | undefined : undefined;
+        const live = running !== undefined && String(running.id ?? '') === turnId ? running : undefined;
+        if (at < 0 && kind !== 'fork' && live === undefined)
           throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn in ${String(source.chat ?? '')}`);
         /*
          * A fork at a turn the chat does not hold is a fresh chat on the
@@ -1287,7 +1294,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * point it cannot find rather than seed nothing under a fork.
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7427-L7433
          */
-        if (at >= 0) {
+        if (at >= 0 || live !== undefined) {
           /*
            * The backend that serves the chat this one is cut from, which is
            * the one that has to be able to cut it: a chat of another backend
@@ -1323,7 +1330,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           else {
             if (sourceAgent.chats?.sideChat !== true)
               throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot start a side chat from a turn`);
-            const message = (all[at] as Bag | undefined)?.message;
+            const message = (live ?? all[at] as Bag | undefined)?.message;
             const said = typeof message === 'object' && message !== null
               ? (message as { text?: unknown }).text
               : undefined;
