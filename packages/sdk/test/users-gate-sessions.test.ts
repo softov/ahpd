@@ -271,8 +271,8 @@ it('keeps config for a channel that names no session out of the store', async ()
    */
   await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'whisper' } });
   expect(admin.refused()).toEqual([
-    'zzz:/nothing: zzz:/nothing is not a session here',
-    'zzz:/disk: zzz:/disk is not a session here',
+    'zzz:/nothing: No agent for session: zzz:/nothing',
+    'zzz:/disk: No agent for session: zzz:/disk',
   ]);
   expect(store.config('nothing')).toBeUndefined();
   // The row that is a session keeps the backend's key and not this host's own.

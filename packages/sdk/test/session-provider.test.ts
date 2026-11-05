@@ -419,6 +419,11 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['ahp-session:/unrecorded']);
   });
 
+  /*
+   * A row whose agent is not loaded is refused as VS Code's restore refuses a
+   * session it finds no agent for: -32001, the code its client takes as final.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+   */
   it('keeps the recorded provider when that harness is not loaded, and waits for it', async () => {
     const one: string[] = [];
     const two: string[] = [];
@@ -432,13 +437,13 @@ describe('a row two harnesses both list', () => {
     // daemon that merely failed to load one plugin.
     expect(await catalogue(client)).toEqual(['two:/shared']);
     await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
     // Nothing moved it, so it is the same conversation once `two` is back.
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
 
-  it('refuses a turn to a row still waiting for its agent, naming it', async () => {
+  it('refuses a turn to a row whose agent is not loaded, as VS Code\'s restore refuses it', async () => {
     const refusals: unknown[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -462,7 +467,7 @@ describe('a row two harnesses both list', () => {
 
     // The turn is refused to the client rather than run on the harness that
     // happened to read the transcript, which is what would rewrite the record.
-    expect(refusals).toEqual(['two is not loaded on this host']);
+    expect(refusals).toEqual(['No agent for session: two:/shared']);
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
@@ -488,7 +493,7 @@ describe('a row two harnesses both list', () => {
     expect(one).toEqual([]);
   });
 
-  it('refuses a session created over a row waiting for its agent, naming it', async () => {
+  it('refuses a session created over a row whose agent is not loaded, as VS Code\'s restore refuses it', async () => {
     const one: string[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -500,27 +505,45 @@ describe('a row two harnesses both list', () => {
     // be a second conversation under an id that already has one, and
     // `keepProvider` would write `one` over the record on the way out.
     await expect(client.handle({ method: 'createSession', params: { channel: 'one:/shared', provider: 'one' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
 
-  it('refuses the marks of a waiting row, naming the agent', async () => {
+  /*
+   * A session's marks are read without its agent, as VS Code reads a
+   * session's annotations without restoring its provider.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14278
+   */
+  it('serves and keeps the marks of a row whose agent is not loaded', async () => {
     const store = memorySessions();
     store.setProvider('shared', 'two');
     const one: string[] = [];
-    const { client } = serving(store, [harness('one', ['shared'], one)]);
+    const notes: Record<string, unknown>[] = [];
+    const { client } = serving(store, [harness('one', ['shared'], one)], {
+      ...peer(),
+      notify: (_method, params) => { notes.push(params as Record<string, unknown>); },
+    });
     await settle();
     await catalogue(client);
 
     // A client hydrates a session by subscribing to its turns, its config and
     // its marks.
     await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared/annotations' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .resolves.toMatchObject({ snapshot: { resource: 'two:/shared/annotations' } });
+    const annotation = {
+      id: 'a1', origin: { session: 'two:/shared' }, resource: 'file:///x', resolved: false,
+      entries: [{ id: 'e1', text: 'one' }],
+    };
+    client.handle({ method: 'dispatchAction', params: { channel: 'two:/shared/annotations', clientSeq: 1, action: { type: 'annotations/set', annotation } } });
+    await settle();
+    const answer = notes.find((note) => (note['origin'] as { clientSeq?: number } | undefined)?.clientSeq === 1);
+    expect(answer).toMatchObject({ action: { type: 'annotations/set' } });
+    expect(answer?.['rejectionReason']).toBeUndefined();
     expect(store.provider('shared')).toBe('two');
   });
 
-  it('answers every other road to a waiting row with the agent that is missing', async () => {
+  it('answers every other road to a row whose agent is not loaded as VS Code\'s restore does', async () => {
     const refusals: string[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -536,20 +559,13 @@ describe('a row two harnesses both list', () => {
     await settle();
     await catalogue(client);
 
-    // The older turns, the marks, the session's config and a draft: four roads
-    // that all end at a transcript this host cannot read, and none of which may
-    // answer as though the session were nowhere, which is what it is not.
+    // The older turns, the session's config and a draft: three roads that all
+    // end at a transcript this host cannot read, each refused as the restore
+    // they need is.
     await expect(client.handle({ method: 'fetchTurns', params: { channel: chatUriFor('two:/shared') } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
 
     for (const [channel, action] of [
-      ['two:/shared/annotations', {
-        type: 'annotations/set',
-        annotation: {
-          id: 'a1', origin: { session: 'two:/shared' }, resource: 'file:///x', resolved: false,
-          entries: [{ id: 'e1', text: 'one' }],
-        },
-      }],
       ['two:/shared', { type: 'session/configChanged', config: { voice: 'shouty' } }],
       [chatUriFor('two:/shared'), { type: 'chat/draftChanged', draft: { text: 'go' } }],
     ] as [string, Record<string, unknown>][]) {
@@ -557,9 +573,8 @@ describe('a row two harnesses both list', () => {
       await settle();
     }
 
-    expect(refusals).toEqual(Array<string>(3).fill('two is not loaded on this host'));
-    // Nothing of the row was written either: no config, and no mark that the
-    // next client to hydrate it would find as though it had been set.
+    expect(refusals).toEqual(Array<string>(2).fill('No agent for session: two:/shared'));
+    // Nothing of the row was written either.
     expect(store.config('shared')).toBeUndefined();
   });
 

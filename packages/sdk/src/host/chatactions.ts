@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -542,22 +542,24 @@ export function chatAction(
       dispatch(uri, action, origin);
     };
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
-    // Before `past`, which answers nothing for a session waiting for its
-    // agent and would have this one say it is not a session at all.
-    const waiting = waitingFor(idOf(sessionFor(channel)));
-    if (waiting !== undefined) {
-      no(`${waiting} is not loaded on this host`);
+    /*
+     * A session whose agent this host is not serving, and one the catalogue
+     * does not list once `past` has read it under the one name the session is
+     * published by, is refused as the reference host's restore refuses a
+     * session it finds no agent for.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+     */
+    if (waitingFor(idOf(sessionFor(channel))) !== undefined) {
+      no(`No agent for session: ${sessionFor(channel)}`);
       return;
     }
     if (known()) {
       keep();
       return;
     }
-    // `past` reads the catalogue first, which is what lists it, under the one
-    // name the session is published by.
     return past(idOf(sessionFor(channel))).then(() => {
       if (known()) keep();
-      else no(`${channel} is not a session here`);
+      else no(`No agent for session: ${sessionFor(channel)}`);
     });
   }
   /*
@@ -573,7 +575,10 @@ export function chatAction(
    * session is: the turn is begun on its chat by the road every turn takes,
    * and its echo carries the `clientSeq` the client sent. Held awake from
    * the wake until the turn has been applied. The wait is returned, so its
-   * client's later dispatches go behind it.
+   * client's later dispatches go behind it. A chat the woken session does
+   * not have takes the start as the client's action with nothing applied,
+   * as the reference host takes an action on a chat it cannot place.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12516
    */
   if (!held && type === 'chat/turnStarted') {
     // The session the chat belongs to, which is not the chat's own name:
@@ -583,7 +588,7 @@ export function chatAction(
     return wake(uri, channel, connection).then(
       () => {
         if (!byChat.has(channel) && !sessions.has(channel)) {
-          no(`${channel} is not a chat of ${uri}`);
+          dispatch(channel, action, origin);
           return;
         }
         return conn.applyNow(params, origin);
@@ -607,23 +612,26 @@ export function chatAction(
    * draft held for a session nobody has is a map that only grows. The read
    * is returned, so its client's later dispatches go behind it, as the
    * reference host queues an action on a chat whose session it has not
-   * restored.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
+   * restored. A session whose agent this host is not serving is refused as
+   * the reference host's restore refuses one, and a chat the catalogue does
+   * not place takes the draft as the client's action with nothing kept, as
+   * the reference host takes an action on a chat it cannot place.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12516
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
    */
   if (!session && type === 'chat/draftChanged') {
     const uri = sessionFor(channel);
     const id = idOf(uri);
     return (async () => {
-      const missing = waitingFor(id);
-      if (missing !== undefined) {
-        refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
+      if (waitingFor(id) !== undefined) {
+        refuse(connection.peer, channel, action, origin, `No agent for session: ${uri}`);
         return;
       }
       // The session the chat belongs to, under the name it is published by,
       // which the catalogue's read names.
       const found = await past(id);
       if (!found || ctx.nameOf(id) !== uri) {
-        refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
+        dispatch(channel, action, origin);
         return;
       }
       const next = typeof action.draft === 'object' && action.draft !== null
@@ -642,13 +650,6 @@ export function chatAction(
       dispatch(channel, action, origin);
     })();
   }
-  // With its keys, because the useful half of this line is what was in the
-  // action nobody read - a type alone says only that a client wanted
-  // something.
-  const nothing = (): void => {
-    const carried = Object.keys(action).filter((key) => key !== 'type');
-    no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
-  };
   const asleep = !session && !worker && !sessions.has(sessionFor(channel)) && owners.has(sessionFor(channel));
   /*
    * A stop on a session asleep in the catalogue.
@@ -669,7 +670,10 @@ export function chatAction(
    * Woken for it, and the action applied again to the session that is live,
    * the same way an action waits for a session being started again. A config
    * change and a draft are kept above without a wake. The wait is returned, so
-   * its client's later dispatches go behind it.
+   * its client's later dispatches go behind it. A chat the woken session does
+   * not have takes the action as the client's with nothing applied, as the
+   * reference host takes an action on a chat it cannot place.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12516
    */
   if (asleep) {
     const uri = sessionFor(channel);
@@ -677,7 +681,7 @@ export function chatAction(
     return wake(uri, channel, connection).then(
       () => {
         if (!byChat.has(channel) && !sessions.has(channel)) {
-          nothing();
+          dispatch(channel, action, origin);
           return;
         }
         return conn.applyNow(params, origin);
@@ -687,8 +691,25 @@ export function chatAction(
       },
     ).finally(release);
   }
+  /*
+   * Nothing here holds the session or the chat. A chat its running session
+   * does not have takes the action as the client's with nothing applied, as
+   * the reference host takes an action on a chat it cannot place; a session
+   * this host cannot open, its agent not served here among them, is refused as
+   * the reference host's restore refuses one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12516
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+   */
   if (!session) {
-    nothing();
+    if (spaceOf(channel) === 'chat' && sessions.has(sessionFor(channel))) dispatch(channel, action, origin);
+    else if (ctx.sessionChannel(channel)) no(`No agent for session: ${sessionFor(channel)}`);
+    else {
+      // With its keys, because the useful half of this line is what was in the
+      // action nobody read - a type alone says only that a client wanted
+      // something.
+      const carried = Object.keys(action).filter((key) => key !== 'type');
+      no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
+    }
     return;
   }
   const command = commandOf(session);

@@ -1,3 +1,4 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerId } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
@@ -612,7 +613,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const held = sessions.get(uri);
     const owner = owners.get(uri);
     if (!held && !owner)
-      throw new RpcError(-32001, `No agent for session ${uri}`);
+      throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
     const agent = held?.agent ?? (owner as Agent);
     /*
      * The turn's last words before the session that said them goes.

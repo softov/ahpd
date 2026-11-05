@@ -229,10 +229,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * with five cases written here: every client applies its own dispatch
      * with that function, and a host that reduced the same action even
      * slightly differently would hand out a state its clients disagree
-     * with. It returns the state it was given when the action names
-     * something that is not there, which is what makes a no-op tellable
-     * from a change - and a no-op echoed as though it had applied is a
-     * client left holding an optimistic mark this host never kept.
+     * with. The client's action is said whether or not the reducer moved the
+     * state, as the reference host emits an accepted annotation action.
+     *
+     * The marks are kept by the session's id, read without the session's
+     * agent, so a session whose agent this host is not serving keeps them too,
+     * as the reference host reads a session's annotations without restoring
+     * its provider. Only the name the session is published under reads as
+     * that id, as for a subscribe to its marks, and the catalogue is read
+     * first, which is what names a row no listing reached. A mark under any
+     * other name is refused in the reference host's words for a session it
+     * cannot find.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14295
      */
     if (type.startsWith('annotations/')) {
       if (!channel.endsWith(MARKS)) {
@@ -241,40 +249,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       }
       const owning = channel.slice(0, -MARKS.length);
       const id = idOf(owning);
-      // A mark on a session this host cannot open is a mark kept for a
-      // harness that is not here: refusing by name is what tells a client
-      // the row is waiting rather than gone.
-      const marked = waitingFor(id);
-      if (marked !== undefined) {
-        no(`${marked} is not loaded on this host`);
-        return;
-      }
       const mark = (): void => {
-        const before = marksOf(id);
-        const after = annotationsReducer(before, action as unknown as AnnotationsAction);
-        if (after === before) {
-          no(`${type} names an annotation this session does not have`);
-          return;
-        }
-        marks.set(id, after);
+        marks.set(id, annotationsReducer(marksOf(id), action as unknown as AnnotationsAction));
         dispatch(channel, action, origin);
       };
-      if (sessions.has(owning) || owners.has(owning)) {
+      const found = (): boolean => (sessions.has(owning) || owners.has(owning) || waitingFor(id) !== undefined)
+        && ctx.nameOf(id) === owning;
+      if (found()) {
         mark();
         return;
       }
-      /*
-       * The marks are kept by the session's id, and only the name the session
-       * is published under reads as that id, as for a subscribe to its marks.
-       * The catalogue is read first, which is what names a row no listing
-       * reached. A mark under any other name names a session that does not
-       * exist here, and is dropped with nothing kept and nothing said, as the
-       * protocol has a server ignore such an action.
-       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
-       */
       return past(id).then(() => {
-        if (ctx.nameOf(id) === owning) mark();
+        if (found()) mark();
+        else no(`Session not found: ${owning}`);
       });
     }
     /*

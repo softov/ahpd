@@ -1248,21 +1248,44 @@ describe('a session\'s annotations', () => {
     expect(gone.annotations).toEqual([]);
   });
 
-  it('refuses one that names a mark the session does not have', async () => {
+  /*
+   * VS Code's host emits an accepted annotation action whether or not the
+   * reducer moved the state, and the reducer leaves a mark it does not have
+   * as it was, in the host and in every client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654
+   */
+  it('says one that names a mark the session does not have, and keeps nothing for it', async () => {
     const { client, peer: p, uri } = await running();
     const marks = `${uri}/annotations`;
     await client.handle({ method: 'subscribe', params: { channel: marks } });
-    // The reducer answers an unknown id by handing back the state it was
-    // given. Echoing that as though it applied leaves the client holding an
-    // optimistic mark this host never kept.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: marks, action: { type: 'annotations/updated', annotationId: 'nope', resolved: true } },
+      params: { channel: marks, clientSeq: 3, action: { type: 'annotations/updated', annotationId: 'nope', resolved: true } },
     });
-    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
-    expect(refused?.params).toMatchObject({
-      rejectionReason: expect.stringContaining('does not have'),
+    await settle();
+    const said = actions(p, marks).at(-1);
+    expect(said).toMatchObject({ origin: { clientSeq: 3 }, action: { type: 'annotations/updated' } });
+    expect(said?.rejectionReason).toBeUndefined();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: marks } }) as {
+      snapshot: { state: { annotations: unknown[] } };
+    }).snapshot.state;
+    expect(state.annotations).toEqual([]);
+  });
+
+  /*
+   * A mark for a session this host does not have is refused in the words VS
+   * Code's host refuses an annotation action whose session it cannot find.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14280-L14284
+   */
+  it('refuses a mark for a session that is not here, as VS Code does', async () => {
+    const { client, peer: p } = await running();
+    const marks = 'ahp-session:/nobody/annotations';
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: marks, clientSeq: 5, action: { type: 'annotations/removed', annotationId: 'a1' } },
     });
+    await settle();
+    expect(actions(p, marks).map((note) => note.rejectionReason)).toEqual(['Session not found: ahp-session:/nobody']);
   });
 });
 

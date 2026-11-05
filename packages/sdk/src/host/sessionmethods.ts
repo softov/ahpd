@@ -13,6 +13,7 @@ import { preambleOf, withPreamble } from './preamble.js';
 import { startsRead } from './chatactions.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import type { ChatOrigin, ChatSummary, SubscribeView } from '@microsoft/agent-host-protocol';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
@@ -483,14 +484,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const live = byChat.get(channel);
       const owning = live?.uri ?? sessionFor(channel);
       if (spaceOf(owning) === 'chat') throw new RpcError(-32001, `No chat at ${channel}`);
-      // Asked before the transcript, so a page asked for out of a session
-      // waiting for its agent names that agent rather than saying the
-      // session is nowhere.
-      const missing = waitingFor(idOf(owning));
-      if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
+      // A session whose agent this host is not serving, or that no agent here
+      // can read, is refused as the reference host's restore refuses one.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+      if (waitingFor(idOf(owning)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
       const all = live ? live.chat.allTurns() : await past(idOf(owning));
       if (!all)
-        throw new RpcError(-32001, `No agent for session ${channel}`);
+        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
       const asked = typeof params.cursor === 'string' ? params.cursor : undefined;
       /*
        * No cursor asks for whatever is next, and the host keeps no record of
@@ -1117,19 +1117,18 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * is made, so the sweep cannot let it go in between.
        */
       if (!held && owners.has(uri)) {
-        const missing = waitingFor(idOf(uri));
-        if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
+        if (waitingFor(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
         const release = hold(uri);
         try {
           await wake(uri, undefined, connection);
           if (!sessions.has(uri))
-            throw new RpcError(-32001, `No agent for session ${uri}`);
+            throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
           return await methods.createChat(params);
         }
         finally { release(); }
       }
       if (!held)
-        throw new RpcError(-32001, `No agent for session ${uri}`);
+        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
       if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
         throw new RpcError(INVALID_PARAMS, `${chatUri} is not a chat URI`);
       if (byChat.has(chatUri))
@@ -1260,7 +1259,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           chats: [...held.chats].map(([one, chat]) => chatSummary(uri, one, chat) as unknown as ChatSummary),
         }, log);
         if (sessions.get(uri) !== held)
-          throw new RpcError(-32001, `No agent for session ${uri}`);
+          throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
         if (byChat.has(chatUri))
           throw new RpcError(-32003, `${chatUri} already exists`);
         claimable(chatUri, 'chat');
@@ -1334,7 +1333,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw new RpcError(-32001, `No chat at ${chatUri}`);
       const held = sessions.get(found.uri);
       if (!held)
-        throw new RpcError(-32001, `No agent for session ${found.uri}`);
+        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${found.uri}`);
       /*
        * A chat of another backend stays where it is.
        *

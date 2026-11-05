@@ -1,5 +1,7 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
+import { RpcError } from '../rpc.js';
 import { baseOf, chatIdFor, chatOfCanvas, chatUriFor, MARKS, spaceOf } from './channels.js';
 import { CLOSING, ENDINGS } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -347,28 +349,30 @@ export function createSleep(ctx: HostContext): Sleep {
     await closing.get(id);
     /*
      * The agent this session was recorded for, before a transcript is read or
-     * a record rewritten: a host that is not serving it says so by name, and
-     * the session keeps its own provider until it is loaded again rather than
-     * becoming a conversation on this one.
+     * a record rewritten: a session whose agent this host is not serving, or
+     * that no agent here can open, is refused as the reference host's restore
+     * refuses a session it finds no agent for, and keeps its own provider
+     * until that agent is loaded again.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
      */
     const missing = waitingFor(id);
-    if (missing !== undefined) throw new Error(`${missing} is not loaded on this host`);
+    if (missing !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     const seed = await past(id);
-    if (!seed) throw new Error(`${chat ?? asked} is not a session this host knows`);
+    if (!seed) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     /*
      * Named again, because `past` is what learned whose session this is - and
      * what this host will call it. Asking with the name computed beforehand
      * found nothing for a row no listing had reached yet. The session wakes
      * under that one name, and a waker that asked under any other spelling of
-     * the id is told it is no session here, as a subscribe to it is.
+     * the id is refused, as a subscribe to it is.
      * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
      */
     const named = nameOf(id);
-    if (named !== asked) throw new Error(`${chat ?? asked} is not a session this host knows`);
+    if (named !== asked) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     const live = sessions.get(named);
     if (live !== undefined) return { uri: named, chat: picked(named, chat) as Session };
     const owner = owners.get(named);
-    if (!owner) throw new Error(`No backend owns ${chat ?? asked}`);
+    if (!owner) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     // Back where it ran. A session continued in another directory is a
     // conversation whose second half cannot see the files its first half was
     // about.

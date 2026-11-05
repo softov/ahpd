@@ -229,7 +229,7 @@ it('answers a delete that failed, and the session is gone all the same', async (
   expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
     && (one.params as { session?: string }).session === 'ahp-session:/held')).toBe(true);
   // A name in neither map: it is out of `sessions`, and out of `owners`.
-  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session ahp-session:/held');
+  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session: ahp-session:/held');
   client.close();
 });
 
@@ -278,7 +278,7 @@ it('refuses a name it has never heard of, in either map', async () => {
   const deleted: Deleted[] = [];
   const { client } = await serving(recording(order, deleted));
 
-  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session echo:/nobody');
+  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session: echo:/nobody');
 
   // Nothing was deleted, because nothing was found to ask about.
   expect(order).toEqual([]);

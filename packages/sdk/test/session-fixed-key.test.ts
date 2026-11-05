@@ -714,7 +714,7 @@ it('answers a config change that waited on the catalogue however long it took', 
   expect(actions(p, 'echo:/nowhere')).toEqual([]);
   listed([]);
   await settle();
-  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['echo:/nowhere is not a session here']);
+  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['No agent for session: echo:/nowhere']);
   expect(store.config('nowhere')).toBeUndefined();
 });
 

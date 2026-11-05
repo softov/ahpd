@@ -1,3 +1,4 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { RpcError } from '../rpc.js';
 import { idOf, uriFor } from '../sessions/catalog.js';
 import type { Connection } from '../types/host.js';
@@ -339,16 +340,17 @@ export function createRouting(ctx: HostContext): Routing {
    * leaves nothing behind.
    *
    * A session recorded for an agent this host is not serving is refused the
-   * same way it is refused to open: it is a conversation of its own, and one
+   * same way it is refused to open, as the reference host's restore refuses a
+   * session it finds no agent for: it is a conversation of its own, and one
    * made over its id here would write this host's harness over the record of
    * which harness it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
    */
   const unheld = (uri: string): void => {
     const name = nameOf(idOf(uri));
     if (sessions.has(name) || owners.has(name))
       throw new RpcError(-32003, `${idOf(uri)} is already held as ${name}`);
-    const waiting = ctx.waitingFor(idOf(uri));
-    if (waiting !== undefined) throw new RpcError(-32002, `${waiting} is not loaded on this host`);
+    if (ctx.waitingFor(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${name}`);
     for (const one of new Set([name, uri])) claimable(one, 'session');
   };
 

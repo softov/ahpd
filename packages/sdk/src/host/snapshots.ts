@@ -1,3 +1,4 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
@@ -380,18 +381,19 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     if (channel.endsWith(MARKS) && sessionChannel(channel)) {
       const owning = channel.slice(0, -MARKS.length);
       const id = idOf(owning);
-      // The same sentence as the roads that open the session itself, since a
-      // client hydrates the marks on the way in and a row waiting for its
-      // harness has none to read.
-      const missing = waitingFor(id);
-      if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
-      // Asked of `past`, which consults the catalogue itself, rather than of
-      // the maps a listing fills: a client sends the three subscriptions that
-      // open a session in one breath, before its own `listSessions` has come
-      // back, and a test against those maps refuses on the race. The session
-      // is the one published under that URI, which is the only one its marks
-      // hang off.
-      if (sessions.has(owning) || ((await past(id)) !== undefined && nameOf(id) === owning))
+      /*
+       * Asked of `past`, which consults the catalogue itself, rather than of
+       * the maps a listing fills: a client sends the three subscriptions that
+       * open a session in one breath, before its own `listSessions` has come
+       * back, and a test against those maps refuses on the race. The session
+       * is the one published under that URI, which is the only one its marks
+       * hang off. A session whose agent this host is not serving keeps its
+       * marks, which are read without that agent, as the reference host reads
+       * a session's annotations without restoring its provider.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14278
+       */
+      if (sessions.has(owning) || (waitingFor(id) !== undefined && nameOf(id) === owning)
+        || ((await past(id)) !== undefined && nameOf(id) === owning))
         return value({ resource: channel, state: marksOf(id), fromSeq: ctx.serverSeq });
     }
     /*
@@ -570,21 +572,21 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const chat = spaceOf(channel) === 'chat';
     const asked = chat ? sessionFor(channel) : channel;
     // Never a session's id read out of a file, a terminal, a watch or a chat.
-    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) throw new RpcError(-32001, `No agent for session ${channel}`);
+    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     const id = idOf(asked);
-    const missing = waitingFor(id);
-    if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
+    /*
+     * A session whose agent this host is not serving, one not running and not
+     * in the catalogue, or one in it under another URI, is refused as the
+     * reference host's restore refuses a session it finds no agent for: the
+     * code a client takes as final.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+     */
+    if (waitingFor(id) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     const turns = await past(id);
     // The chat's session read again, once `past` has named the row.
     const owning = chat ? sessionFor(channel) : channel;
     const owner = owners.get(nameOf(id)) ?? ctx.first;
-    // Not running and not in the catalogue, or in it under another URI.
-    // Refusing is the honest answer and the one a client already knows how to
-    // render - it is what a real host says about a session whose agent has
-    // gone, and what the reference host says about a URI no session is held
-    // under.
-    // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
-    if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(-32001, `No agent for session ${channel}`);
+    if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
     const title = titles.get(id) ?? 'Session';
     /*
      * A chat of this session, answered from its own conversation.
