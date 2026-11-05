@@ -243,10 +243,14 @@ const at = (uri: string): At => {
   return held;
 };
 
-/** One moment, as a URI's metadata wants it. */
-const moment = (iso: string): string => {
+/**
+ * One moment, as a URI's metadata wants it, or nothing for a time that cannot
+ * be read: the protocol's resolve carries a time only when it is known.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L1082-L1085
+ */
+const moment = (iso: string): string | undefined => {
   const when = new Date(iso);
-  return Number.isNaN(when.getTime()) ? new Date(0).toISOString() : when.toISOString();
+  return Number.isNaN(when.getTime()) ? undefined : when.toISOString();
 };
 
 /** The bytes of a write, whichever encoding they arrived in. */
@@ -297,6 +301,14 @@ const manifest = (hostName: string) => ({
     },
     workspace: { type: 'string', description: 'The folder it works in, under the plugin root. Its own, and never moved.' },
     computer: { type: 'string', description: 'The machine it runs in.' },
+    // Named here because a write takes it, and a schema a client follows says
+    // every field the receiver accepts, as the schemas VS Code publishes do.
+    connectors: {
+      type: 'object',
+      propertyNames: { pattern: '^[a-z][a-z0-9-]{0,39}$' },
+      additionalProperties: { type: 'string', pattern: '^connectors://[^/]+/.+$' },
+      description: 'The connectors its sessions may use, by alias: the word a model says, and the connectors://<adapter>/<id> it stands for.',
+    },
     owner: {
       type: 'string',
       anyOf: [{ type: 'string' }, { const: `root:${hostName}`, title: 'This host' }],
@@ -661,12 +673,14 @@ export function botProvider(options: BotOptions): BotProvider {
       if (bot === undefined) throw absent(uri);
       if (held.leaf === '') {
         const body = JSON.stringify(bot, null, 2);
+        const mtime = moment(bot.updatedAt);
+        const ctime = moment(bot.createdAt);
         return {
           uri,
           type: 'file',
           size: Buffer.byteLength(body, 'utf8'),
-          mtime: moment(bot.updatedAt),
-          ctime: moment(bot.createdAt),
+          ...(mtime === undefined ? {} : { mtime }),
+          ...(ctime === undefined ? {} : { ctime }),
           // What an edit is checked against: the moment the record last changed,
           // so a write that read the bot before somebody else's edit is refused
           // rather than quietly undoing it.

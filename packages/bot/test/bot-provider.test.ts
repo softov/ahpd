@@ -299,8 +299,11 @@ it('offers in the make form every field a write takes', async () => {
   const properties = ((entry?.['manifest'] as Bag)?.['properties'] ?? {}) as Bag;
   expect(Object.keys(properties)).toEqual(expect.arrayContaining([
     'name', 'labels', 'description', 'body', 'color', 'instructions', 'template', 'harness', 'model', 'preset',
-    'workspace', 'computer', 'owner',
+    'workspace', 'computer', 'connectors', 'owner',
   ]));
+  // The connectors a write takes, by alias, which the form's
+  // additionalProperties would otherwise refuse.
+  expect(properties['connectors']).toMatchObject({ type: 'object', additionalProperties: { type: 'string' } });
   // A colour is a name or a hex, and the manifest says both.
   expect(properties['color']).toMatchObject({ anyOf: [{ enum: [...BOT_COLORS] }, { pattern: '^#[0-9a-fA-F]{6}$' }] });
 });
@@ -544,6 +547,23 @@ const olderRecord = (folder: string) => ({
   owner: 'user:soft',
   createdAt: '2026-10-11T00:00:00.000Z',
   updatedAt: '2026-10-11T00:00:00.000Z',
+});
+
+/*
+ * A time the store cannot read is left out of a resolve, as the protocol
+ * carries a time only when it is known:
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L1082-L1085
+ */
+it('leaves a time it cannot read out of a resolve', async () => {
+  const { host, bots, records } = made({ soft: ['bot:*', 'session:create'] });
+  const folder = join(bots, 'older');
+  mkdirSync(folder, { recursive: true });
+  await (await records.collection('bots')).put({ ...olderRecord(folder), updatedAt: 'not a time' });
+
+  const soft = await as(host, 'soft');
+  const at = got(await call(soft, 'resourceResolve', { uri: 'bot://older' }));
+  expect(at).not.toHaveProperty('mtime');
+  expect(at['ctime']).toBe('2026-10-11T00:00:00.000Z');
 });
 
 it('moves an older record\'s parts into the AGENTS.md it already has, and keeps its text', async () => {
