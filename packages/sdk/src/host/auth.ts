@@ -15,7 +15,6 @@ export interface Auth {
   metadataFor(resource: string): Bag;
   channelAwaiting(resource: string, connection: Connection): string;
   watchedAs(connection: Connection, session: string): string | undefined;
-  asking(channel: string, action: Record<string, unknown>): void;
 }
 
 export function createAuth(ctx: HostContext): Auth {
@@ -26,43 +25,13 @@ export function createAuth(ctx: HostContext): Auth {
    * not.
    *
    * A session is watched under the one URI it is held by. These are the
-   * sessions a connection asks for: the ones it is asked to sign into, and the
-   * only ones its tokens are spent on.
+   * sessions a connection signs into an MCP server for, reading the server's
+   * `authRequired` state, as a VS Code window reads it and VS Code's host says
+   * nothing more, and the only ones its tokens are spent on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
    */
   const watchedAs = (connection: Connection, session: string): string | undefined =>
     (connection.watching.has(session) ? session : undefined);
-
-  /**
-   * The resource a sign-in requirement is said as the protocol's own
-   * notification.
-   *
-   * `auth/required` is connection-level rather than a state action: a client
-   * reads it and pushes a token back with `authenticate`. Sent off the same
-   * state change that carries the requirement - an MCP server saying
-   * `authRequired` - so there is one source for the fact and no second thing
-   * to keep in step.
-   *
-   * Only to connections watching that session, because that is the channel
-   * the notification names and the only place the requirement is visible.
-   */
-  const asked = new Set<string>();
-  const asking = (channel: string, action: Record<string, unknown>): void => {
-    if (String(action.type ?? '') !== 'session/mcpServerStateChanged') return;
-    const state = (typeof action.state === 'object' && action.state !== null ? action.state : {}) as Bag;
-    if (state.kind !== 'authRequired') return;
-    const resource = (typeof state.resource === 'object' && state.resource !== null ? state.resource : {}) as Bag;
-    const named = typeof resource.resource === 'string' ? resource.resource : undefined;
-    // Once per resource: the state is re-read on every refresh, and a client
-    // asked to sign in on a loop is one that never finishes signing in.
-    if (named === undefined || asked.has(named)) return;
-    asked.add(named);
-    for (const connection of connections) {
-      const watched = watchedAs(connection, channel);
-      if (watched !== undefined) {
-        connection.peer.notify('auth/required', { channel: watched, resource, reason: 'required' });
-      }
-    }
-  };
 
   const loginId = (): string => String(options.users?.resource.resource ?? '');
   /**
@@ -194,5 +163,5 @@ export function createAuth(ctx: HostContext): Auth {
     return ROOT;
   };
 
-  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, watchedAs, asking };
+  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, watchedAs };
 }

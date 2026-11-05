@@ -760,7 +760,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        *
        * Only the sessions this connection watches: a token is spent on the
        * sessions its client asks for and nowhere else, and these are the
-       * ones it was asked to sign in for.
+       * ones whose servers' `authRequired` state it reads.
        */
       const waiting = (target === undefined
         ? [...sessions].filter(([uri]) => watchedAs(connection, uri) !== undefined).flatMap(([, held]) => [...held.chats.values()])

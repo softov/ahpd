@@ -846,7 +846,6 @@ export function createHost(options: HostOptions): Host {
         }
       }
       ctx.telemetered(channel, action);
-      ctx.asking(channel, action);
       ctx.links.observe(channel, action);
       ctx.sessionEvents.observe(channel, action);
     }
@@ -1535,7 +1534,7 @@ export function createHost(options: HostOptions): Host {
     describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
     refreshWatched, startWatchingDir, stopUnwatched, refreshPullRequests, readFacts, refreshFacts,
     LOGS, TRACES, METRICS, log, fire, telemetered,
-    loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, asking,
+    loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting,
     charged, ownerFor, principals, principalFor, forWhom, senderOf,
     charge, checked, scoping, settle,
     sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,

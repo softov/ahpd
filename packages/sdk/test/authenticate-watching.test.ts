@@ -114,11 +114,14 @@ it('takes a token aimed at a session its connection does not watch, as VS Code\'
 });
 
 /*
- * A session is watched, asked about and aimed at by the one URI it is held by:
- * the same id in a provider's scheme is no session, and a token aimed at it
- * names no server.
+ * A server's sign-in is its `authRequired` state, which a client watching the
+ * session reads, as a VS Code window reads it: VS Code's host says no
+ * `auth/required` for it. A session is watched and aimed at by the one URI it
+ * is held by: the same id in a provider's scheme is no session, and a token
+ * aimed at it names no server.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
  */
-it('asks a client watching the session to sign in under its one URI, and refuses a token aimed at another', async () => {
+it('leaves a server\'s sign-in to its state, and refuses a token aimed at another URI of the session', async () => {
   sdk.mcp = [{ name: 'desk', status: 'connected' }];
   const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine() });
   const ana = await introduced(host, 'ana');
@@ -137,10 +140,11 @@ it('asks a client watching the session to sign in under its one URI, and refuses
   });
   await settle(12);
 
-  expect(signIns(ana.wire, 'required')).toEqual([{
-    method: 'auth/required',
-    params: { channel: ONE, resource: expect.objectContaining({ resource: DESK }), reason: 'required' },
-  }]);
+  expect(signIns(ana.wire, 'required')).toEqual([]);
+  const state = (await ana.client.handle({ method: 'subscribe', params: { channel: ONE } }) as {
+    snapshot: { state: { customizations?: { id?: string; state?: { kind?: string } }[] } };
+  }).snapshot.state;
+  expect(state.customizations?.find((one) => one.id === 'mcp:desk')?.state?.kind).toBe('authRequired');
   await expect(ana.client.handle({
     method: 'authenticate',
     params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: 'mcp:desk' } },
