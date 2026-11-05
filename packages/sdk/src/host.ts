@@ -905,6 +905,9 @@ export function createHost(options: HostOptions): Host {
    */
   const dispatch = (channel: string, given: Record<string, unknown>, origin?: Origin): void => {
     const action = ctx.withWorkerUri(channel, given);
+    // A root config change leaving the root's values as they are is not said,
+    // this host's own included, as VS Code's host emits none.
+    if (channel === ROOT && action.type === 'root/configChanged' && ctx.changesNothing(bag(action.config), action.replace === true)) return;
     if (origin !== undefined) said.add(origin);
     /*
      * A backend's start of a turn the chat holds is not said: the host said

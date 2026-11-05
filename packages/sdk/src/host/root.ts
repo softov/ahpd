@@ -1,4 +1,5 @@
 import { availableParallelism, totalmem } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 import { seesAccount, seesConfig } from './gate.js';
 import { OPERATIONS, operationsOf } from '../access/users.js';
 import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
@@ -221,6 +222,15 @@ export interface Root {
    * root's state holds them. None of them is a client's to clear.
    */
   keptOnReplace(pushed: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * Whether a root config change leaves the values the root holds as they
+   * are: a merge whose every value is held already, or a replace with the
+   * values held. Such a change is neither applied nor said, as VS Code's host
+   * neither reduces nor emits one: said, it would have every client watching
+   * the root react to a change that is not one, and send it back.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2882-L2894
+   */
+  changesNothing(config: Record<string, unknown>, replace: boolean): boolean;
   /**
    * Say each daemon value that moved since the root's state last said it.
    *
@@ -691,6 +701,13 @@ export function createRoot(ctx: HostContext): Root {
       .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key) || key === RESTART_KEY)));
   };
 
+  const changesNothing = (config: Record<string, unknown>, replace: boolean): boolean => {
+    const held = ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined;
+    if (held === undefined) return false;
+    const values = held.values ?? {};
+    return isDeepStrictEqual(replace ? config : { ...values, ...config }, values);
+  };
+
   const daemonValuesMoved = async (): Promise<void> => {
     if (ctx.stateOf(ROOT) === undefined) return;
     const now = await daemonValues();
@@ -809,6 +826,6 @@ export function createRoot(ctx: HostContext): Root {
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
     daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace, daemonValuesMoved,
+    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesMoved,
   };
 }

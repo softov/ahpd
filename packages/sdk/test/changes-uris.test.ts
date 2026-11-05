@@ -430,9 +430,11 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
       expect(opened.snapshot.state.agents).toBeDefined();
       await expect(client.handle({ method: 'listSessions', params: { channel: root } })).resolves.toBeTruthy();
       await expect(client.handle({ method: 'listAutomationTriggerDefinitions', params: { channel: root } })).resolves.toBeTruthy();
+      // A change that moves a value, since one that leaves the root as it is
+      // is neither kept nor said.
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: root, clientSeq: 1, action: { type: 'root/configChanged', config: {} } },
+        params: { channel: root, clientSeq: 1, action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
       });
       const echoed = notes.filter((one) => one.method === 'action')
         .map((one) => one.params as { channel: string; action: { type: string } });

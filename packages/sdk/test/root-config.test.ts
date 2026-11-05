@@ -366,6 +366,36 @@ it('keeps the three approval keys for the whole host', async () => {
   expect(theirs.values).toMatchObject(pushed);
 });
 
+/*
+ * A push that changes nothing is neither applied nor said, as VS Code's host
+ * neither reduces nor emits one: a window mirrors its settings again at every
+ * connect and save, and an echo of the values the root holds has every window
+ * watching the root react to a change that is not one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2882-L2894
+ */
+it('says nothing for a push that changes nothing, a replace with the values held included, as VS Code\'s host', async () => {
+  const { signedIn, rootOf, heardOnRoot } = served(false);
+  const ana = await signedIn('admin', 'ana');
+  const ben = await signedIn('admin', 'ben');
+  const said = (): number => heardOnRoot(ben.heard).filter((one) => one.action.type === 'root/configChanged').length;
+  const push = async (action: Record<string, unknown>): Promise<void> => {
+    await ana.client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', ...action } } });
+    await settle();
+  };
+  await push({ config: { terminalAutoApproveEnabled: true } });
+  expect(said()).toBe(1);
+
+  await push({ config: { terminalAutoApproveEnabled: true } });
+  expect(said()).toBe(1);
+  const { values } = (await rootOf(ana.client)).config as { values: Record<string, unknown> };
+  await push({ config: values, replace: true });
+  expect(said()).toBe(1);
+  expect(heardOnRoot(ana.heard).filter((one) => one.action.type === 'root/configChanged')).toHaveLength(1);
+
+  await push({ config: { terminalAutoApproveEnabled: false } });
+  expect(said()).toBe(2);
+});
+
 it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole host', async () => {
   const { signedIn, rootOf, heardOnRoot } = served(false);
   const admin = await signedIn('admin', 'admin');
@@ -994,9 +1024,10 @@ it('keeps the restart mark when a client writes the root config whole with the m
   });
   await settle();
 
+  // The whole root as it is moves nothing, so nothing is kept or said, as VS
+  // Code's host drops a root config change that leaves its values as they are.
   const echoed = heardOnRoot(admin.heard).filter((heard) => heard.action.replace === true);
-  expect(echoed.map((heard) => [heard.rejectionReason, (heard.action.config as Record<string, unknown>)['ahpd.restartNeeded']]))
-    .toEqual([[undefined, true]]);
+  expect(echoed).toEqual([]);
   expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(true);
 });
 

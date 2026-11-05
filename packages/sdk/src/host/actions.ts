@@ -346,6 +346,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * back what was pushed exactly as the conformance suite pins it.
        */
       const apply = (): void => {
+        // What the echo carries, which is what a log line about it says too:
+        // a value the daemon holds back is not a value the log may print.
+        const echoConfig = { ...config, ...said };
+        /*
+         * A `replace` keeps what is not the pusher's to clear: the daemon's
+         * values and every backend's account stay where they are, so the echo
+         * carries them, and the root's state a client reduces from it is the
+         * one this host holds. The reference host keeps its provider-backed
+         * values in a replace the same way.
+         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
+         */
+        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
+        // A push leaving the root's values as they are is neither kept nor
+        // said, as VS Code's host does nothing with it.
+        if (ctx.changesNothing(echoed, action.replace === true)) return;
         /*
          * The host's keys are kept, and the daemon's are not. Every key a
          * client pushes, the window's own among them - the shell, the trust,
@@ -393,19 +408,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * which is a new answer like any other and clears them too.
          */
         if (Object.prototype.hasOwnProperty.call(config, 'workspaceTrust')) delete connection.trustedFolders;
-        // What the echo carries, which is what a log line about it says too:
-        // a value the daemon holds back is not a value the log may print.
-        const echoConfig = { ...config, ...said };
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
-        /*
-         * A `replace` keeps what is not the pusher's to clear: the daemon's
-         * values and every backend's account stay where they are, so the echo
-         * carries them, and the root's state a client reduces from it is the
-         * one this host holds. The reference host keeps its provider-backed
-         * values in a replace the same way.
-         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
-         */
-        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
         /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client

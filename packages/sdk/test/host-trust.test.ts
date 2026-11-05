@@ -467,8 +467,9 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
   await saying(ana, 'ana-one', 't2');
   expect(about(told(), B)).toBe(true);
 
-  // A new push is the window answering for every folder at once.
-  await trusting(ana, [A]);
+  // A new push is the window answering for every folder at once, a push of
+  // what the root holds already being no push at all.
+  await trusting(ana, []);
   await settle();
   await opening(ana, 'ana-two', B);
   await settle();
