@@ -7,18 +7,19 @@ import { str } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
- * One property of a tool's input schema, as the zod the SDK asks for.
+ * One property of a tool's input schema, as the zod the SDK asks for: VS
+ * Code's Claude's `jsonPropertyToZod`.
  *
  * `createSdkMcpServer` takes a zod raw shape and turns it back into JSON
  * Schema for the model, so a definition written as JSON Schema - which is
- * what the protocol declares - has to make the round trip. `fromJSONSchema`
- * reads that whole schema, so a nested object, an array of objects and an
- * enum reach the model as the client wrote them rather than as a string. A
- * property the reader refuses becomes a string, which is what every argument
- * used to be. A description the reader drops is put back, because the model
- * reads it.
+ * what the protocol declares - makes the round trip. `fromJSONSchema` reads
+ * that whole schema, so a nested object, an array of objects and an enum
+ * reach the model as the client wrote them. A property the reader refuses
+ * becomes a string. A description the reader drops is put back, because the
+ * model reads it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeJsonSchemaToZod.ts#L55
  */
-const shaped = (property: object): z.ZodTypeAny => {
+const jsonPropertyToZod = (property: object): z.ZodTypeAny => {
   let read: z.ZodTypeAny;
   try { read = z.fromJSONSchema(property as never); }
   catch { return z.string(); }
@@ -36,12 +37,12 @@ const shaped = (property: object): z.ZodTypeAny => {
  * without promising anything about what is in it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L12-L20
  */
-const TOOL_USE_ID = 'claudecode/toolUseId';
+const TOOL_USE_ID_META_KEY = 'claudecode/toolUseId';
 
 /** The call the CLI said this handler was running, when it said one. */
 const namedBy = (extra: unknown): string | undefined => {
   const meta = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta;
-  const id = meta?.[TOOL_USE_ID];
+  const id = meta?.[TOOL_USE_ID_META_KEY];
   return typeof id === 'string' && id !== '' ? id : undefined;
 };
 
@@ -91,7 +92,7 @@ export const contributed = (
     const schema = one.definition.inputSchema;
     const shape: Record<string, z.ZodTypeAny> = {};
     for (const [key, property] of Object.entries(schema?.properties ?? {})) {
-      const value = shaped(property);
+      const value = jsonPropertyToZod(property);
       shape[key] = (schema?.required ?? []).includes(key) ? value : value.optional();
     }
     return {
@@ -127,7 +128,7 @@ export const contributed = (
             return {
               content: [{
                 type: 'text' as const,
-                text: `Client tool "${one.definition.name}" could not run: SDK omitted tool_use_id (expected at extra._meta["${TOOL_USE_ID}"]).`,
+                text: `Client tool "${one.definition.name}" could not run: SDK omitted tool_use_id (expected at extra._meta["${TOOL_USE_ID_META_KEY}"]).`,
               }],
               isError: true,
             };
