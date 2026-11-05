@@ -1247,10 +1247,16 @@ describe('tools a client contributes', () => {
   }> | undefined)?.ahp?.tools ?? [];
 
   it('offers what a client announced to the model, under a name of its own', async () => {
-    await providing();
-    // Re-declared on the running session rather than only at creation: a
-    // client announces what it provides when it opens the session, which is
-    // after the agent has started.
+    const { client, chatUri } = await providing();
+    // Given to the running CLI at the next send: a client announces what it
+    // provides when it opens the session, which is after the agent has
+    // started.
+    expect(sdk.mcpDeclared).toHaveLength(0);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
+    });
+    await settle();
     expect(sdk.mcpDeclared).toHaveLength(1);
     // Named for the client as well as the tool. Two clients in one session may
     // both provide `openFile`, and the model is offered one list.
@@ -1508,8 +1514,14 @@ describe('tools a client contributes', () => {
     expect(answer?.isError).toBe(true);
     expect(answer?.content[0]?.text).toContain('no longer here');
 
-    // And the tool goes with the client: one whose provider has left is one
-    // every call to would fail.
+    // And the tool goes with the client from the next send on: one whose
+    // provider has left is one every call to would fail.
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
     expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
   });
 

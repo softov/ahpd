@@ -380,8 +380,8 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    *
    * The host's own are settled when the session is built; a client's arrive
    * when it announces itself and go when it leaves. So this is held rather
-   * than read from `options` once, and `setTools` re-declares the server the
-   * model reaches them through.
+   * than read from `options` once: what the CLI was last given, which a send
+   * moves to the set `toolDiff` holds.
    */
   offering: BoundTool[];
   /**
@@ -414,14 +414,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   beginning: string | undefined;
   /**
-   * The change of tools the CLI has not finished taking, while there is one.
-   *
-   * The host hands the session a client's tools when the client becomes active
-   * and does not wait for them to land, and a turn the client sends next is a
-   * turn of a session that has them. So a change waits for the one before it,
-   * and a turn waits for the last of them before its prompt goes out.
+   * The tools the host handed since the CLI was last given a set, while there
+   * are any: VS Code's client-tool diff, which the next send gives the CLI
+   * before its prompt.
    */
-  retooling: Promise<void> | undefined;
+  toolDiff: BoundTool[] | undefined;
 }
 
 /**

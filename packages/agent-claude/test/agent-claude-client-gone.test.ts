@@ -49,6 +49,7 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
     emit: () => {},
     declared,
     offering: [] as BoundTool[],
+    toolDiff: undefined as BoundTool[] | undefined,
     doing: () => {},
     handle: { setMcpServers: async () => {} },
     // The session's own chat holds every call here: no worker opened one.
@@ -56,9 +57,11 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
   };
   const tools = createClientTools(ctx as never);
   // The model reaches a client's tool through this handler, the one the SDK
-  // server is built with. `offering` starts empty, so the list coming in is a
-  // change and the server is built for the cases to read.
+  // server is built with. `offering` starts empty, so the list handed is a
+  // change, and the send that gives it to the CLI builds the server for the
+  // cases to read.
   void tools.methods.setTools([...owned, ...others]);
+  void tools.rebindForClientTools();
   return { tools, ctx };
 };
 

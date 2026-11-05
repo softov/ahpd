@@ -212,18 +212,22 @@ export function createTurns(ctx: SessionContext): Turns {
     if (ctx.rebind !== undefined) {
       ctx.rebind = undefined;
       ctx.gone = undefined;
+      ctx.buildClientMcpServers();
       ctx.handle = ctx.startQuery(ctx.running, false);
       void ctx.consume();
     }
     /*
-     * The tools the session was handed before this turn, landed first.
-     *
-     * A change of tools reaches the CLI as `setMcpServers`, which the CLI
-     * answers once it has the servers, and the host hands it over without
-     * waiting; a turn that comes after it is a turn of a session that has
-     * those tools.
+     * The tools the session was handed since the CLI was last given a set,
+     * given to it before this turn's prompt, as VS Code's send rebinds its
+     * query when the client-tool diff is dirty: a turn that comes after a
+     * client announced its tools is a turn of a session that has them. A set
+     * the CLI refuses fails the turn, as VS Code's failed rebuild fails the
+     * send, and waits for the next.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
      */
-    if (ctx.retooling !== undefined) await ctx.retooling;
+    let untooled: string | undefined;
+    try { await ctx.rebindForClientTools(); }
+    catch (error: unknown) { untooled = error instanceof Error ? error.message : String(error); }
     if (ctx.closed || stops !== stopped) return;
     /*
      * A CLI that went while this turn prepared fails the turn, and says why;
@@ -235,6 +239,11 @@ export function createTurns(ctx: SessionContext): Turns {
     if (ctx.gone !== undefined && ctx.rebind === ctx.handle) {
       ctx.beginning = undefined;
       refuseTurn(turnId, text, ctx.gone, began, from, attachments);
+      return;
+    }
+    if (untooled !== undefined) {
+      ctx.beginning = undefined;
+      refuseTurn(turnId, text, untooled, began, from, attachments);
       return;
     }
     /*

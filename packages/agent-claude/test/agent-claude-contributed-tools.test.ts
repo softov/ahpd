@@ -5,11 +5,11 @@ import type { Bag, BoundTool } from '@ahpd/sdk';
  * A client's tool list, kept only once the SDK has taken it.
  *
  * This lives beside `clienttools.ts` and not in `packages/sdk`, where the task
- * placed it, because what is under test is this backend's `setTools` and its
- * `ctx.declared`: the holder and the entry a call is raised against are the
- * sdk's, but "kept only once the SDK has taken it" is this file's. So the
- * cases build the small part of a session's context `setTools` reads and drive
- * the one method, rather than a whole host.
+ * placed it, because what is under test is this backend's `setTools`, the
+ * send that gives the CLI the set, and its `ctx.declared`: the holder and the
+ * entry a call is raised against are the sdk's, but "kept only once the SDK
+ * has taken it" is this file's. So the cases build the small part of a
+ * session's context the two read and drive them, rather than a whole host.
  */
 
 /** The one argument the SDK server was built from, held for the cases. */
@@ -51,6 +51,7 @@ const session = () => {
     emit: () => {},
     declared: { host: hostServer } as Record<string, Bag>,
     offering: [] as BoundTool[],
+    toolDiff: undefined as BoundTool[] | undefined,
     handle: {
       setMcpServers: async (servers: Record<string, Bag>) => {
         made += 1;
@@ -61,7 +62,11 @@ const session = () => {
   };
   const tools = createClientTools(ctx as never);
   return {
-    setTools: tools.methods.setTools,
+    /** A set handed to the session, and the send that gives it to the CLI: whether the CLI took it. */
+    setTools: async (list: BoundTool[]): Promise<boolean> => {
+      expect(await tools.methods.setTools(list)).toBe(true);
+      return tools.rebindForClientTools().then(() => true, () => false);
+    },
     sent,
     /** What the session offers and declares now, which `setTools` moves. */
     state: () => ({ offering: ctx.offering, declared: ctx.declared }),

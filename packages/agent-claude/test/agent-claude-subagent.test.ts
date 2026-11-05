@@ -101,7 +101,7 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name)) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = []) {
   sdk.reset();
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
@@ -128,6 +128,7 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-sub-')),
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
+    ...(tools.length > 0 ? { tools } : {}),
   });
   await settle();
   // The turn the frames answer.
@@ -426,13 +427,13 @@ it('asks a client to run a worker\'s call on the worker\'s chat', async () => {
    */
   const lines = fixture('claude-subagent.jsonl');
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
-  const { main, workers, session } = await replay('none', lines.slice(0, 5));
-  const worker = workers.get(call) as Worker;
-  expect(worker).toBeDefined();
-  await session.setTools?.([{
+  // The client's tool on offer from the session's start, so the turn has it.
+  const { main, workers } = await replay('none', lines.slice(0, 5), [{
     owner: 'probe',
     definition: { name: 'probe__openFile', description: 'Open a file', inputSchema: { type: 'object', properties: {} } },
   } as unknown as BoundTool]);
+  const worker = workers.get(call) as Worker;
+  expect(worker).toBeDefined();
 
   sdk.push({
     type: 'assistant',

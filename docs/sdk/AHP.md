@@ -531,6 +531,12 @@ failed rather than left open: the agent is waiting on a promise nothing can
 settle any more, and a turn that hangs for ever is worse than a tool that says
 it could not run.
 
+**A change reaches the harness at the next send.** The tools a client announces
+while a turn runs are held, and the Claude backend gives the harness the last
+set handed before the next turn's prompt, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080)
+rebinds its query at the next send: a running turn keeps the tools it started
+with. A set the harness refuses fails that turn and waits for the next send.
+
 ### Being asked
 
 `session/inputNeeded` is a **list**, and `session/inputNeededSet` carries

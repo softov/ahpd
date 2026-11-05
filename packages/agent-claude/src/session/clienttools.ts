@@ -189,6 +189,28 @@ export interface ClientTools {
   releaseCalls: (why: string) => void;
   /** Run the call the CLI named where the client that provides its tool lives, and wait for it. */
   ranByClient: (tool: BoundTool, toolUseId: string) => Promise<ClientCallAnswer>;
+  /**
+   * The tools handed since the CLI was last given a set, taken into what a
+   * new CLI is built with, as VS Code's rebuild consumes its client-tool diff
+   * into the options it starts the query with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L222-L233
+   */
+  buildClientMcpServers: () => void;
+  /**
+   * The tools handed since the CLI was last given a set, given to the running
+   * CLI before a turn's prompt; a refusal rejects, the set kept for the next.
+   *
+   * `ahp` goes out in two declarations, because the SDK connects only a server
+   * name it has not registered yet and `ahp` was registered when the session
+   * started: the first call leaves it out, which is what makes the SDK
+   * disconnect it, and the second carries the new one, which is what makes the
+   * SDK connect that. A list with nothing in it is the first call alone, there
+   * being no server to add back, and a session with no `ahp` yet is the second
+   * alone. Each declaration is kept only once the SDK has taken it, so a
+   * removal that took and an add that did not leaves the session holding the
+   * set without `ahp`.
+   */
+  rebindForClientTools: () => Promise<void>;
   /** The one place this chat's client calls are held, for the snapshot and above. */
   calls: ClientCalls;
   methods: {
@@ -206,9 +228,21 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   const offered = (toolName: string): BoundTool | undefined =>
     ctx.offering.find((one) => called(one.definition.name) === toolName);
 
+  /**
+   * The tools the session's clients provide now: the set the host handed last,
+   * which the CLI is given at the next send.
+   */
+  const live = (): BoundTool[] => ctx.toolDiff ?? ctx.offering;
+
   const clientToolOf = (toolName: string): { owner: string; name: string } | undefined => {
     const tool = offered(toolName);
-    const owner = tool?.owner;
+    /*
+     * The client that provides the tool now, as VS Code's stream mapper reads
+     * its live model's owner of a call's tool: the CLI keeps the tools it was
+     * given until the next send, and a client that left since runs nothing.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L663
+     */
+    const owner = tool === undefined ? undefined : live().find((one) => one.definition.name === tool.definition.name)?.owner;
     if (tool === undefined || owner === undefined) return undefined;
     /*
      * `<clientId>__<name>` is what the model is offered, because two clients
@@ -239,7 +273,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     ...(ctx.options.clientToolTimeoutMs === undefined ? {} : { timeoutMs: ctx.options.clientToolTimeoutMs }),
     // Asked only when a client goes: the model is the one that has to know
     // that somebody else provides the tool its call was for.
-    providers: (name) => ctx.offering
+    providers: (name) => live()
       .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
       .map((one) => String(one.owner)),
   });
@@ -398,17 +432,36 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     return calls.wait(joined.id);
   };
 
-  /** One change of tools, sent to the CLI: `setTools` says when, and why in two declarations. */
-  const retool = async (offered: BoundTool[]): Promise<boolean> => {
-    const next = takes(offered);
-    const before = ctx.offering.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
-    const after = next.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
-    if (before === after) return true;
+  /** Two sets of tools offered alike: the same names, run by the same clients. */
+  const same = (a: BoundTool[], b: BoundTool[]): boolean =>
+    a.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n')
+    === b.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
+
+  /** The declared servers with `ahp` carrying `tools`, or without it for none. */
+  const declaring = (tools: BoundTool[]): Record<string, Bag> => {
+    const declared: Record<string, Bag> = { ...ctx.declared };
+    delete declared.ahp;
+    if (tools.length > 0) declared.ahp = contributed(tools, ranByClient) as Bag;
+    return declared;
+  };
+
+  const buildClientMcpServers = (): void => {
+    const handed = ctx.toolDiff;
+    if (handed === undefined) return;
+    ctx.toolDiff = undefined;
+    ctx.offering = takes(handed);
+    ctx.declared = declaring(ctx.offering);
+  };
+
+  const rebindForClientTools = async (): Promise<void> => {
+    const handed = ctx.toolDiff;
+    if (handed === undefined) return;
+    ctx.toolDiff = undefined;
+    const next = takes(handed);
+    if (same(ctx.offering, next)) return;
     // Without `ahp`: the declaration the SDK disconnects the old one on.
-    const removed: Record<string, Bag> = { ...ctx.declared };
-    delete removed.ahp;
-    const declared: Record<string, Bag> = { ...removed };
-    if (next.length > 0) declared.ahp = contributed(next, ranByClient) as Bag;
+    const removed = declaring([]);
+    const declared = declaring(next);
     try {
       if (ctx.declared.ahp !== undefined) {
         await ctx.handle.setMcpServers(removed as never);
@@ -419,15 +472,20 @@ export function createClientTools(ctx: SessionContext): ClientTools {
       }
       if (next.length > 0) await ctx.handle.setMcpServers(declared as never);
     }
-    catch { return false; }
+    catch (error: unknown) {
+      // The CLI holds what it held, so the set waits for the next send, as
+      // VS Code marks its diff dirty again when a rebuild fails; a set handed
+      // since is the newer one.
+      ctx.toolDiff ??= handed;
+      throw error;
+    }
     ctx.offering = [...next];
     ctx.declared = declared;
-    return true;
   };
 
   const methods: ClientTools['methods'] = {
     /**
-     * The tools on offer, replaced whole.
+     * The tools on offer, replaced whole, from the next send on.
      *
      * Whole because that is what the SDK takes: `setMcpServers` replaces the
      * set it is given, so a server rebuilt from one tool would take the others
@@ -435,38 +493,18 @@ export function createClientTools(ctx: SessionContext): ClientTools {
      * active, which is the only thing that moves this list after a session is
      * built.
      *
-     * `ahp` goes out in two declarations and not one, because the SDK connects
-     * only a server name it has not registered yet and `ahp` was registered
-     * when the session started: the first call leaves it out, which is what
-     * makes the SDK disconnect it, and the second carries the new one, which is
-     * what makes the SDK connect that. Between the two the CLI has no `ahp`
-     * server, so a session tool called in that moment fails. A list
-     * with nothing in it is the first call alone, there being no server to add
-     * back, and a session with no `ahp` yet is the second alone.
-     *
-     * Each declaration is built on the side and kept only once the SDK has
-     * taken it, so a `setMcpServers` that refuses - a session whose CLI has
-     * gone, or one that says no to this set - leaves the session holding what
-     * the CLI actually has. A removal that took and an add that did not leaves
-     * it holding the set without `ahp`, and the list that failed comes again as
-     * a change to send rather than one already sent.
-     *
-     * One change at a time, in the order they came, and a turn's prompt after
-     * the last of them: the protocol applies a session's actions in one order,
-     * so a turn a client sends after announcing its tools is a turn of a
-     * session that has them, as the reference rebuilds its query with the new
-     * tools before it sends a turn. The host does not wait for a change to
-     * land, so the session holds the one in hand as `retooling`, a change goes
-     * out at once when none is in hand and after it otherwise, and
-     * `beginTurn` waits for it.
-     * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1089-L1105
+     * Held until the next send and given to the CLI before that turn's prompt,
+     * as VS Code's Claude marks its client-tool diff dirty and rebinds its
+     * query with the new tools at the next send: a running turn keeps the
+     * tools it started with, and a turn a client sends after announcing its
+     * tools is a turn of a session that has them. The last set handed is the
+     * one given.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeSessionClientToolsModel.ts#L73-L127
      */
-    setTools: (next) => {
-      const took = ctx.retooling === undefined ? retool(next) : ctx.retooling.then(() => retool(next));
-      const landed = took.then(() => undefined, () => undefined);
-      ctx.retooling = landed;
-      void landed.then(() => { if (ctx.retooling === landed) ctx.retooling = undefined; });
-      return took;
+    setTools: async (next) => {
+      ctx.toolDiff = [...next];
+      return true;
     },
 
     /*
@@ -510,5 +548,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
   };
 
-  return { clientToolOf, hostToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, calls, methods };
+  return {
+    clientToolOf, hostToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient,
+    buildClientMcpServers, rebindForClientTools, calls, methods,
+  };
 }
