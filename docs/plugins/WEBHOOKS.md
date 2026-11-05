@@ -324,7 +324,8 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 | Answer | When |
 | --- | --- |
 | 400 | The call has no thread or no text, or its callback URL is missing or outside the prefix |
-| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the turn. The answer's `message` is the host's reason. A turn that the host does not echo in 10 seconds is not refused: the call goes on, and the daemon's log gets a problem line. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
+| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the turn. The answer's `message` is the host's reason. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
+| 504 | The host did not confirm the turn within 10 seconds, so its delivery is unconfirmed rather than taken or refused, as VS Code's router reads a send it never heard back on: `{ thread, turn, message }`, the message `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` The daemon's log gets a problem line, and no callback is posted |
 
 ### The grants
 

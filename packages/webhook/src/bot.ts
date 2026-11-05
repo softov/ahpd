@@ -5,6 +5,7 @@ import { answer } from './route.js';
 import { findThread, threadId } from './thread.js';
 import type { RecordCollection } from '@ahpd/sdk';
 import type { Call } from './call.js';
+import type { Dispatched } from './plugin.js';
 import type { Endpoint } from './record.js';
 import type { Target } from './route.js';
 import type { Thread } from './thread.js';
@@ -32,8 +33,8 @@ export interface BotSeams {
    * `createChat`, and answer its URI, or nothing when the host refused it.
    */
   openChat(session: string): Promise<string | undefined>;
-  /** Send one turn in a chat, and give the host's reason when it refused the turn, or `undefined` when it took it. */
-  send(chat: string, turn: string, text: string): Promise<string | undefined>;
+  /** Send one turn in a chat, and give what the host made of it: taken, refused with its reason, or unconfirmed. */
+  send(chat: string, turn: string, text: string): Promise<Dispatched>;
   /** Wait for one turn to end. Asked before the turn is sent, so no end is missed. */
   ended(chat: string, turn: string): Promise<TurnEnd>;
   /** Stop the wait for one turn's end, for a turn the host refused. */
@@ -197,11 +198,21 @@ export function botTarget(seams: BotSeams): Target {
     const turn = randomUUID();
     const end = seams.ended(thread.chat, turn);
     end.catch((error: unknown) => { seams.problem(`webhooks/${endpoint.id} lost the end of turn ${turn}: ${reason(error)}`); });
-    const refused = await seams.send(thread.chat, turn, askedFor.text);
-    if (refused !== undefined) {
+    const sent = await seams.send(thread.chat, turn, askedFor.text);
+    if ('refused' in sent) {
       seams.forget(thread.chat, turn);
-      seams.problem(`webhooks/${endpoint.id} turn ${turn} was refused: ${refused}`);
-      return answer(409, { message: refused });
+      seams.problem(`webhooks/${endpoint.id} turn ${turn} was refused: ${sent.refused}`);
+      return answer(409, { message: sent.refused });
+    }
+    /*
+     * A send the host never confirmed is neither taken nor refused, and the
+     * caller is told so in VS Code's words for it, never as accepted: the
+     * turn may already be queued.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L283-L287
+     */
+    if ('unconfirmed' in sent) {
+      seams.forget(thread.chat, turn);
+      return answer(504, { thread: askedFor.thread, turn, message: 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically.' });
     }
     const said = { thread: askedFor.thread, turn };
 

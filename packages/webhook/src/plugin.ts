@@ -47,13 +47,16 @@ export const defaults = {
 /** What the plugin's connection calls itself. */
 const CLIENT = 'ahpd-webhook';
 
-/** How long a dispatch waits for the host's echo before it goes on as taken, in milliseconds. */
+/** How long a dispatch waits for the host's echo before its delivery is unconfirmed, in milliseconds. */
 const ECHO_MS = 10_000;
+
+/** What the host made of one dispatch: taken, refused with its reason, or never confirmed within the wait. */
+export type Dispatched = { taken: true } | { refused: string } | { unconfirmed: true };
 
 /** Dispatches actions on the plugin's connection, and hears whether the host took each one. */
 export interface Dispatcher {
-  /** Dispatch one action, and give the host's refusal reason, or `undefined` when the host took it or said nothing. */
-  dispatch(channel: string, action: Record<string, unknown>): Promise<string | undefined>;
+  /** Dispatch one action, and give what the host made of it. */
+  dispatch(channel: string, action: Record<string, unknown>): Promise<Dispatched>;
 }
 
 /**
@@ -63,13 +66,15 @@ export interface Dispatcher {
  * `action` frame whose `origin` names `clientId` and that `clientSeq`: with a
  * `rejectionReason` when it refused the action, and without one when it took it.
  * The host echoes a taken action only to the subscribers of its channel, so the
- * caller subscribes first. A dispatch that hears nothing in `waitMs` gives
- * `undefined` and calls `silent`: only a refusal the host sent is a refusal, since
- * a held dispatch can still be applied after the wait.
+ * caller subscribes first. A dispatch that hears nothing in `waitMs` is
+ * unconfirmed and calls `silent`, as VS Code's router reads a send the host
+ * never confirmed: neither taken nor refused, since a held dispatch can still
+ * be applied after the wait.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L283-L287
  */
 export function dispatcher(conn: PluginPeer, clientId: string, waitMs = ECHO_MS, silent?: (channel: string) => void): Dispatcher {
   let seq = 0;
-  const waiting = new Map<number, (refused: string | undefined) => void>();
+  const waiting = new Map<number, (said: Dispatched) => void>();
   conn.onMessage((message) => {
     if (message.method !== 'action') return;
     const params = message.params as { origin?: { clientId?: unknown; clientSeq?: unknown }; rejectionReason?: unknown } | undefined;
@@ -78,7 +83,7 @@ export function dispatcher(conn: PluginPeer, clientId: string, waitMs = ECHO_MS,
     const done = waiting.get(origin.clientSeq);
     if (done === undefined) return;
     waiting.delete(origin.clientSeq);
-    done(typeof params?.rejectionReason === 'string' ? params.rejectionReason : undefined);
+    done(typeof params?.rejectionReason === 'string' ? { refused: params.rejectionReason } : { taken: true });
   });
   return {
     dispatch: (channel, action) => {
@@ -88,12 +93,12 @@ export function dispatcher(conn: PluginPeer, clientId: string, waitMs = ECHO_MS,
         const timer = setTimeout(() => {
           waiting.delete(clientSeq);
           silent?.(channel);
-          resolve(undefined);
+          resolve({ unconfirmed: true });
         }, waitMs);
         timer.unref?.();
-        waiting.set(clientSeq, (refused) => {
+        waiting.set(clientSeq, (said) => {
           clearTimeout(timer);
-          resolve(refused);
+          resolve(said);
         });
         conn.notify('dispatchAction', { channel, clientSeq, action });
       });

@@ -30,7 +30,7 @@ interface Sent { chat: string; turn: string; text: string }
  * A turn ends when the case says so with `finish`, or at once when `auto` is
  * set, with the text `echo: <what was sent>`.
  */
-async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; turnRefused?: string } = {}) {
+async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; turnRefused?: string; unconfirmed?: boolean } = {}) {
   const threads = await memoryRecords().collection('webhook-threads');
   const sent: Sent[] = [];
   const posted: { url: string; id: string; body: Record<string, unknown> }[] = [];
@@ -53,9 +53,10 @@ async function made(options: { auto?: boolean; sessions?: Record<string, string>
     },
     send: async (chat, turn, text) => {
       sent.push({ chat, turn, text });
-      if (options.turnRefused !== undefined) return options.turnRefused;
+      if (options.turnRefused !== undefined) return { refused: options.turnRefused };
+      if (options.unconfirmed === true) return { unconfirmed: true };
       if (options.auto === true) waiting.get(turn)?.({ status: 'complete', text: `echo: ${text}` });
-      return undefined;
+      return { taken: true };
     },
     ended: (_chat, turn) => new Promise<TurnEnd>((resolve) => { waiting.set(turn, resolve); }),
     forget: (_chat, turn) => { waiting.delete(turn); },
@@ -408,17 +409,34 @@ describe('the plugin connection', () => {
     say({ method: 'action', params: { channel: 'ahp-chat:/c1', origin: { clientId: 'other', clientSeq: 2 }, rejectionReason: 'no' } });
     say({ method: 'action', params: { channel: 'ahp-chat:/c1', origin: { clientId: 'ahpd-webhook', clientSeq: 2 }, rejectionReason: 'the chat is busy' } });
     say({ method: 'action', params: { channel: 'ahp-chat:/c1', origin: { clientId: 'ahpd-webhook', clientSeq: 1 } } });
-    expect(await second).toBe('the chat is busy');
-    expect(await first).toBeUndefined();
+    expect(await second).toEqual({ refused: 'the chat is busy' });
+    expect(await first).toEqual({ taken: true });
   });
 
-  it('goes on as taken, and says so, when no echo comes', async () => {
+  it('reads no echo as a delivery not confirmed, never as taken, and says so', async () => {
     const { conn } = stub();
     const silent: string[] = [];
     const sender = dispatcher(conn, 'ahpd-webhook', 20, (channel) => { silent.push(channel); });
-    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } })).toBeUndefined();
+    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } })).toEqual({ unconfirmed: true });
     expect(silent).toEqual(['ahp-chat:/c1']);
   });
+});
+
+it('answers 504 in VS Code\'s words to a call whose turn the host never confirmed, and posts nothing', async () => {
+  const { target, posted, waiting, sent } = await made({ unconfirmed: true });
+  const answer = await target(
+    endpoint({ reply: 'callback', callbackPrefix: 'https://ci.example.com/hooks/' }),
+    call({ thread: 'pr-12', text: 'hello', callback: 'https://ci.example.com/hooks/pr-12' }),
+  );
+  expect(answer.status).toBe(504);
+  expect(await answer.json()).toEqual({
+    thread: 'pr-12',
+    turn: sent[0]?.turn,
+    message: 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically.',
+  });
+  expect(waiting.size).toBe(0);
+  await settle();
+  expect(posted).toEqual([]);
 });
 
 describe('the callback', () => {

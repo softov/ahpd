@@ -231,7 +231,7 @@ it('answers a call to a connector naming only a bot and a secret with 202', asyn
     threads,
     session: async () => 'session://motion',
     openChat: async () => 'chat://motion',
-    send: async () => undefined,
+    send: async () => ({ taken: true }),
     ended: async () => ({ status: 'complete', text: 'done' }),
     forget: () => {},
     post: async () => {},
