@@ -209,12 +209,14 @@ export function createCanvases(ctx: CanvasHost): Canvases {
   };
 
   const close = (resource: string, by: string): void => {
+    // Whether canvases are served at all, asked first, as the reference asks
+    // before it looks for anything to close.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6615-L6621
+    callable();
     const one = held.get(resource);
     // Gone, and so nothing to do: two closes may meet, and the second is the
-    // one that says nothing - even while the key is off, because a call with
-    // nothing to close is not a call the store takes.
+    // one that says nothing.
     if (one === undefined) return;
-    callable();
     if (one.by !== by) throw new Error(`plugin ${by}: ${resource} was opened by ${one.by}`);
     drop(one);
     // The list whole, or absent when this was the last one: the protocol's

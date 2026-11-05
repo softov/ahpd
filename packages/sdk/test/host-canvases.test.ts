@@ -142,6 +142,16 @@ describe('the store', () => {
     ]);
   });
 
+  /*
+   * The reference asks whether canvases are served before it looks for
+   * anything to close.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6615-L6621
+   */
+  it('refuses a close while canvases are off, though nothing is open under the name', () => {
+    const { store } = recording(true, false);
+    expect(() => store.close(canvasResource(CHAT, 'gone'), 'fixture')).toThrow('Canvases are disabled.');
+  });
+
   it('refuses an update or a close from a plugin that did not open the canvas', () => {
     const { store } = recording();
     const resource = store.open(CHAT, STATE, 'one');
