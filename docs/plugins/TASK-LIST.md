@@ -128,6 +128,8 @@ Each tool answers in one line per item, so a model reads a list in a turn rather
 
 `task_list` reads its filters against a whole task. `by` and `since` match any of the five stamps, so a task appears under the person who created it, approved it or touched its start, finish or review. `ready` is a `todo` task whose every `blockedBy` task is `done`, and, with approval on, one that has an `approved` stamp.
 
+A tool refuses an input it cannot take in the words VS Code's server tools refuse theirs with, naming the tool, the field and what it must be: `Invalid task_set input: status must be todo, doing, blocked, review, done, or dropped.`, or `Invalid task_add input: plan must match the id of a known plan (see plan_list).` for an id no record holds.
+
 ## The task record
 
 Each task is a file of the host's record store, its fields as YAML frontmatter and its `body` as the Markdown below. A plan is kept the same way, with `goal` as the body.

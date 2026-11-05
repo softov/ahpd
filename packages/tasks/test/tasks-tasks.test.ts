@@ -105,13 +105,34 @@ describe('the task tools', () => {
     expect((await kept(records, 't2'))?.created).toMatchObject({ by: 'bob', in: 'ahp-session:/two' });
   });
 
-  it('refuses a plan or a blocker that names no record', async () => {
+  /*
+   * A refusal names the tool, the field and what it must be, in the words VS
+   * Code's server tools refuse their input with:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L649-L671
+   */
+  it('refuses a plan or a blocker that names no record, as VS Code refuses an unknown session', async () => {
     const { run } = await served();
-    await expect(run('task_add', { title: 'Orphan', plan: 'p9' })).rejects.toThrow('there is no plan p9');
-    await expect(run('task_add', { title: 'Orphan', blockedBy: ['t9'] })).rejects.toThrow('there is no task t9');
+    await expect(run('task_add', { title: 'Orphan', plan: 'p9' }))
+      .rejects.toThrow('Invalid task_add input: plan must match the id of a known plan (see plan_list).');
+    await expect(run('task_add', { title: 'Orphan', blockedBy: ['t9'] }))
+      .rejects.toThrow('Invalid task_add input: blockedBy must match the ids of known tasks (see task_list).');
     await run('task_add', { title: 'First' });
-    await expect(run('task_set', { task: 't1', plan: 'p9' })).rejects.toThrow('there is no plan p9');
-    await expect(run('task_set', { task: 't1', blockedBy: ['t9'] })).rejects.toThrow('there is no task t9');
+    await expect(run('task_set', { task: 't1', plan: 'p9' }))
+      .rejects.toThrow('Invalid task_set input: plan must match the id of a known plan (see plan_list).');
+    await expect(run('task_set', { task: 't1', blockedBy: ['t9'] }))
+      .rejects.toThrow('Invalid task_set input: blockedBy must match the ids of known tasks (see task_list).');
+  });
+
+  it('refuses an input of the wrong kind in the words VS Code refuses one with', async () => {
+    const { run } = await served();
+    await expect(run('task_add', {})).rejects.toThrow('Invalid task_add input: title is required.');
+    await expect(run('task_add', { title: ' ' })).rejects.toThrow('Invalid task_add input: title must be a non-empty string.');
+    await expect(run('task_add', { title: 'First', labels: 'x' })).rejects.toThrow('Invalid task_add input: labels must be a string array.');
+    await expect(run('task_add', { title: 'First', body: 5 })).rejects.toThrow('Invalid task_add input: body must be a string.');
+    await expect(run('task_set', {})).rejects.toThrow('Invalid task_set input: task is required.');
+    await expect(run('task_list', { approved: 'yes' })).rejects.toThrow('Invalid task_list input: approved must be a boolean.');
+    await expect(run('task_list', { ready: 1 })).rejects.toThrow('Invalid task_list input: ready must be a boolean.');
+    await expect(run('task_list', { since: 5 })).rejects.toThrow('Invalid task_list input: since must be an ISO-8601 timestamp string.');
   });
 
   it('changes the fields a task names, by id, and refuses what is not one', async () => {
@@ -120,11 +141,12 @@ describe('the task tools', () => {
     expect(await run('task_set', { task: 't1', title: 'Renamed', priority: 'low', labels: ['x'], note: 'a note' }))
       .toBe('t1, todo, low, Renamed');
     expect(await kept(records, 't1')).toMatchObject({ title: 'Renamed', priority: 'low', labels: ['x'], note: 'a note' });
-    await expect(run('task_set', { task: 't9', title: 'Elsewhere' })).rejects.toThrow('there is no task t9');
+    await expect(run('task_set', { task: 't9', title: 'Elsewhere' }))
+      .rejects.toThrow('Invalid task_set input: task must match the id of a known task (see task_list).');
     await expect(run('task_set', { task: 't1', status: 'open' }))
-      .rejects.toThrow('status is one of todo, doing, blocked, review, done, dropped');
+      .rejects.toThrow('Invalid task_set input: status must be todo, doing, blocked, review, done, or dropped.');
     await expect(run('task_set', { task: 't1', priority: 'urgent' }))
-      .rejects.toThrow('priority is one of high, medium, low');
+      .rejects.toThrow('Invalid task_set input: priority must be high, medium, or low.');
   });
 
   it('stamps started at the first doing, finished once, and clears active on leaving doing', async () => {
@@ -151,7 +173,7 @@ describe('the task tools', () => {
     const { run, records } = await served({ requireApproval: true });
     await run('task_add', { title: 'First' });
     await expect(run('task_set', { task: 't1', status: 'doing' }))
-      .rejects.toThrow('task t1 is not approved, so it may not start');
+      .rejects.toThrow('Invalid task_set input: status doing needs task t1 approved first; ask somebody to approve it (see task_approve).');
     expect(await run('task_list', { ready: true })).toBe('No tasks.');
     expect(await run('task_list', { status: 'todo' })).toBe('t1, todo, medium, First');
 
@@ -191,8 +213,9 @@ describe('the task tools', () => {
     expect(await run('task_list', { ready: false })).toBe('t1, done, medium, First');
 
     await expect(run('task_list', { status: 'open' }))
-      .rejects.toThrow('status is one of todo, doing, blocked, review, done, dropped');
-    await expect(run('task_list', { since: 'yesterday' })).rejects.toThrow('since is a date');
+      .rejects.toThrow('Invalid task_list input: status must be todo, doing, blocked, review, done, or dropped.');
+    await expect(run('task_list', { since: 'yesterday' }))
+      .rejects.toThrow('Invalid task_list input: since must be a valid ISO-8601 timestamp (e.g. 2025-01-31T00:00:00Z).');
   });
 
   it('offers the three task tools beside the plan tools, and none asks a grant', async () => {
