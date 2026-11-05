@@ -829,7 +829,9 @@ Sizes are bytes. `cpu.percent` is percent of one core, so it can exceed 100; `co
 
 ## The channel and its commands
 
-A client that subscribes to `x-ahpd-computers://` holds every machine with its state. Subscribing needs `computer:read`, and a reader without it is refused. The snapshot lists each machine as `{ id, record }`, where `record` is `{ state, status }`: `state` is what `computer://<id>/state` reads, and `status` is what `computer://<id>/status` reads.
+A client that subscribes to `x-ahpd-computers://` holds every machine with its state. Subscribing needs `computer:read`, and a reader without it is refused. The snapshot lists each machine as `{ id, record }`, where `record` is `{ state, status }`: `state` is what `computer://<id>/state` reads, where the runtime gives one, and `status` is what `computer://<id>/status` reads.
+
+The channel is read again after each change this plugin makes to a machine, and every five minutes for the changes made outside it, VS Code's periodic pass over a catalogue whose source changes without telling it. A runtime that does not answer a listing keeps the machines it last listed, as VS Code keeps the list it had when a refresh fails, and the daemon's log gets a line naming it.
 
 ```json
 { "records": [

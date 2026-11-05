@@ -6,7 +6,7 @@ import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Pl
 import { AGENT_RECORD_VARIABLE, resolveNeeds, secretRef, strings } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
-import { COMPUTERS_SCHEME, computerCatalogue } from './catalogue.js';
+import { CATALOGUE_PASS_MS, COMPUTERS_SCHEME, computerCatalogue } from './catalogue.js';
 import { computerMethods, computerProvider } from './provider.js';
 import { scopeOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
@@ -1089,11 +1089,20 @@ export const apply: Plugin['apply'] = (host, options) => {
   });
   if (watching !== undefined) host.registerClose(() => { watching.close(); });
 
-  /** The `x-ahpd-computers://` channel, refreshed after each change this plugin makes to a machine. */
+  /**
+   * The `x-ahpd-computers://` channel, refreshed after each change this plugin
+   * makes to a machine, and read again every five minutes for the changes made
+   * outside it, VS Code's periodic pass over a catalogue whose source changes
+   * without telling it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogReconciliationService.ts#L22
+   */
   const catalogue = computerCatalogue(computerRouter, (line) => { host.log(`${name}: ${line}`); });
   catalogue.bind(host.registerChannel(COMPUTERS_SCHEME, catalogue.channel));
   // A reader whose grants changed is sent what they gained and lost.
   host.on('users_changed', () => { void catalogue.refresh(); });
+  const reconciling = setInterval(() => { void catalogue.refresh(); }, CATALOGUE_PASS_MS);
+  reconciling.unref?.();
+  host.registerClose(() => { clearInterval(reconciling); });
 
   /**
    * The runtime, with a stretch around every change of state, and the computer

@@ -153,6 +153,9 @@ export const routed = (
     return ms === undefined ? ask(held, name) : bounded(ask(held, name), ms, runtime);
   };
 
+  /** The rows each runtime answered its last listing with, which stand while it does not answer. */
+  const lastRows = new Map<string, Machine[]>();
+
   /** The runtime a create goes to, which is the value this host is configured with. */
   const maker = (value = fallback): ComputerRuntime => {
     const held = runtimes[value];
@@ -182,20 +185,24 @@ export const routed = (
      * answer is not an empty host: Docker's `list` throws by design when Docker
      * is not running, and a host that also serves a box over ssh would
      * otherwise list nothing at all. The rows of every runtime that answered
-     * are kept, and each that did not is one line naming it.
+     * are kept, and each that did not is one line naming it, its machines the
+     * rows it last answered, as VS Code keeps the list it had when a refresh
+     * fails rather than saying its entries removed.
      */
     list: async () => {
       const answers = await Promise.all(Object.entries(runtimes).map(async ([value, runtime]) => {
         try {
           const rows = (await bounded(runtime.list(), timeoutOf(value), value))
             .map((row) => ({ ...row, id: spellMachineId(value, row.id) }));
+          lastRows.set(value, rows);
           options.listed?.(value, rows);
           return rows;
         }
         catch (error) {
-          options.log?.(`the ${value} runtime did not list its machines, so they are left out: ${reasonOf(error)}`);
+          const kept = lastRows.get(value) ?? [];
+          options.log?.(`the ${value} runtime did not list its machines, so the ${String(kept.length)} it last listed are kept: ${reasonOf(error)}`);
           options.listed?.(value, undefined);
-          return [];
+          return kept;
         }
       }));
       return answers.flat();
