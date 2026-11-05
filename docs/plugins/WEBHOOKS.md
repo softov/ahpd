@@ -342,7 +342,7 @@ On a host with a users directory, the plugin acts as `plugin:webhook`, with the 
 
 The chat is the plugin's own, started as the owner `plugin:webhook`, so `session:create` is asked of nobody here: it is in the list because those two are the grants the plugin's problem line prints when a read is answered no chat.
 
-The plugin opens its connection when the daemon listens, and hears each turn's end from the host.
+The plugin opens its connection when the daemon listens, and hears each turn's end from the host. It holds a subscription to a thread's chat while a turn there needs one, for the echo of the turn's start and the read of its end, and unsubscribes once the last such turn has ended or been refused, as VS Code's router holds a chat's subscription for one delivery.
 
 ## The trigger
 

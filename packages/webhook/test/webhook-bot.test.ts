@@ -3,12 +3,13 @@ import { createServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { botTarget, turnEnds } from '../src/bot.js';
-import { callBack, defaults, dispatcher } from '../src/plugin.js';
+import { botSeams, callBack, defaults, dispatcher } from '../src/plugin.js';
 import { checkEndpoint } from '../src/record.js';
 import type { AddressInfo } from 'node:net';
 import type { ServerResponse } from 'node:http';
 import type { PluginPeer } from '../../sdk/src/types/plugin.js';
 import type { BotSeams, TurnEnd } from '../src/bot.js';
+import type { Dispatched } from '../src/plugin.js';
 import type { Call } from '../src/call.js';
 import type { Endpoint } from '../src/record.js';
 import manifest from '../package.json' with { type: 'json' };
@@ -420,6 +421,48 @@ describe('the plugin connection', () => {
     expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } })).toEqual({ unconfirmed: true });
     expect(silent).toEqual(['ahp-chat:/c1']);
   });
+});
+
+/*
+ * A chat's subscription is held while a turn needs it, for the echo of its
+ * start and the read of its end, and let go once that read is made, as VS
+ * Code's router holds one for a delivery and releases it when it settles.
+ */
+it('holds a chat\'s subscription while a turn needs it, and releases it at the turn\'s end or its refusal', async () => {
+  const asked: string[] = [];
+  const told: string[] = [];
+  const handlers = new Map<string, (event: never) => void>();
+  const conn = {
+    request: async (method: string, params: { channel: string }) => {
+      asked.push(`${method} ${params.channel}`);
+      return { snapshot: { state: { turns: [{ id: 't1', responseParts: [{ kind: 'markdown', content: 'done' }] }] } } };
+    },
+    notify: (method: string, params: { channel: string }) => { told.push(`${method} ${params.channel}`); },
+    onMessage: () => {},
+  } as unknown as PluginPeer;
+  const host = {
+    on: (event: string, handler: (event: never) => void) => { handlers.set(event, handler); },
+    problem: () => {},
+    records: () => undefined,
+    registerClose: () => {},
+  } as unknown as Parameters<typeof botSeams>[0];
+  let answer: Dispatched = { taken: true };
+  const sender = { dispatch: async () => answer };
+  const seams = botSeams(host, async () => ({ conn, sender }), 10);
+
+  const end = seams.ended('ahp-chat:/c1', 't1');
+  expect(await seams.send('ahp-chat:/c1', 't1', 'hello')).toEqual({ taken: true });
+  expect(asked).toEqual(['subscribe ahp-chat:/c1']);
+  expect(told).toEqual([]);
+  (handlers.get('turn_end') as (event: unknown) => void)({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
+  expect(await end).toMatchObject({ status: 'complete', text: 'done' });
+  expect(told).toEqual(['unsubscribe ahp-chat:/c1']);
+
+  answer = { refused: 'the chat is busy' };
+  expect(await seams.send('ahp-chat:/c2', 't2', 'again')).toEqual({ refused: 'the chat is busy' });
+  seams.forget('ahp-chat:/c2', 't2');
+  await new Promise((r) => { setTimeout(r, 5); });
+  expect(told).toEqual(['unsubscribe ahp-chat:/c1', 'unsubscribe ahp-chat:/c2']);
 });
 
 it('answers 504 in VS Code\'s words to a call whose turn the host never confirmed, and posts nothing', async () => {

@@ -180,7 +180,7 @@ export async function callBack(endpoint: Endpoint, url: string, id: string, body
 }
 
 /** The plugin's connection to the host, and the dispatcher over it. */
-interface Opened {
+export interface Opened {
   conn: PluginPeer;
   sender: Dispatcher;
 }
@@ -195,11 +195,38 @@ const textOf = (state: unknown, turn: string): string => {
 };
 
 /** The bot seams over the plugin's connection, which `peer` gives once it is open. */
-function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
+export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
   host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
+  /*
+   * Each chat's subscription, counted by the turns that need it: taken for a
+   * send's echo and held to read its end, then let go, as VS Code's router
+   * takes a chat's subscription for one delivery through the connection's
+   * counted getSubscription and releases it when it settles.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts
+   */
+  const subscriptions = new Map<string, { count: number; ready: Promise<unknown> }>();
+  const hold = async (conn: PluginPeer, chat: string): Promise<void> => {
+    const held = subscriptions.get(chat);
+    if (held !== undefined) {
+      held.count += 1;
+      await held.ready;
+      return;
+    }
+    const ready = conn.request('subscribe', { channel: chat });
+    subscriptions.set(chat, { count: 1, ready });
+    await ready;
+  };
+  const release = (conn: PluginPeer, chat: string): void => {
+    const held = subscriptions.get(chat);
+    if (held === undefined) return;
+    held.count -= 1;
+    if (held.count > 0) return;
+    subscriptions.delete(chat);
+    conn.notify('unsubscribe', { channel: chat });
+  };
   // Each callback's wait for its next attempt, ended when the plugin closes.
   const waits = new Map<NodeJS.Timeout, (error: Error) => void>();
   host.registerClose(() => {
@@ -257,7 +284,7 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
     send: async (chat, turn, text) => {
       const { conn, sender } = await open();
       // The host echoes a taken turn only to the subscribers of its chat.
-      await conn.request('subscribe', { channel: chat });
+      await hold(conn, chat);
       /*
        * Sent as VS Code's client sends a turn: the time it starts and a
        * person's message, which the host says as it came.
@@ -270,12 +297,21 @@ function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number
         message: { text, origin: { kind: 'user' } },
       });
     },
-    forget: (chat, turn) => { ends.forget(chat, turn); },
+    forget: (chat, turn) => {
+      ends.forget(chat, turn);
+      void peer().then((conn) => { release(conn, chat); });
+    },
     ended: async (chat, turn) => {
       const ending = await ends.wait(chat, turn);
       const conn = await peer();
-      const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: unknown } };
-      return { ...ending, text: textOf(opened.snapshot?.state, turn) };
+      try {
+        // Read through the subscription the turn holds, then let it go.
+        const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: unknown } };
+        return { ...ending, text: textOf(opened.snapshot?.state, turn) };
+      }
+      finally {
+        release(conn, chat);
+      }
     },
     post: (endpoint, url, id, body) => callBack(endpoint, url, id, body, {
       wait: (ms) => new Promise<void>((resolve, reject) => {
