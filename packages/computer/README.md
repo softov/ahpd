@@ -156,7 +156,7 @@ A machine made for an agent carries what the agent's `machine()` declares. Each 
 | `release_computer` | Stop it and remove it. Nothing on it survives |
 | `run_in_computer` | Run a command line inside it through `sh -lc`, and answer what it printed and its exit code |
 
-Each declares its `effects`, so a backend with a policy can ask a person before one runs: making a machine writes and reaches the network, releasing is destructive, and running in one is both.
+Each declares its `effects`, so a backend with a policy can ask a person before one runs: making a machine writes and reaches the network, releasing is destructive, and running in one is both. A client sees each with a title, `Request Disposable Computer`, `Release Computer` and `Run in Computer`, and with the annotations VS Code's server tools carry: none is read-only, and releasing and running are destructive.
 
 ## What it serves
 

@@ -10,7 +10,10 @@ import { queue, roomFor } from './runtime.js';
  *
  * Tools rather than resource writes, because a write carries a URI and a mode
  * and can say neither what image nor what limits. Each declares its `effects` so a backend
- * with a policy has something to ask a person on.
+ * with a policy has something to ask a person on, and carries a title and the
+ * annotations VS Code's server tools carry: `readOnlyHint`, and
+ * `destructiveHint` on a tool that can destroy what it acts on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentFeedbackServerTools.ts#L122-L171
  */
 
 /** What the tools were configured with. */
@@ -52,7 +55,9 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     {
       definition: {
         name: 'request_disposable_computer',
+        title: 'Request Disposable Computer',
         description: 'Start a disposable computer and answer its computer:// URI. It runs until it is released.',
+        annotations: { readOnlyHint: false },
         inputSchema: {
           type: 'object',
           properties: {
@@ -107,7 +112,9 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     {
       definition: {
         name: 'release_computer',
+        title: 'Release Computer',
         description: 'Remove a disposable computer. Nothing on it survives.',
+        annotations: { readOnlyHint: false, destructiveHint: true },
         inputSchema: {
           type: 'object',
           properties: { id: { type: 'string', description: 'The name from its computer:// URI.' } },
@@ -138,7 +145,9 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     {
       definition: {
         name: 'run_in_computer',
+        title: 'Run in Computer',
         description: 'Run a shell command inside a disposable computer and answer what it printed and what it exited with.',
+        annotations: { readOnlyHint: false, destructiveHint: true },
         inputSchema: {
           type: 'object',
           properties: {

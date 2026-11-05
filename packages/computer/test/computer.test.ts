@@ -239,6 +239,18 @@ it('declares what each tool does, so a policy has something to ask on', () => {
   expect(by(tools, 'run_in_computer').effects).toEqual({ writes: true, network: true, destructive: true });
 });
 
+it('titles and annotates each tool as VS Code\'s server tools are', () => {
+  const { runtime } = fake();
+  const tools = computerTools(runtime, { ...options, label: 'l', prefix: 'p' });
+  const shown = (name: string) => {
+    const { title, annotations } = by(tools, name).definition;
+    return { title, annotations };
+  };
+  expect(shown('request_disposable_computer')).toEqual({ title: 'Request Disposable Computer', annotations: { readOnlyHint: false } });
+  expect(shown('release_computer')).toEqual({ title: 'Release Computer', annotations: { readOnlyHint: false, destructiveHint: true } });
+  expect(shown('run_in_computer')).toEqual({ title: 'Run in Computer', annotations: { readOnlyHint: false, destructiveHint: true } });
+});
+
 /** A create body, as a client sends one. */
 const made = (value: unknown, extra: Record<string, unknown> = {}): Write =>
   ({ data: JSON.stringify(value), encoding: 'utf-8', ...extra }) as Write;
