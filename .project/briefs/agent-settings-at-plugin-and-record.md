@@ -142,11 +142,11 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - Absent, it is the host's `paths`. pi uses the host's paths with no option at all.
 - A client that names an absolute folder runs a session there, inside the list or not.
 - So `paths` only narrows the list of past sessions, and moves the default folder away from the host's.
+- Softov, 2026-11-05: "Claude's plugin paths, I think is not necessary." Claude takes the host's paths, as pi does.
 
 ## Open points
 
 - Which disagreements are deliberate, and which settings move to the other level.
-- Whether claude's `paths` stays, or claude takes the host's paths as pi does.
 - Whether `hostTools` becomes one switch for every agent, at the daemon, the plugin or the record.
 - Whether a cofold record gives its shell commands variables of their own. The record has no such field today.
 - Whether a cofold record names its own config file, in place of the daemon's `COFOLD_CONFIG`.
