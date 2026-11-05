@@ -7,15 +7,15 @@ import type { Host as DaemonHost } from '../../sdk/src/types/host.js';
 import type { Alert, LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
 import type { Tunnel, TunnelReport } from '../../sdk/src/types/tunnels.js';
 import {
-  deriveConnectionToken, displayLabel, IDENTITY_LABEL, nameLabel,
-  LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT,
+  deriveConnectionToken, displayLabel, normalizeTunnelName, tunnelNameFromHostname,
+  LAUNCHER_LABEL, MAX_TUNNEL_NAME_LENGTH, PROTOCOL_LABEL, TUNNEL_PORT,
 } from '../src/discovery.js';
 import { forward } from '../src/forward.js';
 import { devtunnelKind } from '../src/kind.js';
 import type { KindOptions } from '../src/kind.js';
 import { apply } from '../src/plugin.js';
-import { labelsOf, sdkService } from '../src/service.js';
-import type { Cloud, Host, Remote, Service } from '../src/service.js';
+import { labelsOf, portOf, sdkService } from '../src/service.js';
+import type { Cloud, Host, Kept, Remote, Service } from '../src/service.js';
 
 /*
  * The convention, the hop and the kind, with a fake SDK instead of an account.
@@ -55,18 +55,22 @@ it('never lets a derived token begin with a dash', async () => {
 
 it('reads the display name the way the client works it out', () => {
   // The first label that is not the launcher, not underscore-prefixed and not
-  // a protocol tag. Order matters, and the two markers must not win it.
-  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03'])).toBe('dev03');
-  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL])).toBeUndefined();
+  // a protocol tag, wherever it stands.
+  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL, '_flags', 'dev03'])).toBe('dev03');
+  expect(displayLabel([LAUNCHER_LABEL, PROTOCOL_LABEL])).toBeUndefined();
 });
 
-it('turns a machine name into something that can be a label', () => {
-  expect(nameLabel('dev03.example.com')).toBe('dev03examplecom');
-  expect(nameLabel('--dev')).toBe('dev');
-  expect(nameLabel('x'.repeat(40))).toHaveLength(20);
-  expect(nameLabel('!!!')).toBeUndefined();
-  // A new tunnel carries every marker the convention needs, then the name.
-  expect(labelsOf('dev03')).toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03']);
+it('names a tunnel as VS Code does: the host name cleaned, a configured name normalized', () => {
+  // VS Code's own cases (src/vs/platform/remoteTunnel/test/common/remoteTunnel.test.ts).
+  expect(tunnelNameFromHostname('hello123')).toBe('hello123');
+  expect(tunnelNameFromHostname('-cool-name-')).toBe('cool-name');
+  expect(tunnelNameFromHostname('cool!name with_chars')).toBe('coolname-with-chars');
+  expect(tunnelNameFromHostname('z')).toBe('remote-machine');
+  expect(tunnelNameFromHostname('Dev03.Example.com')).toBe('dev03examplecom');
+  expect(tunnelNameFromHostname('x'.repeat(40))).toHaveLength(MAX_TUNNEL_NAME_LENGTH);
+  expect(normalizeTunnelName('--My_Box')).toBe('my_box');
+  // A tunnel carries its name, the protocol and the launcher, as the CLI's labels.
+  expect(labelsOf('dev03')).toEqual(['dev03', PROTOCOL_LABEL, LAUNCHER_LABEL]);
 });
 
 // The hop -----------------------------------------------------------------
@@ -99,14 +103,16 @@ it('carries a connection from the well-known port to the one the daemon bound', 
 /** A made-up Dev Tunnel, which no service ever made. */
 const REMOTE: Remote = {
   id: 'otter-1234',
-  labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03'],
+  labels: ['dev03', PROTOCOL_LABEL, LAUNCHER_LABEL],
   cluster: 'brs',
 };
 
 /** What the fake SDK was asked to do, so a case can read the calls. */
 interface Calls {
-  found: number;
+  got: Kept[];
+  found: string[];
   made: number;
+  synced: string[][];
   hosted: number;
   deleted: number;
   refreshed: number;
@@ -121,16 +127,17 @@ interface Calls {
 /**
  * The SDK as two objects of arrays and counters.
  *
- * `find` answers what the account already holds, which is what makes a restart
- * keep the Dev Tunnel's id. The host counts the calls that matter to the
- * arrangement: one host for a connector, and a refresh after every port.
+ * `get` answers the tunnel kept by id and `find` the account's tunnel by its
+ * name, which is what makes a restart keep the Dev Tunnel's id. The host counts
+ * the calls that matter to the arrangement: one host for a connector, and a
+ * refresh after every port.
  */
-const fakeCloud = (options: { found?: Remote } = {}) => {
+const fakeCloud = (options: { found?: Remote; kept?: Remote } = {}) => {
   const calls: Calls = {
-    found: 0, made: 0, hosted: 0, deleted: 0, refreshed: 0, restarted: 0, closed: 0,
+    got: [], found: [], made: 0, synced: [], hosted: 0, deleted: 0, refreshed: 0, restarted: 0, closed: 0,
     added: [], removed: [], access: [],
   };
-  let held: Remote | undefined = options.found;
+  let held: Remote | undefined;
   const host: Host = {
     add: async (port) => { calls.added.push(port); return `https://url-${String(port)}.example.test/`; },
     access: async (port, on) => { calls.access.push([port, on]); },
@@ -140,11 +147,31 @@ const fakeCloud = (options: { found?: Remote } = {}) => {
     close: async () => { calls.closed += 1; },
   };
   const cloud: Cloud = {
-    find: async () => { calls.found += 1; return held; },
+    get: async (kept) => {
+      calls.got.push(kept);
+      if (options.kept === undefined || options.kept.id !== kept.id) return undefined;
+      held = options.kept;
+      return held;
+    },
+    find: async (name) => {
+      calls.found.push(name);
+      if (options.found === undefined || !options.found.labels.includes(name)) return undefined;
+      held = options.found;
+      return held;
+    },
     make: async (labels) => {
       calls.made += 1;
       calls.labels = labels;
       held = { id: 'made-1234', labels };
+      return held;
+    },
+    sync: async (labels) => {
+      if (held === undefined) throw new Error('the fake was asked to sync before it held a tunnel');
+      const same = held.labels.length === labels.length && labels.every((label) => held?.labels.includes(label));
+      if (!same) {
+        calls.synced.push(labels);
+        held = { ...held, labels };
+      }
       return held;
     },
     host: async () => { calls.hosted += 1; return host; },
@@ -162,9 +189,16 @@ const fakeCloud = (options: { found?: Remote } = {}) => {
 /** The token a record of this kind would carry, which no call here uses. */
 const TOKEN = 'gho_made-up-token';
 
-/** A service over the real arrangement and the fake SDK. */
-const serviceOver = (cloud: Cloud): Service =>
-  sdkService({ token: () => ({ token: TOKEN }), cloud: () => cloud, name: 'dev03' });
+/** A service over the real arrangement and the fake SDK, with the tunnels it keeps in `kept`. */
+const serviceOver = (cloud: Cloud, kept = new Map<string, Kept>(), name = 'dev03'): Service => sdkService({
+  token: () => ({ token: TOKEN }),
+  cloud: () => cloud,
+  name,
+  kept: {
+    read: async (connector) => kept.get(connector),
+    write: async (connector, one) => { kept.set(connector, one); },
+  },
+});
 
 /** A service no case reaches, for the plugin tests that only register. */
 const unusedService = (): Service => ({
@@ -225,14 +259,14 @@ const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
 
 // The kind ----------------------------------------------------------------
 
-it('finds the Dev Tunnel it made before by its label, so its id and token stay', async () => {
+it('finds the account\'s Dev Tunnel of its name, so its id and token stay', async () => {
   const { cloud, calls } = fakeCloud({ found: REMOTE });
   const { kind, said } = kindFor(serviceOver(cloud), { connector: 'mine' });
   const report = reporting();
 
   await kind.create(tunnel({ purpose: 'system', settings: { connector: 'mine', port: TUNNEL_PORT } }), report.report);
 
-  expect(calls.found).toBe(1);
+  expect(calls.found).toEqual(['dev03']);
   expect(calls.made).toBe(0);
   // The id a client derives its connection token from is the one it had before.
   expect(said[0]).toBe(`tunnel ${REMOTE.id} (dev03), port ${TUNNEL_PORT}`);
@@ -245,9 +279,58 @@ it('makes one with the convention\'s labels when the account has none', async ()
 
   await kind.create(tunnel(), reporting().report);
 
-  expect(calls.found).toBe(1);
+  expect(calls.found).toEqual(['dev03']);
   expect(calls.made).toBe(1);
-  expect(calls.labels).toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL, 'dev03']);
+  expect(calls.labels).toEqual(['dev03', PROTOCOL_LABEL, LAUNCHER_LABEL]);
+});
+
+it('keeps the tunnel a connector hosted and finds it again by its id, ahead of any name', async () => {
+  const kept = new Map<string, Kept>();
+  const first = fakeCloud();
+  await kindFor(serviceOver(first.cloud, kept)).kind.create(tunnel(), reporting().report);
+  expect(kept.get('mine')).toEqual({ id: 'made-1234', name: 'dev03' });
+
+  // The next run asks for that id first, and names no tunnel when it answers.
+  const again = fakeCloud({ kept: { id: 'made-1234', labels: ['dev03', PROTOCOL_LABEL, LAUNCHER_LABEL] } });
+  await kindFor(serviceOver(again.cloud, kept)).kind.create(tunnel(), reporting().report);
+  expect(again.calls.got).toEqual([{ id: 'made-1234', name: 'dev03' }]);
+  expect(again.calls.found).toEqual([]);
+  expect(again.calls.made).toBe(0);
+});
+
+it('gives a found tunnel the labels it should carry, a new name among them, and keeps the name', async () => {
+  const kept = new Map<string, Kept>([['mine', { id: REMOTE.id, cluster: 'brs', name: 'dev03' }]]);
+  const { cloud, calls } = fakeCloud({ kept: { ...REMOTE, labels: ['dev03', 'protocolv4', LAUNCHER_LABEL] } });
+  await kindFor(serviceOver(cloud, kept, 'box-2')).kind.create(tunnel(), reporting().report);
+
+  expect(calls.synced).toEqual([['box-2', PROTOCOL_LABEL, LAUNCHER_LABEL]]);
+  expect(kept.get('mine')).toEqual({ id: REMOTE.id, cluster: 'brs', name: 'box-2' });
+});
+
+it('refuses a name another machine hosts a tunnel of, in the CLI\'s words', async () => {
+  const { cloud, calls } = fakeCloud({ found: { ...REMOTE, hosts: 1 } });
+  const report = reporting();
+  await kindFor(serviceOver(cloud)).kind.create(tunnel(), report.report);
+
+  expect(calls.made).toBe(0);
+  expect(calls.hosted).toBe(0);
+  expect(report.seen.at(-1)).toEqual({
+    status: 'error',
+    error: 'A tunnel with the name dev03 exists and is in-use. Please pick a different name or stop the existing tunnel.',
+  });
+});
+
+it('writes a port as auto, with an anonymous allow when it is public and a deny when it is not', () => {
+  expect(portOf(9101, true)).toEqual({
+    portNumber: 9101,
+    protocol: 'auto',
+    accessControl: { entries: [{ type: 'Anonymous', subjects: [], scopes: ['connect'] }] },
+  });
+  expect(portOf(9101, false)).toEqual({
+    portNumber: 9101,
+    protocol: 'auto',
+    accessControl: { entries: [{ type: 'Anonymous', isDeny: true, subjects: [], scopes: ['connect'] }] },
+  });
 });
 
 it('hosts one Dev Tunnel for a connector, and refreshes it for every port', async () => {

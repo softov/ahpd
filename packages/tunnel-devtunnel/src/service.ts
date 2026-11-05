@@ -12,21 +12,25 @@
  * everything below that is the SDK's, and a test hands the service a cloud that
  * is a few arrays instead.
  *
- * A Dev Tunnel is found by the `_ahpd` label before one is made, so a restart
- * keeps the id. The id is what a client derives its connection token from, and
+ * A connector's Dev Tunnel is found as VS Code's CLI finds the tunnel it hosts
+ * (`start_new_launcher_tunnel` in cli/src/tunnels/dev_tunnels.rs): by the id
+ * kept for it from the last run, then by its name with the launcher label,
+ * and made only when neither answers; its labels are then set to the ones it
+ * should carry. The id is what a client derives its connection token from, and
  * a new id is every client pointed at nothing. The same id is why a port is
  * written with `createOrUpdate`: a kept tunnel still carries the port from the
  * last run, and a plain create answers a conflict for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/dev_tunnels.rs#L575-L805
  */
 
 import { TunnelRelayTunnelHost } from '@microsoft/dev-tunnels-connections';
 import {
-  TunnelAccessControlEntryType, TunnelAccessScopes, TunnelProtocol,
+  TunnelAccessControlEntryType, TunnelAccessScopes, TunnelEndpoint, TunnelProtocol,
 } from '@microsoft/dev-tunnels-contracts';
 import type { Tunnel as DevTunnel, TunnelAccessControl, TunnelPort } from '@microsoft/dev-tunnels-contracts';
 import { ManagementApiVersions, TunnelManagementHttpClient } from '@microsoft/dev-tunnels-management';
 import type { TunnelManagementClient } from '@microsoft/dev-tunnels-management';
-import { IDENTITY_LABEL, LABELS, nameLabel } from './discovery.js';
+import { LABELS, LAUNCHER_LABEL } from './discovery.js';
 
 /** One Dev Tunnel, as much of it as the service and the kind read. */
 export interface Remote {
@@ -36,6 +40,18 @@ export interface Remote {
   labels: string[];
   /** The cluster it lives in, which is the region in its URL. */
   cluster?: string;
+  /** How many hosts are connected to it now: another machine hosts a tunnel with one. */
+  hosts?: number;
+}
+
+/** The tunnel a connector hosted, kept across runs as the CLI keeps its launcher tunnel. */
+export interface Kept {
+  /** The Dev Tunnel's id. */
+  id: string;
+  /** Its cluster. */
+  cluster?: string;
+  /** The name it was hosted under. */
+  name: string;
 }
 
 /** What a port on one Dev Tunnel is doing now. */
@@ -60,11 +76,15 @@ export interface Served {
 
 /** One Dev Tunnel's half of the SDK: the account, the tunnel, and its state. */
 export interface Cloud {
-  /** The account's tunnel carrying the identity label, or nothing. */
-  find(): Promise<Remote | undefined>;
+  /** The tunnel kept from the last run, or nothing when the service no longer has it or refuses it. */
+  get(kept: Kept): Promise<Remote | undefined>;
+  /** The account's first tunnel carrying both the launcher label and this name, or nothing. */
+  find(name: string): Promise<Remote | undefined>;
   /** Make one carrying these labels. */
   make(labels: string[]): Promise<Remote>;
-  /** Host the tunnel `find` or `make` answered. */
+  /** Give the tunnel `get`, `find` or `make` answered these labels, when it carries others. */
+  sync(labels: string[]): Promise<Remote>;
+  /** Host the tunnel `get`, `find` or `make` answered. */
   host(): Promise<Host>;
   /** What one of its ports is doing now. */
   show(port: number): Promise<Shown | undefined>;
@@ -121,8 +141,13 @@ export interface Service {
 export interface ServiceOptions {
   /** The token of one open connector, or nothing when it is not open. */
   token(connector: string): { token: string } | undefined;
-  /** What a new Dev Tunnel is called, from the plugin's `name` option. */
-  name?: string;
+  /** What the Dev Tunnel is called: the plugin's `name` option, or the machine's, as VS Code names it. */
+  name: string;
+  /** Where the tunnel each connector hosted is kept between runs. */
+  kept?: {
+    read(connector: string): Promise<Kept | undefined>;
+    write(connector: string, kept: Kept): Promise<void>;
+  };
   /**
    * Build the SDK's half for one connector.
    *
@@ -132,11 +157,17 @@ export interface ServiceOptions {
   cloud?: (connector: string) => Cloud;
 }
 
-/** The labels a new tunnel carries, with the display name when one is asked for. */
-export function labelsOf(name: string | undefined): string[] {
-  const named = name === undefined ? undefined : nameLabel(name);
-  return [...LABELS, ...(named === undefined ? [] : [named])];
+/** The labels a tunnel carries, as the CLI's `get_labels` gives them: its name, the protocol and the launcher. */
+export function labelsOf(name: string): string[] {
+  return [name, ...LABELS];
 }
+
+/**
+ * What a name with a tunnel another machine hosts is refused with, in the
+ * CLI's words (`CodeError::TunnelActiveAndInUse`, cli/src/util/errors.rs L518).
+ */
+const inUse = (name: string): string =>
+  `A tunnel with the name ${name} exists and is in-use. Please pick a different name or stop the existing tunnel.`;
 
 /** The service over the SDK, with one management client and one host for each connector. */
 export function sdkService(options: ServiceOptions): Service {
@@ -154,12 +185,32 @@ export function sdkService(options: ServiceOptions): Service {
   const cloudOf = (connector: string): Cloud =>
     options.cloud?.(connector) ?? sdkCloud(connector, options);
 
-  /** The connector's tunnel, found or made on first use. */
+  /**
+   * The connector's tunnel, found or made on first use, as the CLI finds the
+   * tunnel it hosts: the kept one by its id; else the account's tunnel of this
+   * name with the launcher label, refused while another machine hosts it; else
+   * a new one. Its labels are then the ones it should carry, a changed name
+   * among them, and what was hosted is kept for the next run.
+   */
   const entryOf = async (connector: string): Promise<Entry> => {
     const already = served.get(connector);
     if (already !== undefined) return already;
     const cloud = cloudOf(connector);
-    const remote = await cloud.find() ?? await cloud.make(labelsOf(options.name));
+    const kept = await options.kept?.read(connector);
+    let found = kept === undefined ? undefined : await cloud.get(kept);
+    if (found === undefined) {
+      const named = await cloud.find(options.name);
+      if (named !== undefined && (named.hosts ?? 0) > 0) throw new Error(inUse(options.name));
+      found = named ?? await cloud.make(labelsOf(options.name));
+    }
+    const remote = await cloud.sync(labelsOf(options.name));
+    if (kept === undefined || kept.id !== remote.id || kept.name !== options.name) {
+      await options.kept?.write(connector, {
+        id: remote.id,
+        ...(remote.cluster === undefined ? {} : { cluster: remote.cluster }),
+        name: options.name,
+      });
+    }
     const made: Entry = { cloud, remote, ports: new Set<number>() };
     served.set(connector, made);
     return made;
@@ -271,6 +322,7 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
     id: tunnel.tunnelId ?? '',
     labels: tunnel.labels ?? [],
     ...(tunnel.clusterId === undefined ? {} : { cluster: tunnel.clusterId }),
+    hosts: countOf(tunnel.status?.hostConnectionCount),
   });
 
   /*
@@ -288,11 +340,34 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
   };
 
   return {
-    find: async () => {
-      // The newest is taken when the account has more than one, so two left by
-      // hand do not stop the daemon from finding its own.
-      const listed = await management.listTunnels(undefined, undefined, { labels: [IDENTITY_LABEL] });
-      const found = listed.at(-1);
+    get: async (kept) => {
+      // A tunnel the service no longer has (404) or no longer lets this account
+      // host (403) is made again, as the CLI's `get_or_create_tunnel` does.
+      let found: DevTunnel | null;
+      try {
+        found = await management.getTunnel(
+          { tunnelId: kept.id, ...(kept.cluster === undefined ? {} : { clusterId: kept.cluster }) },
+          { includePorts: true },
+        );
+      }
+      catch (error) {
+        if ((error as { response?: { status?: number } }).response?.status === 403) return undefined;
+        throw error;
+      }
+      if (found === null) return undefined;
+      held = found;
+      return remoteOf(found);
+    },
+
+    find: async (name) => {
+      // The CLI's `get_existing_tunnel_with_name`: both labels required, the first answer taken.
+      const listed = await management.listTunnels(undefined, undefined, {
+        labels: [LAUNCHER_LABEL, name],
+        requireAllLabels: true,
+        limit: 1,
+        includePorts: true,
+      });
+      const found = listed[0];
       if (found === undefined) return undefined;
       held = found;
       return remoteOf(found);
@@ -307,6 +382,20 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
       return remoteOf(made);
     },
 
+    sync: async (labels) => {
+      // The CLI's `sync_tunnel_tags`: written only when the labels differ as a set.
+      const tunnel = mine();
+      const now = new Set(tunnel.labels ?? []);
+      if (now.size === labels.length && labels.every((label) => now.has(label))) return remoteOf(tunnel);
+      const updated = await management.updateTunnel({
+        ...(tunnel.tunnelId === undefined ? {} : { tunnelId: tunnel.tunnelId }),
+        ...(tunnel.clusterId === undefined ? {} : { clusterId: tunnel.clusterId }),
+        labels,
+      });
+      held = { ...tunnel, labels: updated.labels ?? labels };
+      return remoteOf(held);
+    },
+
     host: async () => {
       const tunnel = mine();
       const connected = await relay(tunnel);
@@ -314,7 +403,10 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
       return {
         add: async (port, anonymous) => {
           const made = await management.createOrUpdateTunnelPort(tunnel, portOf(port, anonymous));
-          return made.portForwardingUris?.[0] ?? urlOf(tunnel, port);
+          // The service's answer, else the URL the SDK forms from the tunnel's
+          // endpoint, as the CLI's `get_port_uri` forms it from `port_uri_format`.
+          const endpoint = tunnel.endpoints?.find((one) => one.portUriFormat !== undefined);
+          return made.portForwardingUris?.[0] ?? (endpoint === undefined ? undefined : TunnelEndpoint.getPortUri(endpoint, port));
         },
         access: async (port, anonymous) => {
           await management.updateTunnelPort(tunnel, portOf(port, anonymous));
@@ -345,39 +437,36 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
   };
 }
 
-/** A port with its protocol and its access, which is the whole of what a write sets. */
-function portOf(port: number, anonymous: boolean): TunnelPort {
+/**
+ * A port with its protocol and its access, which is the whole of what a write
+ * sets: `auto`, as the CLI forwards the agent host's port, and one anonymous
+ * entry, allowing for a public port and denying for a private one, so a public
+ * default on the tunnel does not open a port that is meant to be private.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/dev_tunnels.rs#L1119-L1130
+ */
+export function portOf(port: number, anonymous: boolean): TunnelPort {
   return {
     portNumber: port,
-    protocol: TunnelProtocol.Http,
-    accessControl: anonymous ? anonymousAccess() : { entries: [] },
+    protocol: TunnelProtocol.Auto,
+    accessControl: anonymousAccess(anonymous),
   };
 }
 
-/** The one entry that lets somebody who is not signed in reach a port. */
-function anonymousAccess(): TunnelAccessControl {
+/**
+ * The one anonymous entry a port carries, as the CLI's `privacy_to_tunnel_acl`
+ * writes it: an allow for a public port, a deny for a private one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/dev_tunnels.rs#L1350-L1378
+ */
+function anonymousAccess(allow: boolean): TunnelAccessControl {
   return {
     entries: [{
       type: TunnelAccessControlEntryType.Anonymous,
+      ...(allow ? {} : { isDeny: true }),
       // Anonymous entries name no subjects: the type is the subject.
       subjects: [],
       scopes: [TunnelAccessScopes.Connect],
     }],
   };
-}
-
-/**
- * The address a port answers at, worked out from the tunnel.
- *
- * The service's own answer is preferred, and this is what stands in when it
- * names no forwarding URI: a cluster id is the region, and the id and the port
- * are the subdomain.
- */
-function urlOf(tunnel: DevTunnel, port: number): string | undefined {
-  const id = tunnel.tunnelId;
-  const cluster = tunnel.clusterId;
-  if (id === undefined || id === '' || cluster === undefined || cluster === '') return undefined;
-  return `https://${id}-${port}.${cluster}.devtunnels.ms/`;
 }
 
 /** A connection count, which the service answers as a number or a status. */

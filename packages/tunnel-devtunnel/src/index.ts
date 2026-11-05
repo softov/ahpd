@@ -6,8 +6,8 @@ export {
 } from './adapter.js';
 export type { DevtunnelAdapterOptions, OpenTunnel } from './adapter.js';
 export {
-  deriveConnectionToken, displayLabel, nameLabel,
-  IDENTITY_LABEL, LABELS, LAUNCHER_LABEL, PROTOCOL_LABEL, PROTOCOL_LABEL_PREFIX,
+  deriveConnectionToken, displayLabel, normalizeTunnelName, tunnelNameFromHostname,
+  LABELS, LAUNCHER_LABEL, MAX_TUNNEL_NAME_LENGTH, PROTOCOL_LABEL, PROTOCOL_LABEL_PREFIX,
   PROTOCOL_VERSION, TUNNEL_PORT,
 } from './discovery.js';
 export { forward } from './forward.js';
@@ -17,4 +17,4 @@ export {
 } from './kind.js';
 export type { KindOptions } from './kind.js';
 export { labelsOf, sdkService } from './service.js';
-export type { Cloud, Host, Remote, Served, Service, ServiceOptions, Shown } from './service.js';
+export type { Cloud, Host, Kept, Remote, Served, Service, ServiceOptions, Shown } from './service.js';

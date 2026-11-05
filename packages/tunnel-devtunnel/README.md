@@ -36,7 +36,7 @@ In the configuration file, with every option set:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `connector` | none | The `devtunnel` connector this host's own tunnel uses; absent, no system tunnel is opened |
-| `name` | this machine's hostname | What a Dev Tunnel this plugin makes is called in a client's list |
+| `name` | this machine's hostname | What the Dev Tunnel is called in a client's list, and how it is found. A configured name is normalized as VS Code normalizes one (lowercase, word characters and dashes, twenty at most) and the hostname is cleaned as VS Code and its CLI clean one, so `code tunnel` and this plugin give one machine the same name |
 | `keep` | `true` | Whether the Dev Tunnel outlives the daemon |
 | `anonymous` | `false` | Whether somebody not signed in to this account may reach the system tunnel |
 | `allowAccountChange` | `false` | Whether a second sign-in may replace a connector's GitHub account |
@@ -67,7 +67,7 @@ The plugin registers one tunnel kind, `devtunnel`. A record of it is a connector
 { "kind": "devtunnel", "settings": { "connector": "dev03", "port": 9187, "anonymous": false } }
 ```
 
-Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found by the `_ahpd` label, so a restart reuses it and keeps its id, and with it every client's token.
+Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found as VS Code's CLI finds the tunnel it hosts: by the id the plugin kept for the connector, else by its name with the `vscode-server-launcher` label, so a restart reuses it and keeps its id, and with it every client's token. A tunnel of that name another machine is hosting is refused with the CLI's words. A port is written with the protocol `auto`, and a private one carries an anonymous deny, so a public default on the tunnel does not open it.
 
 The kind offers `start`, `stop`, `restart` and `anonymous`. `restart` connects the relay to the same Dev Tunnel again without removing a port, which is what to try when the relay dropped. `anonymous` takes `{ "on": true }` or `{ "on": false }` and changes who may reach the port live, and the host saves it in the record.
 
@@ -132,8 +132,8 @@ A read that fails keeps the page as it was, and the plugin logs the first failur
 
 With the `connector` option set, the host adds one system tunnel of the `devtunnel` kind and starts it when the daemon starts listening:
 
-1. Finds the connector's Dev Tunnel by the `_ahpd` label, or makes one with the convention's labels.
-2. Labels a new one `vscode-server-launcher` and `protocolv5`, which is what makes a client list it.
+1. Finds the connector's Dev Tunnel by the id kept for it, else by its name with the launcher label, or makes one.
+2. Labels it with its name, `protocolv5` and `vscode-server-launcher`, which is what makes a client list it, and keeps its id for the next start.
 3. Puts port 31546 on it, the fixed port VS Code looks for.
 4. Forwards 31546 on loopback to the port the daemon bound, unless the daemon is already on 31546.
 5. Hosts the Dev Tunnel and prints its address.
