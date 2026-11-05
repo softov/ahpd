@@ -924,29 +924,23 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     catch (error) {
       /*
        * The machine it was in, which nothing is in any more: the old backend
-       * is gone and the new one would not start, so this session is over
-       * whatever the caller does with the refusal.
+       * is gone and the new one would not start.
        */
       const left = enteredIn.get(uri);
       inMachine(left, uri, false);
       enteredIn.delete(uri);
       sessionMachines.delete(uri);
       /*
-       * A session that existed and now does not.
-       *
-       * `createSession` fails inside its own request and there is nothing to
-       * announce, but this is the other case: clients are subscribed, the old
-       * backend is gone, and the new one would not start. `creationFailed` is
-       * the action for exactly that, and saying nothing would leave every one
-       * of them watching a channel that will never speak again.
+       * The failure goes to what asked for the restart, which says it where it
+       * was needed: the turn a relaunch prepared ends in it, a client's change
+       * of folders is refused with it, and a move's continuation tells the
+       * agent. The session stays ready for every client, as VS Code's host
+       * says a creation failed only for a session still being created and
+       * ends the turn a failed relaunch was preparing; whatever reaches it
+       * next opens it as any session not running is opened, from what its
+       * backend recorded.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2467-L2480
        */
-      dispatch(uri, {
-        type: 'session/creationFailed',
-        error: {
-          errorType: 'sessionStartFailed',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
       throw error;
     }
     finally {
@@ -999,24 +993,57 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
-    await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
-    decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
-    offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-    await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
+    try {
+      await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+      decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
+      offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
+      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
+        /*
+         * The repository the worktree is cut from, when it is not the folder the
+         * move asked for - a subdirectory of a repository the window may never
+         * have opened.
+         *
+         * The worktree itself is not asked about: the host makes it, and one the
+         * host made is trusted exactly when its repository is. The repository the window
+         * vouches for here is remembered on its connection, so the backend
+         * started in the worktree is told the same thing.
+         */
+        if (repository !== move.directory) {
+          await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+        }
+      });
+    }
+    catch (error) {
       /*
-       * The repository the worktree is cut from, when it is not the folder the
-       * move asked for - a subdirectory of a repository the window may never
-       * have opened.
-       *
-       * The worktree itself is not asked about: the host makes it, and one the
-       * host made is trusted exactly when its repository is. The repository the window
-       * vouches for here is remembered on its connection, so the backend
-       * started in the worktree is told the same thing.
+       * A move that did not complete is said in the turn that continues it,
+       * in the session as it comes back, which tells the agent to say so
+       * rather than run the task, as VS Code's host continues a failed
+       * conversion's turn with the failure under its label.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
        */
-      if (repository !== move.directory) {
-        await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+      const failure = (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '');
+      const back = await ctx.wake(uri, chatUriFor(uri)).catch((unopened: unknown) => {
+        log(`${uri} did not open again after its move failed: ${unopened instanceof Error ? unopened.message : String(unopened)}`);
+        return undefined;
+      });
+      if (back !== undefined) {
+        void startTurn(
+          back.chat,
+          crypto.randomUUID(),
+          `The requested workspace setup did not complete successfully: ${failure}. Do not run the user's task. Tell the user that workspace setup failed and include this error.`,
+          undefined,
+          {
+            origin: { kind: 'systemNotification' },
+            _meta: {
+              'vscode.chat.requestHiddenFromTranscript': true,
+              'vscode.chat.systemInitiatedLabel': 'Workspace Setup Failed',
+              'vscode.chat.workspaceContinuation': true,
+            },
+          },
+        );
       }
-    });
+      throw error;
+    }
     const lead = byChat.get(chatUriFor(uri));
     const now = sessions.get(uri)?.workingDirectory ?? move.directory;
     if (lead === undefined) return;

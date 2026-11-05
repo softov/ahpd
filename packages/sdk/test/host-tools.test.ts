@@ -435,6 +435,52 @@ describe('tools the host contributes', () => {
       expect(String((notice?.action.message as { text: string }).text)).toContain(resolve('/tmp'));
     });
 
+    /*
+     * The turn that continues it says the move failed and why, and the session
+     * stays where it was, as VS Code's host continues a failed conversion's
+     * turn with the failure under its label.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
+     */
+    it('tells the agent a move did not complete, in the turn that continues it, as VS Code\'s host', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      // The window does not vouch for the folder, which fails the move.
+      p.request = async () => ({ trusted: false });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/stays';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(actions(p, uri).some((one) => one.action.type === 'session/creationFailed')).toBe(false);
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Workspace Setup Failed',
+          'vscode.chat.workspaceContinuation': true,
+        },
+      });
+      expect(String((notice?.action.message as { text: string }).text))
+        .toMatch(/^The requested workspace setup did not complete successfully: .+\. Do not run the user's task\. Tell the user that workspace setup failed and include this error\.$/);
+    });
+
     it('names a folder with a # in the worktree message as a valid URI', async () => {
       /*
        * The answer names the folder as a URI, and a `#` in a path is where a

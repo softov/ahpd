@@ -216,6 +216,26 @@ it('ends the turn that waited on a restart in an error with the failure', async 
   expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
 });
 
+/*
+ * The turn is where the failure is said, and the session stays ready, as VS
+ * Code's host says a creation failed only for a session still being created.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2467-L2480
+ */
+it('leaves a session ready when the restart a turn waited on fails, as VS Code\'s host', async () => {
+  const { client, p, uri, chatUri } = await opened(undefined, 1);
+  void change(client, uri, { fixed: 'two' });
+  void turn(client, chatUri);
+  await settle();
+
+  const failed = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
+    .filter((one) => one.action.type === 'session/creationFailed');
+  expect(failed).toEqual([]);
+  const read = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { lifecycle: string } };
+  };
+  expect(read.snapshot.state.lifecycle).toBe('ready');
+});
+
 it('does not start anything again for a value that did not move', async () => {
   const { client, uri, spawns, began } = await opened();
   // What VS Code pushes on the first send: the whole bag, including the
