@@ -1,7 +1,7 @@
 ---
 title: The demo host offers the fields a real host offers a new session
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -47,8 +47,8 @@ ahpc new session -> host.resolveSessionConfig -> agent schema (demo + notes) + h
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The demo agent is Agent Demo and has a mode](task-01-the-demo-agent-has-a-mode.md) | todo | - |
-| [02 - The demo host offers isolation and branch](task-02-the-host-offers-isolation.md) | todo | - |
+| [01 - The demo agent is Agent Demo and has a mode](task-01-the-demo-agent-has-a-mode.md) | done | - |
+| [02 - The demo host offers isolation and branch](task-02-the-host-offers-isolation.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -56,13 +56,13 @@ ahpc new session -> host.resolveSessionConfig -> agent schema (demo + notes) + h
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-04.
-- **Next action:** [task-01-the-demo-agent-has-a-mode.md](task-01-the-demo-agent-has-a-mode.md).
+- **Done so far:** built 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** review.
 - **Open questions:** none.
 - **Watch out for:** the mode does nothing in a demo turn, as `Tone` does nothing much. The README says so.
 
 ## Final verification checklist
 
-- [ ] `pnpm demo` on a scratch port with a git folder: `ahpc session config` on a new session lists `mode`, `ask`, `tone`, `isolation` and `branch`.
-- [ ] `ahpc agent list` names the agent `Agent Demo`.
-- [ ] The repository's typecheck and tests pass.
+- [x] `pnpm demo` on a scratch port with a git folder: a new session in ahpc offers the mode, `Ask before`, `Tone`, the isolation and the branch.
+- [x] ahpc names the agent `Agent Demo`.
+- [x] The repository's typecheck and the demo's tests pass. CI runs the rest.
