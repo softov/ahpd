@@ -841,7 +841,9 @@ it('closes a confirmation the SDK cancels, and answers the tool with a deny', as
   expect(entriesOf(sent, 'session/inputNeededSet', 'toolu_cancelled')).toHaveLength(1);
 
   abort();
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // Declined, as VS Code's bridge answers a parked confirmation its signal aborted.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L113
+  expect(await decision).toEqual({ behavior: 'deny', message: 'User declined' });
   // And the entry goes with the answer, so no client is left drawing a question
   // that changes nothing.
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_cancelled')).toHaveLength(1);
@@ -852,7 +854,8 @@ it('closes a question the SDK cancels', async () => {
   expect(entriesOf(sent, 'session/inputNeededSet', 'toolu_ask_cancelled')).toHaveLength(1);
 
   abort();
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // Cancelled, as VS Code's bridge answers a parked question its signal aborted.
+  expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_ask_cancelled')).toHaveLength(1);
 });
 
@@ -920,7 +923,8 @@ it('puts nothing on the chat for a call whose signal is already aborted', async 
   const { sent } = await live([], () => {
     decision = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_gone', signal: held.signal });
   });
-  expect(await decision).toEqual({ behavior: 'deny', message: 'Cancelled' });
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
+  expect(await decision).toEqual({ behavior: 'deny', message: 'SDK aborted the tool request' });
   expect(sent.filter((one) => one.type === 'session/inputNeededSet' || one.type === 'chat/toolCallStart'))
     .toEqual([]);
 });

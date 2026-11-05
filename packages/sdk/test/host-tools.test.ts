@@ -1989,7 +1989,7 @@ describe('tools a client contributes', () => {
      */
     const answer = await answering;
     expect(answer?.isError).toBe(true);
-    expect(answer?.content[0]?.text).toBe('The person declined this action');
+    expect(answer?.content[0]?.text).toBe('User declined');
     // And nothing asked a client to run it, before or after.
     expect(await askedToRun(client, uri)).toEqual([]);
   });

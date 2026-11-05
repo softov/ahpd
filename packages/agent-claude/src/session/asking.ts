@@ -32,24 +32,25 @@ interface PendingInput {
 }
 
 /**
- * What a person refusing a call says, to the model and to anything waiting.
+ * What a call refused says, to the model and to anything waiting, in VS Code's
+ * words: a person's decline, a deny list's, and a question the SDK abandoned
+ * while it was put, which VS Code's bridge answers as a decline.
  *
  * One sentence in one place, because the refusal reaches the model as the tool
  * result of a declined call and as the answer to a handler that was waiting for
  * a call nobody will run - and the two are the same refusal.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L108
  */
-const DECLINED = 'The person declined this action';
+const DECLINED = 'User declined';
 
 /**
- * What the model is told about a call the SDK itself cancelled.
- *
- * The SDK aborts a `canUseTool` call through its own signal when the turn it
- * belongs to is interrupted or the CLI goes away, and nothing on this side was
- * listening: the confirmation stayed on every client's screen until the turn
- * happened to end. This is the answer that closes it, and it says what
- * happened rather than who did it - nobody declined anything.
+ * What the model is told about a call the SDK had already abandoned when it
+ * asked, in VS Code's words: its own signal aborted, the turn interrupted or
+ * the CLI gone, so no question is put.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
  */
-const CANCELLED = 'Cancelled';
+const ABORTED = 'SDK aborted the tool request';
 
 /** What the model is told about a call it asked about while no turn was running. */
 const NO_TURN = 'No turn is running to ask in';
@@ -164,7 +165,7 @@ export interface Asking {
   /** Everything the agent is waiting on, by request id. */
   pending: Map<string, PendingInput>;
   /** The SDK’s own gate between a tool call and the host that runs it. */
-  canUseTool: (toolName: string, raw: Bag, asked?: Bag) => Promise<unknown>;
+  canUseTool: (toolName: string, input: Bag, options?: Bag) => Promise<unknown>;
   /**
    * The `PreToolUse` hook that asks for a tool the operator's rule names.
    *
@@ -269,7 +270,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    */
   const askPerson = async (asked: Question): Promise<Held> => {
     const { toolName, raw, callId: id, agentId, signal, suggestions } = asked;
-    if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
+    if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     /*
      * The conversation the tool is running in.
      *
@@ -329,14 +330,17 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * The entry comes off the chat as an answer takes it off, because the
        * question and its answer are one thing: a client left drawing a
        * confirmation the SDK has abandoned is offering a decision that changes
-       * nothing.
+       * nothing. The call is answered as VS Code's bridge answers a parked
+       * request its signal aborted: a confirmation declined, a question
+       * cancelled.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L105-L113
        */
       const cancelled = (): void => {
         const held = pending.get(id);
         if (held === undefined) return;
         pending.delete(id);
         ctx.inputNeededRemoved(id);
-        held.settle({ behavior: 'deny', message: CANCELLED });
+        held.settle({ behavior: 'deny', message: held.questions === undefined ? DECLINED : QUESTION_CANCELLED });
       };
       signal?.addEventListener('abort', cancelled);
       /*
@@ -467,8 +471,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     });
   };
 
-  const canUseTool = async (toolName: string, raw: Bag, asked?: Bag): Promise<unknown> => {
-    const about = bag(asked);
+  const canUseTool = async (toolName: string, input: Bag, options?: Bag): Promise<unknown> => {
+    const about = bag(options);
     /*
      * The agent's own id for this call.
      *
@@ -493,7 +497,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const ruled = ruledBy.get(id);
     if (ruled !== undefined) {
       ruledBy.delete(id);
-      return ruled === 'allow' ? { behavior: 'allow', updatedInput: raw } : { behavior: 'deny', message: DECLINED };
+      return ruled === 'allow' ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: DECLINED };
     }
     /*
      * The operator's rule, read for every call before anything else.
@@ -516,8 +520,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * for a decision made before the turn began.
        */
       const already = settled(toolName);
-      if (already === 'allow') return { behavior: 'allow', updatedInput: raw };
-      if (already === 'deny') return { behavior: 'deny', message: `${toolName} is denied for this session` };
+      if (already === 'allow') return { behavior: 'allow', updatedInput: input };
+      if (already === 'deny') return { behavior: 'deny', message: DECLINED };
       /*
        * A host tool that says nobody is asked about it.
        *
@@ -527,7 +531,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * so both the bound tools and the call are read under that name. Nothing
        * is announced for a call nobody was asked about, as with an allow list.
        */
-      if (ctx.hostToolOf(toolName)?.confirm === false) return { behavior: 'allow', updatedInput: raw };
+      if (ctx.hostToolOf(toolName)?.confirm === false) return { behavior: 'allow', updatedInput: input };
     }
     /*
      * The SDK's own abort for this call, which is the one thing that says the
@@ -539,7 +543,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * on the chat and stay there until the turn ended.
      */
     const signal = about.signal as AbortSignal | undefined;
-    if (signal?.aborted === true) return { behavior: 'deny', message: CANCELLED };
+    if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
     /*
      * The command the model wrote, which `sourceFirst` kept under this call's
@@ -551,7 +555,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      */
     const written = ctx.unprefixed.get(id);
     ctx.unprefixed.delete(id);
-    const shown = toolName === 'Bash' && written !== undefined ? { ...raw, command: written } : undefined;
+    const shown = toolName === 'Bash' && written !== undefined ? { ...input, command: written } : undefined;
     /*
      * A matched call, put where a harness that asks anyway would reach it.
      *
@@ -563,7 +567,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (matched) {
       return await askPerson({
         toolName,
-        raw,
+        raw: input,
         ...(shown !== undefined ? { shown } : {}),
         callId: id,
         suggestions: [],
@@ -583,14 +587,14 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * question for a client to draw.
      */
     if (toolName === 'Bash') {
-      const command = written ?? str(raw.command);
+      const command = written ?? str(input.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
-        return { behavior: 'allow', updatedInput: raw };
+        return { behavior: 'allow', updatedInput: input };
       }
     }
     return await askPerson({
       toolName,
-      raw,
+      raw: input,
       ...(shown !== undefined ? { shown } : {}),
       callId: id,
       suggestions: list(about.suggestions),

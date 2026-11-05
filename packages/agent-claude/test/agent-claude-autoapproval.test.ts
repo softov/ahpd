@@ -271,9 +271,10 @@ it('still refuses a command the deny list names', async () => {
   const { canUseTool } = await sessionWith(check, { permissions: { allow: [], deny: ['Bash'] } });
 
   // The rules are the window's answer about a command; a deny list is a
-  // person's answer about the tool, and it wins.
+  // person's answer about the tool, and it wins, refused in VS Code's words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
   expect(await canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_denied_list' }))
-    .toEqual({ behavior: 'deny', message: 'Bash is denied for this session' });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
 });
 
 it('still answers a call the SDK has already cancelled', async () => {
@@ -282,9 +283,11 @@ it('still answers a call the SDK has already cancelled', async () => {
   const signal = AbortSignal.abort();
 
   // An aborted call is not one to approve, so no question is put and no line
-  // is read. The rule is still asked whether this tool is one it names.
+  // is read, and it is refused in VS Code's words. The rule is still asked
+  // whether this tool is one it names.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L102-L104
   expect(await canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_aborted', signal }))
-    .toEqual({ behavior: 'deny', message: 'Cancelled' });
+    .toEqual({ behavior: 'deny', message: 'SDK aborted the tool request' });
   expect(asked).toEqual([{ kind: 'tool', line: 'Bash', shell: undefined, tool: undefined }]);
 });
 
@@ -344,9 +347,9 @@ it('answers canUseTool with the person\'s refusal as well', async () => {
   session.confirm('toolu_read', false);
   const answer = await waiting;
   expect(decisionOf(answer)).toBe('deny');
-  expect(reasonOf(answer)).toBe('The person declined this action');
+  expect(reasonOf(answer)).toBe('User declined');
   expect(await canUseTool('Read', { file_path: '/tmp/one' }, { toolUseID: 'toolu_read' }))
-    .toEqual({ behavior: 'deny', message: 'The person declined this action' });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
 });
 
 it('does not let an allow list answer for a matched tool', async () => {

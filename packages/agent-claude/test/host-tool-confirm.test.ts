@@ -119,8 +119,8 @@ it('still refuses a tool the deny list names', async () => {
   );
 
   // The flag is the host's claim about the tool; the deny list is a person's
-  // answer, and it wins.
+  // answer, and it wins, refused in VS Code's words.
   expect(await canUseTool(CALLED, { text: 'hello' }, { toolUseID: 'toolu_denied' }))
-    .toEqual({ behavior: 'deny', message: `${CALLED} is denied for this session` });
+    .toEqual({ behavior: 'deny', message: 'User declined' });
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toEqual([]);
 });
