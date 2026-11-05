@@ -28,7 +28,11 @@ A value that names no file, a URL that answers no success, and a name that leave
 
 A URL is fetched in the engine, under the guard every connection there takes: [the network](#the-network) below.
 
-A piece that calls `files.write` puts the file in the session's attachments folder, under the name it asked for. A name longer than 80 characters is cut, and its extension is kept. The action's output carries the file's path, so the agent can read it. A name of a file already there gets a number before its extension, and an existing file is never replaced. The written file goes when the session goes, like every other attachment. A call on a session with no folder refuses the write, and a `FILE` value that names an attachment is no file there.
+A piece that calls `files.write` or `files.upload` puts the file in the session's attachments folder, under the name it asked for, as the engine's file uploader takes one: its data a `Buffer` or a `Readable`, and at most 25 MB, Activepieces' default `AP_MAX_FILE_SIZE_MB`. Anything else is refused in the engine's words, a larger file with `File size is larger than maximum supported size`. A name longer than 80 characters is cut, and its extension is kept. A name of a file already there gets a number before its extension, and an existing file is never replaced. `write` answers the file's name, and `upload` answers it as its `id` and its `url`: the name is what a later `FILE` value takes, as a later step takes Activepieces' file URL. The written file goes when the session goes, like every other attachment. A call on a session with no folder refuses the write, and a `FILE` value that names an attachment is no file there.
+
+## A connector's store
+
+A piece's `store` keeps its values on disk, one file to a connector in `<configDir>/activepieces/stores/`, so a value outlives the engine and the daemon, as Activepieces keeps a piece's store past its run. A connector stands for Activepieces' project: a value put in the `PROJECT` scope is the connector's, and one put in the `FLOW` scope, the default, is kept under the flow the call runs in, so the two scopes never meet. A key is at most 128 characters and a value at most 512 KB as JSON, Activepieces' limits, each refused in its words.
 
 ## An action's input
 

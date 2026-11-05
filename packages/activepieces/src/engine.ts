@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installSsrfGuard } from './guard.ts';
 import { inputOf } from './props.ts';
@@ -282,26 +283,102 @@ const describe = async (id: number, pieces: string[], installed: string | undefi
   return { type: 'described', id, pieces: found, errors };
 };
 
-/** Each connector's store, in memory until this process exits. */
-const stores = new Map<string, Store>();
+/** The longest a store's key is: Activepieces' `STORE_KEY_MAX_LENGTH`. */
+const STORE_KEY_MAX_LENGTH = 128;
 
-/** The store one connector keeps: the values only its own calls read and write. */
-const storeOf = (connector: string): Store => {
+/** The most bytes one stored value is as JSON: Activepieces' `STORE_VALUE_MAX_SIZE`. */
+const STORE_VALUE_MAX_SIZE = 512 * 1024;
+
+/** An error in the engine's words, which wraps its message in JSON. */
+const formatted = (message: string): Error => new Error(JSON.stringify({ message }, null, 2));
+
+/** A key the store does not take: the engine's `StorageInvalidKeyError`. */
+const invalidKey = (key: unknown): Error =>
+  formatted(`Failed to read/write key "${String(key)}", the key is empty or longer than ${STORE_KEY_MAX_LENGTH} characters`);
+
+/** One connector's store as kept: its entries, and the write of them still going. */
+interface Kept {
+  entries: Map<string, unknown>;
+  written: Promise<void>;
+}
+
+/** Each connector's store, read from its file at its first use. */
+const stores = new Map<string, Kept>();
+
+/** The file one connector's store is kept in. */
+const storeFile = (folder: string, connector: string): string => join(folder, `${encodeURIComponent(connector)}.json`);
+
+/** One connector's entries as kept, read once from its file: none when there is none, or none that reads. */
+const keptOf = async (folder: string | undefined, connector: string): Promise<Kept> => {
   const held = stores.get(connector);
   if (held !== undefined) return held;
-  const values = new Map<string, unknown>();
-  const store: Store = {
-    put: async <T>(key: string, value: T): Promise<T> => {
-      values.set(key, value);
+  const entries = new Map<string, unknown>();
+  if (folder !== undefined) {
+    try {
+      const read: unknown = JSON.parse(await readFile(storeFile(folder, connector), 'utf8'));
+      if (isRecord(read)) for (const [key, value] of Object.entries(read)) entries.set(key, value);
+    }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error(error);
+    }
+  }
+  const kept: Kept = { entries, written: Promise.resolve() };
+  stores.set(connector, kept);
+  return kept;
+};
+
+/** The entries written back whole, beside the file and renamed over it, one write after the last. */
+const writeBack = (folder: string | undefined, connector: string, kept: Kept): Promise<void> => {
+  if (folder === undefined) return Promise.resolve();
+  kept.written = kept.written.then(async () => {
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+    const file = storeFile(folder, connector);
+    await writeFile(`${file}.tmp`, JSON.stringify(Object.fromEntries(kept.entries)), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  });
+  return kept.written;
+};
+
+/**
+ * The store one connector keeps, as the engine's context store keeps one.
+ *
+ * A connector stands for Activepieces' project, so its store's project scope is
+ * the connector's own, and its flow scope is the flow the call runs in, the
+ * connector's too, under `flow_<flow>/`: the two scopes never meet. A key is
+ * at most 128 characters and a value at most 512 KB as JSON, each refused in
+ * the engine's words. The entries are kept on disk, one file per connector in
+ * the plugin's folder, so a value outlives the engine and the daemon, as
+ * Activepieces keeps a piece's store past its run.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/piece-context/store.ts
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/build-pieces/piece-reference/persistent-storage.mdx
+ */
+const storeOf = (connector: string, flowId: string, folder: string | undefined): Store => {
+  const keyOf = (key: unknown, scope: unknown): string => {
+    if (typeof key !== 'string' || key.length === 0 || key.length > STORE_KEY_MAX_LENGTH) throw invalidKey(key);
+    return scope === 'PROJECT' ? key : `flow_${flowId}/${key}`;
+  };
+  return {
+    put: async <T>(key: string, value: T, scope: unknown = 'FLOW'): Promise<T> => {
+      const modified = keyOf(key, scope);
+      if (Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8') > STORE_VALUE_MAX_SIZE) {
+        throw formatted(`Failed to read/write key "${modified}", the value you are trying to read/write is larger than ${Math.floor(STORE_VALUE_MAX_SIZE / 1024)} KB`);
+      }
+      const kept = await keptOf(folder, connector);
+      kept.entries.set(modified, value);
+      await writeBack(folder, connector, kept);
       return value;
     },
-    get: async <T>(key: string): Promise<T | null> => (values.has(key) ? values.get(key) as T : null),
-    delete: async (key: string): Promise<void> => {
-      values.delete(key);
+    get: async <T>(key: string, scope: unknown = 'FLOW'): Promise<T | null> => {
+      const modified = keyOf(key, scope);
+      const kept = await keptOf(folder, connector);
+      return kept.entries.has(modified) ? kept.entries.get(modified) as T : null;
+    },
+    delete: async (key: string, scope: unknown = 'FLOW'): Promise<void> => {
+      const modified = keyOf(key, scope);
+      const kept = await keptOf(folder, connector);
+      if (kept.entries.delete(modified)) await writeBack(folder, connector, kept);
     },
   };
-  stores.set(connector, store);
-  return store;
 };
 
 /** An error saying this plugin offers no such part of the framework. */
@@ -323,12 +400,45 @@ const UNSAFE_NAME = /[^A-Za-z0-9._-]+/gu;
 /** The longest a written file's name is, its extension included. */
 const LONGEST_NAME = 80;
 
-/** The bytes a piece writes, or the refusal when it hands something else. */
-const bytesOf = (data: unknown): Buffer => {
-  if (Buffer.isBuffer(data)) return data;
-  if (data instanceof Uint8Array) return Buffer.from(data);
-  if (typeof data === 'string') return Buffer.from(data);
-  throw new Error('a file is written from bytes');
+/** The bytes in a megabyte, as the engine counts a file's size. */
+const BYTES_PER_MB = 1024 * 1024;
+
+/** What a value is, as the engine names a wrong one. */
+const describeType = (value: unknown): string =>
+  (typeof value === 'object' ? Object.prototype.toString.call(value) : typeof value);
+
+/** The most bytes one file is: `AP_MAX_FILE_SIZE_MB`, which the plugin sets to Activepieces' 25. */
+const maxFileSizeBytes = (): number => {
+  const raw = process.env['AP_MAX_FILE_SIZE_MB'];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`AP_MAX_FILE_SIZE_MB must be a positive number, received "${raw ?? ''}"`);
+  return parsed * BYTES_PER_MB;
+};
+
+/** A file larger than the bound, refused as the engine's `FileSizeError` refuses it. */
+const assertWithinLimit = (size: number, maxBytes: number): void => {
+  if (size <= maxBytes) return;
+  throw new Error(JSON.stringify({
+    message: 'File size is larger than maximum supported size',
+    currentFileSize: `${Math.ceil(size / BYTES_PER_MB * 100) / 100} MB`,
+    maximumSupportSize: `${maxBytes / BYTES_PER_MB} MB`,
+  }));
+};
+
+/** A stream read whole, refused as soon as it passes the bound. */
+const drainToBuffer = async (stream: Readable, maxBytes: number): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    if (!Buffer.isBuffer(chunk) && typeof chunk !== 'string') {
+      throw new Error(`Expected file stream to emit Buffer or string chunks, but received ${describeType(chunk)}`);
+    }
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bytes.length;
+    assertWithinLimit(total, maxBytes);
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks);
 };
 
 /**
@@ -346,25 +456,37 @@ const safeName = (named: string): string => {
 };
 
 /**
- * The `files` service one call runs with.
+ * The `files` service one call runs with: the framework's `upload` and
+ * `write`, as the engine's file uploader serves them.
  *
- * `write` puts the bytes in the call's folder, under the basename of the name
- * the piece asked for, and answers the absolute path. A name another call
- * already wrote gets a number before its extension. The file is created with
- * `wx`, so an existing file is never replaced.
+ * The data is a `Buffer` or a `Readable`, read to the file bound of
+ * `AP_MAX_FILE_SIZE_MB` and refused past it in the engine's words. The file
+ * goes into the call's folder, the session's attachments, under the basename
+ * of the name the piece asked for; a name another call already wrote gets a
+ * number before its extension, and the file is created with `wx`, so an
+ * existing file is never replaced. `upload` answers the attachment's name as
+ * its id and its URL, and `write` the name: the reference a later `FILE` value
+ * takes, as a later step takes Activepieces' file URL.
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/engine/src/lib/piece-context/file-uploader.ts
  */
-const filesIn = (folder: string): Record<string, unknown> => ({
-  write: async (asked: { fileName?: unknown; data?: unknown }): Promise<string> => {
+const filesIn = (folder: string): Record<string, unknown> => {
+  const upload = async (asked: { fileName?: unknown; data?: unknown }): Promise<{ id: string; url: string }> => {
+    const data = asked.data;
+    if (!Buffer.isBuffer(data) && !(data instanceof Readable)) {
+      throw new Error(`Expected file data to be a Buffer or Readable stream, but received ${describeType(data)}`);
+    }
+    const maxBytes = maxFileSizeBytes();
+    const bytes = Buffer.isBuffer(data) ? data : await drainToBuffer(data, maxBytes);
+    assertWithinLimit(bytes.length, maxBytes);
     const named = safeName(typeof asked.fileName === 'string' ? asked.fileName : 'file');
-    const bytes = bytesOf(asked.data);
     const extension = extname(named);
     const stem = named.slice(0, named.length - extension.length);
     await mkdir(folder, { recursive: true, mode: 0o700 });
     for (let count = 0; ; count++) {
-      const path = resolve(folder, count === 0 ? named : `${stem}-${String(count)}${extension}`);
+      const name = count === 0 ? named : `${stem}-${String(count)}${extension}`;
       try {
-        await writeFile(path, bytes, { flag: 'wx', mode: 0o400 });
-        return path;
+        await writeFile(resolve(folder, name), bytes, { flag: 'wx', mode: 0o400 });
+        return { id: name, url: name };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
         // The path stays out of the message: the folder is the host's, and a
@@ -372,8 +494,12 @@ const filesIn = (folder: string): Record<string, unknown> => ({
         throw new Error('the file could not be written');
       }
     }
-  },
-});
+  };
+  return {
+    upload,
+    write: async (asked: { fileName?: unknown; data?: unknown }): Promise<string> => (await upload(asked)).url,
+  };
+};
 
 /**
  * The step an action run is, which Activepieces names `step_1`.
@@ -405,7 +531,7 @@ const cannotSuspend = (): never => {
 const contextOf = (request: RunRequest, input: Record<string, unknown>): Record<string, unknown> => ({
   auth: request.auth,
   propsValue: input,
-  store: storeOf(request.connector),
+  store: storeOf(request.connector, request.connector, request.stores),
   step: { name: ACTION_RUN_STEP_NAME },
   project: { id: request.connector, externalId: async () => request.connector },
   executionType: 'BEGIN',

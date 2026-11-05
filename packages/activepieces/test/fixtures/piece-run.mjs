@@ -46,11 +46,63 @@ export const runnable = {
         text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
       },
       run: async (context) => ({
-        path: await context.files.write({
+        written: await context.files.write({
           fileName: context.propsValue.name,
           data: Buffer.from(context.propsValue.text, 'utf8'),
         }),
       }),
+    },
+    stream: {
+      name: 'stream',
+      displayName: 'Stream',
+      description: 'Writes a file from a stream of the text, as many times over as asked, and answers where it went.',
+      props: {
+        name: { type: 'SHORT_TEXT', displayName: 'Name', required: true },
+        text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
+        times: { type: 'NUMBER', displayName: 'Times', required: false },
+      },
+      run: async (context) => {
+        const { Readable } = await import('node:stream');
+        const chunks = Array.from({ length: context.propsValue.times ?? 1 }, () => Buffer.from(context.propsValue.text, 'utf8'));
+        return { written: await context.files.write({ fileName: context.propsValue.name, data: Readable.from(chunks) }) };
+      },
+    },
+    upload: {
+      name: 'upload',
+      displayName: 'Upload',
+      description: 'Uploads a file, and answers what upload answered.',
+      props: {
+        name: { type: 'SHORT_TEXT', displayName: 'Name', required: true },
+        text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
+      },
+      run: async (context) => await context.files.upload({ fileName: context.propsValue.name, data: Buffer.from(context.propsValue.text, 'utf8') }),
+    },
+    text: {
+      name: 'text',
+      displayName: 'Text file',
+      description: 'Writes a string as a file, which the framework does not take.',
+      props: {},
+      run: async (context) => await context.files.write({ fileName: 'a.txt', data: 'a string' }),
+    },
+    project: {
+      name: 'project',
+      displayName: 'Project',
+      description: 'Keeps the text in the project scope, and answers what each scope holds.',
+      props: { text: { type: 'SHORT_TEXT', displayName: 'Text', required: true } },
+      run: async (context) => {
+        await context.store.put('text', context.propsValue.text, 'PROJECT');
+        return { flow: await context.store.get('text'), project: await context.store.get('text', 'PROJECT') };
+      },
+    },
+    keep: {
+      name: 'keep',
+      displayName: 'Keep',
+      description: 'Keeps a value of the size asked under the key asked.',
+      props: {
+        key: { type: 'SHORT_TEXT', displayName: 'Key', required: true },
+        size: { type: 'NUMBER', displayName: 'Size', required: true },
+      },
+      run: async (context) => ({ kept: (await context.store.put(context.propsValue.key, 'x'.repeat(context.propsValue.size))).length }),
     },
     remember: {
       name: 'remember',

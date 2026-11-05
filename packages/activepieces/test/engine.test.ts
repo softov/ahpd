@@ -266,23 +266,27 @@ describe('a call\'s input is made as Activepieces makes an action run\'s', () =>
 });
 
 describe('a written file is an attachment', () => {
-  it('writes a file into the folder, and answers its path', async () => {
+  /** The engine with the file bound the plugin gives it. */
+  const engine = (): ChildProcess => start({ AP_MAX_FILE_SIZE_MB: '25' });
+
+  it('writes a file into the folder, and answers its name, which a later FILE value takes', async () => {
     const dir = madeFolder();
 
-    const answer = await ask(start(), run('write', { name: 'report.txt', text: 'hello' }, dir));
+    const answer = await ask(engine(), run('write', { name: 'report.txt', text: 'hello' }, dir));
 
-    expect(answer).toMatchObject({ type: 'ran', result: { path: join(dir, 'report.txt') } });
+    expect(answer).toMatchObject({ type: 'ran', result: { written: 'report.txt' } });
     expect(readFileSync(join(dir, 'report.txt'), 'utf8')).toBe('hello');
+    expect(await ask(engine(), run('read', { file: 'report.txt' }, dir))).toMatchObject({ result: { text: 'hello' } });
   });
 
   it('numbers a name another call already wrote, before the extension', async () => {
     const dir = madeFolder();
 
-    const first = await ask(start(), run('write', { name: 'report.txt', text: 'one' }, dir));
-    const second = await ask(start(), run('write', { name: 'report.txt', text: 'two' }, dir));
+    const first = await ask(engine(), run('write', { name: 'report.txt', text: 'one' }, dir));
+    const second = await ask(engine(), run('write', { name: 'report.txt', text: 'two' }, dir));
 
-    expect(first).toMatchObject({ result: { path: join(dir, 'report.txt') } });
-    expect(second).toMatchObject({ result: { path: join(dir, 'report-1.txt') } });
+    expect(first).toMatchObject({ result: { written: 'report.txt' } });
+    expect(second).toMatchObject({ result: { written: 'report-1.txt' } });
     expect(readFileSync(join(dir, 'report.txt'), 'utf8')).toBe('one');
     expect(readFileSync(join(dir, 'report-1.txt'), 'utf8')).toBe('two');
   });
@@ -290,33 +294,77 @@ describe('a written file is an attachment', () => {
   it('keeps only the name a piece asked for, without the path in it', async () => {
     const dir = madeFolder();
 
-    const answer = await ask(start(), run('write', { name: '../../evil.txt', text: 'hello' }, dir));
+    const answer = await ask(engine(), run('write', { name: '../../evil.txt', text: 'hello' }, dir));
 
-    expect(answer).toMatchObject({ result: { path: join(dir, 'evil.txt') } });
+    expect(answer).toMatchObject({ result: { written: 'evil.txt' } });
     expect(readFileSync(join(dir, 'evil.txt'), 'utf8')).toBe('hello');
   });
 
   it('replaces a character a file name may not hold', async () => {
     const dir = madeFolder();
 
-    const answer = await ask(start(), run('write', { name: 'a b:c?.txt', text: 'x' }, dir));
+    const answer = await ask(engine(), run('write', { name: 'a b:c?.txt', text: 'x' }, dir));
 
-    expect(answer).toMatchObject({ result: { path: join(dir, 'a-b-c-.txt') } });
+    expect(answer).toMatchObject({ result: { written: 'a-b-c-.txt' } });
   });
 
   it('cuts a long name to 80 characters, and keeps its extension', async () => {
     const dir = madeFolder();
-    const held = join(dir, `${'x'.repeat(76)}.txt`);
+    const held = `${'x'.repeat(76)}.txt`;
 
-    const answer = await ask(start(), run('write', { name: `${'x'.repeat(100)}.txt`, text: 'x' }, dir));
+    const answer = await ask(engine(), run('write', { name: `${'x'.repeat(100)}.txt`, text: 'x' }, dir));
 
-    expect(answer).toMatchObject({ result: { path: held } });
-    expect(readFileSync(held, 'utf8')).toBe('x');
+    expect(answer).toMatchObject({ result: { written: held } });
+    expect(readFileSync(join(dir, held), 'utf8')).toBe('x');
+  });
+
+  it('writes a Readable as the framework takes one, and uploads as it declares', async () => {
+    const dir = madeFolder();
+
+    expect(await ask(engine(), run('stream', { name: 'streamed.txt', text: 'ab', times: 3 }, dir))).toMatchObject({ result: { written: 'streamed.txt' } });
+    expect(readFileSync(join(dir, 'streamed.txt'), 'utf8')).toBe('ababab');
+    expect(await ask(engine(), run('upload', { name: 'up.txt', text: 'up' }, dir))).toMatchObject({ result: { id: 'up.txt', url: 'up.txt' } });
+  });
+
+  it('refuses data that is neither a Buffer nor a Readable, and a file past the bound, in the engine\'s words', async () => {
+    const dir = madeFolder();
+
+    expect(failed(await ask(engine(), run('text', {}, dir)))).toBe('Expected file data to be a Buffer or Readable stream, but received string');
+    const said = failed(await ask(start({ AP_MAX_FILE_SIZE_MB: '1' }), run('stream', { name: 'big.txt', text: 'x'.repeat(1024 * 512), times: 3 }, dir)));
+    expect(JSON.parse(said)).toEqual({ message: 'File size is larger than maximum supported size', currentFileSize: '1.5 MB', maximumSupportSize: '1 MB' });
   });
 
   it('refuses a write when the call has no folder', async () => {
     const said = failed(await ask(start(), run('write', { name: 'report.txt', text: 'hello' })));
 
     expect(said).toBe('this plugin does not offer files');
+  });
+});
+
+describe('a connector\'s store', () => {
+  /** One call of the fixture piece whose connector's store is kept in `stores`. */
+  const stored = (action: string, input: Record<string, unknown>, stores: string): Record<string, unknown> => ({ ...run(action, input), stores });
+
+  it('keeps the flow and the project scopes apart, on disk, past the engine', async () => {
+    const stores = madeFolder();
+
+    expect(await ask(start(), stored('remember', { text: 'kept' }, stores))).toMatchObject({ result: { before: null } });
+    expect(await ask(start(), stored('project', { text: 'shared' }, stores))).toMatchObject({ result: { flow: 'kept', project: 'shared' } });
+    // Another engine, which reads the connector's file.
+    expect(await ask(start(), stored('recall', {}, stores))).toMatchObject({ result: { text: 'kept' } });
+    expect(JSON.parse(readFileSync(join(stores, 'work.json'), 'utf8'))).toEqual({ 'flow_work/text': 'kept', text: 'shared' });
+  });
+
+  it('refuses a key past 128 characters and a value past 512 KB, in the engine\'s words', async () => {
+    const stores = madeFolder();
+    const key = 'k'.repeat(129);
+
+    expect(JSON.parse(failed(await ask(start(), stored('keep', { key, size: 1 }, stores))))).toEqual({
+      message: `Failed to read/write key "${key}", the key is empty or longer than 128 characters`,
+    });
+    expect(JSON.parse(failed(await ask(start(), stored('keep', { key: 'big', size: 512 * 1024 }, stores))))).toEqual({
+      message: 'Failed to read/write key "flow_work/big", the value you are trying to read/write is larger than 512 KB',
+    });
+    expect(await ask(start(), stored('keep', { key: 'small', size: 10 }, stores))).toMatchObject({ result: { kept: 10 } });
   });
 });

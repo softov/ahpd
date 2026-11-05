@@ -193,6 +193,9 @@ export const sandboxEnv = (settings: EngineSettings = {}, env: NodeJS.ProcessEnv
   const allowList = settings.ssrfAllowList ?? [];
   return {
     HOME: tmpdir(),
+    // A step's file is held to 25 MB, Activepieces' default `AP_MAX_FILE_SIZE_MB`.
+    // https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/install/configuration/limits.mdx
+    AP_MAX_FILE_SIZE_MB: '25',
     AP_NETWORK_MODE: settings.networkMode ?? 'STRICT',
     ...(allowList.length === 0 ? {} : { AP_SSRF_ALLOW_LIST: allowList.join(',') }),
     ...(propagated.length === 0 ? {} : { AP_SANDBOX_PROPAGATED_ENV_VARS: propagated.join(',') }),
@@ -358,12 +361,13 @@ const awaited = async (answer: Promise<Answer>, action: string): Promise<Answer>
   }
 };
 
-/** Run one action in the engine, and answer its result. */
-const callAction = async (channel: Engine, piece: PieceDescription, call: RunCallArgs, installed: string | undefined, installedFirst: boolean): Promise<unknown> => {
+/** Run one action in the engine, its connector's store kept in `stores`, and answer its result. */
+const callAction = async (channel: Engine, piece: PieceDescription, call: RunCallArgs, stores: string | undefined, installed: string | undefined, installedFirst: boolean): Promise<unknown> => {
   const answer = await awaited(channel.ask({
     type: 'run',
     piece: piece.package,
     ...call,
+    ...(stores === undefined ? {} : { stores }),
     ...(installed === undefined ? {} : { installed }),
     ...(installedFirst ? { installedFirst: true } : {}),
   }), piece.actions.find((one) => one.name === call.action)?.displayName ?? call.action);
@@ -453,6 +457,9 @@ export const apply: Plugin['apply'] = async (host, options) => {
    * with no name has no adapter either, and its spec is no file name to cache
    * under, so it is not fetched.
    */
+  // Each connector's store, one file to a connector, beside the logos. A host
+  // with no configuration folder keeps the stores in the engine's memory.
+  const stores = host.configDir === undefined || host.configDir === '' ? undefined : join(host.configDir, 'activepieces', 'stores');
   const logos = await Promise.all(answer.pieces.map((piece): Logo | Promise<Logo> => {
     const named = nameOf(piece.package);
     return named === undefined ? {} : logoOf(named, piece.logoUrl, host.configDir);
@@ -460,7 +467,7 @@ export const apply: Plugin['apply'] = async (host, options) => {
   for (const [at, piece] of answer.pieces.entries()) {
     const logo = logos[at];
     if (logo?.problem !== undefined) host.problem(logo.problem);
-    const mapped = adapterOf(piece, (call) => callAction(channel, piece, call, host.installed, fromInstalled.has(piece.package)), logo?.icon);
+    const mapped = adapterOf(piece, (call) => callAction(channel, piece, call, stores, host.installed, fromInstalled.has(piece.package)), logo?.icon);
     for (const note of mapped.notes) host.problem(note);
     if (mapped.adapter !== undefined) host.registerAdapter(mapped.adapter);
   }

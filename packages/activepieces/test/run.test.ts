@@ -174,7 +174,7 @@ describe('an action runs in the engine', () => {
     try {
       const written = await run(connector('work'), 'write', { name: 'notes.txt', text: 'hello' }, { files: dir });
 
-      expect(written).toEqual({ path: join(dir, 'notes.txt') });
+      expect(written).toEqual({ written: 'notes.txt' });
       expect(readFileSync(join(dir, 'notes.txt'), 'utf8')).toBe('hello');
       expect(await run(connector('work'), 'read', { file: 'notes.txt' }, { files: dir }))
         .toMatchObject({ filename: 'notes.txt', text: 'hello' });

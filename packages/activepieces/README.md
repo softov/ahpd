@@ -61,7 +61,7 @@ An adapter is named `ap-` and the piece's own name: `ap-resend`, `ap-telegram-bo
 | Stripe | `@activepieces/piece-stripe` | 0.9.0 | `SECRET_TEXT`, one secret key | MIT |
 | HubSpot | `@activepieces/piece-hubspot` | 0.13.1 | `CUSTOM_AUTH`, a private app access token | MIT |
 
-The versions are exact, and the versions `@activepieces/pieces-framework` at `0.32.0` describes. Each piece is in `packages/pieces/community/` or `packages/pieces/core/` of [github.com/activepieces/activepieces](https://github.com/activepieces/activepieces), which is MIT outside its `ee` folders. Slack, GitHub, Notion and HubSpot declare an OAuth2 connection beside the auth in the table, and this plugin offers only the auth in the table. Actions that need a file are left out: Airtable's file upload, HubSpot's file upload, Jira's two attachment uploads, Slack's file upload and WhatsApp's media upload.
+The versions are exact, and the versions `@activepieces/pieces-framework` at `0.32.0` describes. Each piece is in `packages/pieces/community/` or `packages/pieces/core/` of [github.com/activepieces/activepieces](https://github.com/activepieces/activepieces), which is MIT outside its `ee` folders. Slack, GitHub, Notion and HubSpot declare an OAuth2 connection beside the auth in the table, and this plugin offers only the auth in the table. An action that takes a file, such as Slack's file upload, takes it as a string: [An action that takes or writes a file](https://github.com/softov/ahpd/blob/main/docs/plugins/activepieces.md#an-action-that-takes-or-writes-a-file).
 
 ## A connector
 
@@ -87,9 +87,9 @@ Sent as the params of `x-ahpd/connectors/put`, that connector writes the key to 
 - A call's input is diagnosed, filled, made its props' types and validated as Activepieces makes an action run's, and refused in its words when it cannot run.
 - The engine's environment is Activepieces' sandbox's: a home in the system's temporary folder, the network mode and allow list, and the variables `sandboxPropagatedEnvVars` names. Nothing else of the daemon's environment reaches a piece.
 - Under `STRICT`, every connection a piece makes to an address that is not unicast fails with `SSRFBlockedError`, as in Activepieces' engine.
-- An action may keep a value in `store`, and the engine keeps it in memory for that connector alone until it exits.
-- `files`, `connections` and `server` are not offered.
-  An action that needs a required file is left out, and the plugin reports it once.
+- An action may keep a value in `store`, and the engine keeps it on disk for that connector alone, in the scope the piece names.
+- `files` writes into the session's attachments, a `Buffer` or a `Readable` of at most 25 MB, and answers the name a later `FILE` value takes.
+- `connections` and `server` are not offered.
 - Triggers, OAuth2 and file props wait for a later plan.
 
 ## Documentation

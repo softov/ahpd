@@ -12,16 +12,17 @@
 /**
  * The store an action keeps values in, in the shape a piece calls.
  *
- * The shape of `Store` in `@activepieces/pieces-framework` 0.32.0, written here
- * so the package installs no framework: each piece bundles its own copy.
+ * The shape of `Store` in `@activepieces/pieces-framework`, written here so the
+ * package installs no framework: each piece bundles its own copy. The scope is
+ * the framework's `StoreScope`, `FLOW` when a piece names none, or `PROJECT`.
  */
 export interface Store {
-  /** Keep one value under a key, and answer it. */
-  put<T>(key: string, value: T): Promise<T>;
-  /** The value kept under a key, or `null`. */
-  get<T>(key: string): Promise<T | null>;
-  /** Forget the value under a key. */
-  delete(key: string): Promise<void>;
+  /** Keep one value under a key in a scope, and answer it. */
+  put<T>(key: string, value: T, scope?: unknown): Promise<T>;
+  /** The value kept under a key in a scope, or `null`. */
+  get<T>(key: string, scope?: unknown): Promise<T | null>;
+  /** Forget the value under a key in a scope. */
+  delete(key: string, scope?: unknown): Promise<void>;
 }
 
 /** One prop of a piece's auth, or of one of its actions, as the engine describes it. */
@@ -148,6 +149,8 @@ export interface RunRequest {
    * `files.write` puts a written file here.
    */
   files?: string;
+  /** The folder the engine keeps each connector's store in, one file to a connector. */
+  stores?: string;
 }
 
 /** What the engine answered a `describe` with. */
