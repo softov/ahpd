@@ -30,10 +30,11 @@ const shaped = (property: object): z.ZodTypeAny => {
 /**
  * Where the CLI names the call it is running, on a handler's `extra`.
  *
- * The same key VS Code reads, and the only thing that says which of two
- * identical concurrent calls a handler was invoked for. It rides under the
+ * The key VS Code reads, and the one thing that says which call a handler
+ * was invoked for: a client's answer is keyed by that id. It rides under the
  * CLI's own namespace because the SDK passes the request's `_meta` through
  * without promising anything about what is in it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L12-L20
  */
 const TOOL_USE_ID = 'claudecode/toolUseId';
 
@@ -43,13 +44,6 @@ const namedBy = (extra: unknown): string | undefined => {
   const id = meta?.[TOOL_USE_ID];
   return typeof id === 'string' && id !== '' ? id : undefined;
 };
-
-/** A client's answer, and the call it answers. */
-export interface Claimed {
-  answer: ClientCallAnswer;
-  /** The CLI's id for the call, which is what the entry is held under. */
-  callId: string;
-}
 
 /**
  * The host's tools, as an in-process MCP server the CLI can call.
@@ -61,8 +55,8 @@ export interface Claimed {
  */
 export const contributed = (
   tools: BoundTool[],
-  /** Hand a call to the client that provides it, and wait for what it says. */
-  byClient: (tool: BoundTool, input: Bag, extra: unknown) => Promise<Claimed>,
+  /** Hand the call the CLI named to the client that provides it, and wait for what it says. */
+  byClient: (tool: BoundTool, toolUseId: string) => Promise<ClientCallAnswer>,
 ): unknown => createSdkMcpServer({
   name: 'ahp',
   version: '1.0.0',
@@ -95,22 +89,33 @@ export const contributed = (
          * see a tool at all: an MCP handler that returned before the answer
          * came back would be answering on the client's behalf.
          *
-         * `extra` is where the CLI names the call, which is the only thing that
-         * tells two identical concurrent calls of one tool apart.
+         * `extra` is where the CLI names the call, and the call is what the
+         * client's answer is keyed by. A handler handed no id answers that it
+         * could not run, in VS Code's words, since it has no call to wait on.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L41-L56
          */
         if (one.owner !== undefined) {
-          const { answer, callId } = await byClient(one, input, extra);
+          const toolUseId = namedBy(extra);
+          if (toolUseId === undefined) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Client tool "${one.definition.name}" could not run: SDK omitted tool_use_id (expected at extra._meta["${TOOL_USE_ID}"]).`,
+              }],
+              isError: true,
+            };
+          }
+          const answer = await byClient(one, toolUseId);
           /*
            * The client's whole answer, in the vocabulary an agent reads.
            *
            * A text block is a text block, an image is an image, and a file is
-           * a resource blob - where this used to hand the model the joined
-           * words and drop everything else the client sent.
+           * a resource blob.
            */
           return {
             // MCP's own shapes, built from the protocol's - the SDK's union is
             // narrower than the protocol's and this is where the two meet.
-            content: toMcpContent(answer, callId) as never,
+            content: toMcpContent(answer, toolUseId) as never,
             ...(answer.ok ? {} : { isError: true }),
           };
         }
@@ -162,7 +167,7 @@ export interface ClientTools {
    * approved, and an entry raised for one would tell a client to run a tool
    * the person has not allowed yet.
    *
-   * This is also where a handler waiting for the call is joined to it, whichever
+   * This is also where a handler waiting on the call's id goes on, whichever
    * of the two arrived first - so it is called from the frame that reports the
    * call and from the approval of one the person was asked about.
    */
@@ -179,11 +184,11 @@ export interface ClientTools {
   /** The person allowed the call: it is the owning client's to run now. */
   allowCall: (toolName: string, turnId: string, id: string, line: StringOrMarkdown, input: string | undefined) => void;
   /** The person refused the call: nothing runs it, and nothing goes on waiting. */
-  refuseCall: (toolName: string, id: string, why: string) => void;
+  refuseCall: (id: string, why: string) => void;
   /** Every outstanding client call, answered the same way and forgotten. */
   releaseCalls: (why: string) => void;
-  /** Run one tool where the client that provides it lives, and wait for it. */
-  ranByClient: (tool: BoundTool, input: Bag, extra: unknown) => Promise<Claimed>;
+  /** Run the call the CLI named where the client that provides its tool lives, and wait for it. */
+  ranByClient: (tool: BoundTool, toolUseId: string) => Promise<ClientCallAnswer>;
   /** The one place this chat's client calls are held, for the snapshot and above. */
   calls: ClientCalls;
   methods: {
@@ -239,32 +244,18 @@ export function createClientTools(ctx: SessionContext): ClientTools {
       .map((one) => String(one.owner)),
   });
 
-  /*
-   * Joining the call the model made to the handler that has to answer it.
-   *
-   * The two arrive separately and neither carries the other's name: the
-   * assistant frame opens the call under the CLI's id, and the in-process MCP
-   * handler was invoked with the input and nothing else. So they are matched
-   * here, by tool name and then by the input itself, which tells two
-   * concurrent calls of one tool apart. Whichever arrives first waits for the
-   * other. A CLI new enough to hand the handler the call's own id does not
-   * need this, and takes the id straight to `calls.wait`.
-   */
   /** How a handler's wait for its call ends: with the call, or with why there is none. */
   type Joined = { id: string } | { refused: string };
 
-  const unclaimed = new Map<string, { id: string; input: string }[]>();
-  const expecting = new Map<string, ((joined: Joined) => void)[]>();
-
   /*
-   * Which calls the frames have reported, for a handler that reads the id.
+   * Which calls the frames have reported, for a handler waiting on its id.
    *
-   * With the CLI's own id there is nothing to join - there is only something
-   * to wait for, because the handler and the frame are two frames and either
-   * can be read first. A handler that arrives before the frame waits in
-   * `asked`; one that arrives after is answered from `framed`. Only ids no
-   * handler has come for yet are kept there, and past the cap the oldest goes,
-   * so an aborted call of a long session does not pile up for ever.
+   * The handler and the frame that reports its call reach this session apart,
+   * and either can be read first, so there is something to wait for: a handler
+   * that arrives before the frame waits in `asked`, and one that arrives after
+   * is answered from `framed`. Only ids no handler has come for yet are kept
+   * there, and past the cap the oldest goes, so an aborted call of a long
+   * session does not pile up for ever.
    */
   const framed = new Set<string>();
   const asked = new Map<string, { tool: string; go: (joined: Joined) => void }[]>();
@@ -307,93 +298,34 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     return new Promise((resolve) => { asked.set(id, [...(asked.get(id) ?? []), { tool: toolName, go: resolve }]); });
   };
 
-  /** A call the frame has reported, for a handler that has come for it by name. */
-  const opening = (toolName: string, id: string, written: string): void => {
-    const waiting = expecting.get(toolName) ?? [];
-    const first = waiting.shift();
-    expecting.set(toolName, waiting);
-    if (first) { first({ id }); return; }
-    unclaimed.set(toolName, [...(unclaimed.get(toolName) ?? []), { id, input: written }]);
-  };
-
-  const claim = (toolName: string, input: Bag): Promise<Joined> => {
-    const open = unclaimed.get(toolName) ?? [];
-    const written = JSON.stringify(input);
-    const at = open.findIndex((one) => one.input === written);
-    const took = at >= 0 ? open.splice(at, 1)[0] : open.shift();
-    unclaimed.set(toolName, open);
-    if (took !== undefined) return Promise.resolve({ id: took.id });
-    return new Promise((resolve) => {
-      expecting.set(toolName, [...(expecting.get(toolName) ?? []), resolve]);
-    });
-  };
-
   /**
-   * One call's place in the joins, taken back, and whoever waits on it told.
+   * One call's wait taken back, and whoever waits on it told.
    *
-   * A handler parked on a call that will never open - the person refused it, or
-   * the turn was stopped - is a tool call the model never gets back, so it is
-   * answered with the reason instead. The call goes out of the maps as well: a
-   * handler that joins later by name and input must not be handed this one.
+   * A handler parked on a call that will never open, one the person refused,
+   * is a tool call the model never gets back, so it is answered with the
+   * reason instead.
    */
-  const withdraw = (id: string, why: string, toolName: string): void => {
+  const withdraw = (id: string, why: string): void => {
     for (const one of asked.get(id) ?? []) one.go({ refused: why });
     asked.delete(id);
     framed.delete(id);
-    const open = unclaimed.get(toolName);
-    if (open !== undefined) unclaimed.set(toolName, open.filter((one) => one.id !== id));
-    // A handler that joined by name is waiting for that tool's calls in the
-    // order they are made, so with none of them left this one was its call.
-    if ((unclaimed.get(toolName) ?? []).length === 0) {
-      for (const go of expecting.get(toolName) ?? []) go({ refused: why });
-      expecting.delete(toolName);
-    }
   };
 
   /** Every wait there is, ended at once: a turn that was stopped, or a chat that closed. */
   const refuseAll = (why: string): void => {
     for (const waiting of asked.values()) for (const one of waiting) one.go({ refused: why });
-    for (const waiting of expecting.values()) for (const go of waiting) go({ refused: why });
     asked.clear();
-    expecting.clear();
-    unclaimed.clear();
     framed.clear();
     noEntry.clear();
-  };
-
-  /**
-   * Every wait for one tool, ended at once, because nothing will open it now.
-   *
-   * The tool is no longer on offer - its client left, or the frame for a call
-   * of it names one nothing offers - so a handler parked on a call that will
-   * never open is answered with the reason rather than left until the turn is
-   * stopped. Both joins go: a handler waiting on the call's id, and one that
-   * joined by the tool's name and has not been handed a call yet.
-   */
-  const refuseJoins = (toolName: string, why: string): void => {
-    for (const [id, waiting] of asked) {
-      const here = waiting.filter((one) => one.tool === toolName);
-      if (here.length === 0) continue;
-      for (const one of here) one.go({ refused: why });
-      const rest = waiting.filter((one) => one.tool !== toolName);
-      if (rest.length === 0) asked.delete(id);
-      else asked.set(id, rest);
-    }
-    unclaimed.delete(toolName);
-    for (const go of expecting.get(toolName) ?? []) go({ refused: why });
-    expecting.delete(toolName);
   };
 
   const openCall = (toolName: string, turnId: string, id: string, line: StringOrMarkdown, input: string | undefined): void => {
     const tool = clientToolOf(toolName);
     if (tool === undefined) {
       // Nothing offers this tool, so nothing will open this call: a handler
-      // already waiting on it, by id or by name, is told that rather than left
-      // until the turn is stopped.
-      const none = `Nothing here offers ${toolName}.`;
-      for (const one of asked.get(id) ?? []) one.go({ refused: none });
-      asked.delete(id);
-      refuseJoins(toolName, none);
+      // already waiting on it is told that rather than left until the turn is
+      // stopped.
+      withdraw(id, `Nothing here offers ${toolName}.`);
       return;
     }
     // A call a person is deciding about, or has refused, is not one any client
@@ -401,12 +333,11 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     if (noEntry.has(id)) return;
     /*
      * The call exists now, and this is the one place that says so: a handler
-     * waiting on this id, or on this tool and these arguments, is waiting for
-     * exactly this. Registered here rather than where the frame is first read,
-     * because a call a person approved is one the frame has already skipped.
+     * waiting on this id is waiting for exactly this. Registered here rather
+     * than where the frame is first read, because a call a person approved is
+     * one the frame has already skipped.
      */
     opened(id);
-    opening(toolName, id, input ?? '{}');
     // A worker's call is in the worker's chat, which its entry names.
     const chat = ctx.scopeOfCall(id)?.chat?.uri;
     calls.open({
@@ -438,48 +369,33 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     openCall(toolName, turnId, id, line, input);
   };
 
-  const refuseCall = (toolName: string, id: string, why: string): void => {
+  const refuseCall = (id: string, why: string): void => {
     noEntry.add(id);
     const owner = calls.owner(id);
     // The owner was never asked, so this session answers for it: the call ends
     // here rather than being left open for a client that will not run it.
     if (owner !== undefined) calls.complete(id, owner, refusedAnswer(why));
-    withdraw(id, why, toolName);
+    withdraw(id, why);
   };
 
   const releaseCalls = (why: string): void => {
     calls.release(why);
-    // The joins as well as the calls: a handler waiting for a frame that will
+    // The waits as well as the calls: a handler waiting for a frame that will
     // not come is the other half of a turn left hanging.
     refuseAll(why);
   };
 
-  const ranByClient = async (tool: BoundTool, input: Bag, extra: unknown): Promise<Claimed> => {
-    const named = namedBy(extra);
-    let joined: Joined;
-    if (named !== undefined) {
-      // The call this handler is for, by the CLI's own name for it - so it
-      // waits for that call to be opened and never for somebody else's.
-      joined = await untilOpen(named, called(tool.definition.name));
-    }
-    else {
-      /*
-       * A CLI that named no call, joined by tool name and then by the input.
-       *
-       * Said out loud rather than quietly: two identical calls of one tool
-       * cannot be told apart this way, so whether this path is still needed is
-       * a question about what the CLI sends, and only a live run answers it.
-       */
-      console.warn(`@ahpd/agent-claude: no ${TOOL_USE_ID} for ${tool.definition.name}; matching the call by tool name and input`);
-      joined = await claim(called(tool.definition.name), input);
-    }
+  const ranByClient = async (tool: BoundTool, toolUseId: string): Promise<ClientCallAnswer> => {
+    // The call this handler is for, by the CLI's own name for it, so it waits
+    // for that call to be opened and never for somebody else's.
+    const joined = await untilOpen(toolUseId, called(tool.definition.name));
     /*
      * Nothing to wait on: the call was refused, or the turn it was in stopped.
      * An answer rather than a throw, because a handler that rejects is a
      * transport failure and the model is never told what happened.
      */
-    if ('refused' in joined) return { answer: refusedAnswer(joined.refused), callId: named ?? '' };
-    return { answer: await calls.wait(joined.id), callId: joined.id };
+    if ('refused' in joined) return refusedAnswer(joined.refused);
+    return calls.wait(joined.id);
   };
 
   /** One change of tools, sent to the CLI: `setTools` says when, and why in two declarations. */
@@ -571,22 +487,24 @@ export function createClientTools(ctx: SessionContext): ClientTools {
      * The holder's own `clientGone` ends the calls already open, which is what
      * a call the model made and the client was running gets. What it does not
      * reach is the half a handler is stuck on: a call the CLI has not reported
-     * yet, so a handler is still waiting in the joins for a client that is no
+     * yet, so a handler is still waiting on its id for a client that is no
      * longer there to answer. Those are ended here, with the sentence the
      * holder uses for the same news, so both halves of one call read the same.
      *
      * Every tool whose name is this client's, by the prefix the model is
      * offered under. The tools may already be gone from `offering` - the host
-     * takes them out in the same breath - so the joins are asked, not the list.
+     * takes them out in the same breath - so the waits are asked, not the list:
+     * each carries the tool it is for.
      */
     clientGone: (clientId) => {
       const why = `The client ${clientId} that was running the tool is no longer here`;
-      // Every tool a handler is waiting on: by name in `expecting` and
-      // `unclaimed`, and by call id in `asked`, which carries the tool with the
-      // wait so a client that leaves can be told which of its tools those are.
-      const waited = [...expecting.keys(), ...unclaimed.keys(), ...[...asked.values()].flat().map((one) => one.tool)];
-      for (const toolName of new Set(waited)) {
-        if (toolName.startsWith(called(`${clientId}__`))) refuseJoins(toolName, why);
+      for (const [id, waiting] of asked) {
+        const here = waiting.filter((one) => one.tool.startsWith(called(`${clientId}__`)));
+        if (here.length === 0) continue;
+        for (const one of here) one.go({ refused: why });
+        const rest = waiting.filter((one) => !here.includes(one));
+        if (rest.length === 0) asked.delete(id);
+        else asked.set(id, rest);
       }
       calls.methods.clientGone(clientId);
     },

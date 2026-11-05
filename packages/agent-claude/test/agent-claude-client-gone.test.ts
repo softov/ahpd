@@ -4,13 +4,14 @@ import type { Bag, BoundTool } from '@ahpd/sdk';
 /*
  * A call to a client that left ends at once.
  *
- * A handler the CLI started waits to be joined to the call the frame reports.
- * The client that provides the tool may leave in the gap between the two, or
- * the frame may name a tool nothing offers any more - and then the call never
- * opens, so the handler would wait until the turn is stopped. These cases are
- * that gap: the handler is answered with the refusal at once.
+ * A handler the CLI started waits, by the id the CLI handed it, for the call
+ * the frame reports. The client that provides the tool may leave in the gap
+ * between the two, or the frame may name a tool nothing offers any more - and
+ * then the call never opens, so the handler would wait until the turn is
+ * stopped. These cases are that gap: the handler is answered with the refusal
+ * at once.
  *
- * The holder ends the calls already open; what this backend adds is the joins
+ * The holder ends the calls already open; what this backend adds is the waits
  * the holder never sees, so the cases drive `ranByClient` through the handler
  * the SDK server was handed.
  */
@@ -72,15 +73,26 @@ it('refuses a handler waiting by id when the client leaves', async () => {
   expect(answer.content[0]?.text).toContain('no longer here');
 });
 
-it('refuses a handler waiting by name and input when the client leaves', async () => {
-  const { tools } = session();
+/*
+ * A handler the CLI hands no call id has no call to wait on, a client's answer
+ * being keyed by the call's id, so it answers at once that it could not run,
+ * in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L41-L56
+ */
+it('answers a handler handed no call id that it could not run', async () => {
+  session();
   const handler = handlerFor('probe__openFile');
-  // A CLI that names no call joins by tool name and input instead.
-  const answering = handler({ path: '/a.txt' }, undefined);
-  tools.methods.clientGone('probe');
-  const answer = await answering as { content: { text: string }[]; isError?: boolean };
-  expect(answer.isError).toBe(true);
-  expect(answer.content[0]?.text).toContain('no longer here');
+  const answer = await Promise.race([
+    handler({ path: '/a.txt' }, undefined),
+    new Promise((resolve) => { setTimeout(() => resolve('still waiting'), 50); }),
+  ]);
+  expect(answer).toEqual({
+    content: [{
+      type: 'text',
+      text: 'Client tool "probe__openFile" could not run: SDK omitted tool_use_id (expected at extra._meta["claudecode/toolUseId"]).',
+    }],
+    isError: true,
+  });
 });
 
 it('refuses a handler whose tool is no longer on offer when the frame arrives', async () => {
@@ -96,7 +108,7 @@ it('refuses a handler whose tool is no longer on offer when the frame arrives', 
   expect(answer.content[0]?.text).toContain('Nothing here offers');
 });
 
-it('leaves another client\'s joins alone when this one leaves', async () => {
+it('leaves another client\'s waits alone when this one leaves', async () => {
   const other = toolOf('openFile', 'other');
   const { tools } = session([toolOf('openFile')], [other]);
   const handler = handlerFor('other__openFile');

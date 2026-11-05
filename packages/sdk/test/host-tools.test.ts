@@ -1289,7 +1289,8 @@ describe('tools a client contributes', () => {
     expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
 
     // The model's call reaches the client as a promise that does not settle
-    // until the client says what happened.
+    // until the client says what happened, the CLI naming the call it runs.
+    sdk.toolUseIds.push('call-1');
     const call = offered().find((tool) => tool.name === 'probe__openFile');
     let done = false;
     const answering = call?.handler({ path: '/a.txt' }).then((answer) => { done = true; return answer; });
@@ -1354,6 +1355,7 @@ describe('tools a client contributes', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/gone' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/gone' });
     await settle();
     client.handle({
@@ -1396,6 +1398,7 @@ describe('tools a client contributes', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1447,6 +1450,7 @@ describe('tools a client contributes', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1492,6 +1496,7 @@ describe('tools a client contributes', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
     await settle();
 
@@ -1523,7 +1528,10 @@ describe('tools a client contributes', () => {
       snapshot: { state: SessionState };
     }).snapshot.state;
 
-  /** One turn whose model calls the client's `openFile`. */
+  /**
+   * One turn whose model calls the client's `openFile`, and the id the CLI
+   * hands the handler that runs the call.
+   */
   const calling = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
     client.handle({
       method: 'dispatchAction',
@@ -1538,6 +1546,7 @@ describe('tools a client contributes', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
       },
     });
+    sdk.toolUseIds.push('call-1');
   };
 
   /** The client saying what its tool did, as `chat/toolCallComplete`. */
@@ -1714,10 +1723,8 @@ describe('tools a client contributes', () => {
     await settle();
     /*
      * The two calls carry the same arguments, and the CLI ran the second one
-     * first - which is the order it hands its handlers out in, and the one
-     * thing a match by name and input cannot know: the first handler to run
-     * would take the other's call. The id the CLI names each call by in
-     * `_meta` is what tells these two apart.
+     * first, which is the order it hands its handlers out in. The id the CLI
+     * names each call by in `_meta` is what tells these two apart.
      */
     sdk.toolUseIds.push('call-2', 'call-1');
     await emit({
@@ -1765,30 +1772,32 @@ describe('tools a client contributes', () => {
     expect(first?.content[0]?.text).toBe('the first');
   });
 
-  it('still finds its call by name and input when no id is handed over', async () => {
-    // A CLI that puts nothing in `_meta`, which is what the fallback is for and
-    // is why it stays until a live run shows the key always arrives.
+  /*
+   * A handler the CLI hands no call id has no call to wait on, a client's
+   * answer being keyed by the call's id: it answers that it could not run, in
+   * VS Code's words, and the client's answer to the call settles nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L41-L56
+   */
+  it('answers a handler handed no call id that it could not run', async () => {
     sdk.sendsToolUseId = false;
-    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
-    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'by name' }] });
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
 
     const answer = await answering;
-    expect(answer?.isError).toBeUndefined();
-    expect(answer?.content[0]?.text).toBe('by name');
-    // Said out loud, because whether the fallback is still needed is a question
-    // about what a live CLI sends and nothing a test can answer.
-    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
-    warned.mockRestore();
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content).toEqual([{
+      type: 'text',
+      text: 'Client tool "probe__openFile" could not run: SDK omitted tool_use_id (expected at extra._meta["claudecode/toolUseId"]).',
+    }]);
   });
 
   it('hands the model the client\'s image as an image, and its words as words', async () => {
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
-    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
     answers(client, chatUri, {
       success: true,
@@ -1974,12 +1983,11 @@ describe('tools a client contributes', () => {
   });
 
   it('settles a handler still waiting when the turn is stopped', async () => {
-    // A CLI that names no call, so the handler waits on the tool's name and
-    // input - the other half of the join, which a stopped turn has to end too.
-    sdk.sendsToolUseId = false;
-    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The handler waits on the call's id for a frame that has not opened it,
+    // which is a wait a stopped turn has to end too.
     const { client, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
+    sdk.toolUseIds.push('call-1');
     const answering = tool()?.handler({ path: '/a.txt' });
     await settle();
     // A call a person is being asked about, and never answered: the turn is
@@ -2000,8 +2008,6 @@ describe('tools a client contributes', () => {
     expect(answer?.isError).toBe(true);
     expect(answer?.content[0]?.text).toBe('The turn was stopped');
     expect(await askedToRun(client, uri)).toEqual([]);
-    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
-    warned.mockRestore();
   });
 });
 

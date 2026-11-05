@@ -708,7 +708,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       if (approved) {
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
-      else ctx.refuseCall(name, toolCallId, DECLINED);
+      else ctx.refuseCall(toolCallId, DECLINED);
       // The answer is given, so the preview goes with it: what the tool would
       // leave is on no disk, and the file itself is the copy every client can
       // read once it has run.

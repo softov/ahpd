@@ -512,12 +512,13 @@ runs names the tool as the client announced it, `openFile`, with the server's
 prefix and the client's id taken off, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638)
 takes the prefix off, so the client that owns it finds the tool to run.
 
-**Joining the call to the handler is this host's problem.** They arrive
-separately and neither carries the other's name: the assistant frame opens the
-call under the harness's id, and the in-process handler is invoked with the
-input and nothing else - the SDK surfaces a `toolUseID` to `canUseTool` and to
-hooks, and *not* to a tool. So the two are matched by tool name and then by the
-input itself, which is what tells two concurrent calls of one tool apart.
+**The handler waits on the call the harness names.** The assistant frame opens
+the call under the harness's id, and the in-process handler is handed the same
+id in its request's `_meta` under `claudecode/toolUseId`, the key VS Code reads;
+the two reach this host apart, so the handler waits for the frame that opens
+its call. A handler handed no id answers that it could not run, in [VS Code's
+words](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L41-L56),
+since a client's answer is keyed by the call.
 
 **The completion answers the client.** A client's `chat/toolCallComplete` is what
 unblocks the agent. Its result is said to every client of the chat with the
