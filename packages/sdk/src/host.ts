@@ -922,52 +922,41 @@ export function createHost(options: HostOptions): Host {
       if (held?.kind === 'chat' && ((held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId
         || turns.some((turn) => turn.id === action.turnId))) return;
     }
-    // Whether this action ends the chat's active turn, which the reducer ends only when the ids match.
-    let ending = false;
-    if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
-      /*
-       * A backend's end of a turn the chat does not hold as its turn is not
-       * said: a turn ended when a client's stop was taken, and a turn ends
-       * once; a turn another took the place of was never ended in any
-       * client's state, and the protocol's reducer ends only the active turn.
-       * The reference host ends the turn on the client's cancel and then
-       * aborts the agent.
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L186-L188
-       */
-      const held = states.get(channel);
-      if (origin === undefined && held?.kind === 'chat'
-        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) return;
-      ending = held?.kind === 'chat' && (held.state.activeTurn as Record<string, unknown> | undefined)?.id === action.turnId;
+    const held = states.get(channel);
+    const active = held?.kind === 'chat' ? (held.state.activeTurn as Record<string, unknown> | undefined)?.id : undefined;
+    const ends = action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error';
+    if (ends) {
       /*
        * A question a host tool asked in this turn has nobody left to answer
-       * it: the turn it was asked in is over. Settled as cancelled before the
-       * end goes out, so the tool returns that to the model rather than
+       * it: the turn it was asked in is over. Settled as cancelled at every
+       * end, said or not, so the tool returns that to the model rather than
        * waiting on a person a stopped turn no longer has.
        */
       asks.cancelTurn(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
-      // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
-      if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
-        ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
-      }
     }
     /*
-     * A backend's result for a call the chat holds completed is not said
-     * either: the call was completed by its client's own result, said when the
-     * host took it, and a call completes once.
-     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L631-L635
+     * A backend's action of a turn other than the one the chat runs is stale
+     * and not said, and with no turn running, a completion of a turn a stop
+     * ended is not said either: the reference host's rule for its agents'
+     * actions. Everything else a backend says goes out, a late end and a
+     * second result for a call among them, and the protocol's reducer leaves
+     * what no longer applies as it was.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L918
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
      */
-    if (action.type === 'chat/toolCallComplete' && origin === undefined) {
-      const held = states.get(channel);
-      const turn = held?.kind === 'chat' ? held.state.activeTurn as Record<string, unknown> | undefined : undefined;
-      const call = turn?.id === action.turnId
-        ? (Array.isArray(turn?.responseParts) ? turn.responseParts as Record<string, unknown>[] : [])
-          .map((part) => part.toolCall as Record<string, unknown> | undefined)
-          .find((one) => one?.toolCallId === action.toolCallId)
-        : undefined;
-      if (held?.kind === 'chat' && !['running', 'pending-confirmation', 'auth-required'].includes(String(call?.status))) return;
+    if (origin === undefined && held?.kind === 'chat' && typeof action.turnId === 'string' && action.type !== 'chat/truncated') {
+      const stale = active !== undefined
+        ? action.turnId !== active
+        : action.type === 'chat/turnComplete' && ctx.cancelledTurns.get(channel)?.has(action.turnId) === true;
+      if (stale) return;
+    }
+    // Whether this action ends the chat's active turn, which the reducer ends only when the ids match.
+    const ending = ends && held?.kind === 'chat' && active === action.turnId;
+    // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
+    if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
+      ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
     }
     /*
      * A session's customizations are two halves, and one action carries both.

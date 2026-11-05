@@ -460,12 +460,15 @@ it("answers the agent's request with what the owning client said", async () => {
   await until(() => ended(p, chatUri));
 
   // The request the agent is blocked on is answered with the client's own
-  // words, and the row the agent reported is closed by the agent's own update.
+  // words, and the agent's own update for the row it reported is said after
+  // the client's completion, as VS Code's host says an agent's second result
+  // for a call its turn completed, which the reducer leaves as nothing.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
   expect(results(p, chatUri)).toEqual([
     { isError: false, content: [{ type: 'text', text: 'opened /a.txt' }] },
   ]);
   expect(types(p, chatUri).filter((type) => type.startsWith('chat/toolCall')))
-    .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+    .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete', 'chat/toolCallComplete']);
   /*
    * The entry asking the client went up once the chat held the call running,
    * which is the ready: an entry names a call in the state its kind is raised

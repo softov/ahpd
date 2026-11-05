@@ -314,7 +314,12 @@ Everything a session emits is the host's own action, said with no origin, as
 [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679)
 says a client's action and then runs the side effect that reaches its agent. A
 start a session says of a turn the chat holds already is not said again, since
-a second start would open the turn again in every client's state.
+a second start would open the turn again in every client's state. Of the rest,
+an action of another turn while one runs is dropped, and with none running, a
+completion of a turn a stop ended, as
+[VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L963)
+drops its agents' stale actions; anything else goes out, and the protocol's
+reducer leaves what no longer applies as it was.
 
 ## The rules that fail silently
 

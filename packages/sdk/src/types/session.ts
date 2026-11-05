@@ -761,7 +761,8 @@ export interface Session {
    * client has approved it or denied it, a denial handed as a failure. False
    * when no call by that id waits on that client here, a second result for a
    * call among them, which the host logs. What the backend says of the call
-   * afterwards is not said again.
+   * afterwards is said, and the protocol's reducer leaves the completed call
+   * as it was.
    */
   completeToolCall?(
     toolCallId: string,

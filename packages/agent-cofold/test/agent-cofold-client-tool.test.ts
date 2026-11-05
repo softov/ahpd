@@ -306,12 +306,18 @@ it('settles the call from the owning client and gives the model the result', asy
 
   // The model's next step carries the client's text as the tool result.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('opened /a.txt');
-  // One completion, the client's own, and the turn is over.
+  /*
+   * The client's completion first, and the backend's own for the same call
+   * after it, said as VS Code's host says an agent's second result for a call
+   * its turn completed: the reducer leaves the call as the client completed it,
+   * and the turn is over.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
+   */
   const done = completion(p, chatUri);
   expect(done).toMatchObject({ success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
-  expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(1);
+  expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(2);
   const call = callIn(reduced(p, chatUri).turns[0]?.responseParts ?? []);
-  expect(call).toMatchObject({ status: 'completed', success: true });
+  expect(call).toMatchObject({ status: 'completed', success: true, pastTenseMessage: 'Opened it' });
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
 });
 

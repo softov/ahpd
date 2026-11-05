@@ -958,8 +958,16 @@ it('carries a stop sent right after a start inside behind it, as the client sent
   void dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 7 });
   await until(() => told('chat/turnCancelled').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
-  expect(told('chat/turnCancelled').map((one) => [one.origin, one.rejectionReason, one.action.duration]))
-    .toEqual([[{ clientId: 'window', clientSeq: 2 }, undefined, 7]]);
+  /*
+   * The client's stop first; the backend's own end of the turn it stopped is
+   * said after it with no origin, as VS Code's host says an agent's late end
+   * of a stopped turn, which the reducer leaves as nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L918
+   */
+  const stops = told('chat/turnCancelled');
+  expect(stops.map((one) => [one.origin, one.rejectionReason, one.action.duration])[0])
+    .toEqual([{ clientId: 'window', clientSeq: 2 }, undefined, 7]);
+  expect(stops.slice(1).map((one) => [one.origin, one.rejectionReason])).toEqual(stops.slice(1).map(() => [undefined, undefined]));
   await settleInner();
   const carried = inner.messages
     .filter((one) => one.method === 'dispatchAction')
