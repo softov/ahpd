@@ -1296,6 +1296,14 @@ const noCwd = input['noCwd'] === true;
 }
 
 /**
+ * The characters a connection token is made of, as VS Code's agent host
+ * server holds one, refused in its words otherwise.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostServerMain.ts#L67
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostServerMain.ts#L139-L156
+ */
+const CONNECTION_TOKEN = /^[0-9A-Za-z_-]+$/;
+
+/**
  * The secret this host will require, and where it came from.
  *
  * A token file that is not there is written rather than refused: the flag is
@@ -1314,12 +1322,20 @@ export function secret(options: Options): { token?: string; from: string } {
   }
   if (options.token !== undefined) {
     if (options.token === '') stop('--connection-token was empty.');
+    // The source is named and never the value, as everything this prints says
+    // where the secret came from and not what it is.
+    if (!CONNECTION_TOKEN.test(options.token)) {
+      stop('The connection token from --connection-token does not adhere to the characters 0-9, a-z, A-Z, _, or -.');
+    }
     return { token: options.token, from: 'token: from --connection-token' };
   }
   if (options.tokenFile !== undefined) {
     if (existsSync(options.tokenFile)) {
       const held = readFileSync(options.tokenFile, 'utf8').trim();
       if (held === '') stop(`${options.tokenFile} is empty.`);
+      if (!CONNECTION_TOKEN.test(held)) {
+        stop(`The connection token in '${options.tokenFile}' does not adhere to the characters 0-9, a-z, A-Z, _, or -.`);
+      }
       return { token: held, from: `token: read from ${options.tokenFile}` };
     }
     const made = crypto.randomUUID().replaceAll('-', '');
