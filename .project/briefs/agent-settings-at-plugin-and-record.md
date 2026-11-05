@@ -78,7 +78,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 | **Folders and trust** | | | | | | | | |
 | `paths` |  |  | ✓ |  |  |  |  |  |
 | `honoursTrust` |  | ✓ |  |  |  |  |  |  |
-| `projectTrust` |  |  |  |  |  |  | ✓ | ✓ |
+| `projectTrust` |  |  |  |  | 🔵 | 🔵 | ✓ | ✓ |
 | `sessionDir` |  |  |  |  |  |  | ✓ | ✓ host |
 | `store` |  |  |  |  | ✓ | ✓ host |  |  |
 | `memory` |  |  |  |  | ✓ | ✓ host |  |  |
@@ -100,6 +100,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - **pi record `autoCompactTokens`.** pi's `SettingsManager` holds compaction settings, and cofold has the field on the record.
 - **claude, cofold and pi `hostTools`.** The host offers its tools to every session. Only acp can turn them off for one plugin or one agent.
 - **claude record `computerConfigDir`.** cofold lets a host record set it, and claude has it at the plugin only.
+- **cofold `projectTrust`.** Softov, 2026-11-05: "cofold need the same level Trust as pi." ahpd's cofold loads no project files today. The setting gates what cofold loads once it does.
 
 ## What disagrees
 
