@@ -36,6 +36,8 @@ In the configuration file, with three of the pieces named:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `pieces` | - | The package of each piece the daemon offers, such as `@activepieces/piece-resend`. A version may follow the name, as in `@activepieces/piece-postgres@0.5.1`. Required, and at least one |
+| `networkMode` | `STRICT` | Activepieces' `AP_NETWORK_MODE` for the engine: `STRICT` refuses every connection a piece makes to a private, loopback, link-local or multicast address, `UNRESTRICTED` refuses none |
+| `ssrfAllowList` | none | Activepieces' `AP_SSRF_ALLOW_LIST`: the addresses and CIDR ranges a piece may reach under `STRICT`, such as `10.0.0.5` or `10.0.0.0/8` |
 | `sandboxPropagatedEnvVars` | none | The variables of the daemon's environment the engine is given, by name, as Activepieces' `AP_SANDBOX_PROPAGATED_ENV_VARS`. A proxy or a certificate file a piece needs is listed here |
 
 An adapter is named `ap-` and the piece's own name: `ap-resend`, `ap-telegram-bot` and `ap-slack`. The plugin declares the contract `ap-*`, so a client sees every adapter it loads.
@@ -82,7 +84,9 @@ Sent as the params of `x-ahpd/connectors/put`, that connector writes the key to 
   The result comes back as the tool's answer, and a thrown error comes back as its message only.
 - A call may run for 600 seconds, Activepieces' single action run timeout. One that runs longer fails, saying the action may have partially completed and is not to be run again blindly, and the engine stays up for the next one.
   An engine that exits starts again on the next call, five times, as VS Code restarts its agent host. After that, every call is refused: `The engine process stopped after 5 restarts.`
-- The engine's environment is Activepieces' sandbox's: a home in the system's temporary folder, and the variables `sandboxPropagatedEnvVars` names. Nothing else of the daemon's environment reaches a piece.
+- A call's input is diagnosed, filled, made its props' types and validated as Activepieces makes an action run's, and refused in its words when it cannot run.
+- The engine's environment is Activepieces' sandbox's: a home in the system's temporary folder, the network mode and allow list, and the variables `sandboxPropagatedEnvVars` names. Nothing else of the daemon's environment reaches a piece.
+- Under `STRICT`, every connection a piece makes to an address that is not unicast fails with `SSRFBlockedError`, as in Activepieces' engine.
 - An action may keep a value in `store`, and the engine keeps it in memory for that connector alone until it exits.
 - `files`, `connections` and `server` are not offered.
   An action that needs a required file is left out, and the plugin reports it once.

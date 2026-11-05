@@ -3,7 +3,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { fileOf } from './files.ts';
+import { installSsrfGuard } from './guard.ts';
+import { inputOf } from './props.ts';
+import type { Props } from './props.ts';
 import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store } from './wire.js';
 
 /**
@@ -58,6 +60,9 @@ const pinTls = (): void => {
 };
 
 pinTls();
+
+// The SSRF guard, before any piece loads, as the engine installs it at start.
+installSsrfGuard();
 
 /** The values of a static dropdown, or nothing when the prop is not one. */
 const staticOptions = (prop: Record<string, unknown>): unknown[] | undefined => {
@@ -370,36 +375,6 @@ const filesIn = (folder: string): Record<string, unknown> => ({
   },
 });
 
-/** The names of the action's props that are files. */
-const fileProps = (action: Record<string, unknown>): string[] => {
-  const props = action['props'];
-  if (!isRecord(props)) return [];
-  return Object.entries(props)
-    .filter(([, prop]) => isRecord(prop) && prop['type'] === 'FILE')
-    .map(([name]) => name);
-};
-
-/**
- * The call's input, with each `FILE` value turned into the `ApFile` a piece
- * reads.
- *
- * A value is an `https:` URL, a `data:` URI, or the name of a session
- * attachment. A URL that is not public is refused, and so is a name that
- * leaves the folder. The message never names the folder or the bytes.
- */
-const withFiles = async (action: Record<string, unknown>, request: RunRequest): Promise<Record<string, unknown>> => {
-  const input = { ...request.input };
-  for (const name of fileProps(action)) {
-    const value = input[name];
-    if (value === undefined) continue;
-    if (typeof value !== 'string') {
-      throw new Error(`the file prop ${name} is an https: URL, a data: URI or the name of an attachment`);
-    }
-    input[name] = await fileOf(value, request.files);
-  }
-  return input;
-};
-
 /**
  * The step an action run is, which Activepieces names `step_1`.
  * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/api/src/app/mcp/tools/flow-run-utils.ts
@@ -470,7 +445,7 @@ const answerRun = async (request: RunRequest): Promise<Answer> => {
   const action = actionOf(piece, request);
   const perform = action['run'];
   if (typeof perform !== 'function') throw new Error(`the action ${request.action} cannot run`);
-  const input = await withFiles(action, request);
+  const input = await inputOf(isRecord(action['props']) ? action['props'] as Props : {}, request.input, request.files);
   const result = await (perform as (context: Record<string, unknown>) => unknown)(contextOf(request, input));
   return { type: 'ran', id: request.id, result: result === undefined ? null : result };
 };

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logoOf } from './logos.js';
+import type { NetworkMode } from './guard.js';
 import { adapterOf, nameOf } from './mapping.js';
 import { isAnswer } from './wire.js';
 import type { ChildProcess } from 'node:child_process';
@@ -163,6 +164,14 @@ const failureOf = (line: string, pieces: Wanted[]): { package?: string; why: str
 /** The engine's settings, as the plugin's options give them. */
 export interface EngineSettings {
   /**
+   * Activepieces' `AP_NETWORK_MODE`: `STRICT` installs the engine's SSRF
+   * guard, `UNRESTRICTED` does not. `STRICT` when the options name none, so a
+   * fresh host's pieces reach no private address.
+   */
+  networkMode?: NetworkMode;
+  /** Activepieces' `AP_SSRF_ALLOW_LIST`: the addresses and CIDR ranges the guard lets through. */
+  ssrfAllowList?: readonly string[];
+  /**
    * The variables of the daemon's environment the engine is given, by name:
    * Activepieces' `AP_SANDBOX_PROPAGATED_ENV_VARS`, none by default.
    */
@@ -171,17 +180,21 @@ export interface EngineSettings {
 
 /**
  * The engine's environment, as Activepieces' sandbox builds it: a home of its
- * own, the list of what was propagated, and each of those variables the daemon
- * has. A piece is third-party code, and the daemon's environment holds its own
- * token and whatever keys its agents read, so nothing else of it passes. The
- * home is the system's temporary folder, which is what Activepieces' `/tmp/`
- * is on the machine the engine runs on.
+ * own, the network mode and the allow list the guard reads, the list of what
+ * was propagated, and each of those variables the daemon has. A piece is
+ * third-party code, and the daemon's environment holds its own token and
+ * whatever keys its agents read, so nothing else of it passes. The home is the
+ * system's temporary folder, which is what Activepieces' `/tmp/` is on the
+ * machine the engine runs on.
  * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/sandbox/src/lib/create-sandbox-for-job.ts#L76-L121
  */
 export const sandboxEnv = (settings: EngineSettings = {}, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
   const propagated = settings.sandboxPropagatedEnvVars ?? [];
+  const allowList = settings.ssrfAllowList ?? [];
   return {
     HOME: tmpdir(),
+    AP_NETWORK_MODE: settings.networkMode ?? 'STRICT',
+    ...(allowList.length === 0 ? {} : { AP_SSRF_ALLOW_LIST: allowList.join(',') }),
     ...(propagated.length === 0 ? {} : { AP_SANDBOX_PROPAGATED_ENV_VARS: propagated.join(',') }),
     ...Object.fromEntries(propagated.flatMap((key) => {
       const value = env[key];
@@ -400,10 +413,12 @@ export const apply: Plugin['apply'] = async (host, options) => {
   }
   const first = [...fromInstalled];
 
+  const names = (value: unknown): string[] =>
+    (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && one !== '') : []);
   const channel = engine(host, {
-    sandboxPropagatedEnvVars: Array.isArray(options['sandboxPropagatedEnvVars'])
-      ? options['sandboxPropagatedEnvVars'].filter((one): one is string => typeof one === 'string' && one !== '')
-      : [],
+    networkMode: options['networkMode'] === 'UNRESTRICTED' ? 'UNRESTRICTED' : 'STRICT',
+    ssrfAllowList: names(options['ssrfAllowList']),
+    sandboxPropagatedEnvVars: names(options['sandboxPropagatedEnvVars']),
   });
   host.registerClose(() => { channel.stop(); });
 

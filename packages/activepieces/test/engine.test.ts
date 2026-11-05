@@ -224,13 +224,13 @@ describe('a call carries a file', () => {
     });
   });
 
-  it('turns a data: URI into a file, with no folder', async () => {
+  it('fetches a data: URI that is not base64, as the engine fetches any URL, with no folder', async () => {
     const answer = await ask(start(), run('read', { file: 'data:text/plain,hi' }));
 
-    expect(answer).toMatchObject({ type: 'ran', result: { filename: 'file.txt', text: 'hi', size: 2 } });
+    expect(answer).toMatchObject({ type: 'ran', result: { filename: 'unknown.txt', extension: 'txt', text: 'hi', size: 2 } });
   });
 
-  it('refuses a FILE value that leaves the folder, and names neither the folder nor the bytes', async () => {
+  it('refuses a FILE value that leaves the folder in the validator\'s words, naming neither the folder nor the bytes', async () => {
     const dir = madeFolder();
     const outside = join(tmpdir(), `${basename(dir)}-outside.txt`);
     writeFileSync(outside, 'outside-bytes');
@@ -238,15 +238,30 @@ describe('a call carries a file', () => {
 
     const said = failed(await ask(start(), run('read', { file: `../${basename(outside)}` }, dir)));
 
-    expect(said).toContain('is not a file in this session');
+    expect(JSON.parse(said)).toEqual({ file: [`Expected file url or base64 with mimeType, received: ../${basename(outside)}`] });
     expect(said).not.toContain(dir);
     expect(said).not.toContain('outside-bytes');
   });
 
-  it('refuses a FILE value that names a file when the call has no folder', async () => {
+  it('refuses a FILE value that names a file when the call has no folder, in the validator\'s words', async () => {
     const said = failed(await ask(start(), run('read', { file: 'notes.txt' })));
 
-    expect(said).toBe('notes.txt names a file, and this call has no attachments folder');
+    expect(JSON.parse(said)).toEqual({ file: ['Expected file url or base64 with mimeType, received: notes.txt'] });
+  });
+});
+
+describe('a call\'s input is made as Activepieces makes an action run\'s', () => {
+  it('refuses a key no prop has, a missing required prop, in the diagnosis\'s words', async () => {
+    expect(failed(await ask(start(), run('echo', { txt: 'hi' })))).toBe(
+      "Unknown properties: 'txt'.\nSuggestions: 'txt' → did you mean 'text'?. Valid properties for this action are:\n- text (SHORT_TEXT): Text\nPlease retry with correct property names. Missing required inputs: text (SHORT_TEXT).",
+    );
+    expect(failed(await ask(start(), run('echo', {})))).toBe(
+      'Cannot run action: Missing required inputs: text (SHORT_TEXT). Expected inputs: text (SHORT_TEXT, required).',
+    );
+  });
+
+  it('gives the action each value as its prop\'s type', async () => {
+    expect(await ask(start(), run('echo', { text: 42 }))).toMatchObject({ type: 'ran', result: { text: '42' } });
   });
 });
 

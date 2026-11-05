@@ -70,7 +70,9 @@
     "@activepieces/piece-smtp": "0.5.0",
     "@activepieces/piece-stripe": "0.9.0",
     "@activepieces/piece-telegram-bot": "0.9.1",
-    "@activepieces/piece-whatsapp": "1.0.1"
+    "@activepieces/piece-whatsapp": "1.0.1",
+    "dayjs": "1.11.9",
+    "ipaddr.js": "2.3.0"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"
@@ -97,6 +99,18 @@
             "pattern": "^@activepieces/piece-[a-z0-9][a-z0-9-]*(?:@[^@\\s]+)?$"
           },
           "description": "The package of each Activepieces piece this plugin offers, such as @activepieces/piece-resend. A version may follow the name, as in @activepieces/piece-postgres@0.5.1; the newest version is installed when none is written."
+        },
+        "networkMode": {
+          "type": "string",
+          "enum": ["STRICT", "UNRESTRICTED"],
+          "default": "STRICT",
+          "description": "Activepieces' AP_NETWORK_MODE for the engine: STRICT refuses every connection a piece makes to a private, loopback, link-local or multicast address, UNRESTRICTED makes none."
+        },
+        "ssrfAllowList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Activepieces' AP_SSRF_ALLOW_LIST: addresses and CIDR ranges a piece may reach under STRICT, such as 10.0.0.5 or 10.0.0.0/8."
         },
         "sandboxPropagatedEnvVars": {
           "type": "array",

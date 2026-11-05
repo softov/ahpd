@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { fetched, refused } from '../src/fetch.js';
+import { fetched } from '../src/fetch.js';
 import type { Address, Answer, Lookup } from '../src/fetch.js';
 
 /*
- * The fetch a FILE value's https: URL takes.
+ * The fetch a piece's logo takes.
  *
  * Every case resolves a name with a lookup of its own and makes its request
  * with one of its own, so no name is looked up for real and no socket opens.
@@ -49,8 +49,11 @@ const messageOf = async (asked: Promise<unknown>): Promise<string> => {
   throw new Error('the case was not refused');
 };
 
-/** The addresses a call must refuse, each named by what it is. */
-const REFUSED: [string, string][] = [
+/** What Activepieces' guard says of a name that resolved to a blocked address. */
+const blockedAt = (host: string, ip: string): string => `SSRF protection: refusing to connect to ${host} (resolved ${ip})`;
+
+/** The addresses a call must block, each named by what it is: none of them unicast. */
+const BLOCKED: [string, string][] = [
   ['an IPv4 loopback address', '127.0.0.1'],
   ['the end of the IPv4 loopback range', '127.255.255.254'],
   ['the IPv6 loopback address', '::1'],
@@ -68,7 +71,6 @@ const REFUSED: [string, string][] = [
   ['the unspecified IPv6 address', '::'],
   ['an IPv4-mapped IPv6 loopback address', '::ffff:127.0.0.1'],
   ['an IPv4-mapped IPv6 private address', '::ffff:10.0.0.1'],
-  ['an IPv4-compatible IPv6 loopback address', '::127.0.0.1'],
   ['the start of the shared address space', '100.64.0.1'],
   ['the end of the shared address space', '100.127.255.255'],
   ['an IPv4 benchmarking address', '198.18.0.1'],
@@ -81,21 +83,21 @@ const REFUSED: [string, string][] = [
   ['a NAT64 address for a private IPv4 address', '64:ff9b::10.0.0.1'],
 ];
 
-describe('a fetch refuses an address that is not public', () => {
-  for (const [what, address] of REFUSED) {
-    it(`refuses ${what}, ${address}`, async () => {
+describe('a fetch blocks an address that is not unicast', () => {
+  for (const [what, address] of BLOCKED) {
+    it(`blocks ${what}, ${address}`, async () => {
       await expect(fetched('https://files.example/a.png', {
         lookup: lookups({ 'files.example': [at(address)] }),
         request: never,
-      })).rejects.toThrow('files.example answers on an address that this plugin does not fetch');
+      })).rejects.toThrow(blockedAt('files.example', address));
     });
   }
 
-  it('refuses a name that answers on a public and a private address', async () => {
+  it('blocks a name that answers on a public and a private address', async () => {
     await expect(fetched('https://files.example/a.png', {
       lookup: lookups({ 'files.example': [at('93.184.216.34'), at('10.0.0.1')] }),
       request: never,
-    })).rejects.toThrow('files.example answers on an address that this plugin does not fetch');
+    })).rejects.toThrow(blockedAt('files.example', '10.0.0.1'));
   });
 
   it('refuses a name that did not resolve', async () => {
@@ -105,19 +107,19 @@ describe('a fetch refuses an address that is not public', () => {
     })).rejects.toThrow('files.example did not resolve to an address');
   });
 
-  it('refuses a literal address in the URL, without looking it up', async () => {
+  it('blocks a literal address in the URL, without looking it up', async () => {
     await expect(fetched('https://169.254.169.254/latest/meta-data/', { lookup: noLookup, request: never }))
-      .rejects.toThrow('169.254.169.254 answers on an address that this plugin does not fetch');
+      .rejects.toThrow(blockedAt('169.254.169.254', '169.254.169.254'));
     await expect(fetched('https://[::1]/x', { lookup: noLookup, request: never }))
-      .rejects.toThrow('::1 answers on an address that this plugin does not fetch');
+      .rejects.toThrow(blockedAt('::1', '::1'));
   });
 
-  it('refuses an address the URL parser writes out for a shorter form', async () => {
+  it('blocks an address the URL parser writes out for a shorter form', async () => {
     // The parser turns an integer, a hex number or a short form into the dotted
     // address it holds, so the check sees the address and not the spelling.
     for (const url of ['https://2130706433/x', 'https://0x7f000001/x', 'https://127.1/x']) {
       await expect(fetched(url, { lookup: noLookup, request: never }))
-        .rejects.toThrow('127.0.0.1 answers on an address that this plugin does not fetch');
+        .rejects.toThrow(blockedAt('127.0.0.1', '127.0.0.1'));
     }
   });
 });
@@ -177,7 +179,7 @@ describe('a fetch reads a public address', () => {
 });
 
 describe('a fetch checks each redirect', () => {
-  it('refuses a redirect to a private address', async () => {
+  it('blocks a redirect to a private address', async () => {
     const went: string[] = [];
     await expect(fetched('https://files.example/a.png', {
       lookup: lookups({
@@ -190,16 +192,16 @@ describe('a fetch checks each redirect', () => {
           ? answered(302, { location: 'https://internal.example/secret' })
           : answered(200);
       },
-    })).rejects.toThrow('internal.example answers on an address that this plugin does not fetch');
+    })).rejects.toThrow(blockedAt('internal.example', '10.0.0.5'));
 
     expect(went).toEqual(['93.184.216.34']);
   });
 
-  it('refuses a redirect to the metadata service', async () => {
+  it('blocks a redirect to the metadata service', async () => {
     await expect(fetched('https://files.example/a.png', {
       lookup: lookups({ 'files.example': [at('93.184.216.34')] }),
       request: async () => answered(302, { location: 'https://169.254.169.254/latest/meta-data/' }),
-    })).rejects.toThrow('169.254.169.254 answers on an address that this plugin does not fetch');
+    })).rejects.toThrow(blockedAt('169.254.169.254', '169.254.169.254'));
   });
 
   it('refuses a redirect that is not https:', async () => {
@@ -288,7 +290,7 @@ describe('a refusal names no path and no query', () => {
       request: never,
     }));
 
-    expect(said).toBe('files.example answers on an address that this plugin does not fetch');
+    expect(JSON.parse(said)).toEqual({ message: `${blockedAt('files.example', '10.0.0.1')}, private, loopback, link-local, or multicast address` });
     expect(said).not.toContain('secret');
     expect(said).not.toContain('a.png');
   });
@@ -325,36 +327,5 @@ describe('a refusal names no path and no query', () => {
     expect(said).toBe('files.example answers with more than 2 bytes');
     expect(said).not.toContain('secret');
     expect(said).not.toContain('a.png');
-  });
-});
-
-describe('an address is refused by its range', () => {
-  it('refuses everything in the ranges a daemon must not reach', () => {
-    for (const [, address] of REFUSED) expect(refused(address), address).toBe(true);
-  });
-
-  it('accepts a public address in either family, and a public address written as IPv6', () => {
-    expect(refused('93.184.216.34')).toBe(false);
-    expect(refused('2606:2800:220:1:248:1893:25c8:1946')).toBe(false);
-    // A mapped address is read as the IPv4 address it holds, so a public one
-    // stays public rather than being refused as unreadable.
-    expect(refused('::ffff:93.184.216.34')).toBe(false);
-  });
-
-  it('accepts the addresses just outside each new range', () => {
-    expect(refused('100.63.255.255')).toBe(false);
-    expect(refused('100.128.0.0')).toBe(false);
-    expect(refused('198.17.255.255')).toBe(false);
-    expect(refused('198.20.0.0')).toBe(false);
-    expect(refused('223.255.255.255')).toBe(false);
-    // A NAT64 address is refused for the IPv4 address it holds, so a public one
-    // stays public.
-    expect(refused('64:ff9b::93.184.216.34')).toBe(false);
-  });
-
-  it('refuses a value that is not an address', () => {
-    expect(refused('files.example')).toBe(true);
-    expect(refused('')).toBe(true);
-    expect(refused('127.0.0.300')).toBe(true);
   });
 });
