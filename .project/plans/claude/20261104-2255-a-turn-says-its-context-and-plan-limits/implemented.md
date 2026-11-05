@@ -59,6 +59,7 @@ A session's `_meta` carries the same keys and its account's plan from the handsh
 - task 03 - `OpenLogins.noted` and `onLimits` take a `PlanNote`, `{ quotaSnapshots?, account? }`, as `called` takes a `CallNote`, and a note may carry the account alone.
 - task 03 - a turn's end says the session's `_meta` once its usage request is done, not at `chat/turnComplete`.
 - task 03, review - the step 8 rule gave a `claude setup-token` login `{}`, because the CLI reads the plan type only for its own sign-in. That answer names a token source and no plan type, so the rule now says `{}` only for an API key or another provider. The two sources decide it and are not kept.
+- task 01, review - the CLI answers no `systemTools` and no `systemPromptSections`, so their tokens read as messages before any turn. Each counted category is now its rows, plus an entry for what the rows leave, and the messages are the only remainder.
 
 ## Left for later
 

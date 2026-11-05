@@ -119,7 +119,14 @@ const contextAnswer = (): Bag => ({
   maxTokens: 1000000,
   percentage: 25,
   categories: [
-    { name: 'Used', tokens: 50000, kind: 'used', color: '#000' },
+    // The counted categories add up to the total, as the CLI counts them.
+    { name: 'System prompt', tokens: 3000, kind: 'used', color: '#000' },
+    { name: 'System tools', tokens: 25000, kind: 'used', color: '#000' },
+    { name: 'MCP tools', tokens: 400, kind: 'used', color: '#000' },
+    { name: 'Custom agents', tokens: 700, kind: 'used', color: '#000' },
+    { name: 'Memory files', tokens: 1200, kind: 'used', color: '#000' },
+    { name: 'Skills', tokens: 500, kind: 'used', color: '#000' },
+    { name: 'Messages', tokens: 19200, kind: 'used', color: '#000' },
     { name: 'Free space', tokens: 120000, kind: 'free', color: '#000' },
     { name: 'Autocompact buffer', tokens: 30000, kind: 'buffer', color: '#000' },
     { name: 'MCP tools (deferred)', tokens: 8000, kind: 'deferred', color: '#000', isDeferred: true },
@@ -168,16 +175,50 @@ it('maps the answer to VS Code entries and the bar, leaving the messages out', (
     totalTokens: 50000,
     entries: [
       { kind: 'system', id: 'system:prompt:System prompt', label: 'System prompt', tokens: 3000 },
-      { kind: 'system', id: 'system:memory:/repo/CLAUDE.md', label: '/repo/CLAUDE.md', tokens: 1200 },
       { kind: 'toolDefinition', id: 'toolDefinition:Bash', label: 'Bash', tokens: 900 },
-      { kind: 'skill', id: 'skill:deploy', label: 'deploy', tokens: 500 },
-      { kind: 'subagent', id: 'subagent:reviewer', label: 'reviewer', tokens: 700 },
+      // The rows name one tool of the category; the rest is the category's own.
+      { kind: 'toolDefinition', id: 'category:System tools', label: 'System tools', tokens: 24100 },
       { kind: 'mcpServer', id: 'mcpServer:linear:mcp__linear__create_issue', label: 'mcp__linear__create_issue', tokens: 400 },
+      { kind: 'subagent', id: 'subagent:reviewer', label: 'reviewer', tokens: 700 },
+      { kind: 'system', id: 'system:memory:/repo/CLAUDE.md', label: '/repo/CLAUDE.md', tokens: 1200 },
+      { kind: 'skill', id: 'skill:deploy', label: 'deploy', tokens: 500 },
     ],
     compactions: { count: 0 },
   });
   // The size is the autocompact window, and the model's own limit is apart.
   expect(figure?.context).toEqual({ used: 50000, size: 200000, limit: 1000000, free: 120000, buffer: 30000, deferred: 8000 });
+});
+
+it('takes a category with no rows as one entry, so only the messages are left over', () => {
+  // The summary a CLI answers before any turn: no tool rows and no prompt sections.
+  const figure = contextOf({
+    totalTokens: 32878,
+    rawMaxTokens: 600000,
+    categories: [
+      { name: 'System prompt', tokens: 463, kind: 'used' },
+      { name: 'System tools', tokens: 25299, kind: 'used' },
+      { name: 'System tools (deferred)', tokens: 31915, kind: 'deferred', isDeferred: true },
+      { name: 'Custom agents', tokens: 61, kind: 'used' },
+      { name: 'Memory files', tokens: 889, kind: 'used' },
+      { name: 'Skills', tokens: 6166, kind: 'used' },
+      { name: 'Autocompact buffer', tokens: 33000, kind: 'buffer' },
+      { name: 'Free space', tokens: 534122, kind: 'free' },
+    ],
+    memoryFiles: [{ path: '/home/me/CLAUDE.md', type: 'User', tokens: 889 }],
+    agents: [{ agentType: 'reviewer', source: 'userSettings', tokens: 61 }],
+    skills: { skillFrontmatter: [{ name: 'deploy', source: 'plugin', tokens: 6166 }] },
+  });
+
+  const entries = figure?.attribution.entries ?? [];
+  expect(entries.map((one) => [one.id, one.tokens])).toEqual([
+    ['category:System prompt', 463],
+    ['category:System tools', 25299],
+    ['subagent:reviewer', 61],
+    ['system:memory:/home/me/CLAUDE.md', 889],
+    ['skill:deploy', 6166],
+  ]);
+  expect(entries.reduce((sum, one) => sum + one.tokens, 0)).toBe(32878);
+  expect(figure?.context).toMatchObject({ deferred: 31915 });
 });
 
 it('reads the SDK\'s own spelling of the same report', () => {

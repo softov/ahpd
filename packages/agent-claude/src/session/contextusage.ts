@@ -42,6 +42,20 @@ export interface ContextFigure {
   context: Bag;
 }
 
+/** The category the CLI counts the conversation under, which a reader counts as the remainder. */
+const MESSAGES = 'Messages';
+
+/** The kind of each category the CLI names; any other is part of the system prompt. */
+const CATEGORY_KINDS: Record<string, ContextEntry['kind']> = {
+  'System prompt': 'system',
+  'Memory files': 'system',
+  'MCP server instructions': 'system',
+  'System tools': 'toolDefinition',
+  'MCP tools': 'mcpServer',
+  'Custom agents': 'subagent',
+  Skills: 'skill',
+};
+
 /** A finite number, or nothing. A count of zero is a count. */
 const num = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -95,36 +109,58 @@ export const contextOf = (answer: unknown, limit?: number): ContextFigure | unde
   const rawMax = num(found.rawMaxTokens) ?? num(found.raw_max_tokens);
   const categories = list(found.categories).map(bag);
 
-  const entries: ContextEntry[] = [];
-  const add = (entry: ContextEntry | undefined): void => {
-    if (entry !== undefined) entries.push(entry);
+  /*
+   * The rows that break a category down, by the category's name. The CLI
+   * sends only some of them: the system tools and the prompt's sections are
+   * often absent, and the category alone says what they hold.
+   */
+  const details = new Map<string, ContextEntry[]>();
+  const add = (category: string, entry: ContextEntry | undefined): void => {
+    if (entry !== undefined) details.set(category, [...(details.get(category) ?? []), entry]);
   };
   for (const section of list(found.systemPromptSections).map(bag)) {
     const name = str(section.name) ?? '';
-    add(name === '' ? undefined : entryOf('system', `system:prompt:${name}`, name, section));
+    add('System prompt', name === '' ? undefined : entryOf('system', `system:prompt:${name}`, name, section));
   }
   for (const file of rows(found, 'memoryFiles', 'memory_files')) {
     const path = str(file.path) ?? '';
-    add(path === '' ? undefined : entryOf('system', `system:memory:${path}`, path, file));
+    add('Memory files', path === '' ? undefined : entryOf('system', `system:memory:${path}`, path, file));
   }
   for (const tool of list(found.systemTools).map(bag)) {
     const name = str(tool.name) ?? '';
-    add(name === '' ? undefined : entryOf('toolDefinition', `toolDefinition:${name}`, name, tool));
+    add('System tools', name === '' ? undefined : entryOf('toolDefinition', `toolDefinition:${name}`, name, tool));
   }
   for (const skill of skillRows(found.skills)) {
     const name = str(skill.name) ?? '';
-    add(name === '' ? undefined : entryOf('skill', `skill:${name}`, name, skill));
+    add('Skills', name === '' ? undefined : entryOf('skill', `skill:${name}`, name, skill));
   }
   for (const agent of list(found.agents).map(bag)) {
     const name = str(agent.agentType) ?? str(agent.agent_type) ?? '';
-    add(name === '' ? undefined : entryOf('subagent', `subagent:${name}`, name, agent));
+    add('Custom agents', name === '' ? undefined : entryOf('subagent', `subagent:${name}`, name, agent));
   }
   for (const tool of rows(found, 'mcpTools', 'mcp_tools')) {
     // A deferred tool's schema is not in the window, so it fills nothing.
     if (tool.isLoaded === false) continue;
     const name = str(tool.name) ?? '';
     const server = str(tool.serverName) ?? str(tool.server_name) ?? '';
-    add(name === '' ? undefined : entryOf('mcpServer', `mcpServer:${server}:${name}`, name, tool));
+    add('MCP tools', name === '' ? undefined : entryOf('mcpServer', `mcpServer:${server}:${name}`, name, tool));
+  }
+
+  /*
+   * The categories the CLI counted are what add up to the total, so each one
+   * other than the messages is its rows, and an entry of its own for what
+   * the rows do not cover. An answer with no counted category is its rows.
+   */
+  const counted = categories.filter((category) => str(category.kind) === 'used');
+  const entries: ContextEntry[] = counted.length === 0 ? [...details.values()].flat() : [];
+  for (const category of counted) {
+    const name = str(category.name) ?? '';
+    const tokens = num(category.tokens);
+    if (name === '' || name === MESSAGES || tokens === undefined) continue;
+    const rowsOf = details.get(name) ?? [];
+    entries.push(...rowsOf);
+    const rest = tokens - rowsOf.reduce((sum, one) => sum + one.tokens, 0);
+    if (rest > 0) entries.push({ kind: CATEGORY_KINDS[name] ?? 'system', id: `category:${name}`, label: name, tokens: rest });
   }
 
   const free = kindTokens(categories, 'free');
