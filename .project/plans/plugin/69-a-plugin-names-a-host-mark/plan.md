@@ -1,7 +1,7 @@
 ---
 title: A plugin names a brand mark the host ships
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-26
 revalidated: 2026-10-26
@@ -99,8 +99,8 @@ acp template { icon: { src: "mark:<name>" } } -> loader resolves -> template ico
 | [02 - An adapter falls back to its plugin's icon](task-02-an-adapter-takes-its-plugin-icon.md) | done | - |
 | [03 - An Activepieces piece shows its mark](task-03-a-piece-shows-its-mark.md) | done | 01 |
 | [04 - An ACP agent shows its vendor's mark](task-04-an-acp-agent-shows-its-mark.md) | done | 01 |
-| [05 - The engine names the template a record runs](task-05-the-engine-names-a-record-s-template.md) | implemented | 04 |
-| [06 - Black marks get a dark file, and GitHub gets a mark](task-06-black-marks-get-a-dark-file.md) | implemented | 03 |
+| [05 - The engine names the template a record runs](task-05-the-engine-names-a-record-s-template.md) | done | 04 |
+| [06 - Black marks get a dark file, and GitHub gets a mark](task-06-black-marks-get-a-dark-file.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -110,17 +110,17 @@ acp template { icon: { src: "mark:<name>" } } -> loader resolves -> template ico
 
 ## Resume state
 
-- **Done so far:** tasks 01-04 are merged in #102. Tasks 05 and 06 are built on `plugin/69-icons-fix`. See [implemented.md](implemented.md).
-- **Next action:** Softov reviews the fix PR. After the merge, set the plan to `built` and run the by-hand checks in `.project/pending/plugin-69-mark-checks.md`.
+- **Done so far:** tasks 01-04 are merged in #102, and tasks 05 and 06 in #104. Softov passed the checks by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none. The plan is built.
 - **Open questions:** none. What waits is in [deferred.md](deferred.md).
 - **Watch out for:** ahpw must read a row's `icons` before `icon`, or a record shows no dark file.
 
 ## Final verification checklist
 
-- [ ] `{ "src": "mark:whatsapp" }` in a manifest gives a `data:image/svg+xml` icon in the plugins channel row.
-- [ ] The GitHub, Jira, Linear, Resend and WhatsApp connectors show their marks, and the CDN is not fetched for them.
-- [ ] The Resend and GitHub marks read in ahpw's dark theme.
-- [ ] A webhook connector with no adapter icon shows the webhook plugin's icon.
-- [ ] Softov's existing Codex record shows the OpenAI mark in ahpw, in light and dark.
+- [x] `{ "src": "mark:whatsapp" }` in a manifest gives a `data:image/svg+xml` icon in the plugins channel row.
+- [x] The GitHub, Jira, Linear, Resend and WhatsApp connectors show their marks, and the CDN is not fetched for them.
+- [x] The Resend and GitHub marks read in ahpw's dark theme.
+- [x] A webhook connector with no adapter icon shows the webhook plugin's icon.
+- [x] Softov's existing Codex record shows the OpenAI mark in ahpw, in light and dark.
 - [x] Each new mark has a row in `.project/pending/plugin-58-icon-curation.md`.
 - [x] `plans/index.md` updated.
