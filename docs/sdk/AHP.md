@@ -548,7 +548,7 @@ carries the `id`. Four kinds are served, one per `SessionInputRequestKind`:
 | `toolConfirmation` | a tool call waiting to be allowed, raised where a backend stops a call to ask a person (`canUseTool`) | `chat/toolCallConfirmed`, keyed by `toolCall.toolCallId` |
 | `chatInput` | a question the agent asked, raised where a backend puts an elicitation to a person | `chat/inputCompleted`, keyed by `request.id`, with `response: 'accept' \| 'decline' \| 'cancel'` |
 | `toolClientExecution` | a running call to a tool an active client provides, raised by the client call holder as the frame reports it | `chat/toolCallComplete`, keyed by `toolCall.toolCallId`, from the client the call was reported against |
-| `toolAuthentication` | a call blocked mid-run on an MCP server's sign-in, raised where that server's state turns `authRequired` | the `authenticate` command, not a `chat/*` action: the host carries on with `chat/toolCallAuthResolved` and lifts the entry with `session/inputNeededRemoved` |
+| `toolAuthentication` | a call blocked mid-run on an MCP server's sign-in. The host raises it from the call's own state once a `chat/toolCallAuthRequired` leaves the call waiting, under VS Code's id `toolAuthentication:<chat>:<turn>:<call>`, with the turn and the call, as VS Code's input-needed contribution raises it | the `authenticate` command, not a `chat/*` action: the call goes on with `chat/toolCallAuthResolved` and the host lifts the entry with `session/inputNeededRemoved` |
 
 All four are held in a map keyed by id, never in one slot: the CLI calls
 `canUseTool` per tool call, and an agent that fires two in parallel asks twice

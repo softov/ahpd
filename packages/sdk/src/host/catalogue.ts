@@ -58,6 +58,8 @@ export interface Catalogue {
   answerMirrored(chat: string, requestId: string): void;
   /** The session's entries for a chat that its running turn no longer holds open, taken down. */
   askedLeft(chat: string): void;
+  /** The session's entry for a tool call of the chat that waits on a sign-in, raised under VS Code's id. */
+  syncToolAuthenticationNeeded(chat: string, action: Record<string, unknown>): void;
   /** What a running session's state holds of its folder and its backend, said by action where it moved. */
   factsMoved(uri: string): void;
   activityOf(held: Held): string | undefined;
@@ -1611,9 +1613,39 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }
   };
 
+  /**
+   * The session's entry for a tool call of the chat that waits on a sign-in,
+   * raised from the call's own state as the reference host's input-needed
+   * contribution raises it, under its id: `toolAuthentication:<chat>:<turn>:
+   * <call>`, with the turn and the call. Read after each of the chat's tool
+   * call actions; `askedLeft` takes it down once the call no longer waits.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L105-L156
+   */
+  const syncToolAuthenticationNeeded = (chat: string, action: Bag): void => {
+    if (typeof action.type !== 'string' || !action.type.startsWith('chat/toolCall')) return;
+    const session = sessionHolding(chat);
+    const state = session === undefined ? undefined : ctx.stateOf(session);
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    if (session === undefined || state === undefined || turn === undefined || turn.id !== action.turnId) return;
+    const toolCall = (Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : [])
+      .map((part) => part.toolCall as Bag | undefined)
+      .find((one) => one !== undefined && one.toolCallId === action.toolCallId);
+    if (toolCall?.status !== 'auth-required') return;
+    const request = {
+      id: `toolAuthentication:${chat}:${String(turn.id)}:${String(toolCall.toolCallId)}`,
+      kind: 'toolAuthentication',
+      chat,
+      turnId: turn.id,
+      toolCall,
+    };
+    const held = (Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : []).find((one) => one.id === request.id);
+    if (held !== undefined && isDeepStrictEqual(held, request)) return;
+    ctx.dispatch(session, { type: 'session/inputNeededSet', request });
+  };
+
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf, chatMoved, answerMirrored, askedLeft, factsMoved, activeCount,
+    chatCatalogOf, chatMoved, answerMirrored, askedLeft, syncToolAuthenticationNeeded, factsMoved, activeCount,
     activityOf, sessionComing, sessionAdded, summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };

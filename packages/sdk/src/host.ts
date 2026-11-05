@@ -1006,6 +1006,7 @@ export function createHost(options: HostOptions): Host {
     if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
       ctx.askedLeft(channel);
+      ctx.syncToolAuthenticationNeeded(channel, action);
       ctx.chatMoved(channel);
     }
     // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
