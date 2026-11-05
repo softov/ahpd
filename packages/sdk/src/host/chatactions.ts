@@ -1589,19 +1589,17 @@ export function chatAction(
       }
       /*
        * On a worker's chat, the worker's turn, which this host opened and
-       * holds, is the one the stop ends. The backend is then told to stop that
+       * holds, is the one the stop ends, as the reference host ends every
+       * active turn a client stops. The backend is then told to stop that
        * worker when it can stop one, named by the call its chat was opened
-       * for, and otherwise to stop the lead turn that runs it.
+       * for, and otherwise to stop the lead turn that runs it, where one runs.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
        */
       const call = toolCallOfSubagentChat(channel);
       const lead = String((ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined)?.id ?? '');
-      if ((session.stopWorker === undefined || call === undefined) && lead === '') {
-        no(`Nothing is running on ${session.chatUri} to stop`);
-        break;
-      }
       stopped(String(activeHeld.id ?? ''));
       if (session.stopWorker !== undefined && call !== undefined) session.stopWorker(call);
-      else aborted(session);
+      else if (lead !== '') aborted(session);
       break;
     }
     /**

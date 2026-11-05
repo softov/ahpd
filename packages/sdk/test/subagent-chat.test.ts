@@ -722,6 +722,31 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
   expect(told).toEqual([]);
 });
 
+/*
+ * A stop of a worker chat's running turn is said and ends that turn, as VS
+ * Code's host takes every cancel of an active turn; a backend that can stop
+ * neither the worker nor an idle lead turn is asked for nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+ */
+it('ends a worker\'s turn on its stop when nothing can be asked to stop it, and refuses nothing', async () => {
+  const { ask, uri, lead } = await busyHost();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  const running = String(opened.snapshot.state.activeTurn?.id);
+  await settle();
+  told.length = 0;
+
+  await ask('dispatchAction', { channel: worker, clientSeq: 4, action: { type: 'chat/turnCancelled', turnId: running, duration: 0 } });
+  await settle();
+  expect(saidBack(worker).filter((one) => one.clientSeq === 4)).toEqual([{ turnId: running, clientSeq: 4, rejectionReason: undefined }]);
+  const after = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: unknown } } };
+  expect(after.snapshot.state.activeTurn).toBeUndefined();
+  expect(told).toEqual([]);
+  finishWorker();
+  await settle();
+});
+
 it('stops nothing when a stop on a running worker\'s chat names another turn, and says it back', async () => {
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
