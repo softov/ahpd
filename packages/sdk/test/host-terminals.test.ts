@@ -148,6 +148,27 @@ describe('a command typed into the conversation', () => {
     await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
   });
 
+  /*
+   * A terminal this host does not hold is closed already: two windows
+   * closing the same terminal are both answered `null`, as the reference
+   * host answers them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L937-L947
+   */
+  it('answers null for a terminal it does not hold, as for one it closed', async () => {
+    const pty = fakePty();
+    const { client } = await shelled(pty.spawn);
+    const uri = 'ahp-terminal:/twice';
+    const made = client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    });
+    pty.say('$ ');
+    await made;
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: uri } })).resolves.toBeNull();
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: uri } })).resolves.toBeNull();
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: 'ahp-terminal:/never' } })).resolves.toBeNull();
+  });
+
   /** Every terminal the root's last list names, with its lifecycle. */
   const rootList = (p: ReturnType<typeof peer>): { resource: string; lifecycle?: { status: string } }[] =>
     (actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)?.action.terminals as

@@ -695,11 +695,16 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
       if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return null;
     },
+    /*
+     * A terminal closed, and one this host does not hold is closed already,
+     * answered `null` either way, as the reference host answers two windows
+     * closing the same terminal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L937-L947
+     */
     disposeTerminal: async (params) => {
       const uri = String(params.channel ?? '');
       const terminal = terminals.get(uri);
-      if (!terminal)
-        throw new RpcError(-32008, `No terminal at ${uri}`);
+      if (!terminal) return null;
       terminal.close();
       terminals.delete(uri);
       log(`closed ${uri}`);

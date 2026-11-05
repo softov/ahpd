@@ -122,7 +122,7 @@ There is no `ahpd terminal`. A terminal is driven over the protocol, and the ver
 | Command | What it does |
 | --- | --- |
 | `createTerminal` | Open a shell, under the URI the client chose, in the directory it names - any of them, or the host's own when it names none |
-| `disposeTerminal` | End one and take it off the root list. `-32008 No terminal at <uri>` when there is none |
+| `disposeTerminal` | End one and take it off the root list. A terminal this host does not hold is closed already, answered `null` as one it closed is, as VS Code's host answers it |
 | `subscribe` | The snapshot - state and scrollback - and every action after it |
 | a `!command` in a turn | Run one command in a terminal of its own and read it back as the turn's answer |
 | `ahp_terminals` | Read-only: the terminals this host has open, for the model of a session - [TOOLS.md](TOOLS.md) |
