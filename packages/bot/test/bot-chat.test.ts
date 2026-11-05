@@ -373,9 +373,10 @@ it('tells whoever answers the chat the words and the chat they were said in, and
 /*
  * A turn whose work failed ends as failed, with its error part, as the
  * reference host ends a failed send with `chat/error` (agentSideEffects.ts
- * L1854-L1860 at a4e689ae), and a read back keeps it failed.
+ * L1854-L1860 at a4e689ae) and types the part `sendFailed` (L2564-L2573 at
+ * 6b68d3fe), and a read back keeps it failed.
  */
-it('ends a turn as failed, in the words of what failed', async () => {
+it('ends a turn as failed, in the words of what failed, typed as VS Code types a failed send', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -387,7 +388,7 @@ it('ends a turn as failed, in the words of what failed', async () => {
   chat.fail?.('the model call failed');
 
   const failed = actions(notes, CHAT).find((one) => one['type'] === 'chat/error');
-  expect(failed).toMatchObject({ turnId: 't1', part: { kind: 'error', error: { message: 'the model call failed' } } });
+  expect(failed).toMatchObject({ turnId: 't1', part: { kind: 'error', error: { errorType: 'sendFailed', message: 'the model call failed' } } });
   expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/turnComplete')).toBe(false);
   const state = await stateOf(client);
   expect(state['turns']).toMatchObject([{ id: 't1', state: 'error' }]);

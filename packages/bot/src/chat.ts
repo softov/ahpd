@@ -821,13 +821,15 @@ export function botChatAgent(
       },
       /*
        * A turn whose work failed ends as failed, with an error part, as the
-       * reference host ends a failed send with `chat/error`.
+       * reference host ends a failed send with `chat/error`, and the part's
+       * type is the one it gives a failed send.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1860
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2573
        */
       fail: (message) => {
         const held = open;
         if (held === undefined) return;
-        finish(held, 'error', [{ kind: 'error', error: { errorType: 'turnFailed', message } }]);
+        finish(held, 'error', [{ kind: 'error', error: { errorType: 'sendFailed', message } }]);
       },
       working: (chat, title) => {
         const held = open;
