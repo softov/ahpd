@@ -3,6 +3,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
+import { thinkingFor } from './config.js';
 import { customizationsOf, rootOf } from './customizations.js';
 import { configDirOf, diskOf, managedDirOf } from './disk.js';
 import { watchFolders } from './watch.js';
@@ -393,8 +394,13 @@ export function createServers(ctx: SessionContext): Servers {
       .map((raw) => {
         const model = bag(raw);
         // `value`, not `id`. Reading the wrong name costs every model there
-        // is and leaves a picker that offers nothing.
-        return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
+        // is and leaves a picker that offers nothing. Each with the thinking
+        // control it supports, as the probe reads it.
+        return {
+          id: str(model.value) ?? '',
+          name: str(model.displayName) ?? str(model.value) ?? '',
+          ...thinkingFor(list(model.supportedEffortLevels).filter((one): one is string => typeof one === 'string')),
+        };
       })
       .filter((model) => model.id !== '');
     if (ctx.options.offerModels) ctx.offered = await ctx.options.offerModels(ctx.offered);

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
+  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk,
   serving, settle, running,
 } from './support/host.js';
 
@@ -70,6 +70,49 @@ describe('what the harness offers', () => {
     // models before any client has connected, so the change is dispatched to
     // nobody - and the snapshot above is how every client actually finds out.
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
+  });
+
+  /*
+   * VS Code publishes its agents when the whole list differs from the last one
+   * published, a model renamed under its id among the changes, and publishes
+   * an empty catalog a source answered.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
+   */
+  it('says the agent list when a handshake moves it whole, a rename and an empty answer among the moves', async () => {
+    let models: { id: string; name: string }[] = [{ id: 'a', name: 'A' }];
+    let handshake: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          handshake = start.onHandshake;
+          return { ...base.create(start), models: () => models };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged')
+      .map((n) => ((n.params as { action: { agents: { models: { id: string; name: string }[] }[] } }).action.agents[0]?.models ?? [])
+        .map((one) => `${one.id}:${one.name}`));
+
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A']);
+    models = [{ id: 'a', name: 'A renamed' }];
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A renamed']);
+    const before = said().length;
+    handshake?.();
+    expect(said()).toHaveLength(before);
+    models = [];
+    handshake?.();
+    expect(said().at(-1)).toEqual([]);
+    await host.close();
   });
 
   it('gives each model its own thinking control, from what that model supports', async () => {

@@ -22,6 +22,40 @@ export const EFFORT_LABELS: Record<typeof EFFORTS[number], string> = {
   low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
 };
 
+/**
+ * How hard *this* model can be told to think, as its own config schema.
+ *
+ * Per model and not per session, which is the whole point: the CLI reports a
+ * different `supportedEffortLevels` for each - some take all five, some take
+ * one, and some take none - so a single session-wide effort control offers
+ * levels the chosen model may not have, and accepts one it will then ignore.
+ * A model that supports none gets no schema and a client draws no control,
+ * which is the honest form of "this one does not think harder on request".
+ * The boot probe and every session's handshake read a model this one way, so
+ * the list a handshake answers is the list the probe did.
+ *
+ * `thinkingLevel` is the key, because that is the one the reference client's
+ * picker writes into `ModelSelection.config` for both of its providers.
+ */
+export const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
+  if (efforts.length === 0) return {};
+  return {
+    configSchema: {
+      type: 'object',
+      properties: {
+        thinkingLevel: {
+          type: 'string',
+          title: 'Thinking Level',
+          description: 'Controls how much reasoning effort Claude uses.',
+          enum: [...efforts],
+          enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
+          ...(efforts.includes('high') ? { default: 'high' } : {}),
+        },
+      },
+    },
+  };
+};
+
 /** One client-generated script, sourced before every shell command. */
 interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 

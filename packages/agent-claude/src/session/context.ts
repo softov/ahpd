@@ -1,6 +1,7 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Activity, BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
+import type { OfferedModel } from '../models.js';
 import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
@@ -112,7 +113,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   presetOf?: () => Bag;
   /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
-  offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
+  offerModels?: (cli: OfferedModel[]) => Promise<OfferedModel[]>;
   /**
    * The Claude logins the agent's record may name, and whose agent it is.
    *
@@ -320,8 +321,8 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   gone: string | undefined;
   /** What this session has been told the CLI can do, by customization. */
   customizations: Bag[];
-  /** The models the CLI offered, as this session offers them. */
-  offered: { id: string; name: string }[];
+  /** The models the CLI offered, as this session offers them, each with the thinking control it supports. */
+  offered: OfferedModel[];
   /*
    * The declared Claude options this session runs on, by field.
    *

@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { customizationsOf, EFFORT_LABELS, EFFORTS } from './session.js';
+import { customizationsOf } from './session.js';
+import { thinkingFor } from './session/config.js';
 import { configDirOf, diskOf, managedDirOf } from './session/disk.js';
 import type { Account, Offered } from '@ahpd/sdk';
 import { bag, isRecord, str } from '@ahpd/sdk';
@@ -14,38 +15,6 @@ import { bag, isRecord, str } from '@ahpd/sdk';
  */
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-
-/**
- * How hard *this* model can be told to think, as its own config schema.
- *
- * Per model and not per session, which is the whole point: the CLI reports a
- * different `supportedEffortLevels` for each - some take all five, some take
- * one, and some take none - so a single session-wide effort control offers
- * levels the chosen model may not have, and accepts one it will then ignore.
- * A model that supports none gets no schema and a client draws no control,
- * which is the honest form of "this one does not think harder on request".
- *
- * `thinkingLevel` is the key, because that is the one the reference client's
- * picker writes into `ModelSelection.config` for both of its providers.
- */
-const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
-  if (efforts.length === 0) return {};
-  return {
-    configSchema: {
-      type: 'object',
-      properties: {
-        thinkingLevel: {
-          type: 'string',
-          title: 'Thinking Level',
-          description: 'Controls how much reasoning effort Claude uses.',
-          enum: [...efforts],
-          enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
-          ...(efforts.includes('high') ? { default: 'high' } : {}),
-        },
-      },
-    },
-  };
-};
 
 /**
  * The account the CLI is signed in as, as `Offered.account`.

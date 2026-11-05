@@ -3,6 +3,7 @@ import { accountKey } from './root.js';
 import { Status, idFor, idOf, titleFrom, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { statSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { ChangesSummary } from '../types/changes.js';
 import type { Agent, Listed } from '../types/agent.js';
@@ -849,10 +850,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     finally { summarizing.delete(uri); }
   };
   /**
-   * Fill in the models, once there is a CLI to ask.
-   *
-   * Only when they actually change: `root/agentsChanged` on every handshake
-   * would have every client re-reading the same list once per session created.
+   * Fill in the models a CLI answered at its handshake, an empty list among
+   * them, and say the agent list when it differs whole from the one last
+   * said, as the reference host publishes its agents: a model renamed or
+   * given other limits under its id is a change, and the same list said again
+   * is none, so every handshake does not have every client re-read it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
    */
   const learnModels = (uri: string): void => {
     const session = sessions.get(uri);
@@ -861,16 +864,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (!lead || !owner)
       return;
     const found = lead.models();
-    if (found.length === 0)
+    about(owner.provider).models = found;
+    const agents = ctx.descriptors();
+    if (isDeepStrictEqual(agents, ctx.stateOf(ROOT)?.agents))
       return;
-    const learnt = about(owner.provider);
-    const same = found.length === learnt.models.length
-      && found.every((model, index) => model.id === learnt.models[index]?.id);
-    if (same)
-      return;
-    learnt.models = found;
     ctx.log(`${owner.provider}: ${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
-    ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents: ctx.descriptors() });
+    ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents });
   };
 
   /**
