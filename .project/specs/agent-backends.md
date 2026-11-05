@@ -260,6 +260,34 @@ THEN a pi or ACP session is offered it, and a call puts the questions on the cha
 AND a cofold session is offered the host's `ask_user` in place of cofold's own tool of that name
 AND a Claude session is not offered it, because this backend keeps its own question tool for now
 The reason: a request the host holds is settled by the host, and only it can send `chat/inputRequested` for the chat the session runs in. Leaving Claude its own tool is a deferred change, in the plan `host/20261103-1620-an-agent-asks-the-person`.
+### A backend takes the host's shell, or keeps its own
+
+WHEN the root config sets `enableCustomTerminalTool`, the host is not Windows, and the host has a terminal store
+THEN `Start.tools` carries `bash`, `read_bash`, `write_bash`, `bash_shutdown`, `list_bash` and the other shell's primary, each marked `overridesBuiltInTool`
+AND a backend with a tool of the same name replaces its own tool with the host's
+AND Claude disallows `Bash` and aliases it to `mcp__ahp__bash`
+AND pi drops its own `bash` and `powershell` for the host's
+AND a call of one shows the terminal it opened through `opened`, and keeps it in the content of `chat/toolCallComplete`.
+WHEN any of the three is not so
+THEN the tools are not offered, and a backend keeps its own shell.
+The reason: the reference host's terminal tool takes the place of the harness's own.
+A backend that kept both would run the model's commands in a shell the person cannot watch.
+
+### An async command is a background row that wakes the session
+
+WHEN a model calls the shell tool with `mode=async`
+THEN the call is answered at once with the shell id, and with no output
+AND that shell stays busy until the command ends, so the next call opens another
+AND the command is a background row on the chat, with the command and the terminal it runs in
+AND `vscode/stopBackgroundWork` interrupts it, and the row goes once the command has really ended
+AND the end begins a turn that names the command, its exit code and the end of its output, as a wake's turn is begun
+AND that turn acts as the person whose turn started the command
+AND that turn queues behind a turn that is running, and leaves the chat's wake as it was
+AND no turn begins when the host is closing, or when the chat or the session is closed.
+WHEN the mode is `sync` or absent
+THEN the call waits for the command and answers with its output, as it always has.
+The reason: the reference host's description promises `mode=async`, and its own tool does not build it.
+A client draws a command that outlives its call as background work.
 
 ### A terminal that a tool result names stays
 

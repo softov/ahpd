@@ -905,7 +905,9 @@ describe('a session read from its transcript', () => {
      */
     expect(call?.status).toBe('completed');
     expect(call?.success).toBe(false);
-    expect(call?.error).toMatchObject({ message: 'boom' });
+    // Only a refused call carries an `error`, as VS Code's Claude mapper
+    // completes one; a call that ran and failed says so in `success`.
+    expect(call?.error).toBeUndefined();
     // The sentence the row draws, and the answer to whether anybody is being
     // asked. Both required, and a transcript full of calls without them is a
     // transcript of rows with nothing on them.

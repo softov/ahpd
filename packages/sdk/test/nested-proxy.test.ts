@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -256,12 +256,11 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
   const types = seen.filter(({ channel }) => channel === 'chat').map(({ action }) => action.type);
-  expect(types).toContain('chat/turnStarted');
+  // The start is the outer host's to say, so the inner host's echo of it is
+  // not carried out a second time.
+  expect(types).not.toContain('chat/turnStarted');
   expect(types).toContain('chat/responsePart');
   expect(types).toContain('chat/turnComplete');
-  const began = seen.find(({ action }) => action.type === 'chat/turnStarted')?.action;
-  expect(began?.turnId).toBe('t1');
-  expect(began?.message?.text).toBe('hello world');
   // The streamed text, as the inner backend wrote it: same chunks, same turn.
   const delta = seen.filter(({ action }) => action.type === 'chat/delta').map(({ action }) => String(action.content)).join('');
   expect(delta).toBe('hello world');
@@ -865,6 +864,41 @@ it('carries a read of the lead chat to the host inside, which answers it, and re
   expect(carried('chat/isArchivedChanged')).toEqual([]);
   expect(told('chat/isArchivedChanged').map((one) => one.rejectionReason))
     .toEqual(['Only a known independently manageable non-default chat can be archived.']);
+  await host.close();
+});
+
+/*
+ * The session's own read and archived bits are the host inside's too, as the
+ * host running a session is the one producer of its state in VS Code's designs
+ * across hosts: a client's read and archive of the session go there, and the
+ * bit the host inside says, at the client's action or a turn's end, is the
+ * session's out here, said once.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+ */
+it('carries a read and an archive of the session to the host inside, whose bits the session holds', async () => {
+  const inner = innerHost(backend());
+  const { host, client, dispatch, told } = await outside(inner);
+  const session = 'ahp-session:/outer';
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  await until(() => told('chat/turnComplete').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await settleInner();
+  const carried = (type: string): Bag[] => inner.messages
+    .filter((message) => message.method === 'dispatchAction' && message.params?.action?.type === type);
+  // The turn's end moved the session's read bit inside, and a client heard it once.
+  expect(told('session/isReadChanged').map((one) => one.action.isRead)).not.toContain(true);
+  expect(told('session/isReadChanged').length).toBeLessThanOrEqual(1);
+
+  await dispatch(2, { type: 'session/isReadChanged', isRead: true }, session);
+  await until(() => told('session/isReadChanged').some((one) => one.origin?.clientSeq === 2));
+  expect(carried('session/isReadChanged').map((message) => message.params.action)).toEqual([{ type: 'session/isReadChanged', isRead: true }]);
+  const read = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: Bag } };
+  expect(Number((read.snapshot.state.summary as Bag | undefined)?.status ?? read.snapshot.state.status) & Status.IsRead).toBe(Status.IsRead);
+
+  await dispatch(3, { type: 'session/isArchivedChanged', isArchived: true }, session);
+  await until(() => told('session/isArchivedChanged').some((one) => one.origin?.clientSeq === 3));
+  expect(carried('session/isArchivedChanged').map((message) => message.params.action)).toEqual([{ type: 'session/isArchivedChanged', isArchived: true }]);
+  expect(told('session/isArchivedChanged').filter((one) => one.origin?.clientSeq === 3).map((one) => one.rejectionReason)).toEqual([undefined]);
   await host.close();
 });
 
@@ -1758,13 +1792,14 @@ it('a nested session whose folders change starts the host inside again, and disp
   port.done();
 });
 
-it('a truncate of a nested session is refused, and disposes nothing inside the machine', async () => {
+it('a truncate of a nested session is said, and disposes nothing inside the machine', async () => {
   const port = scriptedPort([PROVIDER], { turns: true });
   const dir = join(port.dir, 'sessions');
   /*
    * The proxy answers no `endPoint`, so this host cannot name the point in the
-   * machine's own conversation to cut back to, and the action is refused. What
-   * it must not do on the way to that answer is close the session as a removal:
+   * machine's own conversation to cut back to, and the cut is said all the
+   * same while the machine keeps its history. What it must not do on the way
+   * to that answer is close the session as a removal:
    * the turn it read back is the machine's, and a dispose there takes the whole
    * conversation with it.
    */
@@ -1786,9 +1821,9 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   await until(() => port.read().length > 0, 1000);
   /*
    * And the turn, which this host reads off the snapshot the machine answers
-   * with. Waiting for it is what makes the refusal below the one this case is
-   * about: a truncate that arrives before the session is up is refused for
-   * having no such turn, which says nothing about what a rewind would do.
+   * with. Waiting for it is what makes the cut the one this case is about: a
+   * truncate that arrives before the session is up is refused for having no
+   * such turn, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
@@ -1801,9 +1836,10 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
     method: 'dispatchAction',
     params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/truncated', turnId: 't1' } },
   });
-  const refused = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 1000);
-  expect(String(refused()?.rejectionReason)).toMatch(/rewind/);
+  const said = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action'
+    && (params?.action as Bag | undefined)?.type === 'chat/truncated')?.params;
+  await until(() => said() !== undefined, 1000);
+  expect(said()?.rejectionReason).toBeUndefined();
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
@@ -1818,6 +1854,13 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
  */
 it('a command typed into a nested session runs in the host inside, and in no terminal out here', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-nested-bang-'));
+  /*
+   * The folder as the machine names it, which a real machine mounts. The host
+   * inside here runs on this same runner, so on Windows the `/c/...` path it is
+   * handed is made where that host reads it, on the current drive.
+   */
+  const mounted = resolve(machinePathOf(dir));
+  mkdirSync(mounted, { recursive: true });
   const inner = innerHost(backend(), { terminals: shellTerminals() });
   const opened: string[] = [];
   const host = createHost({
@@ -1853,6 +1896,7 @@ it('a command typed into a nested session runs in the host inside, and in no ter
     inner.crash(0, 'SIGTERM');
     await host.close();
     rmSync(dir, { recursive: true, force: true });
+    if (mounted !== dir) rmSync(mounted, { recursive: true, force: true });
   }
 });
 

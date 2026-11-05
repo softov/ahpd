@@ -1,7 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
-import { bag, str, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
+import { bag, steerPart, str, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -420,18 +420,34 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       /*
        * A steering message the CLI took in at a tool call, which comes back
        * marked `isQueuedCommand` and is no turn of its own: its answer is the
-       * turn's it steered, as it was live. One the CLI ran after the turn's last
-       * answer is a prompt of its own here, and the host's record of the turns
-       * a chat began puts it back in the turn it steered.
+       * turn's it steered, as it was live, and the turn shows its steer part where
+       * it was taken in, under the id it was handed to the CLI with, as the
+       * live turn does. One the CLI ran after the turn's last answer is a
+       * prompt of its own here, and the host's record of the turns a chat
+       * began puts it back in the turn it steered.
        * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
        */
-      if (open !== undefined && frame.isQueuedCommand === true) continue;
+      if (open !== undefined && frame.isQueuedCommand === true) {
+        open.responseParts = [...(open.responseParts as Bag[]), steerPart(str(frame.uuid) ?? `${String(open.id)}:${String((open.responseParts as Bag[]).length)}`, said)];
+        continue;
+      }
 
+      /*
+       * A task's end, which the CLI saves as a user frame with origin
+       * `task-notification`: its message is the task's own summary, one line,
+       * and its origin says the system made it, as the live turn's does. The
+       * summary is an element of the text; a frame without one, or with an
+       * empty one, keeps its whole text rather than open a turn with nothing.
+       */
+      const notice = str(bag(frame.origin).kind) === 'task-notification';
+      const summary = notice ? /<summary>([\s\S]*?)<\/summary>/.exec(said)?.[1]?.trim() : undefined;
       const opened: WireTurn<Turn> = {
         id: str(frame.uuid) ?? `u${built.length}`,
         startedAt: at,
         // Who produced it, which `Message` requires and this never sent.
-        message: { text: said, origin: { kind: 'user' } },
+        message: notice
+          ? { text: summary === undefined || summary === '' ? said : summary, origin: { kind: 'systemNotification' } }
+          : { text: said, origin: { kind: 'user' } },
         responseParts: [],
         // A turn out of a transcript is one that already happened, so it is
         // complete by definition. `Turn.state` is required and used to be

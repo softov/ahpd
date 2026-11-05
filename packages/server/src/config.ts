@@ -19,9 +19,9 @@ import type { ProxySetting } from './proxy/providers.js';
  * default.
  */
 export interface HttpSetting {
-  /** The port the API is bound to. Absent is the daemon's own port. */
+  /** The port of its own listener. Absent is a shared listener. */
   port?: number;
-  /** The address the API's own listener binds. Absent is the daemon's host. */
+  /** The address its own listener binds. Absent is the daemon's host. */
   host?: string;
 }
 
@@ -378,6 +378,14 @@ export interface Config {
    */
   httpApi?: boolean | HttpSetting;
   /**
+   * Whether the model API is served, and where.
+   *
+   * `true`, or no `port`, is the listener of the HTTP API, or the daemon's own
+   * when the HTTP API is off; `{ "port": N }` is a listener of its own. Absent
+   * is off.
+   */
+  modelApi?: boolean | HttpSetting;
+  /**
    * What `/mcp` serves to a person's MCP client.
    *
    * `none`, the default, answers 404 there and leaves the path to nobody.
@@ -388,17 +396,7 @@ export interface Config {
   mcpTools?: 'none' | 'all';
   /** Where the plugins' routes are served. Absent is the daemon's own listener. */
   routes?: RoutesSetting;
-  /**
-   * The providers this proxy calls, and the model names that point at them.
-   *
-   * A provider is an endpoint and the APIs it answers in; a model name is
-   * `<maker>/<name>` and lists the providers serving it, each under that
-   * provider's own model id. Three providers are built in and are there without
-   * this key, so the proxy knows where it would call before anybody configures
-   * anything, and an entry here replaces one of them whole or adds one that is
-   * not built in. A key is named by the environment variable holding it and is
-   * never written here.
-   */
+  /** The model names the model API serves, each mapped to connectors. */
   modelProxy?: ProxySetting;
   /**
    * The MCP servers every session is offered, by the name a person gave them.

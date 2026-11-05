@@ -726,16 +726,19 @@ export interface Session {
    */
   setDraft(draft: Bag | undefined): void;
   /**
-   * A client's read or archived bit for the chat, once this host has said and
-   * kept it, carried to the host that runs the chat.
+   * A client's read or archived bit for the chat, or for the session the chat
+   * leads, once this host has said and kept it, carried to the host that
+   * runs it.
    *
    * A backend that runs its chat on another host takes it, as the proxy of a
-   * session in a machine does, and the `chat/isReadChanged` and
-   * `chat/isArchivedChanged` that host says of its own clients are the chat's
-   * bits here too. A backend that leaves it out has its chat's bits kept by
-   * this host alone.
+   * session in a machine does, and the `session/isReadChanged`,
+   * `session/isArchivedChanged`, `chat/isReadChanged` and
+   * `chat/isArchivedChanged` that host says are the bits here too: it runs
+   * the session, so its session's read bit follows its chats there. A backend
+   * that leaves it out has its bits kept by this host alone.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
    */
-  flag?(bit: 'read' | 'archived', on: boolean): void;
+  flag?(bit: 'read' | 'archived', on: boolean, of: 'chat' | 'session'): void;
 
   /**
    * Answer a tool call the agent is waiting on.

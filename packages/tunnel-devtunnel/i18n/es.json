@@ -1,17 +1,17 @@
 {
   "meta": {
     "title": "Dev Tunnel",
-    "description": "Un Dev Tunnel que reenvía el puerto en uso, para que un cliente llegue al daemon desde cualquier lugar."
+    "description": "Accede al daemon desde cualquier lugar a través de un Microsoft Dev Tunnel."
   },
   "options": {
     "name": {
-      "description": "Cómo se llama el túnel en la lista de un cliente. Por defecto, el hostname de esta máquina."
+      "description": "Nombre del túnel que muestran los clientes. Por defecto, el hostname de esta máquina."
     },
     "keep": {
-      "description": "Si el túnel sigue existiendo cuando el daemon se detiene. true por defecto."
+      "description": "Mantiene el túnel después de que el daemon se detiene. Activado por defecto."
     },
     "anonymous": {
-      "description": "Si alguien que no inició sesión en esta cuenta puede acceder. false por defecto."
+      "description": "Permite llegar al túnel a personas que no iniciaron sesión en esta cuenta. Desactivado por defecto."
     }
   },
   "views": {

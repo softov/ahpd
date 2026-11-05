@@ -1,7 +1,7 @@
 ---
 title: An agent asks the person
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -74,8 +74,8 @@ model calls ask_user -> ToolCall.ask(questions) -> chat/inputRequested on the ch
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a host tool asks the person](task-01-a-host-tool-asks-the-person.md) | implemented | - |
-| [02 - the ask_user tool](task-02-the-ask-user-tool.md) | implemented | 01 |
+| [01 - a host tool asks the person](task-01-a-host-tool-asks-the-person.md) | done | - |
+| [02 - the ask_user tool](task-02-the-ask-user-tool.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,13 +84,11 @@ model calls ask_user -> ToolCall.ask(questions) -> chat/inputRequested on the ch
 
 ## Resume state
 
-- **Done so far:** both tasks are implemented. A host tool asks the person with `ToolCall.ask`, which sends `chat/inputRequested` on the tool's chat under a `host-ask:` id and returns the answers; `chat/inputCompleted` settles that request in the host and never reaches `session.answer`, and a turn that ends or stops cancels it as `cancel`. `ask_user` is in `hostTools()`, with cofold's input, and a Claude session is not handed it, so it keeps its own question tool.
-- **Next action:** none; the final checklist's live daemon check is still open.
-- **Open questions:** none.
-- **Watch out for:** the request id must not clash with a backend's ids, which the `host-ask:` prefix keeps. The suite rewrites `packages/sdk/test/fixtures/wire.jsonl`; restore it with `git checkout -- packages/sdk/test/fixtures/wire.jsonl`.
+- **Done so far:** built in #210, and Softov checked it by hand on Linux on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** the check on Windows and macOS in [host-1620-terminal-tool-checks.md](../../../pending/host-1620-terminal-tool-checks.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] The sdk, agent-claude, agent-pi and agent-cofold suites pass, one at a time.
-- [ ] On a test daemon, a pi session's `ask_user` question shows in ahpc, and the answer reaches the model.
+- [x] `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
+- [x] The sdk, agent-claude, agent-pi and agent-cofold suites pass, one at a time.
+- [x] On a test daemon, a pi session's `ask_user` question shows in ahpc, and the answer reaches the model.

@@ -131,7 +131,7 @@ describe('/v1 answers in each dialect, and refuses in its own error shape', () =
 
   it('leaves everything outside /v1 to what is below it', async () => {
     const served = await proxy();
-    expect((await send(served.port, '/api/manifest')).status).toBe(418);
+    expect((await send(served.port, '/api/config')).status).toBe(418);
     expect((await send(served.port, '/v10')).status).toBe(418);
   });
 
@@ -808,8 +808,10 @@ const ROUTE = join(import.meta.dirname, 'fixtures', 'plugin-route');
 interface Daemon {
   child: ChildProcess;
   port: number;
-  /** The API's own port when `http.port` gave it one, and -1 otherwise. */
+  /** The API's own port when `httpApi.port` gave it one, and -1 otherwise. */
   apiPort: number;
+  /** The model API's own port when `modelApi.port` gave it one, and -1 otherwise. */
+  modelPort: number;
   output(): string;
 }
 
@@ -852,18 +854,26 @@ const daemon = (config: unknown, env: Record<string, string> = {}): Promise<Daem
     settled = true;
     clearTimeout(timer);
     const api = /http on http:\/\/[^\s,]+:(\d+)\/api/u.exec(output);
-    const one: Daemon = { child, port: Number(ws[2]), apiPort: api === null ? -1 : Number(api[1]), output: () => output };
+    const models = /models on http:\/\/[^\s,]+:(\d+)\/v1/u.exec(output);
+    const one: Daemon = {
+      child,
+      port: Number(ws[2]),
+      apiPort: api === null ? -1 : Number(api[1]),
+      modelPort: models === null ? -1 : Number(models[1]),
+      output: () => output,
+    };
     daemons.push(one);
     resolve(one);
   });
 });
 
-describe('the daemon serves /v1 beside /api, and only while httpApi is on', () => {
-  it('answers a call on its own port with httpApi on, never printing the provider\'s key', async () => {
+describe('the daemon serves the model API while modelApi is on, beside or apart from /api', () => {
+  it('answers a call on its own port with modelApi on, never printing the provider\'s key', async () => {
     const fake = await okProvider();
     writeConnector(fake.endpoint, 'FAKE_PROVIDER_KEY');
     const one = await daemon({
       httpApi: true,
+      modelApi: true,
       plugins: [BACKEND],
       modelProxy: { models: { 'fake/model': [{ provider: 'fake', id: 'fake-model' }] } },
     }, { FAKE_PROVIDER_KEY: MARKER });
@@ -890,6 +900,7 @@ describe('the daemon serves /v1 beside /api, and only while httpApi is on', () =
     writeConnector(fake.endpoint);
     const one = await daemon({
       httpApi: true,
+      modelApi: true,
       plugins: [BACKEND, ROUTE],
       modelProxy: { models: { 'fake/model': [{ provider: 'fake', id: 'fake-model' }] } },
     });
@@ -906,7 +917,7 @@ describe('the daemon serves /v1 beside /api, and only while httpApi is on', () =
   it('moves /v1 with /api to the API\'s own port', async () => {
     const fake = await okProvider();
     writeConnector(fake.endpoint);
-    const one = await daemon({ httpApi: { port: 0 }, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
+    const one = await daemon({ httpApi: { port: 0 }, modelApi: true, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
     expect(one.apiPort).toBeGreaterThan(0);
     expect((await send(one.apiPort, CHAT, { headers: asRoot, body: CALL })).status).toBe(200);
     expect((await send(one.apiPort, '/models', { headers: asRoot })).status).toBe(200);
@@ -915,11 +926,60 @@ describe('the daemon serves /v1 beside /api, and only while httpApi is on', () =
     expect((await send(one.port, '/models', { headers: asRoot })).status).toBe(404);
   }, 30000);
 
-  it('answers /v1 with the 404 /api gets while httpApi is off', async () => {
+  it('gives 404 at the model paths while modelApi is off, and still answers /api', async () => {
+    const fake = await okProvider();
+    writeConnector(fake.endpoint);
+    const one = await daemon({ httpApi: true, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
+    for (const path of [CHAT, '/chat/completions', MESSAGES]) {
+      const got = await send(one.port, path, { headers: asRoot, body: CALL });
+      expect(got.status).toBe(404);
+      expect(got.json).toEqual({ message: `No model API at ${path}` });
+    }
+    expect((await send(one.port, '/v1/models', { headers: asRoot })).status).toBe(404);
+    expect((await send(one.port, '/models', { headers: asRoot })).status).toBe(404);
+    expect((await send(one.port, '/api/config', { headers: asRoot })).status).toBe(200);
+    // The connector's own list is read at startup; no call reached the provider.
+    expect(fake.received.filter((one) => one.method === 'POST')).toEqual([]);
+  }, 30000);
+
+  it('serves the model API on the daemon\'s port while httpApi is off, and 404 at /api', async () => {
+    const fake = await okProvider();
+    writeConnector(fake.endpoint);
+    const one = await daemon({ modelApi: true, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
+    expect((await send(one.port, CHAT, { headers: asRoot, body: CALL })).status).toBe(200);
+    expect((await send(one.port, '/v1/models', { headers: asRoot })).status).toBe(200);
+    expect((await send(one.port, '/api/config', { headers: asRoot })).status).toBe(404);
+    expect((await send(one.port, '/mcp', { headers: asRoot, body: {} })).status).toBe(404);
+  }, 30000);
+
+  it('gives the model API a listener of its own for modelApi.port, with the same token', async () => {
+    const fake = await okProvider();
+    writeConnector(fake.endpoint);
+    const one = await daemon({ httpApi: true, modelApi: { port: 0 }, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
+    expect(one.modelPort).toBeGreaterThan(0);
+    expect(one.modelPort).not.toBe(one.port);
+    expect((await send(one.modelPort, CHAT, { headers: asRoot, body: CALL })).status).toBe(200);
+    expect((await send(one.modelPort, CHAT, { body: CALL })).status).toBe(401);
+    expect((await send(one.modelPort, '/api/config', { headers: asRoot })).status).toBe(404);
+    // The daemon's port keeps the API and no longer carries the model calls.
+    expect((await send(one.port, CHAT, { headers: asRoot, body: CALL })).status).toBe(404);
+    expect((await send(one.port, '/api/config', { headers: asRoot })).status).toBe(200);
+  }, 30000);
+
+  it('shares the API\'s own listener for a modelApi.port equal to httpApi.port', async () => {
+    const fake = await okProvider();
+    writeConnector(fake.endpoint);
+    const one = await daemon({ httpApi: { port: 0 }, modelApi: { port: 0 }, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
+    expect(one.modelPort).toBe(-1);
+    expect((await send(one.apiPort, CHAT, { headers: asRoot, body: CALL })).status).toBe(200);
+    expect((await send(one.apiPort, '/api/config', { headers: asRoot })).status).toBe(200);
+  }, 30000);
+
+  it('answers /v1 with the 404 /api gets while httpApi and modelApi are off', async () => {
     const one = await daemon({ plugins: [BACKEND] });
     const v1 = await send(one.port, MESSAGES, { headers: asRoot, body: CALL });
     expect(v1.status).toBe(404);
     expect(v1.json).toEqual({ message: `No API at ${MESSAGES}` });
-    expect((await send(one.port, '/api/manifest')).status).toBe(404);
+    expect((await send(one.port, '/api/config')).status).toBe(404);
   }, 30000);
 });

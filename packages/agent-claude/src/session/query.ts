@@ -1,12 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { idOf, mergeLogicalTurnUsage, reason } from '@ahpd/sdk';
+import { idOf, mergeLogicalTurnUsage, reason, steerPart } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
 import { BEFORE_TOKEN } from '../logins.js';
-import { hostHoldsTasks, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
+import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
 
 /**
@@ -120,13 +120,20 @@ export function createQuery(ctx: SessionContext): Query {
    * Whatever the host holds the list, the query is built the same way.
    *
    * A person's own deny list, and `TodoWrite`, `TaskCreate`, `TaskUpdate`,
-   * `TaskList` and `TaskGet` too when the host holds the list. A host that does
-   * not leaves the harness's own tools where they are.
+   * `TaskList` and `TaskGet` too when the host holds the list. `Bash` too when
+   * the host runs the shell, with its name aliased to the host's tool, so a
+   * call a skill wrote for `Bash` reaches the shell the person can see. A host
+   * that does neither leaves the harness's own tools where they are.
    */
   const denyOption = (): Bag => {
     const deny = [...ctx.allowed.deny];
     if (hostHoldsTasks(ctx.values, ctx.offering)) for (const name of OWN_TASK_TOOLS) if (!deny.includes(name)) deny.push(name);
-    return deny.length > 0 ? { disallowedTools: deny } : {};
+    const shell = hostRunsShell(ctx.offering);
+    if (shell && !deny.includes('Bash')) deny.push('Bash');
+    return {
+      ...(deny.length > 0 ? { disallowedTools: deny } : {}),
+      ...(shell ? { toolAliases: { Bash: HOST_SHELL_TOOL } } : {}),
+    };
   };
 
   const stopped: Query['stopped'] = { backgroundTasks: [], sessionCrons: [] };
@@ -796,8 +803,18 @@ export function createQuery(ctx: SessionContext): Query {
          * prompt it cancels ends `cancelled`.
          */
         if (type === 'command_lifecycle') {
-          const owed = ctx.owed.get(str(message.command_uuid) ?? '');
+          const uuid = str(message.command_uuid) ?? '';
+          const owed = ctx.owed.get(uuid);
           const state = str(message.state);
+          /*
+           * A steering message the CLI took in shows in the turn it steers, as
+           * its steer part, at the point the CLI took it in: the same point the
+           * transcript records it at, under the same uuid, so the turn read
+           * back holds the part the live turn held.
+           */
+          if (owed?.steering === true && state === 'started' && owed.cli !== 'started') {
+            ctx.addPart(ctx.mainScope, steerPart(uuid, str(owed.message.text) ?? ''));
+          }
           if (owed !== undefined && (state === 'queued' || state === 'started')) owed.cli = state;
           continue;
         }
@@ -933,6 +950,14 @@ export function createQuery(ctx: SessionContext): Query {
             // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
             if (id !== undefined && ctx.background.has(id)) ctx.endWorker(id, 'complete');
           }
+          /*
+           * A notification that arrives while no turn is open is the one the
+           * CLI wakes into a turn of its own, and that turn opens with the
+           * task's summary as its message. One that arrives inside a turn
+           * starts none, so it leaves the next turn's message alone.
+           */
+          const summary = str(message.summary);
+          if (summary !== undefined && ctx.active === undefined) ctx.pendingSummary = summary;
           continue;
         }
 
@@ -1017,7 +1042,7 @@ export function createQuery(ctx: SessionContext): Query {
            * there is either nowhere left to go or a CLI already on it.
            */
           const ofLogin = ctx.failure();
-          const wrong = ofLogin ?? errorText;
+          const wrong = ofLogin ?? (errorText === undefined ? undefined : errorText || 'The turn failed');
           if (wrong === undefined) ctx.answered();
           /*
            * The prompts this result answered, which the CLI no longer owes,
@@ -1048,8 +1073,9 @@ export function createQuery(ctx: SessionContext): Query {
            * run once this result is out, as a turn of the CLI's own, and its
            * answer is this turn's: the turn stays open until a result has named
            * every prompt handed over in it, as the reference completes a turn
-           * only when its prompts are settled. A result that failed ends it.
-           * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
+           * only when its prompts are settled. A result that failed ends it;
+           * one that stopped at a limit does not.
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
            */
           if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) continue;
           if (turn) {
@@ -1136,7 +1162,7 @@ export function createQuery(ctx: SessionContext): Query {
           }
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
+          if (wrong !== undefined) ctx.failed = wrong;
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed

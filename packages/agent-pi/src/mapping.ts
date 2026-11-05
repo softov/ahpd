@@ -469,10 +469,20 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
         confirmed: 'not-needed',
         ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
       };
+      /*
+       * The shell a host tool showed on the call while it ran.
+       *
+       * The completion replaces the call's whole content, so the terminal
+       * block the tool put there has to be carried into it, as a `!` command's
+       * completion carries its own.
+       */
+      const terminals = (Array.isArray(held.content) ? held.content : []).filter((one) => bag(one).type === 'terminal');
       const result: Bag = {
         success,
         pastTenseMessage: pastTenseOf(call, success),
-        ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
+        ...(text === '' && terminals.length === 0 ? {} : {
+          content: [...terminals, ...(text === '' ? [] : [{ type: 'text', text }])],
+        }),
         ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
       };
       /*

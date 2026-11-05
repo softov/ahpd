@@ -13,7 +13,7 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
-import type { BoundTool, ClientCallAnswer } from '@ahpd/sdk';
+import type { BoundTool, ClientCallAnswer, CommandTerminal } from '@ahpd/sdk';
 import { loadPi } from './pi.js';
 
 /**
@@ -79,7 +79,17 @@ const stopped = (signal: AbortSignal | undefined): Promise<never> => new Promise
  * answer is whatever `client` settles with, and a refusal rejects the call with
  * the client's words so the model reads what went wrong.
  */
-export async function toPiTool(bound: BoundTool, client: RunByClient): Promise<ToolDefinition | undefined> {
+export async function toPiTool(
+  bound: BoundTool,
+  client: RunByClient,
+  /**
+   * What a host tool is told when it opens a terminal for a call.
+   *
+   * Answers the callback for a call's id, or nothing when this session has no
+   * call to show it on.
+   */
+  openedFor?: (toolCallId: string) => ((terminal: CommandTerminal) => void) | undefined,
+): Promise<ToolDefinition | undefined> {
   const { definition } = bound;
   if (bound.run === undefined && PI_TOOLS.has(definition.name)) {
     console.warn(`@ahpd/agent-pi: dropping client tool "${definition.name}", which is one of pi's own`);
@@ -100,12 +110,20 @@ export async function toPiTool(bound: BoundTool, client: RunByClient): Promise<T
         return { content: toPiContent(answer), details: undefined };
       }
       try {
+        /*
+         * The call's id is the one its row carries, and `opened` is how a tool
+         * that starts a terminal shows it on that row while it runs.
+         */
+        const opened = openedFor?.(toolCallId);
         return {
           content: [{
             type: 'text' as const,
             // A `run` that never answers still ends when pi stops the turn.
             text: await Promise.race([
-              Promise.resolve(bound.run(params as Record<string, unknown>)),
+              Promise.resolve(bound.run(params as Record<string, unknown>, {
+                toolCallId,
+                ...(opened === undefined ? {} : { opened }),
+              })),
               stopped(signal),
             ]),
           }],

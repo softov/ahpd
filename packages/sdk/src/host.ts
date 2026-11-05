@@ -78,6 +78,7 @@ import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
 import { createAsking } from './host/asking.js';
 import { createTerminalMethods, createTerminals } from './host/terminals.js';
+import { createShells } from './host/shells.js';
 import { createOutputs } from './host/outputs.js';
 import { createLocalTurns } from './host/localturns.js';
 import { createAutomations } from './host/automations.js';
@@ -959,12 +960,30 @@ export function createHost(options: HostOptions): Host {
        * waiting on a person a stopped turn no longer has.
        */
       asks.cancelTurn(channel, String(action.turnId ?? ''));
+      /*
+       * A Plan call the host drew is closed by the turn ending, the way the
+       * ACP bridge closes its own: the protocol never closes this row, so
+       * nothing else would. Closed here, before the ending is said, whoever
+       * says it: the backend, or this host for a client's stop.
+       */
+      if (ending) ctx.completePlan(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
       // A stopped turn is kept for its send's checks, for as long as the chat's state is held.
       if (action.type === 'chat/turnCancelled' && held?.kind === 'chat') {
         ctx.cancelledTurns.set(channel, (ctx.cancelledTurns.get(channel) ?? new Set<string>()).add(String(action.turnId ?? '')));
       }
+    }
+    /*
+     * A backend's removal of an entry the session no longer holds is not said
+     * either: this host took the entry down when the request it named
+     * resolved, and an entry goes once.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+     */
+    if (action.type === 'session/inputNeededRemoved' && origin === undefined) {
+      const held = states.get(channel);
+      const entries = held?.kind === 'session' && Array.isArray(held.state.inputNeeded) ? held.state.inputNeeded as Record<string, unknown>[] : [];
+      if (held?.kind === 'session' && !entries.some((entry) => entry.id === action.id)) return;
     }
     /*
      * A backend's result for a call the chat holds completed is not said
@@ -1436,6 +1455,9 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createLifecycle(ctx));
   Object.assign(ctx, createTooling(ctx));
   Object.assign(ctx, createTerminals(ctx));
+  // Under its own name rather than spread flat, because `of` and `forgetSession`
+  // are words other areas could reach for.
+  ctx.shells = createShells(ctx);
   Object.assign(ctx, createOutputs(ctx));
   Object.assign(ctx, createLocalTurns(ctx));
   Object.assign(ctx, createAutomations(ctx));

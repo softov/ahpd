@@ -13,7 +13,7 @@ Every backend is a plugin, Claude included. Plugins also add tools, ports and UR
 | [`@ahpd/webhook`](../plugins/webhook.md) | Webhooks |
 | [`@ahpd/push`](../plugins/push.md) | Push notifications |
 | [`@ahpd/tunnel-devtunnel`](../plugins/tunnel-devtunnel.md) | A public URL through Dev Tunnels |
-| [`@ahpd/web`](https://github.com/softov/ahpw) | A web UI, at `/plugins/web/` |
+| [`@ahpd/web`](https://github.com/ahpio/ahpw) | A web UI, at `/plugins/web/` |
 
 ::: warning
 A plugin runs in the daemon's process with its permissions. Install only plugins you trust.

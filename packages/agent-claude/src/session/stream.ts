@@ -673,8 +673,18 @@ export function createStream(ctx: SessionContext): Stream {
         return edit === undefined ? undefined : { type: 'fileEdit', ...edit };
       };
       const fileEdit = editOf();
+      /*
+       * The shell a host tool opened for the call, where it opened one.
+       *
+       * The completion replaces the call's whole content, so the terminal the
+       * content change put there while it ran has to be carried into it, as a
+       * `!` command's completion carries its own.
+       */
+      const shownTerminal = id === undefined ? undefined : ctx.openedTerminals.get(id);
+      if (id !== undefined) ctx.openedTerminals.delete(id);
       const shown = [
         ...(workerContent !== undefined ? [workerContent] : []),
+        ...(shownTerminal !== undefined ? [shownTerminal] : []),
         ...(text !== undefined ? [{ type: 'text', text }] : []),
         ...(fileEdit !== undefined ? [fileEdit] : []),
         ...(saved !== undefined ? [saved] : []),

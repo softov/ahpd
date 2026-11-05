@@ -1,7 +1,7 @@
 ---
 title: Every session setting with known values is a picker
 domain: host
-status: implemented
+status: built
 priority: medium
 created: 2026-10-30
 revalidated: 2026-10-30
@@ -78,10 +78,10 @@ client opens a picker -> sessionConfigCompletions(property) -> answerer by name 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A harness answers its own setting](task-01-a-harness-answers-its-own-setting.md) | implemented | - |
-| [02 - The bot chat offers its bots](task-02-the-bot-chat-offers-its-bots.md) | implemented | 01 |
-| [03 - ACP approvals list the known modes](task-03-acp-approvals-list-known-modes.md) | implemented | - |
-| [04 - Computer and isolation come first](task-04-computer-and-isolation-come-first.md) | implemented | - |
+| [01 - A harness answers its own setting](task-01-a-harness-answers-its-own-setting.md) | done | - |
+| [02 - The bot chat offers its bots](task-02-the-bot-chat-offers-its-bots.md) | done | 01 |
+| [03 - ACP approvals list the known modes](task-03-acp-approvals-list-known-modes.md) | done | - |
+| [04 - Computer and isolation come first](task-04-computer-and-isolation-come-first.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -92,12 +92,12 @@ client opens a picker -> sessionConfigCompletions(property) -> answerer by name 
 ## Resume state
 
 - **Done so far:** all four tasks. A harness answers a key of its own schema, and the Bot chat offers its bots that way. An ACP harness lists the modes its agent's source names, until a session hears others. A session's settings come in the order computer, isolation and branch, then the rest.
-- **Next action:** none - the plan is implemented, and `implemented.md` names what was verified.
+- **Next action:** none. The plan is built. The chat a picked bot opens does nothing; [the brief](../../../briefs/bot-master-chat.md) holds it.
 - **Open questions:** none.
 - **Watch out for:** VS Code draws its own Approvals picker only for Claude's five modes. An ACP harness gets the plain picker, as expected.
 
 ## Final verification checklist
 
-- [ ] A new Bot chat in ahpw shows `bot` as a picker of the bot records.
-- [ ] A new Codex session shows Approvals as a picker before any Codex session ran.
-- [ ] The line above ahpw's new session box shows Computer, Isolation, Branch, then Approvals.
+- [x] A new Bot chat in ahpw shows `bot` as a picker of the bot records.
+- [x] A new Codex session shows Approvals as a picker before any Codex session ran.
+- [x] The line above ahpw's new session box shows Computer, Isolation, Branch, then Approvals.

@@ -438,6 +438,14 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'carry on', origin: { kind: 'user' } } } },
   });
+  /*
+   * The status says the reopened run waits on somebody; the activity does not
+   * say it again, and keeps whatever it had before the wait.
+   */
+  const said = [...actions(p, 'ahp-session:/one'), ...actions(p, chatUri)]
+    .filter((e) => String(e.action.type).endsWith('activityChanged'))
+    .map((e) => e.action.activity);
+  expect(said).not.toContain('Waiting on you');
 
   /*
    * A client that arrives after the resume reads the chat snapshot the way a

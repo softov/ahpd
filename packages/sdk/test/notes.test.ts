@@ -352,7 +352,7 @@ it('refuses a key its schema marks immutable, without the backend being asked', 
   expect(why.rejectionReason).toBe('tone is fixed once the session has started');
 });
 
-it('takes one its schema marks mutable, and says so in the backend\'s words when the value is wrong', async () => {
+it('takes one its schema marks mutable, and refuses a value its list does not offer', async () => {
   const { client, peer: p, uri } = await talking();
   await client.handle({
     method: 'dispatchAction',
@@ -367,17 +367,9 @@ it('takes one its schema marks mutable, and says so in the backend\'s words when
     params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'sometimes' } } },
   });
   await settle();
-  // The backend's sentence, not the host's: only it knows whether the key or
-  // the value was the problem, and saying "no such key" about a bad value
-  // would tell a client to stop drawing a control that works.
+  // A value the property's list does not offer, refused by the host in the
+  // reference host's words, which name the key and the value.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L148
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  /*
-   * The whole sentence, because the weak half was the assertion.
-   *
-   * `toContain('sometimes')` matched the value the test itself supplied, so
-   * it passed on any message that echoed the bad input back - including one
-   * that never named the key or said what the valid answers were, which is
-   * the entire thing this test exists to check.
-   */
-  expect(why.rejectionReason).toBe('ask is one of writes, always or never - not sometimes');
+  expect(why.rejectionReason).toBe('Session configuration \'ask\' does not offer \'sometimes\'.');
 });

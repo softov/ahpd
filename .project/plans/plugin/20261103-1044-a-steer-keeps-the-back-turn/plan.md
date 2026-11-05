@@ -1,23 +1,26 @@
 ---
 title: A steer keeps the back turn
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-11-03
-revalidated: 2026-11-03
+revalidated: 2026-11-04
 requires:
   - plans/plugin/20261103-0905-a-back-session-posts-more-than-once/plan.md
+  - plans/bots/20261103-1008-a-message-goes-to-the-back-session-queued/plan.md
 refs:
-  - git://97b0ca4f - the commit of ahpd this plan was checked at
-  - "[code://packages/bot/src/wake.ts#L593-L680](../../../../packages/bot/src/wake.ts#L593-L680) - `woken`, which picks a turn or a steer from `looked.working`, and ends the main turn on a refused send"
-  - "[code://packages/bot/src/plugin.ts#L588-L604](../../../../packages/bot/src/plugin.ts#L588-L604) - `look`, whose `working` is the session's `InProgress` bit only"
-  - "[code://packages/agent-claude/src/session/turns.ts#L620-L633](../../../../packages/agent-claude/src/session/turns.ts#L620-L633) - Claude refuses a turn while one is still starting, which the session status does not show"
+  - git://586d4e5a - the commit of ahpd this plan was checked at
+  - "[code://packages/bot/src/wake.ts#L523-L548](../../../../packages/bot/src/wake.ts#L523-L548) - the message the back session is handed: queued, as an agent's, since plan bots/20261103-1008"
+  - "[code://packages/bot/src/wake.ts#L702-L757](../../../../packages/bot/src/wake.ts#L702-L757) - `woken` sends it, and ends the main turn on a refused send"
+  - "[code://packages/bot/src/chat.ts#L1195-L1205](../../../../packages/bot/src/chat.ts#L1195-L1205) - `steer`, the one path where a person's message goes into the open main turn"
+  - https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/widget/input/chatQueuePickerActionItem.ts#L64-L73 - VS Code lets the person pick \"Add to Queue\" or \"Steer with Message\"
   - problems/a-bot-chat-is-not-a-subagent-of-its-back-session.md - the wider problem this fix is one case of
 ---
 
 ## Goal
 
-A message that a person sends into a bot's main turn while the back turn runs reaches the back turn as a steer.
+A message that a person steers into a bot's open main turn reaches the back turn as a steer.
+A message that begins a main turn reaches the back session queued, as plan bots/20261103-1008 says.
 A refused steer does not end the main turn, and the back turn's posts still land in it.
 
 ## Reconnaissance
@@ -35,21 +38,24 @@ The back turn's two `post_message` calls at 10:37:04 and 10:37:09 found no main 
 
 ### Gaps
 
-- `woken` reads only the session status to pick a steer.
+- Since plan bots/20261103-1008, `woken` sends every message queued, so a steer waits behind the back turn it was meant for.
+- `ChatMessage` does not say whether the person steered the message.
 - A refused send removes the binding of a back turn that still runs.
 
 ## Answers
 
 | What | Source | Task |
 | --- | --- | --- |
-| A message into a main turn that the wake already answers from this session is a steer | (defaulted: since plan 0905 the `answering` entry lives until the back turn ends, so a turn runs there) | 01 |
+| A message the person steered into the open main turn goes to the back session as `steering`, and one that began a main turn goes `queued` | Softov, 2026-11-04, chose "Keep your choice" | 01 |
+| The steer keeps the agent origin and the `vscode.chat.delegation` `_meta` of plan bots/20261103-1008 | (defaulted: one message shape for both kinds) | 01 |
+| A steer adds no id to `waiting`, because the back turn that already answers the main turn takes it in | (defaulted: a steer is no turn of its own) | 01 |
 | A refused steer keeps the binding and the open main turn, and the operator gets a problem line | (defaulted: the back turn still runs and still answers) | 01 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a steer keeps the back turn](task-01-a-steer-keeps-the-back-turn.md) | implemented | - |
+| [01 - a steer keeps the back turn](task-01-a-steer-keeps-the-back-turn.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -57,15 +63,13 @@ The back turn's two `post_message` calls at 10:37:04 and 10:37:09 found no main 
 
 ## Resume state
 
-- **Done so far:** [task-01-a-steer-keeps-the-back-turn.md](task-01-a-steer-keeps-the-back-turn.md) is implemented, with two cases in `bot-wake.test.ts`.
-- **Next action:** review, then the check by hand in [bot-steer-checks.md](../../../pending/bot-steer-checks.md).
-- **Open questions:** none.
-- **Watch out for:** never use ports 5180 or 37537.
+- **Done so far:** built, and Softov checked it by hand on 2026-11-04. See [implemented.md](implemented.md).
+- **Next action:** none.
 
 ## Final verification checklist
 
-- [x] A steer into a back turn that the wake started is sent as `chat/pendingMessageSet` `steering`, with the session status idle.
+- [x] A message steered into the main turn is sent as `chat/pendingMessageSet` `steering`, and one that began a main turn as `queued`.
 - [x] A refused steer ends no main turn, and a later `post_message` lands.
 - [x] `pnpm --filter @ahpd/bot test` passes, run alone.
 - [x] `pnpm typecheck` and `pnpm boundary` pass.
-- [ ] By hand: [bot-steer-checks.md](../../../pending/bot-steer-checks.md).
+- [x] By hand: [bot-steer-checks.md](../../../pending/bot-steer-checks.md).

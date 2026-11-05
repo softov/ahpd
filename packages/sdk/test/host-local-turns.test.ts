@@ -8,6 +8,7 @@ import {
   resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, settle, wrote,
 } from './support/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
+import { steerOf } from '../src/sessions/steer.js';
 import { uriOf } from '../src/resources/resources.js';
 import { chatUriFor } from '../src/host/channels.js';
 import type { SessionStore } from '../src/types/sessions.js';
@@ -55,6 +56,16 @@ const keptIn = (store: SessionStore, id: string): Bag[] => {
     .sort((a, b) => Number(a.seq) - Number(b.seq));
 };
 
+/** Every record of the transcript ids a chat's turns began under, as the files hold them. */
+const recordsIn = (store: SessionStore, id: string): Bag[] => {
+  const folder = store.attachmentsDir?.(id);
+  const recorded = folder === undefined ? undefined : join(folder, 'recorded');
+  if (recorded === undefined || !existsSync(recorded)) return [];
+  return readdirSync(recorded, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(join(recorded, name), 'utf8')) as Bag);
+};
+
 type Client = { handle(request: unknown): Promise<unknown> };
 
 /** A channel's state, as a subscribe answers it. */
@@ -82,6 +93,14 @@ const say = (client: Client, chat: string, turnId: string, text: string): void =
   });
 };
 
+/** Send a message as a turn, with the origin it came from. */
+const sayFrom = (client: Client, chat: string, turnId: string, text: string, origin: Bag): void => {
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text, origin } } },
+  });
+};
+
 /** What a case sets on the backend, and reads back from it. */
 interface Knobs {
   /** Every start the host handed it, in order. */
@@ -93,6 +112,9 @@ interface Knobs {
   /** The conversations the backend deleted, for a backend that can delete. */
   deleted?: string[];
 }
+
+/** A part as a client shows it: a steer marked as one, any other part by its content. */
+const shownAs = (part: Bag): unknown => (steerOf(part) === undefined ? part.content : `steer: ${String(part.content)}`);
 
 const knobs = (): Knobs => ({ starts: [] });
 
@@ -287,6 +309,38 @@ describe('a host started again on the same store', () => {
     await host.close();
   });
 
+  it('reads a turn back with the origin it began with', async () => {
+    const { client, host, chat } = await restarted(async (c, p, ch) => {
+      sayFrom(c, ch, 't1', 'triaging', { kind: 'automation' });
+      await ended(p, ch, 't1');
+    }, [said('t1', 'triaging')]);
+    // The transcript says a person wrote it; the record says an automation
+    // began it, and the record is what a read after a restart goes by.
+    expect(((await stateOf(client, chat)).turns as Bag[])[0]?.message).toMatchObject({ origin: { kind: 'automation' } });
+    await host.close();
+  });
+
+  it('reads a record written without an origin as its transcript says', async () => {
+    const dir = join(temp(), 'sessions');
+    const store = fileSessions({ dir });
+    const first = knobs();
+    const before = await opened(first, store);
+    say(before.client, before.chat, 't1', 'hello there');
+    await ended(before.p, before.chat, 't1');
+    // A person's turn is recorded without one, as every record was before an
+    // origin was kept here.
+    expect(recordsIn(store, 'live').map((one) => 'origin' in one)).toEqual([false]);
+    await before.host.close();
+
+    const second = knobs();
+    second.listed = [row('live')];
+    second.transcript = (id) => (id === 'live' ? [said('t1', 'hello there')] : []);
+    const after = await hostAt(second, fileSessions({ dir }));
+    const turn = ((await stateOf(after.client, before.chat)).turns as Bag[])[0];
+    expect(turn?.message).toMatchObject({ origin: { kind: 'user' } });
+    await after.host.close();
+  });
+
   it('reads a turn the chat never began back inside the turn before it, and a chat with no record as it is', async () => {
     const held = [said('t1', 'hello there'), said('x1', 'written as its own'), said('t2', 'and then')];
     const ran = await restarted(async (c, p, ch) => {
@@ -297,12 +351,32 @@ describe('a host started again on the same store', () => {
     }, held);
     const turns = (await stateOf(ran.client, ran.chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual(['t1', 't2']);
-    expect((turns[0]?.responseParts as Bag[]).map((part) => part.content)).toEqual(['hello there', 'written as its own']);
+    // Its message stays, quoted before its answer, as a steer's does.
+    expect((turns[0]?.responseParts as Bag[]).map(shownAs)).toEqual(['hello there', 'steer: written as its own', 'written as its own']);
     await ran.host.close();
 
     const never = await restarted(async () => {}, held);
     expect(await turnsOf(never.client, never.chat)).toEqual(['t1', 'x1', 't2']);
     await never.host.close();
+  });
+
+  it('keeps a notice turn as a turn of its own, not folded into the one before it', async () => {
+    const notice: Bag = {
+      id: 'n1',
+      message: { text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } },
+      state: 'complete',
+      responseParts: [],
+    };
+    const ran = await restarted(async (c, p, ch) => {
+      say(c, ch, 't1', 'hello there');
+      await ended(p, ch, 't1');
+    }, [said('t1', 'hello there'), notice]);
+    const turns = (await stateOf(ran.client, ran.chat)).turns as Bag[];
+    expect(turns.map((turn) => turn.id)).toEqual(['t1', 'n1']);
+    expect(turns[1]?.message).toEqual({ text: 'Pause for 4 seconds', origin: { kind: 'systemNotification' } });
+    // Not a steer inside the recorded turn: its line stays its own.
+    expect((turns[0]?.responseParts as Bag[]).map(shownAs)).toEqual(['hello there']);
+    await ran.host.close();
   });
 
   it('drops a command\'s turn whose anchor the transcript no longer holds', async () => {
@@ -397,7 +471,7 @@ describe('a cut at a command\'s turn', () => {
     expect(keptIn(store, 'live')).toEqual([]);
   });
 
-  it('is refused at a command\'s turn with no turn before it', async () => {
+  it('is said at a command\'s turn with no turn before it, and a backend that cannot delete keeps its history', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client, p, chat } = await opened(k, store);
@@ -406,9 +480,11 @@ describe('a cut at a command\'s turn', () => {
     const starts = k.starts.length;
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle(10);
-    // Refused as a clear of the whole conversation, which it would be for the
-    // backend, and nothing restarted.
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('not a conversation entire');
+    // A clear of the whole conversation for the backend, which this one cannot
+    // make: said all the same, as the reference host says a truncation its
+    // provider cannot make, and nothing restarted.
+    const said = actions(p, chat).filter((e) => e.action.type === 'chat/truncated');
+    expect(said.map((e) => e.rejectionReason)).toEqual([undefined]);
     expect(k.starts.length).toBe(starts);
   });
 
@@ -567,7 +643,7 @@ describe('a Claude chat', () => {
     turn.id,
     turn.state,
     (turn.message as Bag).text,
-    (turn.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content),
+    (turn.responseParts as Bag[]).filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined).map(shownAs),
   ]);
   /** A session of the captured CLI session's id, with its chat watched, on a host at `dir`. */
   const sessionOf = async (dir: string, session: string) => {
@@ -698,7 +774,7 @@ describe('a Claude chat', () => {
     await stateOf(after.client, uri);
     const turns = (await stateOf(after.client, chat)).turns as Bag[];
     expect(turns.map((turn) => turn.id)).toEqual([prompt]);
-    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content)).toEqual(['one', 'two']);
+    expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined).map(shownAs)).toEqual(['one', 'steer: and then', 'two']);
     await after.host.close();
 
     // A store that kept no record of the chat reads it as its transcript gives
@@ -741,16 +817,24 @@ describe('a Claude chat', () => {
     await ended(before.p, chat, TOOL);
     expect(sdk.uuids).toEqual([FIRST, LATE, TOOL, FOLDED]);
     const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
+    // Each steer shows quoted in the turn it went into, before its answer.
     expect(live).toEqual([
-      [FIRST, 'complete', ALPHA, ['ALPHA', 'BETA']],
-      [TOOL, 'complete', SLEEP, ['DONE BETA2']],
+      [FIRST, 'complete', ALPHA, ['ALPHA', 'steer: Reply with exactly the word BETA and nothing else.', 'BETA']],
+      [TOOL, 'complete', SLEEP, ['steer: Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
     ]);
     await before.host.close();
     expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual(live);
   });
 
-  it('reads a steering message answered after a failed turn back as the turn of its own it was live', async () => {
-    // The session of agent-claude's capture of a turn that failed at its turn
+  /*
+   * A turn the CLI stopped at its turn limit is not a failed one, as the
+   * reference reads `error_max_turns`: the steering message it then answered
+   * stays in the same turn, which completes at the last result.
+   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
+   */
+  it('keeps a steering message answered after the turn limit in the turn it went into, live and read back', async () => {
+    // The session of agent-claude's capture of a turn that stopped at its turn
     // limit with a steering message queued, which the CLI then answered.
     const SESSION = '2b965eb7-14a6-40b2-a9fa-f65ed1c95121';
     const LIMITED = '0bbc4aff-8f2b-4536-a33a-8d0587e38461';
@@ -766,20 +850,14 @@ describe('a Claude chat', () => {
     await emit(...first);
     await steer(before.client, chat, STEERED, 'Reply with exactly the word BETA and nothing else.');
     await emit(...rest);
-    await ended(before.p, chat, STEERED);
+    await ended(before.p, chat, LIMITED);
     const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
     expect(live).toEqual([
-      [LIMITED, 'error', SLEEP, []],
-      [STEERED, 'complete', 'Reply with exactly the word BETA and nothing else.', ['BETA']],
+      [LIMITED, 'complete', SLEEP, ['steer: Reply with exactly the word BETA and nothing else.', 'BETA']],
     ]);
+    expect(actions(before.p, chat).some((e) => e.action.type === 'chat/error')).toBe(false);
     await before.host.close();
-
-    // Its turn began, so the record holds it and it is not read back inside the
-    // failed one. The transcript says nothing of the failure, so the failed
-    // turn reads back as the turn a read gives every finished one.
-    const read = await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'));
-    const asked = (turns: unknown[][]): unknown[] => turns.map(([id, , text, prose]) => [id, text, prose]);
-    expect(asked(read)).toEqual(asked(live));
+    expect(await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'))).toEqual(live);
   });
 
   it('forks a session asleep since a restart at a command\'s turn, where the Claude turn read back before it ended', async () => {

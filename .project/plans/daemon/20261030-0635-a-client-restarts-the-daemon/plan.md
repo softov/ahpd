@@ -84,6 +84,6 @@ client -> x-ahpd/restart { force } -> owner check -> notRestartable -> busy unle
 
 ## Final verification checklist
 
-- [ ] On a test daemon from `ahpd start`, `x-ahpd/restart` restarts it, and the client connects again. The restart passed on 2026-11-03; the reconnect waits in [client-restart-checks.md](../../../pending/client-restart-checks.md).
+- [x] On a test daemon from `ahpd start`, `x-ahpd/restart` restarts it, and the client connects again. The restart passed on 2026-11-03, and the reconnect on 2026-11-04 (b9b6933e).
 - [x] With a turn running, the command refuses, names the session and says `force: true`. Checked on 2026-11-03.
 - [x] With `force: true`, the command restarts while a turn runs. Checked on 2026-11-03.

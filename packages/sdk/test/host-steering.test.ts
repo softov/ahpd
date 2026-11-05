@@ -90,8 +90,50 @@ async function running() {
     method: 'dispatchAction',
     params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 's1', message: { text, origin: { kind: 'user' } } } },
   });
-  return { p, chatUri, steers, steer, queue };
+  // A client taking `steer`'s message back.
+  const unsteer = (clientSeq: number) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' } },
+  });
+  const state = async (): Promise<Bag> => ((await client.handle({ method: 'subscribe', params: { channel: chatUri } })) as { snapshot: { state: Bag } }).snapshot.state;
+  return { p, chatUri, steers, steer, queue, unsteer, state };
 }
+
+/*
+ * "Steering handed to the provider cannot be edited, and can be removed only if
+ * the provider can withdraw it": the reference host asks the provider's
+ * capability before the provider hears of the removal (agentService.ts
+ * L13517-L13524 at a4e689ae). A backend with no withdrawal keeps what it was
+ * handed.
+ */
+it('refuses taking back the running turn\'s steering message from a backend that cannot withdraw it', async () => {
+  const { p, chatUri, steers, steer, unsteer } = await running();
+  await steer(2, 'stop that');
+  await settle();
+  await unsteer(3);
+  await settle();
+  const answer = envelopes(p, chatUri).find((e) => e.origin?.clientSeq === 3);
+  expect(answer?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  expect(steers.map((one) => one.id)).toEqual(['s1']);
+});
+
+/*
+ * A queued message sent again under its id as steering, as VS Code's "Send
+ * Immediately" sends it: the running turn takes it, and the chat's queue no
+ * longer holds it, so it does not run again as a turn of its own.
+ * https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2541-L2554
+ */
+it('steers a queued message sent again as steering, and the queue holds it no more', async () => {
+  const { p, chatUri, steers, steer, queue, state } = await running();
+  await queue(2, 'look there');
+  await settle();
+  await steer(3, 'look there');
+  await settle();
+
+  expect(steers).toEqual([{ id: 's1', text: 'look there' }]);
+  expect(envelopes(p, chatUri).find((one) => one.origin?.clientSeq === 3)?.rejectionReason).toBeUndefined();
+  expect(((await state()).queuedMessages as Bag[] | undefined ?? []).map((one) => one.id)).toEqual([]);
+});
 
 /*
  * "Repeated identical upserts MUST NOT cause duplicate provider delivery": the

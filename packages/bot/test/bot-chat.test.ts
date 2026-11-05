@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -23,6 +23,7 @@ import type { Start } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import type { Principal } from '../../sdk/src/types/users.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 
@@ -507,19 +508,27 @@ it('steers a message into the open turn, which goes on', async () => {
   ]);
   expect(heard).toEqual([
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steered: true },
   ]);
+  // The steer stays in the turn it went into, as a harness notice that names it.
+  const quote = { kind: 'systemNotification', content: 'stop that', _meta: { 'ahpd.steer': 's1' } };
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/responsePart'))
+    .toEqual([{ type: 'chat/responsePart', turnId: 't1', part: quote }]);
+
+  // Read back while the turn is still open, as after a daemon that died in it.
+  const early = await (await backend(configDir, records)).transcript?.('one');
+  expect(early?.[0]?.responseParts).toEqual([quote]);
 
   chat.reply('done');
   const state = await stateOf(client);
-  expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [{ kind: 'markdown', content: 'done' }] }]);
+  expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [quote, { kind: 'markdown', content: 'done' }] }]);
   expect(state['steeringMessage']).toBeUndefined();
 
   // Read back, the chat shows the turn the steer went into, as it does live.
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
-  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+  expect(read?.[0]?.responseParts).toEqual([quote, { id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
 it('answers a steer to the client that sent it', async () => {
@@ -567,6 +576,11 @@ it('keeps the sender of a steered message on the message', async () => {
   expect(set).toMatchObject({ message: { text: 'stop that', ...outside } });
 });
 
+/** A few ticks: the host's queue drain starts the next turn once the turn in front has ended. */
+const drained = async (): Promise<void> => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
 it('keeps a queued message behind the steered turn', async () => {
   const { host } = made();
   const notes: Notes = [];
@@ -591,6 +605,7 @@ it('keeps a queued message behind the steered turn', async () => {
 
   // It starts when the steered turn ends, and not before.
   chat.reply('done');
+  await drained();
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
@@ -711,7 +726,34 @@ it('reads a steering line back in the turn it went into', async () => {
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
-  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+  // A line written before steers were shown names no steering id, and its
+  // part goes after what the turn holds.
+  expect(read?.[0]?.responseParts).toEqual([
+    { id: 't1:reply', kind: 'markdown', content: 'done' },
+    { kind: 'systemNotification', content: 'stop that', _meta: { 'ahpd.steer': 't1:0' } },
+  ]);
+});
+
+it('reads a turn that ended with a steer quoted as markdown back as it was', async () => {
+  const { host, configDir, records } = made();
+  const client = await anyone(host);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+  await said(client, 't1', 'hello');
+  chat.reply('done');
+
+  // The turn's last line holds the quote a steer was before it was a notice.
+  const log = join(configDir, BOTS_DIR, 'backer', 'logs', 'one.jsonl');
+  const lines = readFileSync(log, 'utf8').trimEnd().split('\n');
+  const ended = JSON.parse(lines.pop() ?? '{}') as Bag;
+  const quote = { id: 'steer:s1', kind: 'markdown', content: '> stop that' };
+  ended['responseParts'] = [quote, ...(ended['responseParts'] as Bag[])];
+  const steering = { id: 't1', steering: true, steeringId: 's1', message: { text: 'stop that', origin: { kind: 'user' } } };
+  writeFileSync(log, `${[...lines, JSON.stringify(steering), JSON.stringify(ended)].join('\n')}\n`);
+
+  const read = await (await backend(configDir, records)).transcript?.('one');
+  expect(read?.[0]?.responseParts).toEqual([quote, { id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
 it('waits a queued message out, and starts it when the turn in front ends', async () => {
@@ -740,6 +782,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(lines(configDir, 'one')).toHaveLength(1);
 
   chat.reply('one');
+  await drained();
 
   // Started: the entry left the queue, and its message is the turn that began -
   // under a turn id of the chat's own, with the entry it was named on it.
@@ -752,10 +795,8 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
-  // And the client is told both ways a queued entry ends: taken out of its
-  // queue, and named on the turn it became.
-  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved'))
-    .toMatchObject([{ kind: 'queued', id: 'q1' }]);
+  // And the client is told the queued entry ended by the turn it became, which
+  // names it, as the host's queue drain starts it.
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
@@ -786,8 +827,10 @@ it('starts what waited in the order the queue was left in', async () => {
   expect((await stateOf(client))['queuedMessages']).toMatchObject([{ id: 'q2' }, { id: 'q1' }]);
 
   chat.reply('one');
+  await drained();
   expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'second asked' } });
   chat.reply('two');
+  await drained();
   // And the one behind that, which is the rest of what the order said - the
   // queue emptying one turn at a time rather than all at once.
   const last = await stateOf(client);
@@ -1126,7 +1169,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
       _meta: { toolKind: 'subagent', subagentChatUri: back },
     },
-  }]);
+  }, { kind: 'systemNotification', content: 'and this', _meta: { 'ahpd.steer': 's1' } }]);
   const started = actions(notes, CHAT).filter((one) => ['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallContentChanged'].includes(String(one['type'])));
   expect(started.map((one) => one['type'])).toEqual([
     'chat/toolCallStart',
@@ -1144,7 +1187,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   const idle = await stateOf(client);
   const turn = (idle['turns'] as Bag[])[0] as Bag;
   const parts = turn['responseParts'] as Bag[];
-  expect(parts).toHaveLength(2);
+  expect(parts).toHaveLength(3);
   expect(parts[0]).toMatchObject({
     kind: 'toolCall',
     toolCall: {
@@ -1153,15 +1196,17 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
       content: [{ type: 'subagent', resource: back, title: 'Backer' }],
     },
   });
-  expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'done' });
+  expect(parts[1]).toEqual({ kind: 'systemNotification', content: 'and this', _meta: { 'ahpd.steer': 's1' } });
+  expect(parts[2]).toMatchObject({ kind: 'markdown', content: 'done' });
   const kinds = actions(notes, CHAT).map((one) => one['type']);
   expect(kinds.slice(-3)).toEqual([
     'chat/toolCallComplete',
     'chat/responsePart',
     'chat/turnComplete',
   ]);
-  expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
-  // And the line a restart reads holds the same two parts, as JSON writes
+  // The steer's quote and the reply; the call is said by its own actions.
+  expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(2);
+  // And the line a restart reads holds the same three parts, as JSON writes
   // them: a key whose value is undefined is left out of a line and of a frame.
   expect(lines(configDir, 'one').at(-1))
     .toMatchObject({ id: turn['id'], state: 'complete', responseParts: JSON.parse(JSON.stringify(parts)) as Bag[] });
@@ -1350,6 +1395,37 @@ it('offers the bots as the answers to the chat setting', async () => {
     enum: ['backer', 'builder'],
     enumLabels: ['Backer', 'Builder'],
   });
+});
+
+/*
+ * Two people, each with a bot of their own: a picker offers each person only
+ * the bots they may read, and a chat with the other one's bot is refused as a
+ * bot that does not exist.
+ */
+it('offers a person only the bots they may read, and refuses a chat with another\'s', async () => {
+  const { configDir, records } = made();
+  const bots = await records.collection('bots');
+  for (const [id, owner] of [['anas', 'user:ana'], ['bobs', 'user:bob']] as const) {
+    await bots.put({
+      id, name: id, labels: [], body: 'robot', color: 'red', workspace: join(configDir, BOTS_DIR, id), owner,
+      createdAt: '2026-11-04T00:00:00.000Z', updatedAt: '2026-11-04T00:00:00.000Z',
+    });
+  }
+  const agent = await backend(configDir, records);
+  const person = (id: string): Principal => ({ id, roles: [], can: () => false });
+  const ana = person('ana');
+
+  const offered = await agent.completions!['bot']!({ property: 'bot', query: '', reader: ana });
+  expect(offered.map((one) => one.value)).toEqual(['anas']);
+  // No reader is the root connection, or a host with no users: every bot.
+  expect((await agent.completions!['bot']!({ property: 'bot', query: '' })).map((one) => one.value).sort()).toEqual(['anas', 'bobs']);
+
+  const start = (bot: string): Start => ({
+    uri: `bot-chat:/${bot}-chat`, chatUri: `ahp-chat:/${bot}-chat`, settings: { bot },
+    schema: () => ({}), emit: () => {}, clientToolTimeoutMs: 0, reader: ana,
+  } as Start);
+  expect(() => agent.create(start('bobs'))).toThrow('There is no bot bobs.');
+  expect(agent.create(start('anas'))).toBeDefined();
 });
 
 it('keeps the bots a query matches, by name or by slug', async () => {

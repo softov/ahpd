@@ -257,6 +257,21 @@ it('asks when the host offers no check at all', async () => {
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toHaveLength(1);
 });
 
+it('leaves the activity as it was while a confirmation waits', async () => {
+  const { check } = naming(['Read']);
+  const { session, options, sent } = await sessionWith(check);
+
+  const before = session.activity();
+  void ruleHook(options)(readCall('toolu_waiting'));
+  await settle();
+
+  // The status says a person is needed, and the activity keeps the line it
+  // had: a client drawing both does not say the wait twice.
+  expect(sent.filter((one) => one.type === 'chat/activityChanged'
+    && String(one.activity ?? '').startsWith('Waiting on you'))).toEqual([]);
+  expect(session.activity()).toBe(before);
+});
+
 it('asks the check about every tool, and about a command\'s line', async () => {
   const { asked, check } = approving(['anything']);
   const { canUseTool, sent } = await sessionWith(check);

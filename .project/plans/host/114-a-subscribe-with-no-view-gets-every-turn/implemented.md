@@ -33,7 +33,7 @@ The host cuts the window for every chat snapshot, so a live Claude chat is no lo
 - `pnpm -s build`, `pnpm -s typecheck`, `pnpm -s boundary` and `pnpm -s docs:build` pass.
 - The full suite passes with `pnpm exec vitest run --maxWorkers=2 --testTimeout=20000`: 448 files and 7445 tests.
 - `git grep -n "Newest 50" -- docs` finds nothing.
-- The check by hand in a VS Code 1.143 window was not run: this session has no window, and its reply is owed.
+- Softov ran `host-114-turn-cut-checks.md` in a VS Code window on 2026-11-04, and it passed.
 
 ## Departures from the plan
 

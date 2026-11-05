@@ -116,7 +116,7 @@ GET /models | /v1/models -> table names + catalog names the caller may use, with
 ## Resume state
 
 - **Done so far:** all six tasks are done, and #88 merged them on 2026-10-24. `Adapter.models(connector)` exists, the four host adapters answer it, and `providers()` binds each row's `models()` to its open connector. `ModelProvider.prefix` exists, and `openai-compatible` answers its connector id there. `packages/server/src/proxy/catalog.ts` keeps each open connector's list. `route` reads a name the table does not hold as `<prefix>/<id>`, and the models list carries `name`, `context_length`, `pricing` and `total_count`. The OpenAI paths answer at the root beside `/v1`, and the docs name a model by its provider. The refs' line numbers are corrected to this tree.
-- **Next action:** Softov runs the checks in `.project/pending/proxy-05-model-checks.md`. Then the plan closes with `implemented.md`.
+- **Next action:** the checks passed on a test daemon on 2026-11-04 (8aae81ae). The plan closes with `implemented.md`.
 - **Open questions:** none.
 - **Watch out for:** a table name keeps the one-slash rule of `MODEL_NAME`. Only a fetched name holds more.
 

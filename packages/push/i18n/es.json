@@ -1,20 +1,20 @@
 {
   "meta": {
     "title": "Push",
-    "description": "Envía notificaciones push a los dispositivos conectados cuando una sesión de agente necesita la atención de alguien."
+    "description": "Envía notificaciones push a tus dispositivos cuando una sesión necesita tu atención."
   },
   "options": {
     "title": {
-      "description": "El título de una notificación. Sin él, el nombre del propio daemon."
+      "description": "Título de la notificación. Por defecto, el nombre del daemon."
     },
     "accessToken": {
-      "description": "Un token de acceso de Expo, cuando el proyecto tiene activada la seguridad de push. Se puede dar un nombre en lugar del token, como {\"$secret\": \"host:expo\"}."
+      "description": "Token de acceso de Expo, para proyectos con la seguridad de push activada. Puede ser una referencia del vault, como {\"$secret\": \"host:expo\"}."
     },
     "webPushHosts": {
-      "description": "Los hosts en los que puede estar el endpoint del navegador, donde un patrón *.<dominio> vale para todo host bajo él. Un endpoint en otro host se rechaza en la escritura."
+      "description": "Hosts permitidos como endpoint push de un navegador. '*.<domain>' coincide con cualquier host bajo ese dominio. Los demás se rechazan."
     },
     "contact": {
-      "description": "Una URI mailto: o https: enviada como la reivindicación sub de VAPID, que un servicio de push puede usar para contactar al operador. Sin ella, no hay reivindicación sub."
+      "description": "URI mailto: o https: enviada como claim 'sub' de VAPID, para que un servicio push pueda contactar al operador. No se envía si no se define."
     }
   }
 }

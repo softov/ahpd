@@ -29,7 +29,7 @@ import { optionsSchemaLoaded } from './plugins.js';
  * left out on purpose: a form that could change them would be a form that could
  * take the door off its hinges and leave nothing behind that would open it.
  */
-const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers'] as const;
+const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers'] as const;
 
 /**
  * The keys this daemon can apply while it runs.
@@ -38,6 +38,9 @@ const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'routes', 'modelProxy',
  * the notice in root state that a setting is not in force yet.
  */
 const LIVE = new Set<string>(['advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
+
+/** The keys that are `true`, `false` or a listener's `{ port, host }`. */
+const LISTENERS = new Set<string>(['httpApi', 'modelApi']);
 
 /** A flag as a person types it: `--port`, and `--path` where the field says so. */
 const flagOf = (key: ConfigKey): string => {
@@ -260,13 +263,13 @@ export function daemonRootConfig(
    * those answer as set and the rest of the server is answered as it was
    * written - the same mask a plugin's own options go through.
    *
-   * `httpApi` is the object a client reads, whatever way the file spells it
-   * out: `true` is on with every default, which is the object with nothing in
-   * it.
+   * `httpApi` and `modelApi` are the object a client reads, whatever way the
+   * file spells them out: `true` is on with every default, which is the object
+   * with nothing in it.
    */
   const answered = (key: string, value: unknown): unknown => {
     if (key === 'mcpServers') return maskValue({ type: 'object', additionalProperties: mcpServerSchema }, value);
-    if (key === 'httpApi') return value === true ? {} : value;
+    if (LISTENERS.has(key)) return value === true ? {} : value;
     return value;
   };
 
@@ -321,9 +324,10 @@ export function daemonRootConfig(
             const name = heldName(held, key);
             const overrode = typed[key] !== undefined && !same(typed[key], name === undefined ? undefined : held[name]);
             const mapped = conforming(key, configSchema.properties[key]);
-            // `httpApi` is one type whatever order the field names them in: a
-            // file may hold `true` or `false`, and a client reads the object.
-            if (key === 'httpApi') mapped['type'] = 'object';
+            // `httpApi` and `modelApi` are one type whatever order the field
+            // names them in: a file may hold `true` or `false`, and a client
+            // reads the object.
+            if (LISTENERS.has(key)) mapped['type'] = 'object';
             return [key, overrode
               ? { ...mapped, description: `${said} This run was started with ${flagOf(key)}, so what is here is not what this daemon is using.` }
               : mapped];
@@ -340,7 +344,7 @@ export function daemonRootConfig(
       // under the new name whichever of the two the file spells it with.
       const carried = DAEMON_KEYS.filter((key) => {
         const name = heldName(held, key);
-        return name !== undefined && !(key === 'httpApi' && held[name] === false);
+        return name !== undefined && !(LISTENERS.has(key) && held[name] === false);
       });
       return {
         ...Object.fromEntries(carried.map((key) => [key, answered(key, held[heldName(held, key) as string])])),

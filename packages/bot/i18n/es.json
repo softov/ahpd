@@ -1,17 +1,17 @@
 {
   "meta": {
     "title": "Bot",
-    "description": "Crea bots de conversación con identidad, espacio de trabajo y sesiones persistentes propios."
+    "description": "Crea bots con su propia identidad, espacio de trabajo y sesiones persistentes."
   },
   "options": {
     "root": {
-      "description": "La carpeta donde está el espacio de trabajo de cada bot, como <root>/<slug>."
+      "description": "Carpeta de los espacios de trabajo de los bots, un '<root>/<slug>' por bot. Por defecto, '~/.bots'. No puede estar dentro de la carpeta de configuración."
     },
     "lastChats": {
-      "description": "Cuántos chats lista una plantilla en {{chats}}."
+      "description": "Cuántos chats recientes lista '{{chats}}' en una plantilla. Por defecto, 10."
     },
     "mainTurnPostMessageAbsent": {
-      "description": "Qué hace un turno principal cuando el turno de la sesión de fondo termina sin post_message: post (por defecto), notice, silence o postNotice."
+      "description": "Qué muestra el chat del bot cuando su sesión de trabajo termina sin post_message. 'post' (por defecto) muestra las últimas palabras de la sesión; 'notice' muestra un aviso; 'silence' no muestra nada; 'postNotice' muestra las últimas palabras, o el aviso si no hay ninguna."
     }
   },
   "session": {

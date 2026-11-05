@@ -32,14 +32,15 @@ export type {
   Admission, Connected, Door, DoorOptions, NodeDoor, OnConnect, Opened, Raw, Runtime, Listener, ListenOptions, NodeRequestListener, RequestHandler, RequestsListener, RequestsOptions, StdioOptions, Tap,
 } from './listen.js';
 export type { Account, Offered } from './probe.js';
-export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects, RestoredSubagent, SessionAt, McpServer, StdioMcpServer, HttpMcpServer } from './agent.js';
+export type { Agent, Listed, Start, BoundTool, ToolCallFacts, Endpoint, ToolEffects, RestoredSubagent, SessionAt, McpServer, StdioMcpServer, HttpMcpServer } from './agent.js';
 export type { DirectoryNeed, FileNeed, EnvNeed, CopyNeed, PartNeed, StateNeed, Seed, ResolvedSeed, StateMode, MachineNeed, NeedKind, ResolvedNeed } from './machine.js';
 export type { Entry, Metadata, Read, ResourceChange, ResourceProvider, ResourceStore, SchemeDescription, Watcher, WatchOptions, Write } from './resources.js';
 export type { BroughtBack, ComputerPort, HandedAgent, HandedRecord, MachineSource, NestedSpawn, Spawn, SpawnOptions } from './computers.js';
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';
 export type { SessionConfigAnswerer, SessionConfigAsk } from './completions.js';
 export type { Claim, CommandTerminal, Ran, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals, OutputTerminal, OutputTerminals, TerminalOutputs, ShellIntegration, ShellIntegrationAnswer, Screen, ScreenOptions, SpawnScreen } from './terminals.js';
-export type { BackgroundTask, BackgroundTaskKind, BackgroundTasks } from './background.js';
+export type { HeldShell, ManagedShell, ShellClaim, ShellCommandResult, ShellCommandStatus, Shells, ShellType } from './shells.js';
+export type { BackgroundTask, BackgroundTaskKind, BackgroundTasks, ChatBackgroundTasks } from './background.js';
 export type { GitDir, Worktree, Worktrees } from './worktrees.js';
 export type { NewPullRequest, PullRequest, PullRequests } from './github.js';
 export type { Automation, AutomationEntry, AutomationRun, AutomationStore, RunEnding, StartSession } from './automations.js';

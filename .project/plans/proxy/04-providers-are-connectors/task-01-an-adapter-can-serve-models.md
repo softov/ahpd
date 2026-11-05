@@ -1,6 +1,6 @@
 ---
 title: An adapter can serve models
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

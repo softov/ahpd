@@ -17,7 +17,7 @@ git clone git@github.com:softov/ahpd.git $HOME\ahpd-check; cd $HOME\ahpd-check; 
 mkdir C:\work\demo; git -C C:\work\demo init
 ```
 
-Use the profile and the agent of the 2026-10-20 run: a `node:22` profile with `sessionFolder`, and an `acp` agent record whose command is `node <clone>\packages\agent-acp\test\fixtures\acp-server.mjs`.
+Use the profile and the agent of the 2026-10-20 run: a `node:22` profile with `sessionFolder`, and an agent record with `"engine": "acp"` whose command is `node <clone>\packages\agent-acp\test\fixtures\acp-server.mjs`. A record from that run names no engine, and the daemon now lists such a record as unavailable.
 
 ## The paint turn
 

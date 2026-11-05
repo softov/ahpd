@@ -114,7 +114,11 @@ export const proxySchema: JsonSchema = {
       type: 'object',
       additionalProperties: { type: 'array', items: modelEntrySchema },
     } as MapSchema as JsonSchema,
-    sessionCalls: { type: 'string', enum: SESSION_CALLS },
+    sessionCalls: {
+      type: 'string',
+      enum: SESSION_CALLS,
+      description: "record, the default, checks and records a call made with a session's own token; skip does neither.",
+    },
   },
 };
 

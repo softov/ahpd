@@ -17,7 +17,7 @@
 
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
-import type { Bag } from '@ahpd/sdk';
+import type { Bag, CommandTerminal } from '@ahpd/sdk';
 import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, pastTenseOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
@@ -111,6 +111,14 @@ export interface TurnMappingOptions {
 export interface TurnMapping {
   /** What one event means. */
   actions(event: RunEvent): MappedEvent;
+  /**
+   * Put a terminal a host tool opened on its call, and answer the action.
+   *
+   * The call's own change, as a `!` command's call carries one, so a client
+   * watches the output arrive. The block is kept for the completion, which
+   * replaces the call's whole content.
+   */
+  opened(callId: string, terminal: CommandTerminal): Bag[];
   /**
    * Take a request down, once.
    *
@@ -322,6 +330,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
       part,
     });
   }
+  /**
+   * The terminals a call showed while it ran, by the call's id.
+   *
+   * Held apart from the call so one that opens a terminal before its proposal
+   * is mapped still shows it, and so the completion keeps the block after it
+   * replaces the call's whole content.
+   */
+  const terminals = new Map<string, Bag[]>();
   /** Requests a client is being asked about, by the run's request id. */
   const requests = new Map<string, OpenRequest>();
   /**
@@ -726,19 +742,22 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'tool.completed': {
           const held = open.get(event.callId);
           open.delete(event.callId);
+          const shownTerminals = terminals.get(event.callId) ?? [];
+          terminals.delete(event.callId);
           let meta: Bag | undefined;
           if (held !== undefined) {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
             call.pastTenseMessage = pastTenseOf(held.name, held.shown, held.subject, !event.isError);
-            if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
+            const shown = [...shownTerminals, ...(event.content === '' ? [] : [{ type: 'text', text: event.content }])];
+            if (shown.length > 0) call.content = shown;
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
             // How long it ran, as cofold measured it from its start.
             call._meta = withToolCallDuration(call._meta === undefined ? undefined : bag(call._meta), event.durationMs);
             meta = call._meta === undefined ? undefined : bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, held?.name ?? event.name, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta)]);
+          return only([toolCompleteAction(turnId, event.callId, held?.name ?? event.name, held?.shown ?? event.name, event.content, event.isError, held?.subject, meta, shownTerminals)]);
         }
 
         /*
@@ -749,6 +768,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          */
         case 'tool.denied': {
           const held = open.get(event.callId);
+          terminals.delete(event.callId);
           /*
            * An unknown tool never got a proposal, so there is no call on the
            * client to close. The refusal still reaches the model as the tool
@@ -830,6 +850,20 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
   return {
     settle,
+
+    opened(callId: string, terminal: CommandTerminal): Bag[] {
+      const block: Bag = {
+        type: 'terminal',
+        resource: terminal.uri,
+        title: 'Terminal',
+        ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+      };
+      const content = [...(terminals.get(callId) ?? []), block];
+      terminals.set(callId, content);
+      const part = open.get(callId);
+      if (part !== undefined) (part.part.toolCall as Bag).content = [...content];
+      return [{ type: 'chat/toolCallContentChanged', turnId, toolCallId: callId, content }];
+    },
 
     actions(event: RunEvent): MappedEvent {
       /*

@@ -1,18 +1,18 @@
 {
   "name": "@ahpd/webhook",
-  "version": "0.14.0",
+  "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Webhooks for the ahpd daemon: a URL that talks to a bot by thread or fires an automation, with a secret per endpoint",
+  "description": "Webhooks for ahpd. A URL that talks to a bot or fires an automation, with its own secret.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
     "plugin",
     "webhook",
     "bot",
-    "automation"
+    "automation",
+    "integrations"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -65,7 +65,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Webhook",
-    "description": "A URL that talks to a bot or fires an automation, with a secret per endpoint.",
+    "description": "Give a bot or an automation its own URL, with a secret for each endpoint.",
     "categories": ["connector"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -83,12 +83,12 @@
         "syncTimeoutSeconds": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "How long a sync call waits for its turn to end, in seconds."
+          "description": "How long a sync call waits for the turn to finish, in seconds. Defaults to 60. Each endpoint can override it."
         },
         "maxBodyBytes": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "The most of a call body this plugin reads, in bytes. A larger body answers 413."
+          "description": "Largest request body accepted, in bytes. Defaults to 5242880 (5 MiB). Larger bodies get 413."
         }
       }
     }

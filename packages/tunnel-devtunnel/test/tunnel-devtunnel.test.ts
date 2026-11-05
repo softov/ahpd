@@ -163,7 +163,7 @@ const TOKEN = 'gho_made-up-token';
 
 /** A service over the real arrangement and the fake SDK. */
 const serviceOver = (cloud: Cloud): Service =>
-  sdkService({ token: () => ({ token: TOKEN }), cloud: () => cloud, name: 'dev03' });
+  sdkService({ token: async () => ({ token: TOKEN }), cloud: () => cloud, name: 'dev03' });
 
 /** A service no case reaches, for the plugin tests that only register. */
 const unusedService = (): Service => ({

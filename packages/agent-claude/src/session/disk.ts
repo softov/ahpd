@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -198,16 +198,27 @@ function markdownIn(dir: string, kind: 'prompt' | 'agent', scope: DiskScope): Di
   return out;
 }
 
-/** Every `*.md` under a folder, in path order, as far down as `RULE_DEPTH`. */
-function markdownUnder(dir: string, depth = 0, found: string[] = []): string[] {
+/**
+ * Every `*.md` under a folder, in path order, as far down as `RULE_DEPTH`.
+ *
+ * `seen` holds the real path of each folder walked, so a folder reached again
+ * through a link is not walked again: two links back up would otherwise double
+ * the walk at each level.
+ */
+function markdownUnder(dir: string, depth = 0, found: string[] = [], seen = new Set<string>()): string[] {
   if (depth > RULE_DEPTH) return found;
+  let real: string;
+  try { real = realpathSync(dir); }
+  catch { return found; }
+  if (seen.has(real)) return found;
+  seen.add(real);
   for (const name of namesIn(dir)) {
     if (found.length >= RULE_MOST) break;
     const path = join(dir, name);
     let held;
     try { held = statSync(path); }
     catch { continue; }
-    if (held.isDirectory()) markdownUnder(path, depth + 1, found);
+    if (held.isDirectory()) markdownUnder(path, depth + 1, found, seen);
     else if (held.isFile() && name.toLowerCase().endsWith('.md')) found.push(path);
   }
   return found;

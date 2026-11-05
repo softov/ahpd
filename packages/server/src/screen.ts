@@ -77,6 +77,7 @@ export const screen: SpawnScreen = (options: ScreenOptions): Screen => {
      * The listener is what catches a switch that comes later; a disposed
      * screen has nothing more to show, and answers rather than hanging.
      */
+    whenSettled: async () => { await barrier.catch(() => undefined); },
     whenAltBuffer: async () => {
       await barrier.catch(() => undefined);
       if (disposed || isInAltBuffer()) return;

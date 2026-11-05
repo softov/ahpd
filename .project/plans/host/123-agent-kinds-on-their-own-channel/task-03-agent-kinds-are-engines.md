@@ -1,6 +1,6 @@
 ---
 title: Agent kinds are engines
-status: implemented
+status: done
 depends:
   - task-02-a-kind-has-its-plugin-icon.md
 layer: "sdk, server, agent plugins, docs"

@@ -225,7 +225,7 @@ describe('choosing a model', () => {
     expect(await sdk.canUseTool?.('Bash', {}, { toolUseID: 'c1' })).toMatchObject({ behavior: 'deny' });
   });
 
-  it('refuses a permissions value that is not one, and takes one that is', async () => {
+  it('says a permissions value as the client sent it, and takes one that is one', async () => {
     const { client, peer: p, uri } = await running();
     const set = async (value: unknown) => {
       client.handle({
@@ -237,11 +237,12 @@ describe('choosing a model', () => {
         rejectionReason?: string; action?: { config?: Record<string, unknown> };
       };
     };
-    // A client sending a string where the schema says an object should hear
-    // that the value was not taken, rather than have it quietly ignored.
-    expect(await set('all')).toMatchObject({ rejectionReason: expect.stringContaining('permissions') });
-    // And the good one is echoed rather than refused - asserted here so this
-    // cannot pass in a world where every value is turned away.
+    // The reference host checks a value against its property's list and
+    // nothing else, so a string where the schema says an object is said, and
+    // the backend's refusal of it is this host's log.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L150
+    expect((await set('all')).rejectionReason).toBeUndefined();
+    // And the good one is echoed with its value.
     const took = await set({ allow: ['Read'], deny: [] });
     expect(took.rejectionReason).toBeUndefined();
     expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });

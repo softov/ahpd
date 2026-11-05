@@ -234,20 +234,36 @@ export function createParts(ctx: SessionContext): Parts {
    *
    * A lead frame no prompt is pending for has none, and is dropped, as VS
    * Code's Claude router maps a frame only to the prompt it answers: a CLI that
-   * runs on its own opens no turn a client did not start. A worker's chat whose
-   * turn ended opens one of the agent's own.
+   * runs on its own opens no turn a client did not start. The one exception is
+   * the turn a background task's end wakes, which opens as that task's notice;
+   * VS Code shows nothing there. A worker's chat whose turn ended opens one of
+   * the agent's own.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L82-L84
    */
   const openTurn = (scope: Scope = ctx.mainScope): Bag | undefined => {
     if (scope.turn) return scope.turn;
-    if (scope === ctx.mainScope) return undefined;
+    /*
+     * The summary a background task's end left for the turn it wakes.
+     *
+     * The CLI starts a turn when a notification arrives while nothing runs,
+     * and that turn answers the notification rather than the person: its
+     * message is the task's summary, drawn as one muted line. A notification
+     * that arrived inside a turn left none here, and a turn that opens with
+     * something else - a person's prompt, a steering message answered late -
+     * takes what was left with it.
+     */
+    const notice = scope === ctx.mainScope ? ctx.pendingSummary : undefined;
+    if (scope === ctx.mainScope) ctx.pendingSummary = undefined;
+    if (scope === ctx.mainScope && notice === undefined) return undefined;
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
     const opened = {
       id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
-      // The agent spoke first, so the message in front of this turn is its
-      // own. `Message.origin` is required.
-      message: { text: '', origin: { kind: 'agent' } },
+      // A notice is the system's, and a turn nobody opened is the agent's own.
+      // `Message.origin` is required.
+      message: notice !== undefined
+        ? { text: notice, origin: { kind: 'systemNotification' } }
+        : { text: '', origin: { kind: 'agent' } },
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;

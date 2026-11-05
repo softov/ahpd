@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
+import { steerOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -226,8 +227,8 @@ async function opened() {
 
 /** The prose of one turn, part by part. */
 const prose = (turn: Bag): string[] => ((turn.responseParts ?? []) as Bag[])
-  .filter((part) => part.kind === 'markdown')
-  .map((part) => String(part.content ?? ''));
+  .filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined)
+  .map((part) => (steerOf(part) === undefined ? '' : 'steer: ') + String(part.content ?? ''));
 
 /** What a client shows of each turn: its id, how it ended, the message it answers and whose that is, and its prose. */
 const history = (turns: Bag[]): unknown[] => turns.map((turn) => [
@@ -324,7 +325,7 @@ it('answers a steering message the CLI runs after the turn\'s last answer inside
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
   const turns = state.turns as Bag[];
-  expect(history(turns)).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', 'BETA']]]);
+  expect(history(turns)).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', `steer: ${BETA_TEXT}`, 'BETA']]]);
   // The turn is charged for both of the CLI's turns: the second result's running total.
   expect(((turns[0] as Bag).usage as Bag)?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.00179864, currency: 'USD' } });
 });
@@ -389,7 +390,7 @@ it('gives a steering message whose id is not a UUID a uuid of its own, and answe
   // said its set, and the session says its removal when the CLI reads it.
   expect(chat.filter((one) => one.type === 'chat/pendingMessageSet')).toEqual([]);
   expect(chat.filter((one) => one.type === 'chat/pendingMessageRemoved')).toEqual([expect.objectContaining({ kind: 'steering', id: 's1' })]);
-  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', 'BETA']]]);
+  expect(history(replayed(before, chat).turns as Bag[])).toEqual([[FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA', `steer: ${BETA_TEXT}`, 'BETA']]]);
 });
 
 it('ends the turn at its one result when the CLI folds the steering message into it', async () => {
@@ -399,7 +400,7 @@ it('ends the turn at its one result when the CLI folds the steering message into
   expect(ends).toHaveLength(1);
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
-  expect(history(state.turns as Bag[])).toEqual([[TOOL, 'complete', DONE_TEXT, 'user', ['DONE BETA2']]]);
+  expect(history(state.turns as Bag[])).toEqual([[TOOL, 'complete', DONE_TEXT, 'user', [`steer: ${BETA2_TEXT}`, 'DONE BETA2']]]);
 });
 
 /*
@@ -435,7 +436,7 @@ it('reads a steering message the CLI took in at a tool call back in the turn it 
   expect(history(read)).toEqual([
     [FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA']],
     [LATE, 'complete', BETA_TEXT, 'user', ['BETA']],
-    [TOOL, 'complete', DONE_TEXT, 'user', ['DONE BETA2']],
+    [TOOL, 'complete', DONE_TEXT, 'user', [`steer: ${BETA2_TEXT}`, 'DONE BETA2']],
   ]);
 });
 
@@ -453,7 +454,7 @@ it('reads a steering message the CLI took in before a stop back inside the stopp
   expect(history(read)).toEqual([
     ['136f888d-a4e8-4f3e-a0dc-935c62dfd988', 'cancelled', COUNT_TEXT, 'user', ['1\n2\n3\n4']],
     ['056b0890-1fcc-409a-ac24-b9fbca0270a3', 'complete', BETA_TEXT, 'user', ['BETA']],
-    ['932db394-2ecd-4674-9536-593a3644009b', 'cancelled', 'Run the shell command `sleep 3` with the Bash tool, then count from 1 to 40, one number per line.', 'user', ['1']],
+    ['932db394-2ecd-4674-9536-593a3644009b', 'cancelled', 'Run the shell command `sleep 3` with the Bash tool, then count from 1 to 40, one number per line.', 'user', [`steer: ${BETA2_TEXT}`, '1']],
   ]);
 });
 
@@ -486,7 +487,7 @@ it('opens no turn for a steering message the CLI took in before the stop', async
   expect(chat.filter((one) => one.type === 'chat/turnStarted')).toHaveLength(1);
   expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
   const live = history(replayed(before, chat).turns as Bag[]);
-  expect(live).toEqual([[FOLD_STOPPED, 'cancelled', SLEEP_COUNT_TEXT, 'user', ['1']]]);
+  expect(live).toEqual([[FOLD_STOPPED, 'cancelled', SLEEP_COUNT_TEXT, 'user', [`steer: ${BETA2_TEXT}`, '1']]]);
   // Read back, the stopped turn is the one a client saw.
   const read = await readBack(renamed(fixture('claude-folded-stop-transcript.jsonl'), FOLD_STEER, steered));
   expect(history(read).slice(-1)).toEqual(live);
@@ -495,9 +496,42 @@ it('opens no turn for a steering message the CLI took in before the stop', async
 /*
  * A steering message is the turn's it went into, as the reference steering
  * entry takes the in-flight send's turn: when that turn fails, no turn opens
- * for the message, and what the CLI answers it with goes nowhere.
+ * for the message, and what the CLI answers it with goes nowhere. The capture
+ * stopped at its turn limit, which is no failure, so its result is made the
+ * one a failure in execution gives.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
  */
+it('opens no turn for a steering message the CLI holds when its turn fails', async () => {
+  const { session, chat, before } = await opened();
+  // The probe sent the steering message as the tool's result arrived, which is the turn's last round.
+  const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
+  const [limited, answered] = splitAfter(rest, (frame) => frame.type === 'result');
+  const failed = limited.map((frame) => (frame.type === 'result'
+    ? { ...frame, subtype: 'error_during_execution', is_error: true, errors: ['The request failed'] }
+    : frame));
+  session.sendMessage(LIMITED, SLEEP_DONE_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  expect(session.sendSteeringMessage?.({ id: 's-limit', text: BETA_TEXT })).toBe(true);
+  await settle();
+  const steered = lastSent();
+  sdk.push(...renamed(failed, AFTER_LIMIT, steered));
+  await settle();
+  sdk.push(...renamed(answered, AFTER_LIMIT, steered));
+  await settle();
+
+  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([expect.objectContaining({ turnId: LIMITED })]);
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([LIMITED]);
+  expect(history(replayed(before, chat).turns as Bag[])).toEqual([
+    [LIMITED, 'error', SLEEP_DONE_TEXT, 'user', []],
+  ]);
+  // The CLI owes nothing once it has answered the message, so a turn sent now goes out.
+  expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);
+  await settle();
+  expect(sdk.handed.map((one) => one.uuid)).toEqual([LIMITED, steered, GAMMA]);
+});
+
 /*
  * A turn the CLI stopped at its turn limit is no failure, as VS Code's Claude
  * mapper reads a result that is neither a failed success nor an error during
@@ -526,7 +560,7 @@ it('opens no turn for a steering message the CLI holds when its turn stops at a 
   expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([LIMITED]);
   expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([LIMITED]);
   expect(history(replayed(before, chat).turns as Bag[])).toEqual([
-    [LIMITED, 'complete', SLEEP_DONE_TEXT, 'user', ['BETA']],
+    [LIMITED, 'complete', SLEEP_DONE_TEXT, 'user', [`steer: ${BETA_TEXT}`, 'BETA']],
   ]);
   // The CLI owes nothing once it has answered the message, so a turn sent now goes out.
   expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);

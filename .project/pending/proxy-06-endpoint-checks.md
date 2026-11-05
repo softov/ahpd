@@ -8,9 +8,19 @@ plans:
 
 proxy/06 is on main. The proxy answers every model endpoint of OpenAI and Anthropic. Its tests use fake providers.
 
+## Results so far
+
+On a test daemon at 8b5423b2, on 2026-11-04, with `openrouter`, `openai` and `anthropic` connectors that read their keys from the environment:
+
+- Step 2, the Response create, passed through `openrouter/openai/gpt-4.1-nano`, with an id that starts with `resp_`.
+- Step 5 passed: `{"input_tokens":8}`.
+- Step 7 passed: the daemon's log and the usage records hold no key.
+- Steps 1, 3 and 4 are left. OpenAI answered `insufficient_quota` for each, and the proxy passed that answer on. Step 3 is OpenAI's alone.
+- Step 6 is left. The OpenRouter list has no rerank model.
+
 ## Set up
 
-Do [proxy-04-move-config-dev.md](proxy-04-move-config-dev.md) first: its *Set up* turns `httpApi` on. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
+The daemon needs `modelApi` on, as your `config-dev.json` has since 2026-11-04. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
 
 ```bash
 export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token) B=http://127.0.0.1:37537

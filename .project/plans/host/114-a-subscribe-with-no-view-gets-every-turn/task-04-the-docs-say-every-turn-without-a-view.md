@@ -1,6 +1,6 @@
 ---
 title: The docs say every turn without a view
-status: implemented
+status: done
 depends:
   - task-02-a-snapshot-follows-the-subscribes-view.md
   - task-03-claudes-chat-state-holds-every-turn.md

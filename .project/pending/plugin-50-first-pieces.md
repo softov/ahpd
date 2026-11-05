@@ -10,7 +10,7 @@ plugin/50 is on main. It ships fourteen pieces as adapters, and its tests load e
 
 ## Set up
 
-Your `config-dev.json` already names all fourteen pieces in the activepieces options.
+Your `config-dev.json` names the fourteen pieces in the activepieces options, and `@activepieces/piece-postgres` as well.
 
 1. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
 

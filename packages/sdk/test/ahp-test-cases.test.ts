@@ -371,6 +371,7 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
+const DRAINED = 'queueDrainContribution.ts L29 at 6b68d3fe: "Owns pending-message synchronization and decides when a queued turn can be admitted."; a client\'s reorder, L87 and L146, drains the queue of a chat that runs nothing, so its head starts as a turn';
 const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
 
 /**

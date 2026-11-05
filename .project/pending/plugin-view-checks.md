@@ -6,7 +6,7 @@ plans:
 
 # Check that the Dev Tunnel plugin shows its state
 
-plugin/20261031-1200 is on main (#175). The Dev Tunnel plugin's row carries `views.main` with the tunnel's state. Since 184ca4c8 the plugin runs on the Dev Tunnels SDK, with no `devtunnel` CLI. Do [plugin-1122-tunnel-checks.md](plugin-1122-tunnel-checks.md) first, so a tunnel runs.
+plugin/20261031-1200 is on main (#175). The Dev Tunnel plugin's row carries `views.main` with the tunnel's state. Since 184ca4c8 the plugin runs on the Dev Tunnels SDK, with no `devtunnel` CLI. The tunnel checks of plugin/20261102-1122 passed on 2026-11-04.
 
 ## Set up
 
@@ -24,17 +24,19 @@ export AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.vscode/cli/ag
 rpc() { node /github/ahpd/.project/pending/rpc.mjs "$@"; }
 ```
 
+## Results so far
+
+On 2026-11-04 Claude read the view after one disable and one enable of the system tunnel. It held the address, tunnel `swift-fog-zm4rwhl`, port 31546, the relay state and 0 clients. It went away while the tunnel was off, and came back after the enable.
+
 ## Steps
 
-1. Read the plugin rows. Check that `views.main` of `tunnel-devtunnel` shows the address, tunnel id, port, relay state and client count:
+1. Connect VS Code through the system tunnel, wait 30 seconds, and read the rows again. Check that the client count went up. A plain WebSocket client held open through the tunnel for 70 seconds left the count at 0.
 
 ```bash
-rpc subscribe '{"channel":"x-ahpd-plugins://"}' | grep -o '"views":.\{0,600\}'
+rpc subscribe '{"channel":"x-ahpd-plugins://"}' | grep -o '"clients-value".\{0,120\}'
 ```
 
-2. Connect a client through the tunnel, wait 30 seconds, and read the rows again. Check that the client count went up.
-3. Disable the tunnel in ahpw, and read the rows again. Check that `views.main` is gone.
-4. Enable the tunnel, turn off the network for one minute, and read the rows again. Check that the last view stayed.
+2. Turn off the network for one minute, and read the rows again. Check that the last view stayed.
 
 ## Reply
 

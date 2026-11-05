@@ -6,7 +6,7 @@ import { readJson, writeJsonAtomic } from '../utils/jsonfile.js';
 import { asCreatedBy, asOrigin } from './remotesession.js';
 import type { Scope } from '../usage/scopes.js';
 import type { ChangesSummary } from '../types/changes.js';
-import type { CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
+import type { AutomationOrigin, CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
 import type { Owner } from '../types/usage.js';
 import { ownerOf } from '../utils/values.js';
 
@@ -129,6 +129,8 @@ export function memorySessions(): SessionStore & Held {
     setRemoteOrigin: (id, value) => { patch(id, { remoteOrigin: value }); },
     createdBy: (id) => rows.get(id)?.createdBy,
     setCreatedBy: (id, value) => { patch(id, { createdBy: value }); },
+    automationOrigin: (id) => rows.get(id)?.automationOrigin,
+    setAutomationOrigin: (id, value) => { patch(id, { automationOrigin: value }); },
     worktree: (id) => rows.get(id)?.worktree,
     setWorktree: (id, value) => { patch(id, { worktree: value }); },
     autoArchivedAt: (id) => rows.get(id)?.autoArchivedAt,
@@ -234,6 +236,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.chats === undefined ? {} : { chats: held.chats }),
         ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
         ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+        ...(held.automationOrigin === undefined ? {} : { automationOrigin: held.automationOrigin }),
         ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
         ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
         ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
@@ -285,6 +288,19 @@ const nestedOf = (value: unknown): NestedRecord | undefined => {
     modifiedAt: held.modifiedAt,
     workingDirectories: held.workingDirectories.filter((one): one is string => typeof one === 'string'),
   };
+};
+
+/**
+ * A session's automation origin as the file wrote it, or nothing where it is
+ * not one: the one kind an origin has here, and the automation and the run as
+ * strings. Anything else is ignored rather than guessed at, since a summary
+ * names what this says.
+ */
+const automationOriginOf = (value: unknown): AutomationOrigin | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const held = value as { kind?: unknown; automation?: unknown; run?: unknown };
+  if (held.kind !== 'automation' || typeof held.automation !== 'string' || typeof held.run !== 'string') return undefined;
+  return { kind: 'automation', automation: held.automation, run: held.run };
 };
 
 /**
@@ -419,6 +435,7 @@ interface Row {
   chats?: StoredChat[] | undefined;
   remoteOrigin?: RemoteOrigin | undefined;
   createdBy?: CreatedBy | undefined;
+  automationOrigin?: AutomationOrigin | undefined;
   workingDirectory?: string | undefined;
   worktree?: StoredWorktree | undefined;
   autoArchivedAt?: string | undefined;
@@ -441,7 +458,8 @@ const empty = (row: Row): boolean =>
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
-  && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
+  && row.remoteOrigin === undefined && row.createdBy === undefined && row.automationOrigin === undefined
+  && row.worktree === undefined
   && row.autoArchivedAt === undefined && row.changes === undefined;
 
 /**
@@ -482,6 +500,8 @@ interface Saved {
   remoteOrigin?: RemoteOrigin;
   /** The session that made this one, as a window recorded it. */
   createdBy?: CreatedBy;
+  /** What started this session, for one an automation began. */
+  automationOrigin?: AutomationOrigin;
   /** The folder the session works in, as a path. */
   workingDirectory?: string;
   /** The worktree this host made for the session. */
@@ -627,6 +647,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.chats === undefined ? {} : { chats: held.chats }),
       ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
       ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+      ...(held.automationOrigin === undefined ? {} : { automationOrigin: held.automationOrigin }),
       ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
       ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
       ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
@@ -681,6 +702,24 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     later();
   };
 
+  /**
+   * Move a file this version cannot read to `<file>.unreadable-<time>`.
+   *
+   * The name does not end in `.json`, so a later load does not read it again,
+   * and the UTC time keeps two moves of one id apart. A move that fails leaves
+   * the file where it is, and says so.
+   */
+  const setAside = (file: string): void => {
+    const aside = `${file}.unreadable-${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')}`;
+    try {
+      renameSync(file, aside);
+      told(`Moved ${file} to ${aside}.`);
+    }
+    catch (error) {
+      told(`Could not move ${file} aside, so the next write for it replaces it: ${(error as NodeJS.ErrnoException).code ?? 'failed'}`);
+    }
+  };
+
   const load = (): void => {
     let names: string[];
     try { names = readdirSync(dir); }
@@ -695,15 +734,22 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       const read = readJson(file);
       let row: Saved | undefined;
       if (!read.ok) {
-        told(`Could not read ${file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
+        // The parser's error quotes what it choked on, so a file that is not
+        // JSON is said to be that and no more.
+        if (read.kind === 'missing') continue;
+        told(`Could not read ${file}: ${read.kind === 'unreadable' ? read.code ?? 'unreadable' : 'it is not JSON'}`);
       }
       else if ((read.value as Partial<Saved>).version === 1 && typeof (read.value as Partial<Saved>).id === 'string') {
         row = read.value as Saved;
       }
       else told(`Ignoring ${file}: it is not a session store this version can read.`);
       // One file this version cannot read is one session it does not know, and
-      // the rest of the folder still does.
-      if (row === undefined) continue;
+      // the rest of the folder still does. It is moved aside, because the next
+      // write for its id would put what memory holds in its place.
+      if (row === undefined) {
+        setAside(file);
+        continue;
+      }
       heard.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)) inner.setConfig(row.id, row.config);
@@ -785,6 +831,11 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (origin !== undefined) inner.setRemoteOrigin?.(row.id, origin);
       const createdBy = asCreatedBy(row.createdBy);
       if (createdBy !== undefined) inner.setCreatedBy?.(row.id, createdBy);
+      // What started it, read back only as the one kind of origin a session
+      // record keeps: anything else is ignored rather than guessed at, as every
+      // other field here is.
+      const automationOrigin = automationOriginOf(row.automationOrigin);
+      if (automationOrigin !== undefined) inner.setAutomationOrigin?.(row.id, automationOrigin);
       // A path, and anything that is not a non-empty string is ignored rather
       // than guessed at, as every other field here is.
       if (typeof row.workingDirectory === 'string' && row.workingDirectory !== '') inner.setWorkingDirectory(row.id, row.workingDirectory);
@@ -835,6 +886,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setRemoteOrigin: (id, value) => { touched(id, () => { inner.setRemoteOrigin?.(id, value); }); },
     createdBy: (id) => inner.createdBy?.(id),
     setCreatedBy: (id, value) => { touched(id, () => { inner.setCreatedBy?.(id, value); }); },
+    automationOrigin: (id) => inner.automationOrigin?.(id),
+    setAutomationOrigin: (id, value) => { touched(id, () => { inner.setAutomationOrigin?.(id, value); }); },
     worktree: (id) => inner.worktree(id),
     setWorktree: (id, value) => { touched(id, () => { inner.setWorktree(id, value); }); },
     autoArchivedAt: (id) => inner.autoArchivedAt(id),

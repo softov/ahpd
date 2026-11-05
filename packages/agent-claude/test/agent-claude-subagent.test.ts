@@ -35,8 +35,10 @@ const sdk = vi.hoisted(() => {
     stopped: [] as string[],
     /** How many times the query was interrupted. */
     interrupted: 0,
+    /** How many times a query was closed, which is how a stop ends the turn. */
+    closed: 0,
     /** Start a new feed for the next session. */
-    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; },
+    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; state.closed = 0; },
     /** Queue frames for the current session to read. */
     push(...frames: Record<string, unknown>[]) {
       const feed = state.feed;
@@ -76,7 +78,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
-      close: () => {},
+      close: () => { sdk.closed += 1; },
     };
   },
 }));

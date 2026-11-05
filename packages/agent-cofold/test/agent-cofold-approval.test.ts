@@ -259,6 +259,7 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   const confirmed = said.find((e) => e.rejectionReason === undefined);
   expect(confirmed?.action).toMatchObject({ toolCallId: 'call-a', approved: true, confirmed: 'user-action' });
 
+
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string; confirmed: string };

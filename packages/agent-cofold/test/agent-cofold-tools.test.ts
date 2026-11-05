@@ -301,6 +301,45 @@ it('gives the ask_user name to the host\'s tool', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('gives a host tool its call id, and puts the terminal it opened on the call', async () => {
+  const dir = place();
+  const terminal = { uri: 'ahp-terminal://shell/chat/c1', isPty: true };
+  let seen: string | undefined;
+  const mine: BoundTool = {
+    definition: { name: 'mine', description: 'The host\'s own.', inputSchema: { type: 'object' } },
+    run: async (_input, call) => {
+      seen = call?.toolCallId;
+      call?.opened?.(terminal);
+      return 'ran it';
+    },
+  };
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('mine', {})] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    hostTools: [mine],
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.sendMessage('t1', 'run it');
+  await when(() => ended(v));
+
+  // The id the call carries on every chat action is the one the tool is told.
+  expect(seen).toBe('c1');
+  const block = { type: 'terminal', resource: terminal.uri, title: 'Terminal', isPty: true };
+  const changed = v.of('chat', 'chat/toolCallContentChanged').find((action) => action.toolCallId === 'c1');
+  expect(changed?.content).toEqual([block]);
+  // The completion replaces the call's content, so the terminal it showed
+  // while it ran is carried into the result.
+  expect((completeFor(v, 'c1')?.result as Bag).content).toEqual([
+    block,
+    { type: 'text', text: 'ran it' },
+  ]);
+  const turn = (session.chatState().turns as Bag[])[0] as Bag;
+  const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
+  expect((part?.toolCall as Bag).content).toEqual([block, { type: 'text', text: 'ran it' }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('offers web_search only when a search provider is configured', async () => {
   const dir = place();
   const plain = await open({ script: [{ text: 'ok' }], workspace: dir, store: dir });
@@ -920,9 +959,9 @@ it('keeps the tools for a session with no working directory', async () => {
   expect(names).toContain('read_file');
   const done = completeFor(v, 'c1');
   expect(done?.result).toMatchObject({ success: true });
-  // No directory named, so the command runs in the daemon's own.
+  // No directory named, so the command runs in the session's scratch folder.
   const said = ((done?.result as Bag).content as { text?: string }[]).map((one) => one.text ?? '').join('');
-  expect(said).toContain(process.cwd());
+  expect(said).toMatch(/\.copilot[\\/]chats[\\/]/);
   rmSync(dir, { recursive: true, force: true });
 });
 

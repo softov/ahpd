@@ -288,6 +288,38 @@ it('keeps a writeOnly value in the vault, and in no record and no snapshot', asy
   await close();
 });
 
+it('answers a writeOnly value that stays in the record as set, at the top and below it', async () => {
+  const { host, users, collection, adapters, close } = await served();
+  adapters['webhook'] = {
+    ...adapters['webhook']!,
+    schema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        pin: { type: 'string', writeOnly: true, secret: false },
+        auth: { type: 'object', properties: { token: { type: 'string', writeOnly: true } } },
+        empty: { type: 'string', writeOnly: true, secret: false },
+      },
+      required: ['target'],
+    },
+  };
+  const cy = await as(host, users, 'cy');
+
+  const put = await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy',
+    config: { target: 'bot://motion', pin: '4242', auth: { token: 'tk-nested-1' }, empty: '' },
+  });
+  expect(put).toHaveProperty('result');
+
+  // The record keeps both: neither is a vault field of this adapter.
+  expect((await collection.get('ci'))?.['config']).toMatchObject({ pin: '4242', auth: { token: 'tk-nested-1' } });
+  const row = (await cy.rows())['ci'];
+  expect(row?.['config']).toEqual({ target: 'bot://motion', pin: '<set>', auth: { token: '<set>' }, empty: '' });
+  expect(JSON.stringify(put)).not.toContain('4242');
+  expect(JSON.stringify(put)).not.toContain('tk-nested-1');
+  await close();
+});
+
 it('keeps the stored secret when a put sends the writeOnly field empty', async () => {
   const { host, users, collection, opened, vault, close } = await served();
   const cy = await as(host, users, 'cy');
@@ -404,6 +436,31 @@ it('leaves a person\'s record that names a variable invalid at open, without rea
   expect(problems).toEqual([expect.stringContaining('may read the daemon\'s environment only for a host connector')]);
   expect(opened).toEqual([]);
   expect((await cy.rows())['mine']).toMatchObject({ state: 'invalid' });
+  await close();
+});
+
+it('says on the row why a connector did not open at start, and clears it once it opens', async () => {
+  const { host, users, collection, connectors, close } = await served();
+  await collection.put({
+    id: 'ci', adapter: 'webhook', owner: 'host', config: { target: 'bot://motion', secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } },
+  });
+  expect(process.env['AHPD_TEST_CONNECTOR_KEY']).toBeUndefined();
+  await connectors.openAll();
+  const ana = await as(host, users, 'ana');
+  expect((await ana.rows())['ci']).toMatchObject({
+    state: 'invalid',
+    health: { check: { result: 'failed', message: 'the environment holds no AHPD_TEST_CONNECTOR_KEY' } },
+  });
+
+  process.env['AHPD_TEST_CONNECTOR_KEY'] = 'right-token';
+  try {
+    await connectors.openAll();
+    const row = (await ana.rows())['ci'] as { state: string; health?: { check?: { result: string } } };
+    expect(row.state).toBe('ready');
+    expect(row.health?.check?.result).not.toBe('failed');
+  } finally {
+    delete process.env['AHPD_TEST_CONNECTOR_KEY'];
+  }
   await close();
 });
 

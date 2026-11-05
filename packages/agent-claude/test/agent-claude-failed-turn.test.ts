@@ -240,6 +240,26 @@ it('types a failure outside a result as a failed send', async () => {
 });
 
 /*
+ * A turn handed behind a turn that never reached the CLI is a send of its own
+ * and goes on, as the reference host hands each start to its agent and its
+ * Claude agent sends them one after another.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L486-L492
+ */
+it('ends the turn handed behind a refused turn too, and leaves neither waiting', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  sdk.failing = new Error('the CLI went away');
+  sdk.queries.at(-1)?.close();
+  await settle();
+  session.sendMessage('t1', 'one');
+  session.sendMessage('t2', 'two');
+  await settle();
+  expect(chat.filter((one) => one.type === 'chat/error').map((one) => one.turnId)).toEqual(['t1', 't2']);
+  expect(sdk.said).toEqual([]);
+});
+
+/*
  * A stream that ends with no result fails the turn it was answering, as the
  * reference pipeline fails every send it had not answered, and the next turn
  * goes to a CLI that resumes the conversation.

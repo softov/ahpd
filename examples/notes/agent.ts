@@ -272,7 +272,6 @@ export function notes(options: NotesOptions): Agent<Session> {
       const part: Bag = { id: String(request.id), kind: 'inputRequest', request };
       (turn.responseParts as Bag[]).push(part);
       start.emit('chat', { type: 'chat/inputRequested', request });
-      doing('Waiting on you');
       const given = await new Promise<Bag | undefined>((settle) => {
         wants({
           id: String(request.id),
@@ -352,7 +351,6 @@ export function notes(options: NotesOptions): Agent<Session> {
       });
 
       if (asks) {
-        doing(`Waiting on you: ${tool.displayName}`);
         const allowed = await new Promise<boolean>((settle) => {
           wants({
             id: callId,

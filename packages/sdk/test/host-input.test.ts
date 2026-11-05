@@ -7,7 +7,7 @@ import { checker } from '../../../tools/wire.mjs';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { Status } from '../src/sessions/catalog.js';
 import {
-  resetSdk, actions, emit, sdk, settle, running, peer, hello,
+  resetSdk, actions, emit, sdk, sessionQueries, settle, running, peer, hello,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
 
@@ -421,13 +421,10 @@ describe('driving a turn', () => {
     // A cancel that only interrupts leaves the subprocess waiting on a
     // promise nobody will ever settle.
     expect(await decision).toMatchObject({ behavior: 'deny' });
-    // The CLI reports the call's result once it has recorded the answer, and
-    // the interrupt follows it.
-    await emit({
-      type: 'user', parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sleep', is_error: true, content: 'The turn was stopped' }] },
-    });
-    expect(sdk.interrupted).toBe(1);
+    // And the stop closes the CLI, as the reference stop aborts its query.
+    await settle();
+    expect(sdk.interrupted).toBe(0);
+    expect(sessionQueries()[0]?.closed).toBe(true);
   });
 });
 
@@ -495,15 +492,21 @@ describe('a message typed while a turn is running', () => {
     expect(sdk.said).toEqual(['first']);
   });
 
-  it('refuses to take back a message the chat never queued', async () => {
+  /*
+   * A removal of a message the chat never queued is said as the client sent
+   * it, and the reducer leaves the chat as it was, as the reference host
+   * applies any removal it does not refuse (agentService.ts L13522-L13536 at
+   * 6b68d3fe).
+   */
+  it('says a take-back of a message the chat never queued, which changes nothing', async () => {
     const { client, peer: p, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
+      params: { channel: chatUri, clientSeq: 4, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'nobody' } },
     });
     await settle();
-    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('nobody');
+    const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved');
+    expect(said.map((e) => [e.action.id, e.rejectionReason])).toEqual([['nobody', undefined]]);
   });
 
   /*

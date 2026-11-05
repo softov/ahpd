@@ -89,7 +89,8 @@
  * - text containing `window` sends a `usage_update` that carries the context and
  *   no cost at all;
  * - text containing `wait` emits one chunk and then holds the prompt open
- *   until `session/cancel` arrives, answering `cancelled` only then;
+ *   until `session/cancel` arrives, answering `cancelled` only then; with
+ *   `plan`, it sends the two plans first;
  * - text containing `fail` streams the plain answer and then answers the
  *   prompt with a JSON-RPC error;
  * - text containing `die` streams the plain answer and then exits with code 3,
@@ -740,7 +741,7 @@ const promptScript = async (id, params) => {
     );
     return;
   }
-  if (text.includes('wait')) {
+  if (text.includes('wait') && !text.includes('plan')) {
     // Held open, and answered only by the cancel below: a test that sees this
     // turn end at all has proven the notification reached the server.
     pending = id;
@@ -778,6 +779,11 @@ const promptScript = async (id, params) => {
       { content: 'Write the answer', priority: 'medium', status: 'in_progress' },
     ]);
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'planned' } });
+    // A plan whose turn is held open after it, until the cancel.
+    if (text.includes('wait')) {
+      pending = id;
+      return;
+    }
   }
 
   if (text.includes('shift')) {

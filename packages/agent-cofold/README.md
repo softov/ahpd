@@ -154,7 +154,7 @@ The named providers are tried in the order the configuration lists them, and a f
 
 ## Messages sent while a turn runs
 
-A steering message goes into the running turn: cofold appends it to the run's transcript before the model's next step. The session says it back as the chat's steering message as it takes it, and takes it out once cofold has written it. A run that ends before a step reads it leaves it to a turn of its own, which starts once the chat is idle, ahead of any queued message; after a run a client stopped, it waits until the chat's next turn ends.
+A steering message goes into the running turn: cofold appends it to the run's transcript before the model's next step. The session says it back as the chat's steering message as it takes it, and takes it out once cofold has written it. A run that ends before a step reads it leaves it to a turn of its own, which starts once the chat is idle, ahead of any queued message; a stop lets go of it.
 
 A turn a client sends while another runs is said at once and takes that one's place in every client's chat, as the protocol's reducer replaces the active turn. It runs once the run in front of it is over, because one run reads the session at a time; the turn it replaced runs on, and is in no history. A stop of the turn that took its place stops that run, and the turns waiting with it go. A message queued while a stopped run still winds down is started at once the same way, because every client holds the chat idle once the stop is said.
 

@@ -6,7 +6,9 @@ import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
-import type { TerminalStore } from './terminals.js';
+import type { CommandTerminal, TerminalStore } from './terminals.js';
+import type { Shells } from './shells.js';
+import type { ChatBackgroundTasks } from './background.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
@@ -1066,6 +1068,16 @@ interface HostToolCommon {
    */
   deferLoading?: boolean;
   /**
+   * Whether this tool takes the place of the agent's own tool of that name.
+   *
+   * The reference host's `overridesBuiltInTool`, which its agent terminal tool
+   * sets: a backend whose harness has a tool of its own by the name, or by the
+   * name a harness spells it with, offers this one instead, in the way that
+   * harness documents for replacing one of its own. Undefined leaves the
+   * harness's tools as they are.
+   */
+  overridesBuiltInTool?: boolean;
+  /**
    * The grant a person needs to see this tool where no session asks.
    *
    * Only read for a tool that says `sessionless: true`, and only by the list
@@ -1182,6 +1194,17 @@ export interface ToolCall {
   provider?: string;
   /** The turn the call is running in, when the chat has one running. */
   turn(): string | undefined;
+  /** The call's own id, as its `chat/toolCallStart` carried it, when the backend named it. */
+  toolCallId?: string;
+  /**
+   * Told the terminal as soon as a host tool opens one for this call.
+   *
+   * The backend's half of showing a call's shell, as `RunCommand` is for a `!`
+   * command: the terminal is put on the call and a
+   * `chat/toolCallContentChanged` goes out, so a client watches the output
+   * arrive. Absent where the backend names no call, or names none to a handler.
+   */
+  opened?(terminal: CommandTerminal): void;
   /**
    * Who is behind this call: a person's id, a session's owner, or `host`.
    *
@@ -1345,6 +1368,24 @@ export interface ToolCall {
   setArtifacts(list: Bag[]): void;
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
+  /**
+   * The calling session's shells, and what may be done with them.
+   *
+   * Nothing where this host runs no terminal store, which is the one thing a
+   * shell needs: a shell is a terminal on the root list, and a call that asks
+   * for one where none can be watched is refused rather than given a shell
+   * nobody sees.
+   */
+  shells(): Shells | undefined;
+  /**
+   * The calling chat's background rows, to set one and take it back.
+   *
+   * The same seam a backend reports through, with the chat already named: a
+   * tool draws a row where it runs and nowhere else. A row is set while the
+   * work it names is running and removed when that work has ended, so a
+   * client goes on holding its stop until there is nothing left to stop.
+   */
+  background(): ChatBackgroundTasks;
   /**
    * Read a resource this host serves, as text.
    *

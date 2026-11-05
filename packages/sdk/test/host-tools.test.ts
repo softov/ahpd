@@ -1848,7 +1848,7 @@ describe('tools a client contributes', () => {
     await settle();
   };
 
-  /** The person's answer, dispatched to the session the way a client dispatches it. */
+  /** The person's answer, dispatched to the session the way a client dispatches it, naming the call's turn. */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -1856,7 +1856,7 @@ describe('tools a client contributes', () => {
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-1', approved } },
     });
   };
 

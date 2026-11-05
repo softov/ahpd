@@ -30,6 +30,7 @@ import type { Spawn } from './spawn.js';
 import type { Lifecycle } from './lifecycle.js';
 import type { Tooling } from './tooling.js';
 import type { Terminals } from './terminals.js';
+import type { HostShells } from './shells.js';
 import type { Outputs } from './outputs.js';
 import type { LocalTurns } from './localturns.js';
 import type { Background } from './background.js';
@@ -56,6 +57,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
+  /** The shells each chat's agent runs its commands in, one set a chat. */
+  shells: HostShells;
   /** The options `createHost` was given. */
   options: HostOptions;
   /** The directory this host serves. */

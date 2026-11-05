@@ -285,7 +285,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         ],
         default: 'default',
         sessionMutable: true,
-        chatMutable: true,
       },
       /*
        * Scripts a client generated, sourced before every shell command.
@@ -335,7 +334,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         },
         default: { allow: [], deny: [] },
         sessionMutable: true,
-        chatMutable: true,
       },
       /*
        * The customization locations whose edits always ask, as VS Code's

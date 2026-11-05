@@ -1,7 +1,7 @@
 ---
 title: A model provider is a connector
 domain: proxy
-status: active
+status: built
 priority: high
 created: 2026-10-23
 revalidated: 2026-10-23
@@ -109,10 +109,10 @@ tool -> POST /v1/chat/completions -> route: model entry names openrouter
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An adapter can serve models](task-01-an-adapter-can-serve-models.md) | implemented | - |
-| [02 - The host ships four provider adapters](task-02-the-host-ships-four-provider-adapters.md) | implemented | 01 |
-| [03 - The proxy routes through connectors](task-03-the-proxy-routes-through-connectors.md) | implemented | 01, 02 |
-| [04 - The docs say a provider is a connector](task-04-the-docs-say-a-provider-is-a-connector.md) | implemented | 03 |
+| [01 - An adapter can serve models](task-01-an-adapter-can-serve-models.md) | done | - |
+| [02 - The host ships four provider adapters](task-02-the-host-ships-four-provider-adapters.md) | done | 01 |
+| [03 - The proxy routes through connectors](task-03-the-proxy-routes-through-connectors.md) | done | 01, 02 |
+| [04 - The docs say a provider is a connector](task-04-the-docs-say-a-provider-is-a-connector.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -124,6 +124,6 @@ tool -> POST /v1/chat/completions -> route: model entry names openrouter
 ## Resume state
 
 - **Done so far:** all four tasks are implemented. An adapter declares `models` and answers `provider`, and the host ships four provider adapters with icons. The proxy routes through the open connectors in owner order, and the docs and the domain say so.
-- **Next action:** Softov moves `config-dev.json` to connectors with `.project/pending/proxy-04-move-config-dev.md`. Then the plan closes with `implemented.md`.
+- **Next action:** none. The plan is built; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the model names table stays in the file and keeps `sessionCalls`. Only `providers` goes, and a file that still writes it is refused at start.

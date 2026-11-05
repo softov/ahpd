@@ -1,41 +1,41 @@
 {
   "meta": {
     "title": "Agente Cofold",
-    "description": "Roda o runtime de agentes Cofold, com acesso a endpoints de API compatíveis com a OpenAI."
+    "description": "Execute o runtime de agentes Cofold em qualquer endpoint compatível com OpenAI."
   },
   "options": {
     "model": {
-      "description": "O id do modelo usado por um registro que não indica nenhum."
+      "description": "Modelo padrão para os agentes que não definem um."
     },
     "baseUrl": {
-      "description": "O endpoint compatível com a OpenAI usado por um registro que não indica nenhum."
+      "description": "Endpoint compatível com OpenAI padrão para os agentes que não definem um."
     },
     "instructions": {
-      "description": "O prompt de sistema com que é criado um registro que não indica nenhum."
+      "description": "Prompt de sistema padrão para os agentes que não definem um."
     },
     "computerConfigDir": {
-      "description": "A pasta de configuração que o harness lê dentro de uma máquina. Por padrão, /ahpd/cofold; false mantém a da própria imagem."
+      "description": "Pasta de configuração do Cofold dentro de um computador. Por padrão, '/ahpd/cofold'. Use false para manter a configuração própria da imagem."
     },
     "store": {
-      "description": "A pasta onde fica o armazenamento de arquivos do cofold de cada registro, uma pasta por registro. Por padrão, a pasta de dados da própria ferramenta."
+      "description": "Pasta do armazenamento de arquivos de cada agente, uma subpasta por agente. Por padrão, '$XDG_DATA_HOME/ahpd/cofold'."
     },
     "memory": {
-      "description": "true para manter o armazenamento de cada registro em memória, para um teste."
+      "description": "Mantém o armazenamento de cada agente em memória em vez de no disco. Para testes."
     },
     "tools": {
-      "description": "Quais recursos uma sessão roda, de onde web_search tira seus provedores, e se uma escrita exige que o arquivo seja lido antes."
+      "description": "Quais ferramentas uma sessão recebe, onde o web_search encontra seus provedores e se um arquivo precisa ser lido antes de ser escrito."
     },
     "strictTools": {
-      "description": "false aplica à opção tools a verificação flexível, e uma chave que o harness não conhece é descartada em vez de recusada."
+      "description": "Recusa chaves desconhecidas em tools. Ativado por padrão; use false para descartá-las."
     },
     "apiKey": {
-      "description": "A chave do próprio daemon, para um registro que não indica nenhuma."
+      "description": "Chave de API padrão para os agentes que não definem uma."
     },
     "resource": {
-      "description": "O recurso protegido em que um cliente se autentica."
+      "description": "Recurso protegido no qual os clientes se autenticam. Por padrão, a origem do endpoint quando ele usa https."
     },
     "autoCompactTokens": {
-      "description": "O tamanho estimado do histórico em que uma sessão é compactada, nunca acima de 80% do contexto informado do modelo, ou de 32000. Por padrão, esses 80%."
+      "description": "Tamanho do histórico, em tokens estimados, em que uma sessão é compactada. Por padrão, 80% do contexto do modelo, ou de 32000 quando ele é desconhecido, e nunca mais que isso."
     }
   },
   "session": {

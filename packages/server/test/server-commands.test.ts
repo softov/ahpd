@@ -890,6 +890,8 @@ describe('what a served command says it does', () => {
       ['automation.import', 'add', { kind: 'automation' }],
       ['automation.list', 'read', { kind: 'automation' }],
       ['daemon.config', 'read', null],
+      ['daemon.config.set', 'change', null],
+      ['daemon.config.unset', 'change', null],
       ['daemon.restart', 'change', null],
       ['daemon.status', 'read', null],
       ['daemon.update', 'change', null],

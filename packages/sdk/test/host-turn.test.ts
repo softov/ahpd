@@ -567,6 +567,25 @@ describe('driving a turn', () => {
     expect(after.snapshot.state.turns[0]?.state).toBe('complete');
     expect(after.snapshot.state.turns[0]?.responseParts.some((one) => one.kind === 'error')).toBe(false);
   });
+
+  it('says a turn ended badly even when the harness gave no words', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    // A failure in execution with no `errors` at all - which happens, and
+    // used to leave the turn silent.
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { state: string; responseParts: { kind: string; error?: { message?: string } }[] }[] } };
+    };
+    const failure = after.snapshot.state.turns[0]?.responseParts.find((one) => one.kind === 'error');
+    expect(failure?.error?.message).toBe('The turn failed');
+  });
+
   it('tells every client when a session goes', async () => {
     const { host, client, peer: p, uri } = await running();
     const other = peer();
@@ -714,7 +733,9 @@ describe('a turn asked for while one is running', () => {
       params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
     });
     await settle();
-    expect(sdk.interrupted).toBe(1);
+    // A stop closes the CLI rather than interrupting it.
+    expect(sdk.interrupted).toBe(0);
+    expect(sessionQueries()[0]?.closed).toBe(true);
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, user_message_uuids: [sdk.uuids[0]] });
     await settle();
     expect(sdk.said).toEqual(['first']);

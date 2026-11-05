@@ -26,7 +26,7 @@ Open http://127.0.0.1:39200/plugins/web/ in Chrome, and sign in with `check-toke
 rpc subscribe '{"channel":"push://devices"}'
 ```
 
-3. Start a session from ahpc, and leave a request waiting. Close the Chrome tab. Expect a notification, and a click that opens that session.
+3. Start a session in ahpw, and leave a request waiting. Close the Chrome tab. The test daemon has no users file, so a browser hears only the sessions its own client started or opened. Expect a notification, and a click that opens that session.
 4. Close the tab again, then finish a turn. Expect `A session finished`.
 5. Do steps 1 to 4 in Firefox.
 6. Run the command "Stop notifications when this tab is closed". Send again, and expect the device to leave `push://devices`.

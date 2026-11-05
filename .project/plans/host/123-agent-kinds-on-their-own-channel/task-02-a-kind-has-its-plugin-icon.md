@@ -1,6 +1,6 @@
 ---
 title: A kind with no icons sends its plugin's icons
-status: implemented
+status: done
 depends:
   - task-01-the-agent-kinds-channel.md
 layer: "sdk, server, docs"

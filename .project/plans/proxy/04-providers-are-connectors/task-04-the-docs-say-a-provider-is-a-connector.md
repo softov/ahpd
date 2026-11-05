@@ -1,6 +1,6 @@
 ---
 title: The docs say a provider is a connector
-status: implemented
+status: done
 depends: [task-03-the-proxy-routes-through-connectors.md]
 layer: "docs"
 refs:

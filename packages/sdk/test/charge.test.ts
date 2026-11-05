@@ -457,6 +457,21 @@ describe('a minute limit', () => {
     expect(meter.sum('policy:R1/calls', TODAY)).toBe(1);
   });
 
+  it('counts a limit for each person under each person\'s key', async () => {
+    const store = await storeOf({
+      id: 'E1', scope: 'all', kind: 'model', effect: 'allow', match: { model: ['anthropic/*'] },
+      limits: [{ amount: 2, measure: 'calls', period: 'minute', pool: 'each' }],
+    });
+    const meter = createMinuteMeter();
+    const call = async (who: Principal): Promise<Charge> =>
+      charged('model', who, undefined, { model: 'anthropic/sonnet-5' }, memoryUsage(), TODAY, undefined, store, meter);
+    expect(poolsOf(await call(alice))).toEqual(['policy:E1/calls/user:alice']);
+    expect(poolsOf(await call(alice))).toEqual(['policy:E1/calls/user:alice']);
+    expect(refusalOf(await call(alice)).message).toBe('E1 has no room: 2 / 2 calls this minute');
+    // Bob has a minute of his own.
+    expect(poolsOf(await call(bob))).toEqual(['policy:E1/calls/user:bob']);
+  });
+
   it('answers a minute figure with where it begins and resets, in UTC', async () => {
     const store = await BURST();
     const row = await store.get('R1') as Policy;
