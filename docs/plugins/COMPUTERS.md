@@ -926,7 +926,7 @@ A value under the plugin's `needs` or a profile's `needs` answers `<set>` in `ah
 
 Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all. `claude` holds both Claude Code and its ACP adapter, and `ahpd` holds ahpd with the backends that run nested. Parts are the default way an agent's CLI reaches a machine: nothing of this host's binaries is mounted unless an agent's options ask for it.
 
-The versions file is `packages/computer/images/versions.json`, and it is the only place a version is written down. Each entry names an `id`, a `version` that is one version rather than a range, and a `kind`:
+The versions file is `packages/computer/images/versions.json`, and it is the only place a version is written down. Each entry names an `id`, a `version` that is one exact version, `major.minor.patch` with a prerelease and nothing more, as VS Code pins an agent SDK, and a `kind`:
 
 | Kind | Is | Holds |
 | --- | --- | --- |
@@ -976,7 +976,7 @@ A machine made from a profile that names no image runs `debian:bookworm-slim` wi
 
 ### Adding a part
 
-Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a range, an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, run by the part's Node when it is a script and as it is when the package installed an executable, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout, or what its own `packages` put in `node_modules/.bin`. An archive part with `packages` requires `node`, and each package names its own version, since the part's is the download's.
+Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a version that is not one exact version, in VS Code's words; an `id`, a `bin` entry or an `updates` variable or value outside the letters, digits, `.`, `_` and `-` VS Code holds a shell token to, since each lands unquoted in a shell line; an `id` an image name cannot be, as the reference grammar's path component is lowercase; an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. A build picks an archive part's download by the `TARGETARCH` BuildKit sets, and a build that sets none is refused rather than given another architecture's. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, run by the part's Node when it is a script and as it is when the package installed an executable, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout, or what its own `packages` put in `node_modules/.bin`. An archive part with `packages` requires `node`, and each package names its own version, since the part's is the download's.
 
 The kinds it will not build are named in the error a missing or unknown `kind` gives, rather than guessed at. A CLI that is neither npm nor a tarball needs a kind of its own before the file will accept it.
 

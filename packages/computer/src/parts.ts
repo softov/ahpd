@@ -55,12 +55,32 @@ export const versionsPath = (): string => fileURLToPath(new URL('../images/versi
 const KINDS = ['npm', 'archive', 'ahpd', 'node'] as const;
 
 /**
- * An exact version, which is what the file has to hold.
+ * An exact version, which is what the file has to hold: VS Code's check of a
+ * pinned agent SDK, major.minor.patch with a prerelease and nothing more.
  *
  * A range would let two hosts building the same tag run different agents, which
  * is the whole thing pinning is against.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/common.ts#L104-L106
  */
-const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?$/;
+const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * A value written unquoted into a shell line of a Dockerfile, as VS Code checks
+ * one: letters, digits, `.`, `_` and `-`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostHelpers.ts#L14-L25
+ */
+const SHELL_TOKEN = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * A part's id as an image name holds it, `ahpd-part/<id>`: a path component
+ * of the reference grammar, lowercase letters and digits with `.`, `_`, `__`
+ * or dashes between them.
+ * https://github.com/distribution/reference/blob/0965666a6ade2e06035fe352e38344be1e68951a/regexp.go#L41-L68
+ */
+const PATH_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*$/;
+
+/** A tag of the reference grammar, which a part's image tag has to be. */
+const TAG = /^[\w][\w.-]{0,127}$/;
 
 /** A download url, which lands unquoted in a shell line in the Dockerfile. */
 const URL_SAFE = /^https:\/\/[A-Za-z0-9._~\/%+-]+$/;
@@ -87,18 +107,30 @@ const said = (problem: string): never => { throw new Error(`${versionsPath()}: $
  * One entry, read as an entry or refused as one.
  *
  * Everything a part cannot be is refused here rather than at build: a version
- * that is a range, an archive nobody can check, a `requires` naming a part that
- * is not in the file. The file is small and read on every build, so a refusal
- * here is a refusal that costs nothing.
+ * that is not one exact version, a value that would reach a shell line as
+ * something else, an id no image can be named by, an archive nobody can check,
+ * a `requires` naming a part that is not in the file. The file is small and
+ * read on every build, so a refusal here is a refusal that costs nothing.
  */
 const entryOf = (value: unknown, where: string): Part => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return said(`${where} is not an entry`);
   const held = value as Record<string, unknown>;
   const text = (key: string): string => (typeof held[key] === 'string' ? held[key] : said(`${where} has no ${key}`));
+  // What lands unquoted in a Dockerfile's shell lines, refused in VS Code's words.
+  const token = (one: string, label: string): string => {
+    if (!SHELL_TOKEN.test(one)) throw new Error(`Unsafe ${label} value for shell interpolation: ${JSON.stringify(one)}`);
+    return one;
+  };
+  // An exact version, refused as VS Code refuses a pinned SDK's that is not one.
+  const exact = (name: string, one: string): string => {
+    if (!EXACT.test(one)) throw new Error(`Refusing to use ${name}@${one} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+    return one;
+  };
+  const id = token(text('id'), 'part id');
+  if (!PATH_COMPONENT.test(id)) return said(`${where} has the id ${id}, which an image name cannot hold: invalid reference format`);
   const kind = text('kind');
   if (!KINDS.includes(kind as Part['kind'])) return said(`${where} names no kind this can build: ${kind}`);
-  const version = text('version');
-  if (!EXACT.test(version)) return said(`${where} has the version ${version}, which is a range rather than one version`);
+  const version = exact(id, text('version'));
   const archives = ((): Part['archives'] => {
     if (held.archives === undefined) return undefined;
     if (typeof held.archives !== 'object' || held.archives === null || Array.isArray(held.archives)) {
@@ -120,12 +152,10 @@ const entryOf = (value: unknown, where: string): Part => {
     (Array.isArray(held[key]) && (held[key] as unknown[]).every((one) => typeof one === 'string')
       ? held[key] as string[]
       : undefined);
-  const bin = list('bin') ?? said(`${where} names no command`);
+  const bin = (list('bin') ?? said(`${where} names no command`)).map((one) => token(one, 'bin'));
   for (const spec of list('packages') ?? []) {
-    const own = packageOf(spec).version;
-    if (own !== undefined && !EXACT.test(own)) {
-      return said(`${where} has the package ${spec}, whose version is a range rather than one version`);
-    }
+    const { name, version: own } = packageOf(spec);
+    if (own !== undefined) exact(name, own);
     // An archive's version is its download's, so a package in one names its own.
     if (kind === 'archive' && own === undefined) {
       return said(`${where} has the package ${spec} with no version of its own, which an archive part has to give`);
@@ -134,8 +164,12 @@ const entryOf = (value: unknown, where: string): Part => {
   if (kind === 'archive' && list('packages') !== undefined && !(list('requires') ?? []).includes('node')) {
     return said(`${where} installs npm packages and does not require node`);
   }
+  const updates = typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
+    ? Object.fromEntries(Object.entries(held.updates as Record<string, unknown>).map(([key, one]) =>
+      [token(key, 'update variable'), token(typeof one === 'string' ? one : said(`${where} has the update ${key}, which is not text`), 'update value')]))
+    : undefined;
   return {
-    id: text('id'),
+    id,
     name: text('name'),
     kind: kind as Part['kind'],
     version,
@@ -143,9 +177,7 @@ const entryOf = (value: unknown, where: string): Part => {
     ...(archives === undefined ? {} : { archives }),
     bin,
     ...(list('requires') === undefined ? {} : { requires: list('requires') as string[] }),
-    ...(typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
-      ? { updates: held.updates as Record<string, string> }
-      : {}),
+    ...(updates === undefined ? {} : { updates }),
     ...(list('plugins') === undefined ? {} : { plugins: list('plugins') as string[] }),
   };
 };
@@ -208,11 +240,14 @@ const fileHashOf = (dockerfile: string): string => createHash('sha256').update(d
  */
 export const tagOf = (part: Part, sourceHash?: string, dockerfile?: string): string => {
   const built = dockerfile === undefined ? '' : `-${fileHashOf(dockerfile)}`;
-  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${pinnedOf(part)}${built}`;
-  if (sourceHash === undefined || sourceHash === '') {
+  if (part.kind === 'ahpd' && (sourceHash === undefined || sourceHash === '')) {
     throw new Error('the tag of the ahpd part carries a hash of its own source, and none was given to tag it with');
   }
-  return `ahpd-part/${part.id}:${part.version}-${sourceHash}${built}`;
+  const tag = part.kind === 'ahpd' ? `${part.version}-${String(sourceHash)}${built}` : `${pinnedOf(part)}${built}`;
+  // The tag of the reference grammar, which the exact versions it is made of
+  // keep it in; its length is the one thing they do not bound.
+  if (!TAG.test(tag)) throw new Error(`ahpd-part/${part.id}:${tag}: invalid reference format`);
+  return `ahpd-part/${part.id}:${tag}`;
 };
 
 /**
@@ -437,7 +472,8 @@ const nodeTag = (): string => {
  *
  * `TARGETARCH` is BuildKit's own, so one Dockerfile builds both images and a
  * build for anything else says which architecture it was rather than downloading
- * the wrong one.
+ * the wrong one. A build that sets none, which a builder without BuildKit is,
+ * says that, for the same reason.
  *
  * Every line carries the trailing backslash the `RUN` it sits in needs. Without
  * it Docker takes the next line for a fresh instruction, and says
@@ -451,7 +487,7 @@ const byPlatform = (part: Part): string => {
     return `      ${arch}) url=${one.url}; sum=${one.sha256}; how=${tarFlag(one.url)};; \\`;
   };
   return [
-    '    case "${TARGETARCH:-amd64}" in \\',
+    '    case "${TARGETARCH:?is not set, which BuildKit sets to the architecture a build is for}" in \\',
     line('amd64', 'linux-x64'),
     line('arm64', 'linux-arm64'),
     '      *) echo "no download for ${TARGETARCH}" >&2; exit 1;; \\',

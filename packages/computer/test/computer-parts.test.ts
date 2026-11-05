@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -124,12 +125,56 @@ it('refuses a file with two parts of one id', () => {
   expect(() => read([npm(), npm({ name: 'Other' })])).toThrow(/names codex twice/);
 });
 
-it('refuses a version that is a range rather than one version', () => {
-  for (const version of ['^2.1.1', '~2.1.1', '2.x', 'latest', '2.1']) {
-    expect(() => read([npm({ version })])).toThrow(/a range rather than one version/);
+it('refuses a version that is not one exact version, in VS Code\'s words', () => {
+  for (const version of ['^2.1.1', '~2.1.1', '2.x', 'latest', '2.1', '2.1.1+build.5']) {
+    expect(() => read([npm({ version })])).toThrow(`Refusing to use codex@${version} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
   }
-  // A prerelease is one version, not a range.
+  expect(() => read([node(), npm({ packages: ['@openai/codex@0.1.0+build'] })]))
+    .toThrow(`Refusing to use @openai/codex@0.1.0+build from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+  // A prerelease is one version, not a range, its own dashes included.
   expect(read([node(), npm({ version: '0.2.0-rc.2' })])[1]?.version).toBe('0.2.0-rc.2');
+  expect(read([node(), npm({ version: '0.2.0-rc-2' })])[1]?.version).toBe('0.2.0-rc-2');
+});
+
+/*
+ * An id, a command and an update variable land unquoted in the Dockerfile's
+ * shell lines, so each is held to the alphabet VS Code holds such a value to,
+ * and the id names an image as well.
+ */
+it('refuses an id, a command or an update that would reach a shell line as something else', () => {
+  expect(() => read([npm({ id: 'codex;id' })])).toThrow('Unsafe part id value for shell interpolation: "codex;id"');
+  expect(() => read([npm({ bin: ['codex acp'] })])).toThrow('Unsafe bin value for shell interpolation: "codex acp"');
+  expect(() => read([npm({ updates: { 'NO UPDATE': '1' } })])).toThrow('Unsafe update variable value for shell interpolation: "NO UPDATE"');
+  expect(() => read([npm({ updates: { NO_UPDATE: '1; id' } })])).toThrow('Unsafe update value value for shell interpolation: "1; id"');
+  expect(() => read([npm({ id: 'Codex' })])).toThrow(/has the id Codex, which an image name cannot hold: invalid reference format/);
+  expect(read([node(), npm({ updates: { CODEX_NO_UPDATE: '1' } })])[1]?.updates).toEqual({ CODEX_NO_UPDATE: '1' });
+});
+
+it('refuses a tag the reference grammar does not take', () => {
+  const long = read([node(), npm({ version: `1.0.0-${'a'.repeat(130)}` })])[1] as Part;
+  expect(() => tagOf(long)).toThrow(/invalid reference format/);
+});
+
+/*
+ * The download is picked by the architecture BuildKit says the build is for,
+ * and a build that says none is refused rather than given another one's.
+ */
+it('picks a download by TARGETARCH, and refuses a build that sets none', () => {
+  const part = read([archive({
+    archives: {
+      'linux-x64': { url: 'https://example.test/goose-x64.tar.gz', sha256: 'ab'.repeat(32) },
+      'linux-arm64': { url: 'https://example.test/goose-arm64.tar.gz', sha256: 'cd'.repeat(32) },
+    },
+  })])[0] as Part;
+  const file = dockerfileOf(part);
+  const picked = file.slice(file.indexOf('case "'), file.indexOf('esac;') + 'esac;'.length).replace(/\\\n/gu, '');
+  const run = (env: Record<string, string>) =>
+    spawnSync('sh', ['-c', `set -eu; ${picked} printf '%s' "$url"`], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', ...env } });
+
+  expect(run({ TARGETARCH: 'arm64' }).stdout).toBe('https://example.test/goose-arm64.tar.gz');
+  const unset = run({});
+  expect(unset.status).not.toBe(0);
+  expect(unset.stderr).toContain('TARGETARCH: is not set, which BuildKit sets to the architecture a build is for');
 });
 
 it('refuses an archive nothing can check', () => {
