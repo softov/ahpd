@@ -2,17 +2,18 @@
   "name": "@ahpd/tasks",
   "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Tasks and plans for the ahpd daemon: one list every agent reads and writes through host tools",
+  "description": "Tasks and plans for ahpd. One shared list that every agent reads and writes through host tools.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
+    "ahpio",
+    "ai-agent",
     "plugin",
     "tasks",
     "plans",
-    "kanban"
+    "kanban",
+    "todo"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -66,7 +67,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Tasks",
-    "description": "One list of tasks and plans every agent reads and writes.",
+    "description": "One shared list of tasks and plans for every agent.",
     "categories": ["channel", "tool"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [
@@ -95,12 +96,12 @@
       "properties": {
         "requireApproval": {
           "type": "boolean",
-          "description": "Whether an agent may set a task to doing before somebody approved it. Off by default."
+          "description": "Require approval before an agent starts a task. Off by default."
         },
         "sweepAfterDays": {
           "type": "integer",
           "minimum": 1,
-          "description": "How many days a done or dropped plan is kept. Absent, a finished plan is kept forever."
+          "description": "Days to keep a done or dropped plan. Kept forever when unset."
         }
       }
     }

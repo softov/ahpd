@@ -1,21 +1,24 @@
+
 {
   "name": "@ahpd/agent-claude",
   "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "Claude Code as an Agent Host Protocol backend: a plugin for the ahpd daemon and an Agent for @ahpd/sdk",
+  "description": "Claude Code integration for the Agent Host Protocol. Run it as an ahpd plugin or use it directly with @ahpd/sdk.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
-    "protocol",
-    "json-rpc",
-    "websocket",
+    "ahpio",
+    "ai-agent",
     "claude",
     "claude-code",
+    "claude-remote",
     "anthropic",
-    "backend",
+    "agent-backend",
+    "agent-gateway",
+    "agent-remote",
+    "agent-sdk",
+    "plugin",
     "adapter"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
@@ -73,10 +76,21 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Agent Claude",
-    "description": "Claude Code as an agent backend, one record per configuration.",
-    "categories": ["agent"],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
-    "icons": [{ "src": "./icon.svg" }],
+    "description": "Run Claude Code as an AHP agent, with independent configurations for each agent.",
+    "categories": [
+      "agent"
+    ],
+    "links": [
+      {
+        "title": "Repository",
+        "url": "https://github.com/softov/ahpd"
+      }
+    ],
+    "icons": [
+      {
+        "src": "./icon.svg"
+      }
+    ],
     "contracts": {
       "agents": ["*"],
       "engines": ["claude"],
@@ -85,27 +99,47 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "paths": { "type": "array", "items": { "type": "string" }, "description": "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
-        "computerExecutable": { "type": "string", "description": "Where the CLI is inside a machine. claude on the image's PATH by default." },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Directories to include in the workspace catalog and use as default session locations. Inherits the host's paths when omitted."
+        },
+        "computerExecutable": {
+          "type": "string",
+          "description": "Path to the Claude CLI executable inside a computer. Defaults to 'claude' from the computer's PATH."
+        },
         "computerCli": {
           "type": "string",
           "enum": ["part", "host"],
-          "description": "Where the CLI a machine runs comes from: part, the claude part this host builds, by default; host mounts this host's own installed CLI."
+          "description": "How computers obtain the Claude CLI. 'part' (default) uses a CLI component built by the host; 'host' mounts the host's installed CLI."
         },
         "computerCliFallback": {
           "type": "string",
           "enum": ["refuse", "host"],
-          "description": "With computerCli part, what a machine gets when the claude part cannot be built: refuse, by default, refuses the Claude session naming the part; host mounts this host's own CLI instead and logs it."
+          "description": "What happens when the Claude CLI component cannot be built. 'refuse' (default) rejects the session with an error; 'host' mounts the host's installed CLI instead and logs the fallback. Applies only when computerCli is 'part'."
         },
         "computerConfigDir": {
-          "anyOf": [{ "type": "string" }, { "const": false }],
-          "description": "The configuration directory the CLI reads inside a machine. /ahpd/<id> by default, /ahpd/claude for the built-in; false leaves the image's own."
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ],
+          "description": "Claude CLI configuration directory inside a computer. Defaults to '/ahpd/<id>' or '/ahpd/claude' for the built-in agent. Set to false to keep the computer image's own configuration."
         },
-        "workerStop": { "type": "string", "enum": ["worker", "session"], "description": "What a stop given in a subagent's chat stops. worker by default." },
+        "workerStop": {
+          "type": "string",
+          "enum": ["worker", "session"],
+          "description": "Scope of stop requests made from a subagent's chat. 'worker' (default) stops only that subagent; 'session' stops the entire session."
+        },
         "handshakeTimeoutMs": {
           "type": "integer",
           "minimum": 1,
-          "description": "How long the CLI has to answer its handshake before its session treats it as a CLI that died. Default 120000, and a slower machine raises it."
+          "description": "Maximum time in milliseconds to wait for the Claude CLI handshake before treating startup as failed. Defaults to 120000 (2 minutes). Increase for slower computers."
         }
       }
     }

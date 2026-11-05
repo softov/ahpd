@@ -1,11 +1,11 @@
 {
   "meta": {
     "title": "Conectores do Activepieces",
-    "description": "Cada piece do Activepieces instalada é um adaptador, e cada uma das suas ações é uma ferramenta do host."
+    "description": "Use peças do Activepieces como conectores, com cada ação disponível como ferramenta do host."
   },
   "options": {
     "pieces": {
-      "description": "O pacote de cada piece do Activepieces que este plugin oferece, como @activepieces/piece-resend. O nome pode vir seguido de uma versão, como em @activepieces/piece-postgres@0.5.1; sem versão, a mais nova é instalada."
+      "description": "Pacotes do Activepieces a oferecer, como '@activepieces/piece-resend'. Adicione uma versão para fixá-la, como em '@activepieces/piece-postgres@0.5.1'. Por padrão, a versão mais recente."
     }
   }
 }
