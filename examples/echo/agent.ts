@@ -210,6 +210,13 @@ export function echo(options: EchoOptions): Agent {
         }
         if (closed || active !== turn) return;
         turn.duration = Date.now() - began;
+        /*
+         * How it ended, which the protocol's `Turn` carries: these turns are
+         * what `transcript` answers, and a chat read back from them shows
+         * each one as the chat held it when it finished.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L710-L730
+         */
+        turn.state = 'complete';
         // A turn a later one took the place of is in no history.
         if (!replaced.delete(turnId)) turns.push(turn);
         active = undefined;

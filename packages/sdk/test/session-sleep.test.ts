@@ -484,6 +484,30 @@ it('reads a chat back after its release with no queue where nothing is queued, a
   expect(back.snapshot.state).not.toHaveProperty('queuedMessages');
 });
 
+/*
+ * A finished turn reads back after its release as the chat held it, complete:
+ * the protocol's `Turn` says how each turn ended, and a read after a release
+ * serves the turns the backend kept.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L710-L730
+ */
+it('reads a finished turn back after its release as complete, as the chat held it', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const live = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = await other.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  const ended = (state: Bag): unknown[] => ((state.turns ?? []) as Bag[]).map((turn) => turn.state);
+  expect(ended(live.snapshot.state)).toEqual(['complete']);
+  expect(ended(back.snapshot.state)).toEqual(['complete']);
+});
+
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSessionResidency.ts#L318-L338
   const knobs: Knobs = { closes: [] };
