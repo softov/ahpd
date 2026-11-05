@@ -200,7 +200,9 @@ export function createOutputs(ctx: HostContext): Outputs {
     const live = ctx.byChat.get(chat);
     if (live !== undefined) {
       const active = bag(live.chat.chatState()).activeTurn;
-      return { session: live.uri, turns: [...live.chat.allTurns() as Bag[], ...(isRecord(active) ? [active] : [])] };
+      // With the commands typed into it, which are this host's own turns.
+      const turns = ctx.withLocalTurns(live.uri, chat, live.chat.allTurns() as Bag[]);
+      return { session: live.uri, turns: [...turns, ...(isRecord(active) ? [active] : [])] };
     }
     const owning = ctx.homeId(chat) === undefined ? ctx.sessionOfChat(chat) : ctx.sessionFor(chat);
     if (owning === undefined || !ctx.sessionChannel(owning)) return undefined;
