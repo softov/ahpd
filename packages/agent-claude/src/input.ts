@@ -46,14 +46,16 @@ export function titleOf(description: string | undefined, agentType: string | und
 
 /**
  * The carousel an `AskUserQuestion` asks for, and the map its answers are read
- * back through.
+ * back through, as VS Code's Claude agent builds it.
  *
- * The questions keyed `q1`..`qN` in the order they were asked, each titled by
- * its `header` when it has one and an option list keyed by the label the SDK
- * wants the answer valued by. The request's line is the default one, since
- * AskUserQuestion has no header of its own above its questions. The map is from
- * each question's key to the question's own text, which is what an answer is
- * keyed by.
+ * Each question keyed by its `header`, or `q-<index>` for one with none, and
+ * titled by its header, with an option list keyed by the label the SDK wants
+ * the answer valued by and a typed answer only where the question allows one.
+ * The request is the call's id and its questions, marked with the AskUser
+ * purpose in its `_meta`. The map is from each question's key to the
+ * question's own text, which is what an answer is keyed by.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L89-L125
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L292-L295
  *
  * One builder for the question a person answers now and the one a transcript
  * draws after a restart, so the two are the same thing rather than two that
@@ -63,14 +65,13 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
   const asked = new Map<string, string>();
   const questions: OnWire<ChatInputQuestion>[] = list(input.questions).map((entry, index) => {
     const question = bag(entry);
-    const key = `q${index + 1}`;
-    asked.set(key, str(question.question) ?? '');
     const header = str(question.header);
+    const key = header || `q-${index}`;
+    asked.set(key, str(question.question) ?? '');
     const carousel = {
       id: key,
-      ...(header === undefined || header === '' ? {} : { title: header }),
+      ...(header === undefined ? {} : { title: header }),
       message: str(question.question) ?? '',
-      required: true,
       // The label is the id, because the label is what the SDK wants back:
       // answers are valued by the option's own label, not by an id.
       options: list(question.options).map((option) => {
@@ -86,13 +87,16 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
           ...(description === undefined ? {} : { description }),
         };
       }),
-      allowFreeformInput: true,
+      allowFreeformInput: question.allowFreeformInput === true,
     };
     return question.multiSelect === true
       ? { ...carousel, kind: 'multi-select' } satisfies OnWire<ChatInputQuestion>
       : { ...carousel, kind: 'single-select' } satisfies OnWire<ChatInputQuestion>;
   });
-  return { request: { id, message: 'The agent has a question', questions }, asked };
+  // `_meta` is no field of the request's type, and it rides the request as
+  // VS Code's own does: the protocol carries a request verbatim.
+  const request = { id, questions, _meta: { purpose: 'askUser' } };
+  return { request: request as OnWire<ChatInputRequest>, asked };
 }
 
 /**

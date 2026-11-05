@@ -146,7 +146,8 @@ describe('driving a turn', () => {
 
     const requested = actions(p).find((e) => e.action.type === 'chat/inputRequested');
     const request = requested?.action.request as { id: string; questions: { id: string }[] };
-    expect(request.questions[0]?.id).toBe('q1');
+    // A question with no header is keyed by its place, as VS Code's Claude keys it.
+    expect(request.questions[0]?.id).toBe('q-0');
 
     client.handle({
       method: 'dispatchAction',
@@ -156,7 +157,7 @@ describe('driving a turn', () => {
           type: 'chat/inputCompleted',
           requestId: request.id,
           accepted: true,
-          answers: { q1: { kind: 'selected', value: 'SQLite' } },
+          answers: { 'q-0': { kind: 'selected', value: 'SQLite' } },
         },
       },
     });
@@ -192,7 +193,7 @@ describe('driving a turn', () => {
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer },
+        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q-0', answer },
       },
     });
     await settle();
@@ -200,7 +201,7 @@ describe('driving a turn', () => {
     // that the other people looking at the question see it being filled in.
     const synced = actions(p).filter((e) => e.action.type === 'chat/inputAnswerChanged');
     expect(synced).toHaveLength(1);
-    expect(synced[0]?.action).toMatchObject({ requestId: request.id, questionId: 'q1', answer });
+    expect(synced[0]?.action).toMatchObject({ requestId: request.id, questionId: 'q-0', answer });
 
     // And on the request itself, which is what a client arriving now reads:
     // an empty form in front of somebody else's filled-in one is the state
@@ -208,14 +209,14 @@ describe('driving a turn', () => {
     const open = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { request?: { answers?: unknown } }[] } };
     }).snapshot.state;
-    expect(open.inputNeeded?.[0]?.request?.answers).toEqual({ q1: answer });
+    expect(open.inputNeeded?.[0]?.request?.answers).toEqual({ 'q-0': answer });
 
-    // Submitted the same way, which is what answers a required question.
+    // Submitted the same way.
     client.handle({
       method: 'dispatchAction',
       params: {
         channel: chatUri,
-        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer: { ...answer, state: 'submitted' } },
+        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q-0', answer: { ...answer, state: 'submitted' } },
       },
     });
     await settle();
@@ -270,17 +271,17 @@ describe('driving a turn', () => {
         },
       });
     };
-    said('q1', { state: 'draft', value: { kind: 'selected', value: 'SQLite' } });
-    said('q2', { state: 'draft', value: { kind: 'selected', value: '5432' } });
+    said('q-0', { state: 'draft', value: { kind: 'selected', value: 'SQLite' } });
+    said('q-1', { state: 'draft', value: { kind: 'selected', value: '5432' } });
     // No `answer` is the action's way of saying this one is cleared, which is
     // the only way JSON has of saying `undefined`.
-    said('q2');
+    said('q-1');
     await settle();
 
     const open = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { request?: { answers?: Record<string, unknown> } }[] } };
     }).snapshot.state;
-    expect(Object.keys(open.inputNeeded?.[0]?.request?.answers ?? {})).toEqual(['q1']);
+    expect(Object.keys(open.inputNeeded?.[0]?.request?.answers ?? {})).toEqual(['q-0']);
   });
 
   it('refuses an answer to a question nothing is waiting on', async () => {
@@ -336,7 +337,7 @@ describe('driving a turn', () => {
 
     it('reaches the answering client and the other one before the tool call completes', async () => {
       const { p, q, chatUri, request, decision, complete, otherChat } = await twoAsked();
-      const answers = { q1: { state: 'submitted', value: { kind: 'selected', value: 'SQLite' } } };
+      const answers = { 'q-0': { state: 'submitted', value: { kind: 'selected', value: 'SQLite' } } };
       complete({ response: 'accept', answers });
       for (const one of [p, q]) {
         const said = actions(one, chatUri).filter((e) => e.action.type === 'chat/inputCompleted');

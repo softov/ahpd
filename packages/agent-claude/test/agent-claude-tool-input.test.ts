@@ -561,8 +561,8 @@ const asked = {
 const picked = { 'Which colour?': 'Red', 'Which sizes?': ['S', 'L'] };
 /** What a client settles a question with, which carries the answers two levels in. */
 const said = {
-  q1: { state: 'submitted', value: { kind: 'selected', value: 'Red' } },
-  q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+  Colour: { state: 'submitted', value: { kind: 'selected', value: 'Red' } },
+  Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
 };
 
 /** The question asked and then answered, or not, and the result the CLI sent. */
@@ -623,12 +623,12 @@ it('holds a part-way answer on the request, and says nothing of the client\'s an
   ], () => {
     void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
   });
-  expect(session.setAnswer?.('toolu_ask', 'q1', said.q1 as never)).toBe(true);
+  expect(session.setAnswer?.('toolu_ask', 'Colour', said.Colour as never)).toBe(true);
   // The client's answer is the host's to say, as the client sent it.
   expect(sent.some((one) => one.type === 'chat/inputAnswerChanged')).toBe(false);
   // A client that arrives now reads it off the request.
   const needed = (session.sessionState().inputNeeded ?? []) as Bag[];
-  expect((needed.find((one) => one.kind === 'chatInput')?.request as Bag | undefined)?.answers).toEqual({ q1: said.q1 });
+  expect((needed.find((one) => one.kind === 'chatInput')?.request as Bag | undefined)?.answers).toEqual({ Colour: said.Colour });
   sdk.hold = Promise.resolve();
 });
 
@@ -708,28 +708,36 @@ it('draws no question for a restored one that was never answered', async () => {
 });
 
 /*
- * Each question's header, as its title.
+ * Each question's header, as its key and its title.
  *
  * AskUserQuestion gives every question a short `header`, and a client draws it
- * above the question as the question's `title`. The request's own line stays
- * the default one: the input has no header of its own.
+ * above the question as the question's `title`.
  */
 
-it('titles each question by its header, and leaves a question with none untitled', () => {
+/*
+ * The request as VS Code's Claude agent builds it: each question keyed by its
+ * header, or `q-<index>` with none, typed answers only where a question allows
+ * them, no request message and nothing required, and the AskUser purpose.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L89-L125
+ */
+it('keys and titles each question by its header, as VS Code\'s Claude builds the request', () => {
   const { request, asked: keys } = questionRequest({
     header: 'Not a field AskUserQuestion has',
     questions: [
       { question: 'Which colour?', header: 'Colour', options: [{ label: 'Red' }] },
-      { question: 'Which size?', options: [{ label: 'S' }] },
+      { question: 'Which size?', options: [{ label: 'S' }], allowFreeformInput: true },
       { question: 'Which shape?', header: 'Shape', multiSelect: true, options: [{ label: 'Round' }] },
     ],
   }, 'toolu_ask');
-  expect(request.message).toBe('The agent has a question');
-  expect(request.questions?.map((one) => one.id)).toEqual(['q1', 'q2', 'q3']);
+  expect(request).not.toHaveProperty('message');
+  expect((request as unknown as Bag)._meta).toEqual({ purpose: 'askUser' });
+  expect(request.questions?.map((one) => one.id)).toEqual(['Colour', 'q-1', 'Shape']);
   expect(request.questions?.map((one) => one.message)).toEqual(['Which colour?', 'Which size?', 'Which shape?']);
   expect(request.questions?.map((one) => one.title)).toEqual(['Colour', undefined, 'Shape']);
   expect(request.questions?.[1]).not.toHaveProperty('title');
-  expect([...keys.entries()]).toEqual([['q1', 'Which colour?'], ['q2', 'Which size?'], ['q3', 'Which shape?']]);
+  expect(request.questions?.map((one) => (one as Bag).allowFreeformInput)).toEqual([false, true, false]);
+  for (const one of request.questions ?? []) expect(one).not.toHaveProperty('required');
+  expect([...keys.entries()]).toEqual([['Colour', 'Which colour?'], ['q-1', 'Which size?'], ['Shape', 'Which shape?']]);
 });
 
 it('titles a live question and its restored part by the same headers', async () => {
@@ -751,7 +759,7 @@ it('titles a live question and its restored part by the same headers', async () 
  */
 
 /** What the tool is handed for one answer, synced first or carried by the completion. */
-async function toolReads(question: 'q1' | 'q2', value: Bag, synced: boolean): Promise<unknown> {
+async function toolReads(question: 'Colour' | 'Size', value: Bag, synced: boolean): Promise<unknown> {
   let decision: Promise<unknown> | undefined;
   const { session } = await live([
     { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
@@ -767,19 +775,19 @@ async function toolReads(question: 'q1' | 'q2', value: Bag, synced: boolean): Pr
     session.answer('toolu_ask', true, { [question]: answer });
   }
   const settled = await decision as { updatedInput: { answers: Record<string, unknown> } };
-  return settled.updatedInput.answers[question === 'q1' ? 'Which colour?' : 'Which sizes?'];
+  return settled.updatedInput.answers[question === 'Colour' ? 'Which colour?' : 'Which sizes?'];
 }
 
 for (const synced of [true, false]) {
   const how = synced ? 'a synced answer' : 'a completion\'s own answer';
   it(`joins a selection and the text beside it, through ${how}`, async () => {
-    expect(await toolReads('q1', { kind: 'selected', value: 'Blue', freeformValues: ['teal'] }, synced)).toBe('Blue, teal');
+    expect(await toolReads('Colour', { kind: 'selected', value: 'Blue', freeformValues: ['teal'] }, synced)).toBe('Blue, teal');
   });
   it(`joins a multiple selection and the text beside it, through ${how}`, async () => {
-    expect(await toolReads('q2', { kind: 'selected-many', value: ['A', 'B'], freeformValues: ['c'] }, synced)).toBe('A, B, c');
+    expect(await toolReads('Size', { kind: 'selected-many', value: ['A', 'B'], freeformValues: ['c'] }, synced)).toBe('A, B, c');
   });
   it(`hands a text answer over as its text, through ${how}`, async () => {
-    expect(await toolReads('q1', { kind: 'text', value: 'teal' }, synced)).toBe('teal');
+    expect(await toolReads('Colour', { kind: 'text', value: 'teal' }, synced)).toBe('teal');
   });
 }
 
@@ -791,8 +799,8 @@ it('records the joined answer as what the tool ran with', async () => {
     decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
   });
   session.answer('toolu_ask', true, {
-    q1: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
-    q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+    Colour: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
+    Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
   });
   expect(await decision).toEqual({
     behavior: 'allow',
