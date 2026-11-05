@@ -16,6 +16,11 @@ export interface Waiting {
   from?: MessageFrom | undefined;
   attachments?: MessageAttachment[] | undefined;
   options?: TurnOptions | undefined;
+  /**
+   * Whether a reopened run's start took this turn's place in every client's
+   * state while it waited, so its start is said again when it runs.
+   */
+  displaced?: boolean;
 }
 
 /**

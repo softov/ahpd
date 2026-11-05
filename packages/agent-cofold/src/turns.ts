@@ -536,6 +536,19 @@ export const createTurns = (ctx: SessionContext): Turns => {
     const next = ctx.waiting.shift();
     if (next === undefined) return;
     const { turnId, text, model, from, attachments, options } = next;
+    // A turn a reopened run took the place of is the chat's again from here.
+    if (next.displaced === true) {
+      start.emit('chat', {
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt: new Date().toISOString(),
+        message: {
+          text,
+          origin: from?.origin ?? { kind: 'user' },
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+        },
+      });
+    }
     if (ctx.refused !== undefined) {
       failTurn(turnId, text, model, from, attachments, ctx.refused);
       return;

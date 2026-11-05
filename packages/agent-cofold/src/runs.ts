@@ -256,6 +256,9 @@ export const createRuns = (ctx: SessionContext): Runs => {
       message: { text: input === undefined ? '' : textOf(input) },
       responseParts: [],
     };
+    // The host said the start of each turn handed meanwhile, and this start
+    // takes its place as the chat's active turn.
+    for (const one of ctx.waiting) one.displaced = true;
     start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: ctx.active.message });
     const mapping = mapTurn({
       turnId,
