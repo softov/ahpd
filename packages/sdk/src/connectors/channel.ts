@@ -333,6 +333,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const open = new Map<string, Opened>();
   /** What the host knows of each open connector's health, by id, in memory only. */
   const healths = new Map<string, ConnectorHealth>();
+  /** The ids whose last check is the reason their record did not open. */
+  const openFailures = new Set<string>();
   /** The provider problems already said, so a route on every call says each one once. */
   const providerProblems = new Set<string>();
   /** The sign-ins this host has started, by state, in memory only: a restart loses them. */
@@ -534,6 +536,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const health = healths.get(id) ?? {};
     health.check = { ...result, at: new Date().toISOString() };
     healths.set(id, health);
+    openFailures.delete(id);
     return result;
   };
 
@@ -581,6 +584,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const entry = open.get(id);
     open.delete(id);
     healths.delete(id);
+    openFailures.delete(id);
     const stop = entry?.stop;
     if (stop === undefined) return;
     try {
@@ -592,6 +596,22 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
 
   /** Open one stored connector through its adapter, and keep what stops it. */
   const openOne = async (adapter: ServedAdapter, record: StoredRecord, owner: ConnectorOwner): Promise<void> => {
+    try {
+      await openRecord(adapter, record, owner);
+    } catch (error) {
+      // The row says why, as a failed check does, so a client shows it.
+      const message = reason(error).slice(0, HEALTH_MESSAGE_LIMIT);
+      healths.set(record.id, { ...healths.get(record.id), check: { result: 'failed', ...(message === '' ? {} : { message }), at: new Date().toISOString() } });
+      openFailures.add(record.id);
+      throw error;
+    }
+    if (!openFailures.delete(record.id)) return;
+    const health = healths.get(record.id);
+    if (health !== undefined) delete health.check;
+  };
+
+  /** Open one stored record with its adapter, in place of whatever was open under its id. */
+  const openRecord = async (adapter: ServedAdapter, record: StoredRecord, owner: ConnectorOwner): Promise<void> => {
     const config = configOf(record);
     options.check(heldAgainst(config), adapter.schema, `connector ${record.id}`);
     const connector: Connector = {
