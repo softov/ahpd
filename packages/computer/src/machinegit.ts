@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitArgv, hostPathOf } from '@ahpd/sdk';
 import type { BroughtBack } from '@ahpd/sdk';
-import { bundleOfTree, httpsOf, originOf, SEED_BUNDLE, SEED_REF } from './clone.js';
+import { bundleOfTree, cloneUrl, originOf, SEED_BUNDLE, SEED_REF } from './clone.js';
 import { seedOf } from './gitdir.js';
 import type { GitSeed } from './gitdir.js';
 
@@ -155,9 +155,9 @@ export const checkedOut = async (
  * the machine, and answer the commit it is at.
  *
  * The `clone` route: the box reaches the remote itself, so nothing of this
- * host's history is sent. The machine holds no credential, so origin is
- * fetched by its https form and only a public repository can be fetched;
- * that is the address its `origin` names. A branch `origin` does not have
+ * host's history is sent. The machine holds no credential, so only a public
+ * repository can be fetched, at the address `cloneUrl` gives its `origin`,
+ * which is set as the machine's own `origin`. A branch `origin` does not have
  * is refused, since the machine could only be seeded from a commit the
  * session is not on.
  */
@@ -166,8 +166,9 @@ export const fetchedInto = async (far: FarSeed, root: string, at: string, branch
   if (named === undefined) {
     throw new Error(`${far.name} fetches its code from origin, and ${root} has no origin remote; code: "bundle" sends it from this host`);
   }
-  // The machine has no ssh key, so an ssh origin is fetched over https.
-  const origin = httpsOf(named);
+  // A GitHub SSH origin is fetched by GitHub's HTTPS origin, as VS Code's
+  // agent host clones one, and any other origin as written.
+  const origin = cloneUrl(named);
   if (branch === undefined) {
     throw new Error(`${far.name} fetches the session's branch from origin, and ${root} is on no branch; code: "bundle" sends the commit from this host`);
   }

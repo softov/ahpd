@@ -613,7 +613,7 @@ The session's folder is on this host, so `code` says how the machine gets the se
 | `code` | What happens |
 | --- | --- |
 | `bundle` | The default. This host makes a git bundle of the session's branch, copies it in with `docker cp`, and the machine clones it with `origin` set to the repository's remote. No credential goes into the box. |
-| `clone` | The machine fetches the session's branch from `origin` by its https form, so `git@github.com:acme/app.git` is fetched as `https://github.com/acme/app.git`. The machine holds no key and no token, so this works only for a public repository, and the branch has to be on `origin`. |
+| `clone` | The machine fetches the session's branch from `origin`, a GitHub SSH origin by GitHub's HTTPS origin as VS Code's agent host clones one, so `git@github.com:acme/app.git` is fetched as `https://github.com/acme/app.git`, and any other origin as written. The machine holds no key and no token, so this works only for a public repository it can fetch, and the branch has to be on `origin`. |
 
 Either way the work comes back the same way, by the fetch [Disposable machines](#disposable-machines) describes, and the machine never pushes.
 

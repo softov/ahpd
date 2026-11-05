@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { httpsOf, originOf, SEED_BUNDLE } from '../src/clone.js';
+import { originOf, SEED_BUNDLE } from '../src/clone.js';
+import { fetchedInto } from '../src/machinegit.js';
 import { dockerRuntime } from '../src/runtime.js';
 
 /*
@@ -83,11 +84,30 @@ it('names an origin without the user and password its address holds', () => {
   expect(originOf(repo)).toBeUndefined();
 });
 
-it('names an ssh remote by its https form, and leaves any other address as it is', () => {
-  expect(httpsOf('git@github.com:softov/ahpd.git')).toBe('https://github.com/softov/ahpd.git');
-  expect(httpsOf('ssh://git@git.example.com:2222/team/repo.git')).toBe('https://git.example.com/team/repo.git');
-  expect(httpsOf('https://git.example.com/team/repo.git')).toBe('https://git.example.com/team/repo.git');
-  expect(httpsOf('/srv/git/repo.git')).toBe('/srv/git/repo.git');
+/*
+ * The address the machine is told to fetch, read from the command that sets
+ * it: a GitHub SSH origin by GitHub's HTTPS origin, as VS Code's agent host
+ * clones one, and any other as written.
+ */
+it('fetches a GitHub SSH origin by its HTTPS origin, and any other origin as written', async () => {
+  const { repo, run } = repository();
+  const fetchedBy = async (origin: string): Promise<string | undefined> => {
+    run('remote', 'set-url', 'origin', origin);
+    const asked: string[][] = [];
+    await fetchedInto({
+      name: 'box',
+      must: async (command) => { asked.push(command); return 'abc123\n'; },
+      ran: async (command) => { asked.push(command); return { code: 0, stdout: '', stderr: '' }; },
+      put: async () => {},
+      drop: async () => {},
+    }, repo, '/work/.git', 'main');
+    return asked.find((one) => one.includes('remote.origin.url'))?.at(-1);
+  };
+  expect(await fetchedBy('git@github.com:softov/ahpd.git')).toBe('https://github.com/softov/ahpd.git');
+  expect(await fetchedBy('ssh://git@github.com/softov/ahpd.git')).toBe('https://github.com/softov/ahpd.git');
+  expect(await fetchedBy('git@git.example.com:team/repo.git')).toBe('git@git.example.com:team/repo.git');
+  expect(await fetchedBy('ssh://git@git.example.com:2222/team/repo.git')).toBe('ssh://git@git.example.com:2222/team/repo.git');
+  expect(await fetchedBy('https://git.example.com/team/repo.git')).toBe('https://git.example.com/team/repo.git');
 });
 
 it.skipIf(!DOCKER)('seeds a machine on another Docker from a bundle, binds nothing of this host\'s, and brings its commit back', async () => {

@@ -2589,20 +2589,22 @@ it('keeps a machine on another box\'s Docker whose work cannot be brought back, 
 
 /*
  * A profile with `code: "clone"` has its machine fetch the session's branch
- * from the tree's `origin`, by its https form and with no credential.
+ * from the tree's `origin`, with no credential: a GitHub SSH origin by
+ * GitHub's HTTPS origin, as VS Code's agent host clones one, and any other
+ * origin as written.
  */
 
 /** A cloning profile on `dev02`. */
 const CLONING = { ...FAR_PROFILE, code: 'clone' };
 
-/** The repository `repositoryIn` makes, with an ssh `origin` its machine fetches by https. */
+/** The repository `repositoryIn` makes, with an SSH `origin` on a forge of its own. */
 const withOrigin = (dir: string) => {
   const made = repositoryIn(dir);
   execFileSync('git', ['-C', made.repo, 'remote', 'add', 'origin', 'git@git.example.com:team/repo.git'], { stdio: 'pipe' });
   return made;
 };
 
-it('fetches the session\'s branch from origin by its https form where the profile says clone', async () => {
+it('fetches the session\'s branch from origin as written where the profile says clone', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');
   const { repo } = withOrigin(dir);
@@ -2626,7 +2628,7 @@ it('fetches the session\'s branch from origin by its https form where the profil
     'ls-remote --exit-code origin refs/heads/main',
     'fetch -q --no-tags origin +refs/heads/main:refs/ahpd/seed',
   ]);
-  expect(commands.some((one) => one.command.join(' ').includes('remote.origin.url https://git.example.com/team/repo.git'))).toBe(true);
+  expect(commands.some((one) => one.command.join(' ').includes('remote.origin.url git@git.example.com:team/repo.git'))).toBe(true);
 }, FAR_CASE);
 
 it('refuses a clone of a branch origin does not have, and says bundle brings it without a push', async () => {
