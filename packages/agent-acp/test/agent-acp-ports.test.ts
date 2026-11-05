@@ -641,9 +641,11 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   });
 
   // The session says somebody is needed, as a permission does, and the entry is
-  // the chat input kind: it names the chat rather than a turn.
+  // the chat input kind under VS Code's id for it: it names the chat rather
+  // than a turn.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
   const entry = needing(p, uri);
-  expect(entry).toMatchObject({ id: 'call-elicit:elicitation', kind: 'chatInput' });
+  expect(entry).toMatchObject({ id: `chatInput:${String(entry?.chat)}:call-elicit:elicitation`, kind: 'chatInput' });
   // The chat it names is this conversation's, under the host's own name for it
   // rather than the alias this window subscribed with: the entry is what a
   // client that never subscribed to the chat answers on.
@@ -685,7 +687,7 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   // And the entry is withdrawn, so nothing is left asking a question the server
   // has already been answered.
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'call-elicit:elicitation')).toBe(true);
+    && e.action.id === entry?.id)).toBe(true);
 });
 
 it('answers a declined form with a decline, and carries no content', async () => {
@@ -931,7 +933,9 @@ it('carries a page rather than a form, and the server\'s own completion ends it'
   // No completion in nobody's name, as the reference host says none: the page
   // stays in its turn, and its entry went with the turn that ended.
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/inputCompleted')).toBe(false);
-  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === 'url-1'))
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:url-1`);
+  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry?.id))
     .toBe(true);
 });
 
@@ -1027,8 +1031,10 @@ it('moves nothing for a withdrawal that arrives after the question was answered'
    * a question nobody is holding, and the server told twice about one request.
    */
   expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/inputCompleted')).toHaveLength(1);
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:call-wd-after:elicitation`);
   expect(actions(p, uri).filter((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'call-wd-after:elicitation')).toHaveLength(1);
+    && e.action.id === entry?.id)).toHaveLength(1);
 });
 
 it('answers the question a stopped turn left standing with `cancel`', async () => {
@@ -1051,8 +1057,10 @@ it('answers the question a stopped turn left standing with `cancel`', async () =
   expect(readFileSync(log, 'utf8')).toContain('"action":"cancel"');
   // The entry goes with the turn the stop ended, so a client is not left asking
   // a question that can no longer be answered.
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:elicitation:1`);
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'elicitation:1')).toBe(true);
+    && e.action.id === entry?.id)).toBe(true);
   expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
   // And no completion in nobody's name: the stop is the ending, and the turn it
   // ends closes the question in every client's state.

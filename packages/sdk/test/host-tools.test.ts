@@ -1613,7 +1613,7 @@ describe('tools a client contributes', () => {
     });
   };
 
-  /** The client saying what its tool did, as `chat/toolCallComplete`. */
+  /** The client saying what its tool did, as `chat/toolCallComplete` of the turn the call is in. */
   const answers = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -1622,7 +1622,7 @@ describe('tools a client contributes', () => {
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId, result } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId, result } },
     });
   };
 
@@ -2336,23 +2336,22 @@ describe('a client\'s call, held by the backend', () => {
 
   it('raises the entry against the client that will answer it', async () => {
     const { held, clients, uri, chatUri } = await open(['a', 'b']);
-    const { calls, tools, start } = held();
+    const { tools } = held();
     // Two clients in one session both provide `openFile`, and the model is
     // offered both under a name of each client's own.
     expect(tools().map((one) => one.definition.name)).toEqual(['a__openFile', 'b__openFile']);
 
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     await settle();
-    // The entry id is the protocol's own spelling, built from the chat the
-    // backend named - its own name for it, not the URI a client watches.
-    expect(id).toBe(`toolClientExecution:${start.chatUri}:t1:call-1`);
 
+    // The host's entry for the call its chat holds running under the client,
+    // under the reference host's id, the chat on it the one a client
+    // dispatches its answer to.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
     const held_ = await state(clients[0] as Client, uri);
     expect(held_.inputNeeded).toEqual([{
-      id,
+      id: `toolClientExecution:${chatUri}:t1:call-1`,
       kind: 'toolClientExecution',
-      // Respelled for whoever reads it, because the chat on the entry is the
-      // one a client dispatches its answer to.
       chat: chatUri,
       turnId: 't1',
       clientId: 'a',
@@ -2370,16 +2369,15 @@ describe('a client\'s call, held by the backend', () => {
 
   it('leaves the session not waiting on a person while the call is out', async () => {
     const { held, clients, uri, chatUri } = await open(['a']);
-    const { calls } = held();
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     await settle();
 
     const held_ = await state(clients[0] as Client, uri);
-    const entry = (held_.inputNeeded ?? []).find((one) => one.id === id);
+    const entry = (held_.inputNeeded ?? []).find((one) => one.id === `toolClientExecution:${chatUri}:t1:call-1`);
     expect(entry).toBeDefined();
     // The session's own status is its reducer's, which the entry does not
-    // move: idle and read, as it opened.
-    expect(held_.status).toBe(1 | 32);
+    // move: in progress, as the turn the call is in runs.
+    expect(held_.status).toBe(IN_PROGRESS);
 
     /*
      * The protocol's own reducer, on the state the host serves.
@@ -2396,7 +2394,7 @@ describe('a client\'s call, held by the backend', () => {
     expect(again.status & NEEDS_PERSON).toBe(0);
 
     const asked = raised(again, { id: 'q-1', kind: 'chatInput', chat: chatUri } as SessionInputRequest);
-    expect(asked.status).toBe(INPUT_NEEDED | 32);
+    expect(asked.status).toBe(INPUT_NEEDED);
   });
 
   it('settles the call for its own client, and refuses the other one', async () => {
@@ -2501,8 +2499,8 @@ describe('a client\'s call, held by the backend', () => {
   });
 
   it('fires input_needed_set with the kind a plugin has to read', async () => {
-    const { held, heard } = await open(['a']);
-    held().calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const { held, heard, chatUri } = await open(['a']);
+    called(held(), 'call-1', 'a');
     await settle();
 
     // Delegated work reads as an entry like any other, so the kind on the event
@@ -2511,7 +2509,7 @@ describe('a client\'s call, held by the backend', () => {
     expect(said).toHaveLength(1);
     expect(said[0]).toMatchObject({
       session: 'ahp-session:/held',
-      id: `toolClientExecution:${held().start.chatUri}:t1:call-1`,
+      id: `toolClientExecution:${chatUri}:t1:call-1`,
       kind: 'toolClientExecution',
     });
   });

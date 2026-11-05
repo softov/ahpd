@@ -277,10 +277,14 @@ setConfig: (key, value) => {
 Two things stop a turn and wait for a person, and they are answered by different
 methods:
 
-| | `Session` method | announced by |
+| | `Session` method | said on the chat as |
 | --- | --- | --- |
-| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `session/inputNeededSet` with `kind: 'toolConfirmation'` |
-| a question that is not about a tool | `answer(requestId, accepted, answers)` | `session/inputNeededSet` with `kind: 'chatInput'` |
+| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `chat/toolCallReady` with no `confirmed` |
+| a question that is not about a tool | `answer(requestId, accepted, answers)` | `chat/inputRequested` |
+
+The session's `inputNeeded` list is the host's, an entry raised for each from
+the chat's state and taken down once answered; a backend leaves the list to the
+host.
 
 A confirmation may offer the agent's own choices as `options` on the call's `chat/toolCallReady` and on the entry's `toolCall`.
 `optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.

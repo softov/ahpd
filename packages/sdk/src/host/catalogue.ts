@@ -54,12 +54,10 @@ export interface Catalogue {
    * session's activity and its catalogue row.
    */
   chatMoved(chat: string): void;
-  /** An answer typed into a chat's question, carried into the session's entry for it. */
-  answerMirrored(chat: string, requestId: string): void;
-  /** The session's entries for a chat that its running turn no longer holds open, taken down. */
-  askedLeft(chat: string): void;
-  /** The session's entry for a tool call of the chat that waits on a sign-in, raised under VS Code's id. */
-  syncToolAuthenticationNeeded(chat: string, action: Record<string, unknown>): void;
+  /** The session's entries for what a chat's running turn waits on a person for, raised and taken down from the chat's state. */
+  syncSessionInputNeeded(chat: string): void;
+  /** The entries a chat's running turn holds open, under VS Code's ids. */
+  inputNeededOf(chat: string, state: Record<string, unknown> | undefined): Record<string, unknown>[];
   /** What a running session's state holds of its folder and its backend, said by action where it moved. */
   factsMoved(uri: string): void;
   activityOf(held: Held): string | undefined;
@@ -1598,107 +1596,72 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * An answer typed into a chat's question, carried into the session's mirror
-   * of that question.
-   *
-   * The session's `inputNeeded` entry for a question is the chat's request
-   * mirrored, answers and all, so a client watching only the session sees the
-   * form being filled in. Upserted from the chat's own state once the chat has
-   * taken the answer, as the reference host keeps the mirror; an entry nobody
-   * raised for the question is left for its raiser.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L61-L101
+   * What a chat's running turn waits on a person for, as the session's
+   * `inputNeeded` entries under the reference host's ids: a question with no
+   * response (`chatInput:<chat>:<request>`, the request as the chat holds it,
+   * answers and all), a call at a confirmation (`toolConfirmation:<chat>:
+   * <turn>:<call>`, less one a session setting approved), a call a client runs
+   * (`toolClientExecution:...`, with that client) and a call awaiting a sign-in
+   * (`toolAuthentication:...`). Read from the chat's state, whoever asked: a
+   * backend, a host tool or this host itself, as VS Code's host mirrors every
+   * chat's blockers and no agent raises an entry.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L207-L221
    */
-  const answerMirrored = (chat: string, requestId: string): void => {
-    const session = sessionHolding(chat);
-    const state = session === undefined ? undefined : ctx.stateOf(session);
-    const own = ctx.stateOf(chat);
-    if (session === undefined || state === undefined || own === undefined) return;
-    const entry = (Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : [])
-      .find((one) => one.kind === 'chatInput' && one.chat === chat && (one.request as Bag | undefined)?.id === requestId);
-    const turn = own.activeTurn as Bag | undefined;
-    const part = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
-      .find((one) => one.kind === 'inputRequest' && one.response === undefined && (one.request as Bag | undefined)?.id === requestId);
-    if (entry === undefined || part === undefined) return;
-    const request = { ...entry, request: part.request };
-    if (JSON.stringify(request) !== JSON.stringify(entry)) ctx.dispatch(session, { type: 'session/inputNeededSet', request });
+  const inputNeededOf = (chat: string, state: Bag | undefined): Bag[] => {
+    const turn = state?.activeTurn as Bag | undefined;
+    if (turn === undefined) return [];
+    return (Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []).flatMap((part): Bag[] => {
+      const request = part.request as Bag | undefined;
+      if (part.kind === 'inputRequest' && part.response === undefined && request !== undefined)
+        return [{ id: `chatInput:${chat}:${String(request.id)}`, kind: 'chatInput', chat, request }];
+      const toolCall = part.toolCall as Bag | undefined;
+      if (toolCall === undefined) return [];
+      const ids = `${chat}:${String(turn.id)}:${String(toolCall.toolCallId)}`;
+      const status = String(toolCall.status ?? '');
+      const contributor = toolCall.contributor as Bag | undefined;
+      const approved = status === 'pending-confirmation' && (toolCall._meta as Bag | undefined)?.autoApproveBySetting === true;
+      if ((status === 'pending-confirmation' || status === 'pending-result-confirmation') && !approved)
+        return [{ id: `toolConfirmation:${ids}`, kind: 'toolConfirmation', chat, turnId: turn.id, toolCall }];
+      if (status === 'running' && contributor?.kind === 'client')
+        return [{ id: `toolClientExecution:${ids}`, kind: 'toolClientExecution', chat, turnId: turn.id, clientId: contributor.clientId, toolCall }];
+      if (status === 'auth-required')
+        return [{ id: `toolAuthentication:${ids}`, kind: 'toolAuthentication', chat, turnId: turn.id, toolCall }];
+      return [];
+    });
   };
 
+  /** What each chat has in its session's list, as this host last said it. */
+  const raised = new Map<string, Bag[]>();
   /**
-   * The session's entries for one chat that no longer stand, taken down.
-   *
-   * An entry stands while the chat's running turn holds open what it names,
-   * in the state the reference host raises that kind of entry for: a question
-   * with no response, a call at a confirmation, a call a client is running,
-   * a call awaiting authentication. Read after each of the chat's actions, so
-   * an entry goes once its request resolves and every entry of the chat goes
-   * with its turn, as that host keeps the session's entries; "the host ...
-   * removes them with `session/inputNeededRemoved` once the underlying request
-   * resolves".
+   * The session's entries for one chat, kept to what its running turn waits
+   * on: each raised with `session/inputNeededSet` where it is new or moved,
+   * and each the chat no longer holds open taken down with
+   * `session/inputNeededRemoved`, after every action of the chat, so an entry
+   * goes once its request resolves and every entry of the chat goes with its
+   * turn, as the reference host keeps the session's entries.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L51-L83
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L243-L245
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
    */
-  const askedLeft = (chat: string): void => {
+  const syncSessionInputNeeded = (chat: string): void => {
     const session = sessionHolding(chat);
-    const state = session === undefined ? undefined : ctx.stateOf(session);
-    const own = ctx.stateOf(chat);
-    if (session === undefined || state === undefined || own === undefined) return;
-    const turn = own.activeTurn as Bag | undefined;
-    const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
-    const call = (entry: Bag): Bag | undefined => (String(entry.turnId ?? '') === String(turn?.id ?? '')
-      ? parts.map((part) => part.toolCall as Bag | undefined)
-        .find((one) => one !== undefined && one.toolCallId === (entry.toolCall as Bag | undefined)?.toolCallId)
-      : undefined);
-    const stands = (entry: Bag): boolean => {
-      if (turn === undefined) return false;
-      if (entry.kind === 'chatInput') {
-        return parts.some((part) => part.kind === 'inputRequest' && part.response === undefined
-          && (part.request as Bag | undefined)?.id === (entry.request as Bag | undefined)?.id);
-      }
-      const status = String(call(entry)?.status ?? '');
-      if (entry.kind === 'toolConfirmation') return ['pending-confirmation', 'pending-result-confirmation'].includes(status);
-      if (entry.kind === 'toolClientExecution') return status === 'running';
-      if (entry.kind === 'toolAuthentication') return status === 'auth-required';
-      return true;
-    };
-    for (const entry of Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : []) {
-      if (entry.chat !== chat || stands(entry)) continue;
-      ctx.dispatch(session, { type: 'session/inputNeededRemoved', id: entry.id });
+    const was = raised.get(chat) ?? [];
+    const now = session === undefined ? [] : inputNeededOf(chat, ctx.stateOf(chat));
+    if (now.length === 0) raised.delete(chat);
+    else raised.set(chat, now);
+    if (session === undefined) return;
+    for (const request of now) {
+      const before = was.find((one) => one.id === request.id);
+      if (before === undefined || !isDeepStrictEqual(before, request)) ctx.dispatch(session, { type: 'session/inputNeededSet', request });
     }
-  };
-
-  /**
-   * The session's entry for a tool call of the chat that waits on a sign-in,
-   * raised from the call's own state as the reference host's input-needed
-   * contribution raises it, under its id: `toolAuthentication:<chat>:<turn>:
-   * <call>`, with the turn and the call. Read after each of the chat's tool
-   * call actions; `askedLeft` takes it down once the call no longer waits.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L105-L156
-   */
-  const syncToolAuthenticationNeeded = (chat: string, action: Bag): void => {
-    if (typeof action.type !== 'string' || !action.type.startsWith('chat/toolCall')) return;
-    const session = sessionHolding(chat);
-    const state = session === undefined ? undefined : ctx.stateOf(session);
-    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
-    if (session === undefined || state === undefined || turn === undefined || turn.id !== action.turnId) return;
-    const toolCall = (Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : [])
-      .map((part) => part.toolCall as Bag | undefined)
-      .find((one) => one !== undefined && one.toolCallId === action.toolCallId);
-    if (toolCall?.status !== 'auth-required') return;
-    const request = {
-      id: `toolAuthentication:${chat}:${String(turn.id)}:${String(toolCall.toolCallId)}`,
-      kind: 'toolAuthentication',
-      chat,
-      turnId: turn.id,
-      toolCall,
-    };
-    const held = (Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : []).find((one) => one.id === request.id);
-    if (held !== undefined && isDeepStrictEqual(held, request)) return;
-    ctx.dispatch(session, { type: 'session/inputNeededSet', request });
+    for (const entry of was) {
+      if (!now.some((one) => one.id === entry.id)) ctx.dispatch(session, { type: 'session/inputNeededRemoved', id: entry.id });
+    }
   };
 
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf, chatMoved, answerMirrored, askedLeft, syncToolAuthenticationNeeded, factsMoved, activeCount,
+    chatCatalogOf, chatMoved, syncSessionInputNeeded, inputNeededOf, factsMoved, activeCount,
     activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized, failSessionCreationIfStillCreating,
     summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,

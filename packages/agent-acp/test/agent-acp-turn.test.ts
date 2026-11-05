@@ -604,20 +604,26 @@ it('opens no entry for a call the agent has not started', async () => {
   expect(types(p, uri)).not.toContain('session/inputNeededSet');
 });
 
-it('opens no entry for a call the agent has finished as it announced it', async () => {
+it('leaves no entry for a call the agent has finished as it announced it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
   begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cdone');
   await until(() => ended(p, chatUri));
 
-  // The row is drawn, attributed and closed at once. Nothing is asking anybody
-  // to run it: the call is already run, and an entry raised for one would wait
-  // on a client for a call whose result is in the chat.
+  /*
+   * The row is drawn, attributed and closed at once, and nothing is left asking
+   * anybody to run it: the entry its ready raised went with its completion, as
+   * VS Code's host syncs a call's entry with each action on the call.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L67-L157
+   */
   const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
   expect(calls.map((e) => e.action.type))
     .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
   expect(calls[0]?.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
-  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  const raised = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededSet')
+    .map((e) => (e.action.request as Bag).id);
+  const removed = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededRemoved').map((e) => e.action.id);
+  expect(removed).toEqual(raised);
 });
 
 it('asks a client to run the call once the person allows it', async () => {

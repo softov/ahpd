@@ -111,9 +111,10 @@ const tooler = (outcome: (said: string) => void): Agent => {
  * A backend that hands its emitter to the test, so the test decides when a
  * session begins and stops waiting on a person.
  */
-function asker(): { agent: Agent; say: (action: Bag) => void } {
+function asker(): { agent: Agent; say: (action: Bag) => void; ask: (action: Bag) => void; chat: () => string } {
   const inner = echo({ path: DIR, pace: 0 });
   let emit: Emit | undefined;
+  let chatUri = '';
   return {
     agent: {
       ...inner,
@@ -121,10 +122,13 @@ function asker(): { agent: Agent; say: (action: Bag) => void } {
       displayName: 'Asker',
       create: (start) => {
         emit = start.emit;
+        chatUri = start.chatUri;
         return inner.create(start);
       },
     },
     say: (action) => { emit?.('session', action); },
+    ask: (action) => { emit?.('chat', action); },
+    chat: () => chatUri,
   };
 }
 
@@ -620,55 +624,57 @@ it('fires automation_fire when an automation starts a session', async () => {
   expect(fired[0]).toMatchObject({ automation: 'ahp-automation:/nightly' });
 });
 
-it('fires input_needed_set and input_needed_removed as the backend asks and answers', async () => {
-  const { agent, say } = asker();
+/*
+ * The session's entries are the host's, raised from the chat's state under
+ * VS Code's ids, and each is told to the plugins as it is said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L51-L101
+ */
+it('fires input_needed_set and input_needed_removed as the host raises a question\'s entry and takes it down', async () => {
+  const { agent, ask, chat } = asker();
   const { seen, client } = watched({ agents: [agent] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/ask', provider: 'asker' } });
   await settle();
 
-  const request = { id: 'ask-1', chat: 'ahp-chat:/ask', kind: 'chatInput' };
-  say({ type: 'session/inputNeededSet', request });
-  // The protocol's action is an upsert keyed by `id`, so a backend that sets
-  // the same entry again says it again; the handler is what dedupes.
-  say({ type: 'session/inputNeededSet', request });
-  say({ type: 'session/inputNeededRemoved', id: 'ask-1' });
+  ask({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } });
+  ask({ type: 'chat/inputRequested', request: { id: 'ask-1', message: 'Which one?' } });
+  ask({ type: 'chat/inputCompleted', requestId: 'ask-1', response: 'cancel' });
   await settle();
 
-  // Both ends repeat an action the client also received, and both are here
-  // because a plugin that says so watches nothing else. In the order sent.
+  // A plugin that says so watches nothing else. In the order said.
   const about = seen.filter((event) => event.type === 'input_needed_set' || event.type === 'input_needed_removed');
-  expect(about.map((event) => event.type)).toEqual(['input_needed_set', 'input_needed_set', 'input_needed_removed']);
-  expect(about[0]).toMatchObject({ session: 'ahp-session:/ask', chat: 'ahp-chat:/ask', id: 'ask-1', kind: 'chatInput' });
-  expect(about[2]).toMatchObject({ session: 'ahp-session:/ask', id: 'ask-1' });
+  const id = `chatInput:${chat()}:ask-1`;
+  expect(about.map((event) => event.type)).toEqual(['input_needed_set', 'input_needed_removed']);
+  expect(about[0]).toMatchObject({ session: 'ahp-session:/ask', chat: chat(), id, kind: 'chatInput' });
+  expect(about[1]).toMatchObject({ session: 'ahp-session:/ask', id });
 });
 
-it('leaves the event out when the backend sends no id to raise it about', async () => {
+it('says no entry a backend raises itself, nor its event', async () => {
   const { agent, say } = asker();
   const { seen, client } = watched({ agents: [agent] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'asker' } });
   await settle();
 
-  say({ type: 'session/inputNeededSet', request: { chat: 'ahp-chat:/bare', kind: 'chatInput' } });
-  say({ type: 'session/inputNeededRemoved' });
+  say({ type: 'session/inputNeededSet', request: { id: 'own', chat: 'ahp-chat:/bare', kind: 'chatInput' } });
+  say({ type: 'session/inputNeededRemoved', id: 'own' });
   await settle();
 
-  // An event carrying empty strings is a notifier told about a session it
-  // cannot name, and the client already has the action.
   expect(of(seen, 'input_needed_set')).toHaveLength(0);
   expect(of(seen, 'input_needed_removed')).toHaveLength(0);
 });
 
 it('reports a handler that throws on input_needed_set and still reaches the client', async () => {
-  const { agent, say } = asker();
+  const { agent, ask } = asker();
   const { lines, client, peer: p } = watched({ agents: [agent] }, 'input_needed_set');
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/broken', provider: 'asker' } });
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/broken' } });
   await settle();
 
-  say({ type: 'session/inputNeededSet', request: { id: 'ask-2', chat: 'ahp-chat:/broken', kind: 'toolConfirmation' } });
+  ask({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } });
+  ask({ type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
+  ask({ type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'c1', invocationMessage: 'Write a file' });
   await settle();
 
   expect(lines.filter((line) => line.includes('probe failed at input_needed_set: probe broke'))).toHaveLength(1);

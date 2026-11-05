@@ -191,10 +191,12 @@ it('pauses an approval as a tool call and one entry, and does not complete the t
     toolCall: { toolCallId: string; status: string; confirmationTitle?: string; invocationMessage?: string };
   };
   // The entry is self-sufficient: the chat to answer on, the call to name,
-  // and the question the person reads.
+  // and the question the person reads, under VS Code's id for a call at a
+  // confirmation.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
   expect(entry.chat).toBe(chatUri);
   expect(entry.turnId).toBe('t1');
-  expect(entry.id.startsWith('approval:')).toBe(true);
+  expect(entry.id).toBe(`toolConfirmation:${chatUri}:t1:call-a`);
   expect(entry.toolCall.toolCallId).toBe('call-a');
   expect(entry.toolCall.status).toBe('pending-confirmation');
   expect(entry.toolCall.confirmationTitle).toBeDefined();

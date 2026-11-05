@@ -1009,11 +1009,24 @@ export function createHost(options: HostOptions): Host {
     // nothing a session reads, which is why only this road says it, and an
     // action of another kind moves no chat state at all.
     if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
-      if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
-      ctx.askedLeft(channel);
-      ctx.syncToolAuthenticationNeeded(channel, action);
+      ctx.syncSessionInputNeeded(channel);
       ctx.chatMoved(channel);
     }
+    /*
+     * A session's entry raised or taken down, told to the plugins as it is
+     * said: the session is waiting on a person, or no longer is for that one.
+     */
+    if (action.type === 'session/inputNeededSet') {
+      const request = (action.request ?? {}) as Record<string, unknown>;
+      void ctx.fire({
+        type: 'input_needed_set',
+        session: channel,
+        chat: String(request.chat ?? ''),
+        id: String(request.id ?? ''),
+        kind: request.kind as `${SessionInputRequestKind}`,
+      });
+    }
+    else if (action.type === 'session/inputNeededRemoved') void ctx.fire({ type: 'input_needed_removed', session: channel, id: String(action.id ?? '') });
     /*
      * A turn that ends in an error it cannot be resumed from is kept for its
      * chat, and a read after a restart puts it back where the backend's

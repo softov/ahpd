@@ -140,7 +140,7 @@ it('asks before it writes, and writes once it is allowed', async () => {
   // The session says what is wanted, so a client that never subscribed to the
   // chat still knows somebody is being asked.
   const asked = actions(p, uri).find((a) => a.type === 'session/inputNeededSet');
-  const request = asked?.request as { id: string; kind: string; chat: string; turnId: string };
+  const request = asked?.request as { id: string; kind: string; chat: string; turnId: string; toolCall: { toolCallId: string } };
   expect(request.kind).toBe('toolConfirmation');
   expect(request.chat).toBe(chatUri);
   const before = reduced(p, uri, chatUri);
@@ -152,7 +152,8 @@ it('asks before it writes, and writes once it is allowed', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: true, confirmed: 'user-action' },
+      // The call the entry names, as a client answers the entry's call.
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: true, confirmed: 'user-action' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -177,13 +178,13 @@ it('says a client\'s decision on a call once, as the client\'s, as VS Code\'s ho
   say(client, chatUri, 'write shopping bread and milk');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
   const asked = actions(p, uri).find((a) => a.type === 'session/inputNeededSet');
-  const request = asked?.request as { id: string; turnId: string };
+  const request = asked?.request as { id: string; turnId: string; toolCall: { toolCallId: string } };
   void client.handle({
     method: 'dispatchAction',
     params: {
       channel: chatUri,
       clientSeq: 7,
-      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.id, approved: true, confirmed: 'user-action' },
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: true, confirmed: 'user-action' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -198,13 +199,13 @@ it('writes nothing when it is told not to', async () => {
   const { dir, client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'write secrets everything');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
-  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { id: string };
+  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { turnId: string; toolCall: { toolCallId: string } };
 
   void client.handle({
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: false, reason: 'denied' },
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: false, reason: 'denied' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -226,9 +227,10 @@ it('asks which note when the line did not say, and reads the one named', async (
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
 
   const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as {
-    id: string; kind: string; request: { questions: { options: { id: string }[] }[] };
+    id: string; kind: string; request: { id: string; questions: { options: { id: string }[] }[] };
   };
-  // The other kind of question: not a tool call, and answered by its own id.
+  // The other kind of question: not a tool call, and answered by the id of the
+  // request the entry carries.
   expect(request.kind).toBe('chatInput');
   expect(request.request.questions[0]?.options.map((one) => one.id)).toEqual(['monday.md']);
   // `chat/inputRequested` opens its own response part, the way toolCallStart
@@ -243,7 +245,7 @@ it('asks which note when the line did not say, and reads the one named', async (
       channel: chatUri,
       action: {
         type: 'chat/inputCompleted',
-        requestId: request.id,
+        requestId: request.request.id,
         response: 'accept',
         answers: { name: { state: 'submitted', value: { kind: 'selected', value: 'monday.md' } } },
       },

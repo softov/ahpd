@@ -187,7 +187,7 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   const freed = actions(p).find((one) => one.action.type === 'chat/toolCallAuthResolved');
   expect(freed?.action.toolCallId).toBe('tc1');
   const lifted = actions(p).filter((one) => one.action.type === 'session/inputNeededRemoved');
-  expect(lifted.some((one) => one.action.id === 'auth:tc1')).toBe(true);
+  expect(lifted.map((one) => one.action.id)).toEqual([(blocked?.action.request as { id?: string }).id]);
 });
 
 /*

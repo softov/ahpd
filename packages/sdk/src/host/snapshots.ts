@@ -149,10 +149,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * activity is its own chat's, and the session's is the chat that decides
      * it, which this host reads across all of them.
      */
-    const { resource: _resource, activity: _activity, customizations: reported, ...theirs } = lead.sessionState();
+    const { resource: _resource, activity: _activity, customizations: reported, inputNeeded: _raised, ...theirs } = lead.sessionState();
     const mine = decided.get(channel);
     const activity = activityOf(held);
     const customizations = ctx.laidCustomizations(channel, reported);
+    // What each chat's running turn waits on a person for, read from the
+    // chat's state as this host raises it.
+    const inputNeeded = [...held.chats].flatMap(([chatUri, chat]) => ctx.inputNeededOf(chatUri, ctx.stateOf(chatUri) ?? chat.chatState() as Bag));
     return {
       ...theirs,
       // Creating until it is said ready, which a provisional session is at its
@@ -175,7 +178,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // What this host contributes, which is nothing unless it was given
       // any - and then the field is absent rather than an empty list.
       ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(channel) } : {}),
-      status: seedStatus(channel, theirs.inputNeeded),
+      ...(inputNeeded.length > 0 ? { inputNeeded } : {}),
+      status: seedStatus(channel, inputNeeded),
       // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
       // does not, and the catalogue row is where a client reads it.
       defaultChat: held.defaultChat,

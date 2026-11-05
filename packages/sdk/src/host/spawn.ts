@@ -1,5 +1,5 @@
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import type { ChatAction, ChatState, SessionInputRequestKind, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
 import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
@@ -1210,6 +1210,14 @@ export function createSpawn(ctx: HostContext): Spawn {
        */
       emit: (channel, action) => {
         /*
+         * The session's `inputNeeded` entries are this host's to say: it
+         * raises and takes down each from the chats' state, whoever asked, as
+         * VS Code's host mirrors every chat's blockers and no agent raises an
+         * entry.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
+         */
+        if (channel === 'session' && (action.type === 'session/inputNeededSet' || action.type === 'session/inputNeededRemoved')) return;
+        /*
          * A chat's read and archived bits are the ones this host keeps, laid
          * over the status a backend says on the chat's row, as they are on the
          * chat's state.
@@ -1357,28 +1365,6 @@ export function createSpawn(ctx: HostContext): Spawn {
             ...(typeof failure.errorType === 'string' ? { errorType: failure.errorType } : {}),
             ...(sender === undefined ? {} : { sender }),
           });
-        }
-        /*
-         * A session that began, or stopped, waiting on a person. The set is an
-         * upsert keyed by `id`, so setting one entry again raises it again.
-         */
-        if (action.type === 'session/inputNeededSet') {
-          const request = (action.request ?? {}) as Bag;
-          const id = String(request.id ?? '');
-          const chat = String(request.chat ?? '');
-          if (id !== '' && chat !== '') {
-            void fire({
-              type: 'input_needed_set',
-              session: uri,
-              chat,
-              id,
-              kind: request.kind as `${SessionInputRequestKind}`,
-            });
-          }
-        }
-        else if (action.type === 'session/inputNeededRemoved') {
-          const id = String(action.id ?? '');
-          if (id !== '') void fire({ type: 'input_needed_removed', session: uri, id });
         }
         /*
          * And the run this session was started for, when the turn that was it

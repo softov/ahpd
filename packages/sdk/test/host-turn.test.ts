@@ -362,16 +362,19 @@ describe('driving a turn', () => {
     const second = sdk.canUseTool?.('WebSearch', { query: 'rain' }, { toolUseID: 'call-b' });
     await settle();
 
+    // Each under the reference host's id for a call at its confirmation.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
+    const entry = (call: string) => `toolConfirmation:${chatUri}:t1:${call}`;
     const asked = actions(p, uri)
       .filter((e) => e.action.type === 'session/inputNeededSet')
       .map((e) => (e.action.request as { id: string }).id);
-    expect(asked).toEqual(['call-a', 'call-b']);
+    expect(asked).toEqual([entry('call-a'), entry('call-b')]);
 
     // Both are on the session, because `inputNeeded` is a list.
     const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { id: string }[] } };
     };
-    expect(state.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-a', 'call-b']);
+    expect(state.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual([entry('call-a'), entry('call-b')]);
 
     // Answer the *first* one, which is the one that used to be unreachable.
     client.handle({
@@ -388,11 +391,11 @@ describe('driving a turn', () => {
     const after = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { id: string }[] } };
     };
-    expect(after.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-b']);
+    expect(after.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual([entry('call-b')]);
     const dropped = actions(p, uri)
       .filter((e) => e.action.type === 'session/inputNeededRemoved')
       .map((e) => e.action.id);
-    expect(dropped).toEqual(['call-a']);
+    expect(dropped).toEqual([entry('call-a')]);
 
     client.handle({
       method: 'dispatchAction',

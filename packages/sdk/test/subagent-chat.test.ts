@@ -603,10 +603,11 @@ it('answers the session and its worker chat spelt from another scheme of its id'
   expect(session.snapshot.resource).toBe('fake:/ask');
   const chat = await ask('subscribe', { channel: elsewhere }) as { snapshot: { resource: string; state: Bag } };
   expect(chat.snapshot.resource).toBe(elsewhere);
-  // The worker chat the session names is the one built from the URI it is held by.
+  // The worker chat the session names is the one built from the URI it is held
+  // by, beside the lead's own two calls waiting to be allowed.
   const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
-  expect(needed.map((one) => one.chat)).toEqual([worker, worker]);
+  expect(needed.map((one) => one.chat)).toEqual([worker, worker, chatUriFor('ahp-session:/ask'), chatUriFor('ahp-session:/ask')]);
   // And an answer sent on that spelling reaches the worker's call.
   await send(elsewhere, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
   expect(refusals()).toEqual([]);
@@ -657,8 +658,9 @@ it('says the session\'s URIs inside an action as the host holds them, to every c
     const added = on_(session, 'session/chatAdded')[0]?.summary as Bag | undefined;
     expect(added?.resource).toBe(workerOf(session));
     expect((added?.origin as Bag | undefined)?.chat).toBe(chatOf(session));
+    // The worker's two, and the lead's own two calls waiting to be allowed.
     const asks = on_(session, 'session/inputNeededSet').map((one) => (one.request as Bag).chat);
-    expect(asks).toEqual([workerOf(session), workerOf(session)]);
+    expect(asks).toEqual([workerOf(session), workerOf(session), chatOf(session), chatOf(session)]);
     const start = on_(chatOf(session), 'chat/toolCallStart').find((one) => one.toolCallId === 'toolu_agent');
     expect((start?._meta as Bag | undefined)?.subagentChatUri).toBe(workerOf(session));
   }

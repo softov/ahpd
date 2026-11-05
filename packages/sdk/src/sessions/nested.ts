@@ -1674,7 +1674,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     },
     /* Taken only for an input request the inner session has open. */
     answer: (requestId: string, accepted: boolean, answers: Bag): boolean => {
-      const open = (session?.inputNeeded ?? []).some((entry) => entry.id === requestId) || asking(requestId);
+      const open = (session?.inputNeeded ?? []).some((entry) => entry.kind === 'chatInput' && entry.request.id === requestId) || asking(requestId);
       if (!open) return false;
       carry('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });
       return true;
