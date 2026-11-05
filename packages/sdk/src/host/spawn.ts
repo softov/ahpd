@@ -322,10 +322,28 @@ export function createSpawn(ctx: HostContext): Spawn {
    * and the chat's state takes each action as every chat's does; the row and
    * the session's activity follow that state from there.
    */
+  /**
+   * Whether a backend's `chat/toolCallConfirmed` names a call a client's
+   * decision already moved, which the host said in its place (`Session.confirm`):
+   * VS Code's host says a client's confirmation once, and no provider says one
+   * of its own. A backend's word on a call still waiting is its own decision,
+   * and is said.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1878-L1904
+   */
+  const decidedAlready = (chat: string, action: Bag): boolean => {
+    if (action.type !== 'chat/toolCallConfirmed') return false;
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
+      .map((part) => part.toolCall as Bag | undefined)
+      .find((one) => one !== undefined && one.toolCallId === action.toolCallId);
+    return call?.status !== 'pending-confirmation';
+  };
+
   const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     const action = withWorkerUri(uri, given);
+    if (decidedAlready(uri, action)) return;
     const was = ctx.stateOf(uri)?.status;
     dispatch(uri, action);
     // Unread where the protocol's chat reducer makes it so, from the action a
@@ -1219,6 +1237,8 @@ export function createSpawn(ctx: HostContext): Spawn {
           const turns = Array.isArray(held?.turns) ? held.turns as Bag[] : [];
           if (String((held?.activeTurn as Bag | undefined)?.id ?? '') === turn || turns.some((one) => String(one.id ?? '') === turn)) return;
         }
+        // A client's decision on a call is said once, as the client's.
+        if (channel === 'chat' && decidedAlready(chatUri, action)) return;
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);

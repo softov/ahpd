@@ -77,7 +77,7 @@ describe('driving a turn', () => {
       const needed = frames.find((n) => (n.params as { action: Record<string, unknown> }).action.type === 'session/inputNeededSet');
       const answer = (action: Record<string, unknown>) => client.handle({
         method: 'dispatchAction',
-        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'c9', ...action } },
+        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c9', ...action } },
       });
       return { p, chatUri, decision, ready, needed, answer };
     };

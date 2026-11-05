@@ -165,6 +165,35 @@ it('asks before it writes, and writes once it is allowed', async () => {
   expect(call).toMatchObject({ status: 'completed', confirmed: 'user-action' });
 });
 
+/*
+ * A client's decision on a call is said once, as the client's: the host says
+ * it in the backend's place, and the backend's own word on the call it already
+ * moved is not said again, as VS Code's host echoes a client's confirmation
+ * once and no provider says one of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1878-L1904
+ */
+it('says a client\'s decision on a call once, as the client\'s, as VS Code\'s host', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  say(client, chatUri, 'write shopping bread and milk');
+  await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
+  const asked = actions(p, uri).find((a) => a.type === 'session/inputNeededSet');
+  const request = asked?.request as { id: string; turnId: string };
+  void client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      clientSeq: 7,
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.id, approved: true, confirmed: 'user-action' },
+    },
+  });
+  await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
+  const confirmed = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number } })
+    .filter((e) => e.channel === chatUri && e.action.type === 'chat/toolCallConfirmed');
+  expect(confirmed.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }]);
+});
+
 it('writes nothing when it is told not to', async () => {
   const { dir, client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'write secrets everything');

@@ -716,9 +716,10 @@ export interface Session {
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
    * Handed over once the chat's state has the call pending a confirmation,
-   * which is the protocol's condition for taking one. The backend says the
-   * `chat/toolCallConfirmed` back, and the host sends the client's own
-   * decision in its place. False when no call by that id waits on a
+   * which is the protocol's condition for taking one. The host has said the
+   * client's own decision by then, so a `chat/toolCallConfirmed` the backend
+   * says for the call it moved is not said again, as VS Code's host says a
+   * client's confirmation once. False when no call by that id waits on a
    * confirmation here, and the host then says the decision itself, since
    * every client holds the call the state says.
    */
