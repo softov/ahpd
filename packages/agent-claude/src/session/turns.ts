@@ -124,20 +124,21 @@ export function createTurns(ctx: SessionContext): Turns {
   };
 
   /**
-   * The running turn's prompt as it went to the CLI, with what rode on it.
+   * The running turn's prompt as it went to the CLI, with what rode on it: VS
+   * Code's pending message's `sdkMessage`.
    *
-   * The text a side chat's first prompt carries is not the message's text, and
-   * a message's attachments are blocks of their own, so a prompt sent again is
-   * this rather than the turn's message. A turn whose prompt is out is the one
-   * steering goes into.
+   * A side chat's first prompt carries text of its own beside the message's,
+   * and a message's attachments are blocks of their own, so a prompt sent
+   * again is this. A turn whose prompt is out is the one steering goes into.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L25
    */
-  let prompted: { turn: string; text: string; attachments?: MessageAttachment[] } | undefined;
+  let sdkMessage: { turn: string; text: string; attachments?: MessageAttachment[] } | undefined;
 
   const again = async (steers: readonly PendingSdkMessage[]): Promise<void> => {
     const turn = ctx.active;
-    if (turn !== undefined && prompted?.turn === String(turn.id)) {
+    if (turn !== undefined && sdkMessage?.turn === String(turn.id)) {
       const uuid = writtenAs(String(turn.id), true);
-      await push(prompted.text, prompted.attachments, uuid, { message: bag(turn.message), steering: false, turnId: String(turn.id), lifecycle: 'sent' });
+      await push(sdkMessage.text, sdkMessage.attachments, uuid, { message: bag(turn.message), steering: false, turnId: String(turn.id), lifecycle: 'sent' });
     }
     // Behind the prompt, in the order they went.
     for (const one of steers) {
@@ -331,7 +332,7 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     const sent = carried === undefined ? text : `${carried}\n\n${text}`;
     carried = undefined;
-    prompted = { turn: turnId, text: sent, ...(attachments === undefined ? {} : { attachments }) };
+    sdkMessage = { turn: turnId, text: sent, ...(attachments === undefined ? {} : { attachments }) };
     await push(sent, attachments, writtenAs(turnId, false), { message: bag(turn.message), steering: false, turnId, lifecycle: 'sent' });
   };
 
@@ -399,7 +400,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * turn's prompt goes under its turn's id, and a new one otherwise.
      */
     sendSteeringMessage: ({ id, text, attachments }) => {
-      if (ctx.active === undefined || prompted?.turn !== String(ctx.active.id)) return false;
+      if (ctx.active === undefined || sdkMessage?.turn !== String(ctx.active.id)) return false;
       const message = {
         text,
         origin: { kind: 'user' },
