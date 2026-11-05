@@ -120,6 +120,33 @@ describe('a command typed into the conversation', () => {
    * The terminal as soon as it opens, as the reference host names its own:
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
    */
+  /*
+   * A pseudoterminal is listed, and its create answered, once its shell has
+   * printed, as VS Code's terminal manager waits for the prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+   */
+  it('lists a client\'s pseudoterminal, and answers its create, once its shell has printed', async () => {
+    const pty = fakePty();
+    const { client, peer: p } = await shelled(pty.spawn);
+    const uri = 'ahp-terminal:/prompted';
+    let answered = false;
+    const made = client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    }).then(() => { answered = true; });
+    await settle();
+    const listed = (): boolean => actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .some((e) => (e.action.terminals as { resource: string }[]).some((one) => one.resource === uri));
+    expect(listed()).toBe(false);
+    expect(answered).toBe(false);
+
+    pty.say('$ ');
+    await made;
+    expect(listed()).toBe(true);
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
   it('names its terminal while it runs, and says a pseudoterminal runs it', async () => {
     const pty = fakePty();
     const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
@@ -616,6 +643,36 @@ describe('a shell on this machine', () => {
     // would find out too late.
     expect(found.snapshot.state.isPty).toBe(false);
     expect(found.snapshot.state.supportsCommandDetection).toBe(false);
+  });
+
+  /*
+   * VS Code's terminal manager refuses a name already open with a plain error
+   * in its words, and takes a claim as it was sent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L306-L310
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L421
+   */
+  it('refuses a second terminal under one name in VS Code\'s words', async () => {
+    const { client } = await opened();
+    const uri = 'ahp-terminal:/twice';
+    await client.handle({ method: 'createTerminal', params: { channel: uri, cwd: uriOf(tmpdir()) } });
+    await expect(client.handle({ method: 'createTerminal', params: { channel: uri, cwd: uriOf(tmpdir()) } }))
+      .rejects.toMatchObject({ message: `Terminal already exists: ${uri}` });
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
+  it('takes a claim as the client sent it, and a client\'s with no id where it sent none', async () => {
+    const { client } = await opened();
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/unclaimed', cwd: uriOf(tmpdir()) } });
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: 'ahp-terminal:/half', claim: { kind: 'session', session: 'ahp-session:/x' }, cwd: uriOf(tmpdir()) },
+    });
+    const claimed = async (channel: string): Promise<unknown> => ((await client.handle({ method: 'subscribe', params: { channel } })) as {
+      snapshot: { state: { claim: unknown } };
+    }).snapshot.state.claim;
+    expect(await claimed('ahp-terminal:/unclaimed')).toEqual({ kind: 'client', clientId: '' });
+    expect(await claimed('ahp-terminal:/half')).toEqual({ kind: 'session', session: 'ahp-session:/x' });
+    for (const channel of ['ahp-terminal:/unclaimed', 'ahp-terminal:/half']) await client.handle({ method: 'disposeTerminal', params: { channel } });
   });
 
   it('lists them on the root channel, and stops when one is disposed', async () => {

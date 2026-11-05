@@ -1,7 +1,7 @@
 import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
 import { commandTurnKey } from './chatactions.js';
 import { localPath } from '../resources/fileuri.js';
-import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { BANG, CLOSING, need } from './common.js';
 import { textOf } from './outputs.js';
 import { callTimes } from '../utils/timing.js';
@@ -11,6 +11,13 @@ import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, Ran, Star
 import type { OnWire } from '../types/wire.js';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { ConnectionContext, HostContext } from './context.js';
+
+/**
+ * VS Code's `WAIT_FOR_PROMPT_TIMEOUT`: how long a new pseudoterminal's prompt
+ * is waited on before the root's list says the terminal anyway.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L33
+ */
+const PROMPT_WAIT_MS = 10_000;
 
 /**
  * The host's own terminals.
@@ -476,8 +483,7 @@ export interface TerminalMethods {
   disposeTerminal: (params: Record<string, unknown>) => Promise<unknown>;
 }
 
-export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext): TerminalMethods {
-  const { connection } = conn;
+export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext): TerminalMethods {
   const {
     claimable, dir, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
   } = ctx;
@@ -498,8 +504,10 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       // was never going to answer.
       const shells = need(options.terminals, 'createTerminal');
       const uri = named(String(params.channel ?? ''), 'terminal');
+      // In the reference's words, as the plain error it throws.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L306-L310
       if (terminals.has(uri))
-        throw new RpcError(-32003, `${uri} already exists`);
+        throw new Error(`Terminal already exists: ${uri}`);
       // The host names these, and a client's shell under one would answer for
       // the terminal a tool call names.
       if (retainedTerminalOf(uri) !== undefined)
@@ -507,20 +515,19 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       claimable(uri, 'terminal');
       const asked = typeof params.cwd === 'string' ? localPath(params.cwd) : dir;
       /*
-       * Whose terminal this is, checked rather than taken.
-       *
-       * A claim used to be a `Bag` and anything at all was accepted, so a
-       * client could take a terminal with `{}` and the channel then said
-       * so to everyone watching. Absent is this connection, which is the
-       * ordinary case; present and malformed is a refusal, because a
-       * client that meant to name a session and got it wrong should hear
-       * about it rather than quietly become the owner.
+       * Whose terminal this is, taken as the client sent it, and a client's
+       * with no id where it sent none, as the reference's terminal manager
+       * takes it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L421
        */
-      const claim = params.claim === undefined
-        ? { kind: 'client' as const, clientId: connection.clientId }
-        : claimOf(params.claim);
-      if (!claim) throw new RpcError(INVALID_PARAMS, 'That is not a terminal claim');
+      const claim = (params.claim ?? { kind: 'client', clientId: '' }) as Claim;
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
+      /*
+       * The shell's first words, or its exit: what the root's list waits on
+       * below.
+       */
+      let spoke: () => void = () => {};
+      const spoken = new Promise<void>((done) => { spoke = done; });
       const terminal = shells.create({
         uri,
         cwd: asked,
@@ -537,6 +544,7 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
         ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
         emit: (_channel, action) => {
           dispatch(uri, action);
+          if ((action as Bag).type === 'terminal/data' || (action as Bag).type === 'terminal/exited') spoke();
           /*
            * A terminal that exited is a different row on the root channel
            * as well, and that list only moved when one was created or
@@ -562,7 +570,20 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       terminals.set(uri, terminal);
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked });
       log(`opened ${uri} in ${asked}`);
-      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+      /*
+       * Listed, and answered, once the shell has printed or exited or ten
+       * seconds passed, as the reference's terminal manager waits for a
+       * pseudoterminal's prompt before it lists a terminal. A shell on pipes
+       * prints no prompt until it is given something to run, so it is listed
+       * at once.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+       */
+      if (terminal.state().isPty === true) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })]);
+        clearTimeout(timer);
+      }
+      if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return null;
     },
     disposeTerminal: async (params) => {

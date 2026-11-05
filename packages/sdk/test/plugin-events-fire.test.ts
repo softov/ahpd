@@ -579,6 +579,7 @@ it('fires terminal_open once the terminal exists', async () => {
       title: () => options.name ?? 'Terminal',
       claim: () => options.claim,
       lifecycle: () => ({ status: 'running' }),
+      state: () => ({ isPty: false }),
     }),
   } as unknown as TerminalStore;
   const { seen, client } = watched({ terminals: store });
