@@ -394,12 +394,12 @@ const append = (dir: string, id: string, said: Bag): void => {
  */
 const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => {
   const path = fileOf(dir, id);
-  let born: Date;
-  let touched: Date;
+  let createdAt: Date;
+  let modifiedAt: Date;
   try {
     const stat = statSync(path);
-    born = stat.birthtime;
-    touched = stat.mtime;
+    createdAt = stat.birthtime;
+    modifiedAt = stat.mtime;
   }
   catch { return undefined; }
   const log = logAt(path);
@@ -411,8 +411,8 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
   return {
     id,
     title: bot?.name ?? (typeof named === 'string' && named !== '' ? named : id),
-    createdAt: born.toISOString(),
-    modifiedAt: touched.toISOString(),
+    createdAt: createdAt.toISOString(),
+    modifiedAt: modifiedAt.toISOString(),
     workingDirectories: bot === undefined ? [] : [uriOf(bot.workspace)],
     ...(meta === undefined ? {} : { _meta: meta }),
   };

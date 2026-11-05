@@ -314,7 +314,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * never timed.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
    */
-  const begun = new Map<string, { turn: string; at: number }>();
+  const startedTurns = new Map<string, { turn: string; at: number }>();
   /**
    * The messages on their way to a back session, by the main turn they belong
    * to: how many are, and whether a client stopped that turn meanwhile.
@@ -331,7 +331,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * of it has taken up, as a client takes back one it queued: each would
    * otherwise run there as a turn nobody waits on.
    */
-  const takeBack = async (back: string, waiting: Set<string>): Promise<void> => {
+  const removePendingMessages = async (back: string, waiting: Set<string>): Promise<void> => {
     if (waiting.size === 0) return;
     let looked: Looked;
     try {
@@ -360,7 +360,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
    */
-  const cancelBack = async (back: string): Promise<void> => {
+  const cancelSubagent = async (back: string): Promise<void> => {
     let looked: Looked;
     try {
       looked = await seams.look(back);
@@ -370,7 +370,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       return;
     }
     if (looked.turn === undefined) return;
-    const clock = begun.get(back);
+    const clock = startedTurns.get(back);
     const duration = clock?.turn === looked.turn ? Date.now() - clock.at : 0;
     let refused: string | undefined;
     try {
@@ -563,8 +563,8 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        */
       const backs = [...answering].filter(([, held]) => held.session === session && held.turnId === turnId);
       for (const [back, held] of backs) {
-        if (pending === undefined) await takeBack(back, held.waiting);
-        await cancelBack(back);
+        if (pending === undefined) await removePendingMessages(back, held.waiting);
+        await cancelSubagent(back);
       }
     },
 
@@ -741,8 +741,8 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         // A send a stop came during: what it sent is taken back, and the turn
         // running there is stopped as well.
         if (delivery.stopped) {
-          await takeBack(session, waiting);
-          await cancelBack(session);
+          await removePendingMessages(session, waiting);
+          await cancelSubagent(session);
         }
       }
       finally {
@@ -755,7 +755,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const held = answering.get(backSession);
       if (held === undefined) return;
       if (queuedMessageId !== undefined) held.waiting.delete(queuedMessageId);
-      begun.set(backSession, { turn: backTurn, at: Date.now() });
+      startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
     },
 
     began: (backSession, session, handle, turnId, chat, backTurn) => {
@@ -770,7 +770,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const bot = slug === undefined ? undefined : seams.store.get(slug);
       const name = bot?.name ?? '';
       answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Set() });
-      begun.set(backSession, { turn: backTurn, at: Date.now() });
+      startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
       handle.working?.(chat, name);
     },
   };
