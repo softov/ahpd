@@ -178,7 +178,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * client's own - which is what lets a client that never sees the chat still
    * run the call.
    */
-  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(ctx.calls.entries());
+  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.request).concat(ctx.calls.entries());
 
   const self: Session = {
     ...config.methods,

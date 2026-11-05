@@ -7,7 +7,8 @@ import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../in
 import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
-  entry: Bag;
+  /** The question as it was raised on the session's `inputNeeded`: the spec's `SessionInputRequest`. */
+  request: Bag;
   /** The tool a confirmation is for, by the CLI's own name for it. */
   toolName?: string;
   /** `AskUserQuestion` needs its own payload echoed back verbatim. */
@@ -97,12 +98,12 @@ type Held = { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown
 interface Question {
   /** The tool's name, as the CLI calls it. */
   toolName: string;
-  /** The input the call would run with, as the caller was handed it. */
-  raw: Bag;
-  /** The input as the model wrote it, which the question shows, where it differs from `raw`. */
+  /** The input the call would run with, as the caller was handed it: the SDK's and VS Code's `input`. */
+  input: Bag;
+  /** The input as the model wrote it, which the question shows, where it differs from `input`. */
   shown?: Bag;
-  /** The agent's own id for the call, which is also the question's. */
-  callId: string;
+  /** The agent's own id for the call, which is also the question's: the SDK's `toolUseID`. */
+  toolUseID: string;
   /** The subagent the call runs in, when it is one. */
   agentId?: string;
   /** The SDK's own abort for the call. */
@@ -265,11 +266,11 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    * have to be kept alike.
    *
    * A call the SDK has already cancelled is answered before a question is put:
-   * the entry would go on the chat and stay there, and its caller is a call the
-   * SDK has abandoned.
+   * the request would go on the chat and stay there, and its caller is a call
+   * the SDK has abandoned.
    */
   const askPerson = async (asked: Question): Promise<Held> => {
-    const { toolName, raw, callId: id, agentId, signal, suggestions } = asked;
+    const { toolName, input, toolUseID: id, agentId, signal, suggestions } = asked;
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     /*
      * The conversation the tool is running in.
@@ -306,7 +307,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * with no folder and a file the edit does not fit are all one answer here:
      * a card exactly as it was before there was a preview at all.
      */
-    const writing = writeOf(toolName, raw);
+    const writing = writeOf(toolName, input);
     const shown = writing === undefined ? undefined : await ctx.options.onEditProposed?.(id, writing.path, writing.apply);
     const edits: Bag | undefined = shown === undefined ? undefined : { items: [shown] };
     if (edits !== undefined) previews.add(id);
@@ -327,7 +328,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       /*
        * The SDK saying the call is over, which no client is told any other way.
        *
-       * The entry comes off the chat as an answer takes it off, because the
+       * The request comes off the chat as an answer takes it off, because the
        * question and its answer are one thing: a client left drawing a
        * confirmation the SDK has abandoned is offering a decision that changes
        * nothing. The call is answered as VS Code's bridge answers a parked
@@ -353,7 +354,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * worker whose spawn is only recorded there would have no chat at all.
        */
       if (toolName === 'Task' || toolName === 'Agent') {
-        ctx.recordSpawn(id, bag(raw), scope);
+        ctx.recordSpawn(id, bag(input), scope);
       }
       /** Where a question about this call is drawn: the worker's chat, or the lead. */
       const where = scope.chat?.uri ?? ctx.options.chatUri;
@@ -361,12 +362,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       if (toolName === 'AskUserQuestion') {
         // The same builder a restored question is drawn from, so the two are
         // one thing rather than two that have to be kept alike.
-        const { request, asked } = questionRequest(raw, id);
-        // `chat` is required on every input request and was never sent.
-        const entry: Bag = { id, chat: where, kind: 'chatInput', request };
-        pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle: done });
+        const { request, asked } = questionRequest(input, id);
+        // `chat` is required on every session input request.
+        const sessionRequest: Bag = { id, chat: where, kind: 'chatInput', request };
+        pending.set(id, { id, request: sessionRequest, questions: list(input.questions), asked, answers: new Map(), settle: done });
         ctx.emitOn(scope, { type: 'chat/inputRequested', request });
-        ctx.inputNeededSet(entry);
+        ctx.inputNeededSet(sessionRequest);
         return;
       }
 
@@ -377,9 +378,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * raised comes down, and one that would be raised is not raised.
        */
       ctx.holdCall(id);
-      // The card shows the call as the model wrote it; the CLI runs `raw`.
-      const written = asked.shown ?? raw;
-      const input = toolInputOf(toolName, written);
+      // The card shows the call as the model wrote it; the CLI runs `input`.
+      const written = asked.shown ?? input;
+      const toolInput = toolInputOf(toolName, written);
       // Named and titled from Claude's tables, as VS Code's Claude agent puts
       // its confirmation, a client's tool by the name its client announced.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
@@ -400,7 +401,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         toolName: shownName,
         displayName,
         ...(contributor ? { contributor } : {}),
-        ...(input !== undefined ? { toolInput: input } : {}),
+        ...(toolInput !== undefined ? { toolInput } : {}),
         ...(meta ? { _meta: meta } : {}),
       } as Bag;
       /*
@@ -419,7 +420,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // streaming: the whole input is given here, as the action gives it.
       if (held && str(call.status) === 'streaming') {
         delete call.partialInput;
-        if (input !== undefined) call.toolInput = input;
+        if (toolInput !== undefined) call.toolInput = toolInput;
       }
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
@@ -448,26 +449,25 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         toolCallId: id,
         invocationMessage,
         confirmationTitle,
-        ...(input !== undefined ? { toolInput: input } : {}),
+        ...(toolInput !== undefined ? { toolInput } : {}),
         ...(options !== undefined ? { options } : {}),
         ...(edits !== undefined ? { edits } : {}),
       });
 
-      // `chat` and `turnId` are both required on a tool confirmation and
-      // neither was sent.
-      const entry: Bag = { id, chat: where, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
+      // `chat` and `turnId` are both required on a tool confirmation.
+      const sessionRequest: Bag = { id, chat: where, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
       pending.set(id, {
         id,
-        entry,
+        request: sessionRequest,
         toolName,
         asked: new Map(),
         answers: new Map(),
         ...(options !== undefined ? { options, suggestions } : {}),
         settle: (result) => done(result.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: raw, ...(result.updatedPermissions === undefined ? {} : { updatedPermissions: result.updatedPermissions }) }
+          ? { behavior: 'allow', updatedInput: input, ...(result.updatedPermissions === undefined ? {} : { updatedPermissions: result.updatedPermissions }) }
           : result),
       });
-      ctx.inputNeededSet(entry);
+      ctx.inputNeededSet(sessionRequest);
     });
   };
 
@@ -567,9 +567,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (matched) {
       return await askPerson({
         toolName,
-        raw: input,
+        input,
         ...(shown !== undefined ? { shown } : {}),
-        callId: id,
+        toolUseID: id,
         suggestions: [],
         ...(agentId !== undefined ? { agentId } : {}),
         ...(signal !== undefined ? { signal } : {}),
@@ -594,9 +594,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     }
     return await askPerson({
       toolName,
-      raw: input,
+      input,
       ...(shown !== undefined ? { shown } : {}),
-      callId: id,
+      toolUseID: id,
       suggestions: list(about.suggestions),
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),
@@ -644,8 +644,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const agentId = input.agent_id;
     const answered = await askPerson({
       toolName,
-      raw: bag(input.tool_input),
-      callId,
+      input: bag(input.tool_input),
+      toolUseID: callId,
       suggestions: [],
       ...(agentId !== undefined ? { agentId } : {}),
       ...(options?.signal !== undefined ? { signal: options.signal } : {}),
@@ -666,8 +666,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // compare against whichever question happened to be held and return
       // silently when it did not match - which, with two tool calls open, is
       // a person pressing Approve and nothing at all happening.
-      const held = [...pending.values()].find((one) => one.entry.kind === 'toolConfirmation'
-        && str(bag(one.entry.toolCall).toolCallId) === toolCallId);
+      const held = [...pending.values()].find((one) => one.request.kind === 'toolConfirmation'
+        && str(bag(one.request.toolCall).toolCallId) === toolCallId);
       if (!held) return false;
       const settle = held.settle;
       pending.delete(held.id);
@@ -705,12 +705,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * waits for it is told so.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
        */
-      const call = bag(held.entry.toolCall);
+      const call = bag(held.request.toolCall);
       // The CLI's own name, which is the one a client's tool is offered under;
       // the call's row names the tool as its client announced it.
       const name = held.toolName ?? '';
       if (approved) {
-        ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
+        ctx.allowCall(name, str(held.request.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
       else ctx.refuseCall(toolCallId, DECLINED);
       // The answer is given, so the preview goes with it: what the tool would
@@ -741,10 +741,10 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // Only a question has answers. A tool confirmation is the other kind of
       // pending input and is answered by approving it, so a draft answer to
       // one names a field it does not have.
-      if (!held || held.entry.kind !== 'chatInput') return false;
+      if (!held || held.request.kind !== 'chatInput') return false;
       if (answer === undefined) held.answers.delete(questionId);
       else held.answers.set(questionId, answer);
-      const request = bag(held.entry.request);
+      const request = bag(held.request.request);
       if (held.answers.size > 0) request.answers = Object.fromEntries(held.answers);
       else delete request.answers;
       return true;

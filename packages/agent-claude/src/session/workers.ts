@@ -598,7 +598,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       if (was === 'completed' || was === 'cancelled') continue;
       const id = str(call.toolCallId);
       for (const one of [...ctx.pending.values()]) {
-        if (one.entry.kind !== 'toolConfirmation' || str(bag(one.entry.toolCall).toolCallId) !== id) continue;
+        if (one.request.kind !== 'toolConfirmation' || str(bag(one.request.toolCall).toolCallId) !== id) continue;
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The turn ended before this ran' });
         ctx.inputNeededRemoved(one.id);
@@ -635,7 +635,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     if (scope?.chat === undefined) return;
     completed.add(callId);
     for (const one of [...ctx.pending.values()]) {
-      if (one.entry.chat !== scope.chat.uri) continue;
+      if (one.request.chat !== scope.chat.uri) continue;
       ctx.pending.delete(one.id);
       one.settle({ behavior: 'deny', message: 'The subagent finished' });
       ctx.inputNeededRemoved(one.id);
