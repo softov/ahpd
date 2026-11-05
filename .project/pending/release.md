@@ -10,7 +10,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Left
 
-1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `a7b0cfd7` or later. It wires in #212 to #228.
+1. **The daemon on main.** Restart the dev daemon in Softov's terminal, on `4b5e1290` or later. It wires in #212 to #237. Before the restart, run `ahpd config set httpApi true` and `ahpd config set modelApi true` with `--config-file ~/.config/ahpd/config-dev.json`: the file lost `http`, and #237 gates the model calls on `modelApi`.
 2. **ahpw on the candidate.** Set `@ahpd/sdk` to `^0.15.0-rc.1` in ahpw, and release it.
 
 ## Done
