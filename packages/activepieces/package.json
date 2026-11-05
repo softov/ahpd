@@ -103,8 +103,8 @@
         "networkMode": {
           "type": "string",
           "enum": ["STRICT", "UNRESTRICTED"],
-          "default": "STRICT",
-          "description": "Activepieces' AP_NETWORK_MODE for the engine: STRICT refuses every connection a piece makes to a private, loopback, link-local or multicast address, UNRESTRICTED makes none."
+          "default": "UNRESTRICTED",
+          "description": "Activepieces' AP_NETWORK_MODE for the engine: STRICT refuses every connection a piece makes to a private, loopback, link-local or multicast address, UNRESTRICTED refuses none."
         },
         "ssrfAllowList": {
           "type": "array",

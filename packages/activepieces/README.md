@@ -36,7 +36,7 @@ In the configuration file, with three of the pieces named:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `pieces` | - | The package of each piece the daemon offers, such as `@activepieces/piece-resend`. A version may follow the name, as in `@activepieces/piece-postgres@0.5.1`. Required, and at least one |
-| `networkMode` | `STRICT` | Activepieces' `AP_NETWORK_MODE` for the engine: `STRICT` refuses every connection a piece makes to a private, loopback, link-local or multicast address, `UNRESTRICTED` refuses none |
+| `networkMode` | `UNRESTRICTED` | Activepieces' `AP_NETWORK_MODE` for the engine, with Activepieces' default: `UNRESTRICTED` refuses no connection a piece makes, so the network the daemon runs in is the boundary, and `STRICT` refuses every one to a private, loopback, link-local or multicast address |
 | `ssrfAllowList` | none | Activepieces' `AP_SSRF_ALLOW_LIST`: the addresses and CIDR ranges a piece may reach under `STRICT`, such as `10.0.0.5` or `10.0.0.0/8` |
 | `sandboxPropagatedEnvVars` | none | The variables of the daemon's environment the engine is given, by name, as Activepieces' `AP_SANDBOX_PROPAGATED_ENV_VARS`. A proxy or a certificate file a piece needs is listed here |
 

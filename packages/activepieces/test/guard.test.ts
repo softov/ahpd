@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { SSRFBlockedError, isBlockedIp } from '../src/guard.js';
+import { sandboxEnv } from '../src/plugin.js';
+import manifest from '../package.json' with { type: 'json' };
 
 /*
  * Activepieces' SSRF guard: its classifier, and the guard the engine installs.
@@ -121,5 +123,17 @@ describe('the guard the engine installs', () => {
     const open = await probed({ AP_NETWORK_MODE: 'UNRESTRICTED' });
     expect(open.installed).toBe(false);
     expect([open.lookup, open.socket, open.fetch]).not.toContain('SSRFBlockedError');
+  });
+});
+
+/*
+ * The operator's switch starts where Activepieces' does:
+ * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/api/src/app/helper/system/system.ts#L68
+ */
+describe('the network mode the engine is given', () => {
+  it('is UNRESTRICTED unless the operator sets STRICT, as Activepieces\' default is', () => {
+    expect(sandboxEnv({}, {})['AP_NETWORK_MODE']).toBe('UNRESTRICTED');
+    expect(sandboxEnv({ networkMode: 'STRICT' }, {})['AP_NETWORK_MODE']).toBe('STRICT');
+    expect(manifest.ahpd.optionsSchema.properties.networkMode.default).toBe('UNRESTRICTED');
   });
 });

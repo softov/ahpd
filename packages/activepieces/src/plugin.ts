@@ -164,9 +164,13 @@ const failureOf = (line: string, pieces: Wanted[]): { package?: string; why: str
 /** The engine's settings, as the plugin's options give them. */
 export interface EngineSettings {
   /**
-   * Activepieces' `AP_NETWORK_MODE`: `STRICT` installs the engine's SSRF
-   * guard, `UNRESTRICTED` does not. `STRICT` when the options name none, so a
-   * fresh host's pieces reach no private address.
+   * Activepieces' `AP_NETWORK_MODE`, the operator's switch: `STRICT` installs
+   * the engine's SSRF guard, `UNRESTRICTED` does not. `UNRESTRICTED` when the
+   * options name none, which is Activepieces' own default: the boundary a
+   * piece's connections meet is the network the operator runs the daemon in,
+   * and `STRICT` is the guard the operator turns on in the engine besides.
+   * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/packages/server/api/src/app/helper/system/system.ts#L68
+   * https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/install/architecture/network-security.mdx#L21-L45
    */
   networkMode?: NetworkMode;
   /** Activepieces' `AP_SSRF_ALLOW_LIST`: the addresses and CIDR ranges the guard lets through. */
@@ -196,7 +200,7 @@ export const sandboxEnv = (settings: EngineSettings = {}, env: NodeJS.ProcessEnv
     // A step's file is held to 25 MB, Activepieces' default `AP_MAX_FILE_SIZE_MB`.
     // https://github.com/activepieces/activepieces/blob/0a2f7057077cecdc2f014c03475f4b19ecd5dcb8/docs/install/configuration/limits.mdx
     AP_MAX_FILE_SIZE_MB: '25',
-    AP_NETWORK_MODE: settings.networkMode ?? 'STRICT',
+    AP_NETWORK_MODE: settings.networkMode ?? 'UNRESTRICTED',
     ...(allowList.length === 0 ? {} : { AP_SSRF_ALLOW_LIST: allowList.join(',') }),
     ...(propagated.length === 0 ? {} : { AP_SANDBOX_PROPAGATED_ENV_VARS: propagated.join(',') }),
     ...Object.fromEntries(propagated.flatMap((key) => {
@@ -443,7 +447,7 @@ export const apply: Plugin['apply'] = async (host, options) => {
   const names = (value: unknown): string[] =>
     (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && one !== '') : []);
   const channel = engine(host, {
-    networkMode: options['networkMode'] === 'UNRESTRICTED' ? 'UNRESTRICTED' : 'STRICT',
+    networkMode: options['networkMode'] === 'STRICT' ? 'STRICT' : 'UNRESTRICTED',
     ssrfAllowList: names(options['ssrfAllowList']),
     sandboxPropagatedEnvVars: names(options['sandboxPropagatedEnvVars']),
   });
