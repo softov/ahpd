@@ -1,8 +1,8 @@
 import { createServer } from 'node:http';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { botTarget, turnEnds } from '../src/bot.js';
-import { callBack, dispatcher } from '../src/plugin.js';
+import { callBack, defaults, dispatcher } from '../src/plugin.js';
 import { checkEndpoint } from '../src/record.js';
 import type { AddressInfo } from 'node:net';
 import type { ServerResponse } from 'node:http';
@@ -279,6 +279,25 @@ describe('the reply modes', () => {
     expect(await answer.json()).toMatchObject({ text: 'in time' });
   });
 
+  it('holds a sync wait within the sender\'s window: three seconds for Graph and ten for GitHub, whatever the setting', async () => {
+    vi.useFakeTimers();
+    try {
+      for (const [auth, seconds] of [['graph', 3], ['github', 10]] as const) {
+        const { target } = await made({ timeout: 60 });
+        let answered: Response | undefined;
+        void target(endpoint({ reply: 'sync', auth, syncTimeoutSeconds: 60 }), call({ thread: 'pr-12', text: 'hello' }))
+          .then((answer) => { answered = answer; });
+        await vi.advanceTimersByTimeAsync(seconds * 1000 - 100);
+        expect(answered).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(200);
+        expect(answered?.status).toBe(202);
+      }
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('takes the endpoint timeout over the plugin option', async () => {
     const { target, finish } = await made({ timeout: 0.02 });
     const pending = target(endpoint({ reply: 'sync', syncTimeoutSeconds: 1 }), call({ thread: 'pr-12', text: 'hello' }));
@@ -336,11 +355,11 @@ it('hears a turn that ended in an error, with its message', async () => {
   expect(await waited).toEqual({ status: 'error', error: 'the model refused' });
 });
 
-it('gives the plugin option syncTimeoutSeconds a default of 60', async () => {
-  const { defaults } = await import('../src/plugin.js');
+it('gives the plugin option syncTimeoutSeconds GitHub\'s ten seconds by default, and maxBodyBytes 25 MiB', () => {
   const optionsSchema = manifest.ahpd.optionsSchema;
-  expect(defaults.syncTimeoutSeconds).toBe(60);
+  expect(defaults).toEqual({ syncTimeoutSeconds: 10, maxBodyBytes: 25 * 1024 * 1024 });
   expect(optionsSchema.properties).toHaveProperty('syncTimeoutSeconds');
+  expect(optionsSchema.properties).toHaveProperty('maxBodyBytes');
 });
 
 describe('the plugin connection', () => {

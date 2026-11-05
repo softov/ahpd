@@ -54,7 +54,7 @@ An endpoint's URL is `/plugins/webhook/<id>` on the daemon's port, or on the rou
 
 A client builds that URL from the adapter's receive capability, whose `path` is `/plugins/webhook/{id}`: put the daemon's HTTP root, or the routes listener's, before it and the connector's id in place of `{id}`.
 
-The route reads the body first, up to the plugin's `maxBodyBytes` (5 MiB by default), and then checks the proof over those bytes, so there is nothing a caller without proof can make this process hold. A body over the limit answers 413.
+The route reads the body first, up to the plugin's `maxBodyBytes` (25 MiB by default, which holds the 25 MB GitHub caps a payload at), and then checks the proof over those bytes, so there is nothing a caller without proof can make this process hold. A body over the limit answers 413.
 
 ```bash
 curl -X POST http://127.0.0.1:37537/plugins/webhook/ci \
@@ -309,7 +309,7 @@ A callback URL must start with the endpoint's `callbackPrefix`. The plugin compa
 
 A callback that answers with a redirect is a failed callback. The plugin does not follow the redirect, and the daemon's log gets a problem line.
 
-A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugin option, which is 60 by default.
+A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugin option, which is 10 by default, the window GitHub gives a receiver. The wait is held within the sender's own window whatever the setting: at most 10 seconds for a `github` endpoint and 3 for a `graph` one, since an answer after it reaches a sender that has counted the delivery failed.
 
 ```json
 {

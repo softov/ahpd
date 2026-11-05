@@ -105,6 +105,16 @@ function checkCallback(endpoint: Endpoint, callback: string | undefined): { url:
   return { url: url.href };
 }
 
+/**
+ * The window a sender gives a receiver before it counts a delivery failed, in
+ * seconds, by the endpoint's scheme: GitHub's ten and Microsoft Graph's three.
+ * A sync call's wait is held within it, since an answer after it reaches a
+ * sender that has already given up.
+ * https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#respond-within-10-seconds
+ * https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks#http-codes-and-retry-logic
+ */
+const SENDER_WINDOW_SECONDS: Partial<Record<string, number>> = { github: 10, graph: 3 };
+
 /** What a reply says of a turn that ended: its status, its text, and its error when it failed. */
 const ended = (done: TurnEnd): Record<string, unknown> => ({
   status: done.status,
@@ -199,7 +209,10 @@ export function botTarget(seams: BotSeams): Target {
     const said = { thread: askedFor.thread, turn };
 
     if (endpoint.reply === 'sync') {
-      const seconds = endpoint.syncTimeoutSeconds ?? seams.syncTimeoutSeconds;
+      const seconds = Math.min(
+        endpoint.syncTimeoutSeconds ?? seams.syncTimeoutSeconds,
+        SENDER_WINDOW_SECONDS[endpoint.auth ?? 'bearer'] ?? Number.POSITIVE_INFINITY,
+      );
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined); }, seconds * 1000); });
       const done = await Promise.race([end, late]);

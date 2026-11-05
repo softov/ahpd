@@ -30,9 +30,15 @@ export const name = NAME;
 /** What a listing prints. */
 export const title = 'Webhook';
 
-/** What an option falls back to. */
+/**
+ * What an option falls back to.
+ *
+ * A sync call waits ten seconds, the window GitHub gives a receiver before it
+ * counts the delivery failed; a sender with a shorter window holds the wait to
+ * it (bot.ts). https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#respond-within-10-seconds
+ */
 export const defaults = {
-  syncTimeoutSeconds: 60,
+  syncTimeoutSeconds: 10,
   maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
 } as const;
 

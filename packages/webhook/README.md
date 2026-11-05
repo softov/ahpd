@@ -26,13 +26,13 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 In the configuration file, with every option set:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 60, "maxBodyBytes": 5242880 } }] }
+{ "plugins": [{ "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 10, "maxBodyBytes": 26214400 } }] }
 ```
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `syncTimeoutSeconds` | `60` | How long a sync call waits for its turn to end, in seconds |
-| `maxBodyBytes` | `5242880` | The most of a call body the plugin reads, in bytes. A larger body answers 413 |
+| `syncTimeoutSeconds` | `10` | How long a sync call waits for its turn to end, in seconds: GitHub's window. A GitHub endpoint waits at most 10 and a Microsoft Graph one at most 3, the windows those senders give before they count a delivery failed |
+| `maxBodyBytes` | `26214400` | The most of a call body the plugin reads, in bytes: 25 MiB, which holds GitHub's 25 MB payload cap. A larger body answers 413 |
 
 ## An endpoint
 
