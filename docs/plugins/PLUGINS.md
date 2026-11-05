@@ -1472,7 +1472,7 @@ A client draws an icon as an image, an `<img>` or a native image view, and never
 
 ### Text in the client's language
 
-A client sends a `locale`, a BCP 47 tag such as `pt-BR`, in `initialize`. The host answers the new session form and the plugins screen in that locale. A plugin ships the text for its own fields in `ahpd.i18n`:
+A client sends a `locale`, a BCP 47 tag such as `pt-BR`, in `initialize`, and may send another on `reconnect` under `_meta['ahpd.locale']`. The host answers the new session form and the plugins screen in that locale. A tag longer than 35 characters, the least [RFC 5646](https://www.rfc-editor.org/rfc/rfc5646#section-4.4.1) lets a bounded implementation keep, is read as no locale sent: English at `initialize`, and the locale the client had at `reconnect`. A plugin ships the text for its own fields in `ahpd.i18n`:
 
 ```json
 "i18n": "i18n"

@@ -32,7 +32,12 @@ export interface Handshake {
  */
 const LEGACY_COMPATIBLE_VERSION = '0.10.0';
 
-/** The longest `locale` kept: a BCP 47 tag past this is not one a client sends. */
+/**
+ * The longest `locale` kept, the least RFC 5646 lets an implementation that
+ * bounds its tags keep; a longer one is read as no locale sent, which the
+ * plugin documents say, as the RFC asks of a bound.
+ * https://www.rfc-editor.org/rfc/rfc5646#section-4.4.1
+ */
 const LOCALE_LIMIT = 35;
 
 /** Every version the host speaks, highest first: the package's baselines and the 1.141 alias. */
@@ -560,9 +565,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       // this `reconnect` declares, as the reference host reads it.
       // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
       markOlder(clientNames.get(clientId), params._meta);
-      // An ahpd extension: `reconnect` takes `locale` as `initialize` does,
-      // and a client that sends none keeps the one it had.
-      keepLocale(params.locale, true);
+      // A locale is this host's own input on `reconnect`, so it rides the
+      // request's `_meta` under this host's key, as the protocol carries a
+      // request's extra inputs and the reference host reads its own there; a
+      // client that sends none keeps the one it had.
+      // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L47-L51
+      keepLocale(bag(params._meta)['ahpd.locale'], true);
       void fire({ type: 'client_connect', client: connection.clientId });
       // The client list is told once the connection has said who it is.
       if (connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: true });

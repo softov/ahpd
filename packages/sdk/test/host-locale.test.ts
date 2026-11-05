@@ -34,9 +34,16 @@ describe('a client locale', () => {
     expect(host.localeOf('probe')).toBeUndefined();
   });
 
-  it('is replaced by reconnect, and kept when reconnect sends none', async () => {
+  /*
+   * A host's own input on a typed request rides its `_meta`, as AHP carries a
+   * request's extra inputs.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L47-L51
+   */
+  it('is replaced by reconnect under _meta[\'ahpd.locale\'], and kept when reconnect sends none', async () => {
     const { host } = await introduced({ locale: 'pt-BR' });
-    await back(host, { locale: 'es' });
+    await back(host, { locale: 'fr' });
+    expect(host.localeOf('probe')).toBe('pt-BR');
+    await back(host, { _meta: { 'ahpd.locale': 'es' } });
     expect(host.localeOf('probe')).toBe('es');
     await back(host);
     expect(host.localeOf('probe')).toBe('es');
@@ -54,8 +61,8 @@ describe('a client locale', () => {
       expect(host.localeOf('probe')).toBeUndefined();
     }
     const { host } = await introduced({ locale: 'pt-BR' });
-    await back(host, { locale: 7 });
-    await back(host, { locale: 'x'.repeat(36) });
+    await back(host, { _meta: { 'ahpd.locale': 7 } });
+    await back(host, { _meta: { 'ahpd.locale': 'x'.repeat(36) } });
     expect(host.localeOf('probe')).toBe('pt-BR');
     const longest = 'x'.repeat(35);
     expect((await introduced({ locale: longest })).host.localeOf('probe')).toBe(longest);
