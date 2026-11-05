@@ -52,14 +52,14 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 | **Prompt and output** | | | | | | | | |
 | `instructions` |  |  | 🔵 | 🔵 | ✓ | ✓ | 🔵 | 🔵 |
 | `outputStyle` |  |  |  | ✓ |  |  |  |  |
-| `thinking` |  |  |  | ✓ |  |  |  | 🔵 |
+| `thinking` |  |  |  | ✓ |  | 🔵 |  | 🔵 |
 | `autoCompactTokens` |  |  |  |  | ✓ | ✓ |  | 🔵 |
 | **Host tools** | | | | | | | | |
 | `hostTools` | ✓ | ✓ | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 |
 | `toolsChanged` | ✓ | ✓ |  |  |  |  |  |  |
 | `hostTasks` |  |  |  | ✓ |  |  |  |  |
 | `enableTasks` |  |  |  | ✓ |  |  |  |  |
-| `tools` |  |  |  |  | ✓ | ✓ |  |  |
+| `tools` |  |  |  | 🔵 | ✓ | ✓ |  | 🔵 |
 | `strictTools` |  |  |  |  | ✓ |  |  |  |
 | **Process** | | | | | | | | |
 | `base` |  | ✓ host |  |  |  |  |  |  |
@@ -95,6 +95,8 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - **pi record `models`, pi `baseUrl`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344).
 - **claude and pi `instructions`.** Claude's SDK takes a prompt to append, and ahpd already sends the host's instructions through it. See [`code://packages/agent-claude/src/session/query.ts#L451`](../../packages/agent-claude/src/session/query.ts#L451). pi's SDK replaces or appends to its system prompt. cofold has `instructions` at both levels.
 - **pi record `thinking`.** pi's `createAgentSession` takes a `thinkingLevel`, and claude has `thinking` on the record.
+- **cofold record `thinking`.** cofold reads an effort level per session, from the session's `effortLevel` setting. See [`code://packages/agent-cofold/src/agent.ts#L424-L431`](../../packages/agent-cofold/src/agent.ts#L424-L431). A record cannot set a default.
+- **claude and pi record `tools`.** Claude's SDK takes `allowedTools` and `disallowedTools`, and ahpd already sends both. See [`code://packages/agent-claude/src/session/query.ts#L135`](../../packages/agent-claude/src/session/query.ts#L135). pi's `createAgentSession` takes `tools` and `excludeTools`.
 - **pi record `autoCompactTokens`.** pi's `SettingsManager` holds compaction settings, and cofold has the field on the record.
 - **claude, cofold and pi `hostTools`.** The host offers its tools to every session. Only acp can turn them off for one plugin or one agent.
 - **claude record `computerConfigDir`.** cofold lets a host record set it, and claude has it at the plugin only.
@@ -111,6 +113,28 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - **Environment.** acp, claude and pi take `env` on the record. cofold takes `baseUrl`, `apiKey` and `resource` instead.
 - **pi's provider.** pi takes credentials, and ahpd uses that: a pi record sets keys through `env`, which ahpd hands to pi with `setRuntimeApiKey`. A base URL and a model list come only from pi's own `models.json`, outside ahpd.
 
+## Settings that one agent has
+
+- **`hostTasks` and `enableTasks`, claude only.** Claude ships its own task tools: `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet`. `hostTasks` takes them away when the host offers the tasks plugin's `task_add`. pi ships no task tools, and cofold's tool groups have none. An acp agent's tools are its own, and the host cannot take one away. See [`code://packages/agent-claude/src/options.ts#L92-L126`](../../packages/agent-claude/src/options.ts#L92-L126).
+- **`tools` and `strictTools`, cofold only.** ahpd configures cofold in code, so its tool groups are ahpd settings: `files`, `shell`, `memory` and `web`. `strictTools: false` drops a tool key cofold does not know, in place of a refusal. The other agents keep their tools in their own settings files.
+- **No `env` or `cwd` on cofold.** cofold runs in the daemon's own process, so no child process takes variables or a folder. A session works in its own folder, or in the daemon's folder when it names none. See [`code://packages/agent-cofold/src/session.ts#L102`](../../packages/agent-cofold/src/session.ts#L102). Its key and endpoint are `apiKey` and `baseUrl`.
+- **No `thinking` on cofold.** The effort is a session setting only, as *Why each blue circle* says.
+
+## The folder settings
+
+| Setting | Agent | What it is |
+| --- | --- | --- |
+| `cwd` | acp | The folder the ACP server process starts in. Absent, it is the session's folder. |
+| `paths` | claude | The folders whose past Claude sessions are listed. The first is the default folder of a new session. |
+| `honoursTrust` | acp | Whether the agent asks the person before it loads a project's own settings. Absent, a session in a folder the host did not trust is refused. |
+| `projectTrust` | pi | Whether pi loads a project's own extensions, skills and prompts. |
+| `sessionDir` | pi | The folder pi keeps its session files in. pi's own folder by default. |
+| `store` | cofold | The folder of each record's file store, one folder per record. |
+| `memory` | cofold | `true` keeps each record's store in memory, for a test. |
+
+- `cwd` and `paths` say where a session runs. `honoursTrust` and `projectTrust` say what a session may load from that folder. `sessionDir`, `store` and `memory` say where the agent keeps its own data.
+- The session's folder itself is not a setting. The client names it, or the agent takes its default.
+
 ## Claude's `paths`
 
 - It scopes which past Claude sessions are listed, and its first entry is the default folder of a new session.
@@ -123,3 +147,4 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 - Which disagreements are deliberate, and which settings move to the other level.
 - Whether claude's `paths` stays, or claude takes the host's paths as pi does.
 - Whether `hostTools` becomes one switch for every agent, at the daemon, the plugin or the record.
+- Whether a cofold record gives its shell commands variables of their own. The record has no such field today.
