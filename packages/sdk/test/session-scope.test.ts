@@ -161,10 +161,14 @@ async function colleague(host: ReturnType<typeof createHost>, token: string) {
 const uri = 'ahp-session:/scoped';
 const chatUri = chatUriFor(uri);
 
-const turn = (client: Client, text = 'go') => client.handle({
-  method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
-});
+/** A first turn, sent on the chat the client watches, which is where its end is said. */
+const turn = async (client: Client, text = 'go') => {
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  return client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  });
+};
 
 const change = (client: Client, config: Record<string, unknown>) => client.handle({
   method: 'dispatchAction',
@@ -189,11 +193,18 @@ const stateOf = async (client: Client): Promise<{
 };
 
 /** Every refusal one connection was sent, in the order it arrived. */
+/**
+ * Why each turn was not run: a refusal, or the error a start ends in, as the
+ * host says a client's start and then ends a turn it will not run.
+ */
 const refusedIn = (wire: ReturnType<typeof peer>): string[] => wire.notes
   .filter((one) => one.method === 'action')
   .map((one) => one.params as Note)
-  .filter((one) => one.rejectionReason !== undefined)
-  .map((one) => one.rejectionReason ?? '');
+  .flatMap((one) => {
+    if (one.rejectionReason !== undefined) return [one.rejectionReason];
+    const action = one.action as { type?: string; part?: { error?: { message?: string } } } | undefined;
+    return action?.type === 'chat/error' ? [String(action.part?.error?.message ?? '')] : [];
+  });
 
 it('offers the asking person their own memberships, starting on their primary', async () => {
   const store = memorySessions();
