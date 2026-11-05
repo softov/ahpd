@@ -256,7 +256,8 @@ it('wakes a pinned session for an automation run and makes no new session', asyn
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
 
   await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: 'r' } });
-  await until(() => (store.get('ahp-automation:/check')?.runs ?? []).length === 1, 'the run');
+  // The run is recorded first and its session joined to it after.
+  await until(() => ((store.get('ahp-automation:/check')?.runs ?? [])[0] as unknown as Bag | undefined)?.primarySession !== undefined, 'the run');
   const run = (store.get('ahp-automation:/check')?.runs ?? [])[0] as unknown as Bag;
   expect(run.primarySession).toBe(one.resource);
   expect(counts.starts).toEqual([undefined, 'one']);

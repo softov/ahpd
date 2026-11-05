@@ -112,7 +112,7 @@ A preset also takes the same `filter` the rule does, so one can be narrowed to a
 
 A run is started by a schedule, by an event, or by a person pressing Run, and all three go through the same door, because what an automation says about running twice is about the automation rather than about what asked. Starting a run and a person pressing Run both begin the first turn in `beginAutomation`.
 
-The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop, not when it starts. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
+The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop, not when it starts. `runAutomation` is answered with the run once it is recorded, and its session is made after, so a press is answered whatever making the session takes, as VS Code's host answers it. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
 
 An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
 
@@ -239,7 +239,7 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | Command | What it does |
 | --- | --- |
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
-| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
+| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
 | `fetchAutomationRuns` | Bring one more page of an automation's runs into view. An unrecognised cursor is refused rather than guessed at |
 | `automation/createRequested` | Write one into the catalogue |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |

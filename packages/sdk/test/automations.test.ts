@@ -17,6 +17,7 @@ import type { AgentOwner } from '../src/types/agents.js';
 import type { AutomationRun, AutomationStore, StartSession } from '../src/types/automations.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Chosen, Session } from '../src/types/session.js';
+import type { Worktrees } from '../src/types/worktrees.js';
 
 /*
  * Automations, on a host that holds no clock.
@@ -1122,6 +1123,49 @@ it('starts the first turn on the model the session template names', async () => 
   expect(models[0]).toEqual({ id: 'echo/fast', config: { effort: 'low' } });
 });
 
+it('answers a press with its run once the run is recorded, and makes the session after, as VS Code\'s host', async () => {
+  /*
+   * A folder whose repository is asked about until told, which holds the
+   * session's making where a client can see it: VS Code's host answers with
+   * the run it recorded and starts the run after (agentHostAutomationService.ts
+   * L707-L713), so the answer does not wait on what making a session takes.
+   */
+  let open = (): void => {};
+  const asked = new Promise<void>((done) => { open = done; });
+  const worktrees: Worktrees = {
+    repository: async () => { await asked; return undefined; },
+    branches: async () => [],
+    create: async () => {},
+    dirty: async () => false,
+    remove: async () => {},
+  };
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], automations: memoryAutomations(), worktrees });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await write(client, DEFINITION);
+  try {
+    let answer: { resource: string } | undefined;
+    void (client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+    }) as Promise<{ resource: string }>).then((one) => { answer = one; });
+    await until(() => answer !== undefined, 100);
+    const resource = answer?.resource ?? '';
+    expect(resource.startsWith('ahp-automation-run:/')).toBe(true);
+    expect((await runState(client, resource)).sessions).toEqual([]);
+
+    open();
+    await until(async () => (await runState(client, resource)).sessions.length === 1);
+    const made = await runState(client, resource);
+    expect(made.primarySession).toBe(made.sessions[0]);
+  }
+  finally {
+    open();
+  }
+});
+
 it('reads running while the session it started is still working', async () => {
   // A paced backend keeps the turn open, which is the one moment the protocol
   // says the run is `running` rather than terminal.
@@ -1164,6 +1208,8 @@ it('settles a run cancelled when its session is disposed mid-turn', async () => 
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).sessions.length > 0);
 
   const before = await runState(client, run.resource);
   expect(before.lifecycle.status).toBe('running');
@@ -1190,6 +1236,8 @@ it('stops a running run, and keeps the session it was running in', async () => {
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).sessions.length > 0);
 
   const before = await runState(client, run.resource);
   expect(before.lifecycle.status).toBe('running');
@@ -1782,6 +1830,8 @@ it('takes the owner from the connection that made it, and a run is that person\'
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).primarySession !== undefined);
   const state = await runState(client, run.resource);
   expect(state._meta).toEqual({ 'ahpd.owner': 'user:ana' });
   expect('owner' in state).toBe(false);
@@ -1864,6 +1914,8 @@ it('refuses a run of an automation whose agent has become somebody else\'s', asy
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its start is tried after.
+  await until(async () => (await runState(client, run.resource)).lifecycle.status !== 'running');
   const state = await runState(client, run.resource);
   expect(state.lifecycle).toMatchObject({ status: 'failed', error: { message: 'No agent provider registered for: echo' } });
   expect(state.sessions).toEqual([]);

@@ -514,7 +514,7 @@ export function createAutomations(ctx: HostContext): Automations {
         ? startForAutomation
         : (wanted) => startForAutomation({ ...wanted, text: wakeMessage(wanted.text, facts) }));
       log(run
-        ? `${said} and started ${run.primarySession ?? run.resource}`
+        ? `${said} and started ${run.resource}`
         : `${said} and is switched off or gone`);
     }
     catch (error) {
@@ -1553,6 +1553,11 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
     }),
     /**
      * Start one now.
+     *
+     * The answer is the run as the store recorded it, and its session is made
+     * after: a client watching the run reads the session arrive on it, as VS
+     * Code's host answers with the run it recorded and starts it after.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
      *
      * The session is created here rather than in the store, because only
      * this file knows what a session is - the store is handed a function

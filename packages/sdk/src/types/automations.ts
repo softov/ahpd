@@ -304,6 +304,10 @@ export interface AutomationStore {
    * `start` is handed in rather than reached for: only the host can create a
    * session, and a store that could would be a second thing that knows what a
    * session is. It answers the session URI, and the store records it.
+   *
+   * Answered with the run once it is recorded, before the session `start` makes
+   * is there: what the start comes to is said on the run, as VS Code's host
+   * answers `runAutomation` with the run it recorded and starts it after.
    */
   run(
     resource: string,

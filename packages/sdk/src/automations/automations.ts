@@ -858,28 +858,39 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
        * resolving cannot reopen it.
        */
       run.lifecycle = { ...run.lifecycle, status: 'running', startedAt: now() };
-      try {
-        const session = await start(options);
-        run.sessions = [session];
-        run.primarySession = session;
-      }
-      catch (error) {
-        // Failed, and why. A run that vanished would be indistinguishable from
-        // one that never started. The protocol's failed lifecycle calls the
-        // final timestamp `completedAt`, not `endedAt` - and no execution
-        // began, so this carries no `startedAt`.
-        run.lifecycle = {
-          status: 'failed',
-          createdAt: run.lifecycle.createdAt,
-          completedAt: now(),
-          error: { message: error instanceof Error ? error.message : String(error) },
-        };
-        // End here rather than never starting, so this run counts against the
-        // window the moment it is over - which a run that is still `pending`
-        // does not, because nothing has happened to it yet.
-        trim(resource);
-      }
-      said({ automation: resource, run: run.resource });
+      /*
+       * The run answered as recorded, and its session made after.
+       *
+       * VS Code's host answers `runAutomation` with the run it has recorded and
+       * starts that run in the background, so whoever asked is answered at once
+       * whatever making the session takes: a worktree, a machine, the plugins
+       * it copies. What the start comes to is said on the run.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
+       */
+      void (async () => {
+        try {
+          const session = await start(options);
+          run.sessions = [session];
+          run.primarySession = session;
+        }
+        catch (error) {
+          // Failed, and why. A run that vanished would be indistinguishable
+          // from one that never started. The protocol's failed lifecycle calls
+          // the final timestamp `completedAt`, not `endedAt` - and no execution
+          // began, so this carries no `startedAt`.
+          run.lifecycle = {
+            status: 'failed',
+            createdAt: run.lifecycle.createdAt,
+            completedAt: now(),
+            error: { message: error instanceof Error ? error.message : String(error) },
+          };
+          // End here rather than never starting, so this run counts against
+          // the window the moment it is over - which a run that is still
+          // `pending` does not, because nothing has happened to it yet.
+          trim(resource);
+        }
+        said({ automation: resource, run: run.resource });
+      })();
       return run;
     },
 
