@@ -391,6 +391,7 @@ it('answers a toggle on a client plugin itself, and never asks the backend', asy
   await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1' }]);
   await settle();
 
+  const before = actions(a.peer, URI).length;
   b.client.handle({
     method: 'dispatchAction',
     params: {
@@ -400,13 +401,17 @@ it('answers a toggle on a client plugin itself, and never asks the backend', asy
   });
   await settle();
 
+  // The switch as it was sent and nothing after it, as VS Code's host records
+  // a client's enablement whole and says the list again only where resolving
+  // it moved it: the decision kept resolves to the entry the switch put there.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+  expect(actions(a.peer, URI).slice(before).map((one) => one.type)).toEqual(['session/customizationToggled']);
   // Still on the list, with the decision on it: switching one off is not
   // throwing it away, and a client that did it has to be able to undo it.
-  const last = actions(a.peer, URI)
-    .filter((one) => one.type === 'session/customizationUpdated')
-    .map((one) => one.customization as Record<string, unknown>)
-    .findLast((one) => one.uri === PLUGIN);
-  expect(last?.enablement).toEqual([{ kind: 'session', enabled: false }]);
+  const held = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { customizations?: Record<string, unknown>[] } };
+  };
+  expect(held.snapshot.state.customizations?.find((one) => one.uri === PLUGIN)?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   // The backend has never heard of this customization, so it is not asked
   // about one - and answering a toggle itself is the whole of the difference.
   expect(toggled).toEqual([]);

@@ -1,4 +1,5 @@
 import { isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { idOf, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { frozenCopy } from '../utils/frozen.js';
@@ -256,14 +257,19 @@ export interface Tooling {
   /** Forget what a session's backends were told, called where a chat starts. */
   forgetTold(uri: string): void;
   /**
-   * Keep what a session decided about one of its backend's customizations.
+   * Keep what a session decided for itself about one of its backend's
+   * customizations: the session entry a client's switch carried, or none,
+   * which clears it.
    *
-   * Called where the backend answered a switch and took it, which is the only
-   * moment this host learns the decision: the backend goes on reporting what
-   * it reports, so this is what a session's list reads it from until the next
-   * report says otherwise.
+   * The backend goes on reporting what it reports, so this is what a session's
+   * list reads its own decision from until the next report says otherwise.
    */
-  keepDecision(uri: string, id: string, enabled: boolean): void;
+  keepDecision(uri: string, id: string, enabled: boolean | undefined): void;
+  /**
+   * Say a session's customizations again where resolving them moved them, as
+   * VS Code republishes them after an enablement changes.
+   */
+  publishSessionCustomizations(uri: string): void;
   /**
    * Tell a session's chats what they may offer, after the clients moved.
    *
@@ -837,16 +843,16 @@ export function createTooling(ctx: HostContext): Tooling {
   const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(uri)?.get(id);
 
   /**
-   * Keep a session's own decision about one customization.
+   * Keep a session's own decision about one customization, or clear it.
    *
-   * Called where a backend answered a switch, which is the only moment this
-   * host learns that a customization it did not hold is off: the backend has
-   * no entry to read it off, and what it keeps is its own to report.
+   * The backend has no entry to read a session's decision off, and what it
+   * keeps is its own to report.
    */
-  const keepDecision = (uri: string, id: string, enabled: boolean): void => {
+  const keepDecision = (uri: string, id: string, enabled: boolean | undefined): void => {
     const held = decided.get(uri) ?? new Map<string, boolean>();
     decided.set(uri, held);
-    held.set(id, enabled);
+    if (enabled === undefined) held.delete(id);
+    else held.set(id, enabled);
   };
 
   /**
@@ -965,18 +971,16 @@ export function createTooling(ctx: HostContext): Tooling {
   const toggleClientPlugin = (uri: string, id: string, enablement: Bag[]): Toggled | undefined => {
     const found = heldBy(uri, id);
     if (found === undefined) return undefined;
-    const { clientId, one, at } = found;
+    const { one, at } = found;
     const decisions = byScope(enablementOf(enablement));
     /*
-     * A decision equal to what this session would inherit is not kept, as the
-     * store keeps none either: it would shadow the next decision and hold the
-     * session still when the scope it was inheriting from moved. A host with
-     * no store has nothing to inherit from, so what the caller sent stands -
-     * without a store the array is the whole of this session's answer.
+     * The session's own decision is the caller's session entry as it was sent,
+     * as the reference host records a client's enablement whole. A host with
+     * no store has nowhere to keep a decision about a folder or about every
+     * session, so there the most specific entry stands for the session.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120-L2125
      */
-    const inherited = store === undefined ? undefined : entriesFor(uri, keyOf(one, at), [], undefined)[0]?.enabled !== false;
-    const said = ownIn(decisions) ?? (store === undefined ? decisions[0]?.enabled !== false : undefined);
-    const own = said === undefined || said === inherited ? undefined : said;
+    const own = ownIn(decisions) ?? (store === undefined ? decisions[0]?.enabled !== false : undefined);
     const asked: Bag[] = own === undefined ? [] : [{ kind: 'session', enabled: own }];
     let part: Bag | undefined;
     if (at === -1) {
@@ -995,8 +999,24 @@ export function createTooling(ctx: HostContext): Tooling {
         ? { ...other, enablement: byScope([...asked, ...fromClient]) }
         : other));
     }
-    dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
     return part === undefined ? {} : { server: str(part.name) ?? '' };
+  };
+
+  /*
+   * A session's customizations said again where resolving them moved them, as
+   * the reference host republishes a session's after an enablement changes:
+   * only a session whose state holds a list, and nothing when the list
+   * resolved is the one its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L376-L385
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+   */
+  const publishSessionCustomizations = (uri: string): void => {
+    const current = ctx.stateOf(uri)?.customizations;
+    if (current === undefined) return;
+    const reported = reportedBy(uri);
+    const resolved = [...reported.map((one) => withEntries(uri, bag(one))), ...clientPluginsOf(uri)];
+    if (isDeepStrictEqual(current, resolved)) return;
+    dispatch(uri, { type: 'session/customizationsChanged', customizations: reported });
   };
 
   /**
@@ -2422,7 +2442,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
-    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision,
+    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision, publishSessionCustomizations,
     retool, pluginsSettled, chatMeant, renameChat, renameSession, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,

@@ -2954,16 +2954,21 @@ describe('a customization switched for one session', () => {
     const base = echo({ path: dir, pace: 0 });
     const told: [string, boolean][] = [];
     const said: string[] = [];
+    /** Each session's start, so a case can have its backend report its list again. */
+    const starts: Start[] = [];
     const agent: Agent = {
       ...base,
       probe: async () => ({ models: [], commands: [], customizations: [PLUGIN] }),
-      create: (start: Start) => ({
-        ...base.create(start),
-        setCustomizationEnabled: async (id: string, on: boolean) => {
-          told.push([id, on]);
-          return id === PLUGIN.id;
-        },
-      }),
+      create: (start: Start) => {
+        starts.push(start);
+        return {
+          ...base.create(start),
+          setCustomizationEnabled: async (id: string, on: boolean) => {
+            told.push([id, on]);
+            return id === PLUGIN.id;
+          },
+        };
+      },
     };
     const host = createHost({
       path: dir, agents: [agent], ...machine(), enablement: memoryEnablement(),
@@ -2991,10 +2996,37 @@ describe('a customization switched for one session', () => {
           channel: uri,
           action: { type: 'session/customizationToggled', id, enablement: [{ kind: 'session', enabled }] },
         } }),
+        /** A switch carrying the client's whole answer, every scope it decided. */
+        switched: (id: string, enablement: Record<string, unknown>[]) => client.handle({ method: 'dispatchAction', params: {
+          channel: uri,
+          action: { type: 'session/customizationToggled', id, enablement },
+        } }),
+        /** The session's backend reporting its list again, as it found it. */
+        report: () => { starts.at(-1)?.emit('session', { type: 'session/customizationsChanged', customizations: [PLUGIN] }); },
       };
     };
     return { host, told, said, open };
   }
+
+  /*
+   * A switch that carries no decision of the session's own leaves it none, as
+   * VS Code's host records a client's enablement whole: a session switched off
+   * for every session and then on again follows the decision for every
+   * session, and its list read again holds no decision at all, which is on
+   * (the store keeps no decision that says what every session already does).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120-L2125
+   */
+  it('keeps no decision of the session\'s own for a switch that carried none', async () => {
+    const { open } = await switchable();
+    const one = await open('one');
+    await one.switched(PLUGIN.id as string, [{ kind: 'global', enabled: false }]);
+    await settle();
+    await one.switched(PLUGIN.id as string, [{ kind: 'global', enabled: true }]);
+    await settle();
+    one.report();
+    await settle();
+    expect((await one.plugin())?.enablement).toBeUndefined();
+  });
 
   it('keeps the decision on the session that made it, and reports it off', async () => {
     const { told, open } = await switchable();

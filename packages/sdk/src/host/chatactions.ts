@@ -1729,10 +1729,10 @@ export function chatAction(
         /*
          * Every open session the change reaches: every one for a decision
          * about all of them, and the sessions in the folder for one about a
-         * folder. Each is switched where its answer moved and told in any
-         * case, because what it inherits moved even where the answer it holds
-         * for itself did not. The session that asked is below, with the
-         * switch the client turned.
+         * folder. Each is switched where its answer moved, and its list said
+         * again where resolving it moved it, as the reference host republishes
+         * each session an enablement change reaches. The session that asked is
+         * below, with the switch the client turned.
          */
         const everywhere = wasGlobal !== store.global(key);
         const here = wasFolder !== (folder === undefined ? undefined : store.folder(folder, key));
@@ -1749,13 +1749,13 @@ export function chatAction(
           else {
             /*
              * The session's own decision stands where it is - only the store's
-             * moved - so this switches it and says so, which is what makes a
-             * customization switched off in one session switched off in the
-             * session beside it.
+             * moved - so this switches it, which is what makes a customization
+             * switched off in one session switched off in the session beside
+             * it.
              */
             ctx.toggleClientPlugin(uri, id, at.own === undefined ? [] : [{ kind: 'session', enabled: at.own }]);
           }
-          dispatch(uri, { type: 'session/customizationsChanged', customizations: lead === undefined ? [] : lead.customizations() });
+          ctx.publishSessionCustomizations(uri);
         }
       }
       /*
@@ -1780,22 +1780,26 @@ export function chatAction(
          */
         if (toggled.server !== undefined)
           void session.setCustomizationEnabled(id, onFor(session.uri, asked));
+        ctx.publishSessionCustomizations(session.uri);
         break;
       }
       /*
        * A decision about a customization that carries one is this host's to
        * keep, whether or not the backend can switch it live, as the reference
-       * host records the client's enablement of a plugin or a server and its
-       * agent reconciles: a backend says whether a switch can be made and not
-       * what it decided, and the list it reports next reads the decision back.
-       * The session's state holds the switch as the protocol's reducer took it.
+       * host records the client's enablement of a plugin or a server whole and
+       * its agent reconciles: a backend says whether a switch can be made and
+       * not what it decided, and the list it reports next reads the decision
+       * back. The session's state holds the switch as the protocol's reducer
+       * took it, and where a decision was kept the list is said again where
+       * resolving it moved it; a skill, a command, an agent and a rule carry
+       * no decision of their own, so their switch is the state's alone.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L416-L428
        */
-      const on = onFor(session.uri, asked);
-      if (under !== undefined) ctx.keepDecision(session.uri, id, on);
-      void session.setCustomizationEnabled(id, on).then((took) => {
+      if (under !== undefined) ctx.keepDecision(session.uri, id, asked);
+      void session.setCustomizationEnabled(id, onFor(session.uri, asked)).then((took) => {
         if (!took) log(`${session.uri}: ${id} has no runtime switch`);
       });
+      if (under !== undefined) ctx.publishSessionCustomizations(session.uri);
       break;
     }
     /*

@@ -836,9 +836,10 @@ describe('turning a customization on and off', () => {
      * draws the switch from has to carry it or the switch would be drawn back
      * on by the very report that says the switch worked.
      */
-    const lists = actions(p, 'ahp-session:/live').filter((e) => e.action.type === 'session/customizationsChanged');
-    const container = (lists.at(-1)?.action.customizations as Record<string, unknown>[] | undefined)
-      ?.find((one) => one.id === 'plugin:cc-plugin-agents-md');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    }).snapshot.state;
+    const container = state.customizations.find((one) => one.id === 'plugin:cc-plugin-agents-md');
     expect(container?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   });
 
