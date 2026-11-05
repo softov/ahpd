@@ -890,27 +890,21 @@ describe('authenticating', () => {
 });
 
 describe('telling a client how far along something is', () => {
-  it('reports progress against the token the request carried, and stops at the total', async () => {
+  /*
+   * A session's own start reports no progress, a token given or not: VS
+   * Code's host reports progress for a backend's download alone, which this
+   * host has none of, and its client draws every progress frame it is sent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6335-L6346
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10896-L10906
+   */
+  it('reports no progress for a session\'s own start, as VS Code\'s host', async () => {
     const { client, peer: p } = await running();
     p.notes.length = 0;
     await client.handle({
       method: 'createSession',
       params: { channel: 'ahp-session:/slow', provider: 'claude', progressToken: 'tok-1' },
     });
-    const along = p.notes
-      .filter((one) => one.method === 'root/progress')
-      .map((one) => one.params as { progressToken: string; progress: number; total?: number; message?: string });
-    /*
-     * Only when the client asked, and only to the client that asked.
-     *
-     * The token belongs to that request and means nothing to anybody else, so
-     * this is the one thing here that is not broadcast.
-     */
-    expect(along.map((one) => one.progressToken)).toEqual(['tok-1', 'tok-1', 'tok-1']);
-    expect(along.map((one) => one.progress)).toEqual([0, 1, 2]);
-    // Complete is `progress === total`, which is how the protocol spells it.
-    expect(along.at(-1)?.total).toBe(2);
-    expect(typeof along[0]?.message).toBe('string');
+    expect(p.notes.some((one) => one.method === 'root/progress')).toBe(false);
   });
 
   it('says nothing when no token was given', async () => {

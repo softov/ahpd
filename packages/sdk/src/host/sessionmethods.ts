@@ -1067,20 +1067,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // at. A backend that cannot take them is told none.
         const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
         /*
-         * How far along.
-         *
-         * `root/progress` echoes the `progressToken` the request carried, so
-         * it is sent only when the client asked for one - and only to the
-         * client that asked, because the token is that request's and means
-         * nothing to anybody else.
-         */
-        const token = typeof params.progressToken === 'string' ? params.progressToken : undefined;
-        const along = (progress: number, message: string): void => {
-          if (token === undefined) return;
-          connection.peer.notify('root/progress', { channel: ROOT, progressToken: token, progress, total: 2, message });
-        };
-        along(0, 'Starting the session');
-        /*
          * A worktree session runs in the folder the client picked until its
          * first send, which makes the tree and starts the session again in
          * it, as VS Code's host resolves a session's worktree on the first
@@ -1088,7 +1074,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
          */
         const running = where;
-        along(1, 'Starting the agent');
         await settle(uri, where, config, connection.principal);
         /*
          * Checked before the machine is made, so a refused session makes
@@ -1151,8 +1136,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         }
         // The tree its first send makes, owed as the start again that send runs.
         oweTree(uri, conn.tokensFor(provider), connection, conn.tokensFor);
-        // Complete, which the protocol spells as `progress === total`.
-        along(2, 'Ready');
         if (activeClient !== undefined) {
           dispatch(uri, { type: 'session/activeClientSet', activeClient });
           retool(uri);
