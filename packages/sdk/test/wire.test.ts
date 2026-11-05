@@ -757,6 +757,11 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'CommandMap.reconnect.result /actions/N/action/request undeclared key `_meta`': 'Being asked',
     'CommandMap.reconnect.result /actions/N/action/request/request undeclared key `_meta`': 'Being asked',
     'SessionInputNeededSetAction /request/request undeclared key `_meta`': 'Being asked',
+    // A property a chat may set for itself, marked as VS Code's agents mark one.
+    'ResolveSessionConfigResult /schema/properties/permissionMode undeclared key `chatMutable`': 'Commands',
+    'ResolveSessionConfigResult /schema/properties/permissions undeclared key `chatMutable`': 'Commands',
+    'SessionState /config/schema/properties/permissionMode undeclared key `chatMutable`': 'Commands',
+    'SessionState /config/schema/properties/permissions undeclared key `chatMutable`': 'Commands',
   };
 
   /*
