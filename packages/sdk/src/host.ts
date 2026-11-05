@@ -603,8 +603,12 @@ export function createHost(options: HostOptions): Host {
    * nothing to draw.
    */
   const offered = new Map<string, Bag>();
-  /** The marks on a session, empty until somebody makes one. */
-  const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
+  /**
+   * The marks on a session: the ones this process holds, else the ones the
+   * store kept from a process before it, empty until somebody makes one.
+   */
+  const marksOf = (id: string): AnnotationsState =>
+    marks.get(id) ?? (kept.annotations?.(id) as AnnotationsState | undefined) ?? { annotations: [] };
 
   /**
    * A root notification about a session, as one connection receives it.

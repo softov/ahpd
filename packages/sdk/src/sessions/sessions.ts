@@ -177,6 +177,8 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, draft);
       patch(id, { chatDrafts: held.size === 0 ? undefined : held });
     },
+    annotations: (id) => rows.get(id)?.annotations,
+    setAnnotations: (id, value) => { patch(id, { annotations: value }); },
     chats: (id) => rows.get(id)?.chats ?? [],
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
@@ -250,6 +252,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
         ...(held.chatDrafts === undefined ? {} : { chatDrafts: held.chatDrafts }),
+        ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
         ...(held.nested === undefined ? {} : { nested: held.nested }),
         ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -438,6 +441,7 @@ interface Row {
   chatTitles?: Map<string, string> | undefined;
   chatFlags?: Map<string, number> | undefined;
   chatDrafts?: Map<string, Record<string, unknown>> | undefined;
+  annotations?: Record<string, unknown> | undefined;
   parent?: string | undefined;
   nested?: NestedRecord | undefined;
   chats?: StoredChat[] | undefined;
@@ -465,7 +469,7 @@ const empty = (row: Row): boolean =>
   && row.owner === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
-  && row.chatFlags === undefined && row.chatDrafts === undefined
+  && row.chatFlags === undefined && row.chatDrafts === undefined && row.annotations === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
   && row.remoteOrigin === undefined && row.createdBy === undefined && row.multiRoot === undefined && row.worktree === undefined
   && row.additionalWorktrees === undefined && row.autoArchivedAt === undefined && row.changes === undefined;
@@ -501,6 +505,8 @@ interface Saved {
   chatFlags?: Record<string, number>;
   /** The draft typed into each chat, by the chat's URI. */
   chatDrafts?: Record<string, Record<string, unknown>>;
+  /** What clients marked on the session, as the annotations channel holds it. */
+  annotations?: Record<string, unknown>;
   /** The id of the session this one was started from, where one did. */
   parent?: string;
   nested?: NestedRecord;
@@ -655,6 +661,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
       ...(held.chatDrafts === undefined ? {} : { chatDrafts: Object.fromEntries(held.chatDrafts) }),
+      ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
       ...(held.nested === undefined ? {} : { nested: held.nested }),
       ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -808,6 +815,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof draft === 'object' && draft !== null && !Array.isArray(draft)) inner.setChatDraft?.(row.id, chatUri, draft);
         }
       }
+      // The annotations channel's state, which holds a list: anything else is ignored.
+      if (typeof row.annotations === 'object' && row.annotations !== null && Array.isArray((row.annotations as { annotations?: unknown }).annotations)) {
+        inner.setAnnotations?.(row.id, row.annotations);
+      }
       // The id of a session that started this one. Anything that is not a
       // non-empty string is ignored rather than guessed at, as every other
       // field here is.
@@ -906,6 +917,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
     chatDraft: (id, chatUri) => inner.chatDraft?.(id, chatUri),
     setChatDraft: (id, chatUri, draft) => { touched(id, () => { inner.setChatDraft?.(id, chatUri, draft); }); },
+    annotations: (id) => inner.annotations?.(id),
+    setAnnotations: (id, value) => { touched(id, () => { inner.setAnnotations?.(id, value); }); },
     chats: (id) => inner.chats(id),
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
     // Two rows move, so two files have to be written - which is why this is

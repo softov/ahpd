@@ -537,6 +537,15 @@ export interface SessionStore {
   /** Replace it. Nothing forgets it, which is a draft cleared. */
   setChatDraft?(id: string, chatUri: string, draft: Record<string, unknown> | undefined): void;
   /**
+   * What clients marked on the session, the annotations channel's state as
+   * its reducer left it, or nothing. Kept so the marks outlive the process,
+   * as VS Code's host keeps a session's annotations in its own record.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+   */
+  annotations?(id: string): Record<string, unknown> | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setAnnotations?(id: string, value: Record<string, unknown> | undefined): void;
+  /**
    * The chats this session has, in the order they were opened.
    *
    * A session is a container for conversations, and this is what makes a

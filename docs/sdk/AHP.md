@@ -363,7 +363,7 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `annotations/set` | client | ✅ | Reduced with the package's own `annotationsReducer`, so this host and its clients cannot disagree about what a mark became. |
+| `annotations/set` | client | ✅ | Reduced with the package's own `annotationsReducer`, so this host and its clients cannot disagree about what a mark became. Every mark action's result is written to the session's record as it lands, and the channel opens on it after a restart, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963) keeps a session's annotations; a store that keeps nothing holds them for the process. |
 | `annotations/updated` | client | ✅ | An action naming an annotation the session does not have is refused rather than echoed: the reducer answers an unknown id by handing back the state it was given, and echoing that would leave the client holding a mark this host never kept. |
 | `annotations/removed` | client | ✅ | The same rule, and the same refusal for an id nothing here has. |
 | `annotations/entrySet` | client | ✅ | A comment inside a mark. |

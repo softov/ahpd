@@ -1306,6 +1306,43 @@ describe('a session\'s annotations', () => {
     expect(seen.snapshot.state.annotations[0]?.entries[0]?.text).toBe('this is the bit');
   });
 
+  /*
+   * The marks outlive the process, as VS Code's host keeps a session's
+   * annotations in its own record and reads them back for the channel.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+   */
+  it('keeps the marks across a restart on the same store', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-marks-'));
+    try {
+      const { client, uri } = await running({ sessions: fileSessions({ dir }) });
+      const marks = `${uri}/annotations`;
+      await client.handle({ method: 'subscribe', params: { channel: marks } });
+      await client.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: marks,
+          action: { type: 'annotations/set', annotation: { id: 'a1', origin: { session: uri }, resource: 'file:///home/softov/x.ts', resolved: false, entries: [{ id: 'e1', text: 'kept' }] } },
+        },
+      });
+      await settle();
+      // The write is coalesced onto the next tick.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      // A second host on the same store, which is what a restart is.
+      sdk.sessions.push({ sessionId: 'live', summary: 'Live', lastModified: 1, cwd: '/home/softov' });
+      const second = serving('/home/softov', [], { sessions: fileSessions({ dir }) }).accept(peer());
+      await second.handle(hello(['0.9.0']));
+      await second.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      const seen = await second.handle({ method: 'subscribe', params: { channel: marks } }) as {
+        snapshot: { state: { annotations: { id: string; entries: { text: string }[] }[] } };
+      };
+      expect(seen.snapshot.state.annotations.map((one) => [one.id, one.entries[0]?.text])).toEqual([['a1', 'kept']]);
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('echoes each of the five to everyone watching, carrying the origin', async () => {
     const { client, peer: p, uri } = await running();
     const marks = `${uri}/annotations`;

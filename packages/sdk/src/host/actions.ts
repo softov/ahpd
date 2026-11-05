@@ -232,7 +232,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const owning = channel.slice(0, -MARKS.length);
       const id = idOf(owning);
       const mark = (): void => {
-        marks.set(id, annotationsReducer(marksOf(id), action as unknown as AnnotationsAction));
+        const next = annotationsReducer(marksOf(id), action as unknown as AnnotationsAction);
+        marks.set(id, next);
+        // Written down as it lands, so the marks outlive the process, as the
+        // reference host persists a session's annotations on each action.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+        kept.setAnnotations?.(id, next as unknown as Bag);
         dispatch(channel, action, origin);
       };
       const found = (): boolean => (sessions.has(owning) || owners.has(owning) || waitingFor(id) !== undefined)
