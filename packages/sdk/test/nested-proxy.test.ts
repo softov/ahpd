@@ -256,12 +256,11 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
   const types = seen.filter(({ channel }) => channel === 'chat').map(({ action }) => action.type);
-  expect(types).toContain('chat/turnStarted');
+  // The start is the outer host's to say, so the inner host's echo of it is
+  // not carried out a second time.
+  expect(types).not.toContain('chat/turnStarted');
   expect(types).toContain('chat/responsePart');
   expect(types).toContain('chat/turnComplete');
-  const began = seen.find(({ action }) => action.type === 'chat/turnStarted')?.action;
-  expect(began?.turnId).toBe('t1');
-  expect(began?.message?.text).toBe('hello world');
   // The streamed text, as the inner backend wrote it: same chunks, same turn.
   const delta = seen.filter(({ action }) => action.type === 'chat/delta').map(({ action }) => String(action.content)).join('');
   expect(delta).toBe('hello world');
@@ -1793,13 +1792,14 @@ it('a nested session whose folders change starts the host inside again, and disp
   port.done();
 });
 
-it('a truncate of a nested session is refused, and disposes nothing inside the machine', async () => {
+it('a truncate of a nested session is said, and disposes nothing inside the machine', async () => {
   const port = scriptedPort([PROVIDER], { turns: true });
   const dir = join(port.dir, 'sessions');
   /*
    * The proxy answers no `endPoint`, so this host cannot name the point in the
-   * machine's own conversation to cut back to, and the action is refused. What
-   * it must not do on the way to that answer is close the session as a removal:
+   * machine's own conversation to cut back to, and the cut is said all the
+   * same while the machine keeps its history. What it must not do on the way
+   * to that answer is close the session as a removal:
    * the turn it read back is the machine's, and a dispose there takes the whole
    * conversation with it.
    */
@@ -1821,9 +1821,9 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   await until(() => port.read().length > 0, 1000);
   /*
    * And the turn, which this host reads off the snapshot the machine answers
-   * with. Waiting for it is what makes the refusal below the one this case is
-   * about: a truncate that arrives before the session is up is refused for
-   * having no such turn, which says nothing about what a rewind would do.
+   * with. Waiting for it is what makes the cut the one this case is about: a
+   * truncate that arrives before the session is up is refused for having no
+   * such turn, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
@@ -1836,9 +1836,10 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
     method: 'dispatchAction',
     params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/truncated', turnId: 't1' } },
   });
-  const refused = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 1000);
-  expect(String(refused()?.rejectionReason)).toMatch(/rewind/);
+  const said = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action'
+    && (params?.action as Bag | undefined)?.type === 'chat/truncated')?.params;
+  await until(() => said() !== undefined, 1000);
+  expect(said()?.rejectionReason).toBeUndefined();
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
