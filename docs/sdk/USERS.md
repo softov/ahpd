@@ -117,7 +117,7 @@ The subjects the host decides are these nineteen:
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](../server/PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
 | `mcp` | - | `call` | Running the host's tools from a person's MCP client at `/mcp` ([MCP.md](../server/MCP.md)). `mcp:call` is what the door asks; each tool checks its own grants again |
 | `trust` | - | `push` | Pushing the host's answer about the folders sessions load their projects from, which a window sends. A push answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
-| `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
+| `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so under a people directory a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
 
 `proxy`, `mcp` and `trust` have no scheme of their own: a client never reads a
 `proxy://`, an `mcp://` or a `trust://` URI, so nothing asks for a resource

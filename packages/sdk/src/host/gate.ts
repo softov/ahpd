@@ -338,26 +338,32 @@ export const computerNeeds = (action: Record<string, unknown>): Grant | undefine
  * one of those values may be a credential.
  * The read is the whole group rather than the `settings` operation beside it:
  * what is behind it is every key the daemon holds, not one of them.
- * The host's own root holds every grant, as it does at every other gate.
- * A host with no people directory has nobody to ask, so nobody sees them.
+ * The host's own root holds every grant, as it does at every other gate. A
+ * host with no people directory serves the whole root config to every
+ * connection, as the reference host serves it to every client.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4307-L4317
  */
-export const seesConfig = (connection: Connection | undefined): boolean =>
-  connection?.root === true || connection?.principal?.can('config:settings') === true;
+export const seesConfig = (connection: Connection | undefined, directory: boolean): boolean =>
+  !directory || connection?.root === true || connection?.principal?.can('config:settings') === true;
 
 /**
  * Whether this connection is somebody who may read the account an agent bills to.
  *
  * The account is the operator's: an email and a plan, out of the CLI this
- * daemon runs. Root state is readable before anybody signs in, so a connection
- * that is not the host and does not hold `account:read` is shown none of it -
- * decision `an-agent-account-is-shown-to-account-readers`.
+ * daemon runs. Under a people directory, root state is readable before anybody
+ * signs in, so a connection that is not the host and does not hold
+ * `account:read` is shown none of it - decision
+ * `an-agent-account-is-shown-to-account-readers`, against a remote guest. A
+ * host with no directory has no guests, and serves the account to every
+ * connection, as the reference host serves an agent's account in the root
+ * config every client reads.
  *
  * `account:status`, the operation, rather than the read group: a role that
  * holds the group covers it, as a role holding `config:read` covers the
  * settings this host asks for by their own operation.
  */
-export const seesAccount = (connection: Connection | undefined): boolean =>
-  connection?.root === true || connection?.principal?.can('account:status') === true;
+export const seesAccount = (connection: Connection | undefined, directory: boolean): boolean =>
+  !directory || connection?.root === true || connection?.principal?.can('account:status') === true;
 
 /** The kinds of channel a family of client action can belong on. */
 export type Home = 'session' | 'terminal' | 'automations' | 'root' | 'watch';

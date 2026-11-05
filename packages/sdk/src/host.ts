@@ -761,14 +761,16 @@ export function createHost(options: HostOptions): Host {
     if (action.type !== 'root/configChanged') return envelope;
     const config = (typeof action.config === 'object' && action.config !== null ? action.config : {}) as Record<string, unknown>;
     /*
-     * The daemon's own keys go to a connection holding `config:read` and to no
-     * other, the sender among them. A write is `config:write`'s and a value is
-     * `config:read`'s, so somebody who may change the listener but not read the
-     * settings is refused the answer rather than trusted with it - and the
-     * envelope is one per host, which is why this is here and not where the
-     * change is applied.
+     * Under a people directory, the daemon's own keys go to a connection
+     * holding `config:read` and to no other, the sender among them. A write is
+     * `config:write`'s and a value is `config:read`'s, so somebody who may
+     * change the listener but not read the settings is refused the answer
+     * rather than trusted with it - and the envelope is one per host, which is
+     * why this is here and not where the change is applied. A host with no
+     * directory says the whole change to every connection.
      */
-    const mine = seesConfig(connection)
+    const directory = options.users !== undefined;
+    const mine = seesConfig(connection, directory)
       ? config
       : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonHeld(key)));
     /*
@@ -778,7 +780,7 @@ export function createHost(options: HostOptions): Host {
      * is the rule the daemon's keys already take - decision
      * `an-agent-account-is-shown-to-account-readers`.
      */
-    const shown = seesAccount(connection)
+    const shown = seesAccount(connection, directory)
       ? mine
       : Object.fromEntries(Object.entries(mine).filter(([key]) => !isAccountKey(key)));
     return shown === config ? envelope : { ...envelope, action: { ...action, config: shown } };

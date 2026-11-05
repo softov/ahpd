@@ -721,16 +721,18 @@ export function createRoot(ctx: HostContext): Root {
   const rootFor = (held: Bag, connection?: Connection): Bag => {
     const config = (held.config ?? { schema: ROOT_CONFIG_SCHEMA, values: {} }) as { schema: Bag; values: Bag };
     /*
-     * The daemon's own keys for a connection that may read them and nobody
-     * else, and the account each backend bills to likewise: the operator's
-     * own, so it is `account:read`'s and the host's - decision
-     * `an-agent-account-is-shown-to-account-readers`. A connection without the
-     * grant is handed neither, which is the same absence a backend nothing has
-     * reported an account for has.
+     * Under a people directory, the daemon's own keys for a connection that
+     * may read them and nobody else, and the account each backend bills to
+     * likewise: the operator's own, so it is `account:read`'s and the host's -
+     * decision `an-agent-account-is-shown-to-account-readers`. A connection
+     * without the grant is handed neither, which is the same absence a backend
+     * nothing has reported an account for has. A host with no directory hands
+     * every connection the whole config, as the reference host does.
      */
-    const reads = seesConfig(connection);
+    const directory = options.users !== undefined;
+    const reads = seesConfig(connection, directory);
     const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
-      (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
+      (reads || !daemonHeld(key)) && (seesAccount(connection, directory) || !isAccountKey(key))));
     const properties = (config.schema.properties ?? {}) as Bag;
     const meta = metaFor(connection);
     return {
