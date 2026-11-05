@@ -1,29 +1,36 @@
-import { reason, secretRef, str } from '@ahpd/sdk';
+import { posix } from 'node:path';
+import { Status, bag, idOf, reason, secretRef, str, translated } from '@ahpd/sdk';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { WEB_PUSH_HOSTS, deviceStore, pushProvider } from './provider.js';
 import { createSender } from './send.js';
 import { loadVapid } from './vapid.js';
 import { createWebSender } from './webpush.js';
 import type { Device, DeviceStore } from './provider.js';
 import type { PushMessage } from './send.js';
-import type { InputNeededSetEvent, Plugin, TurnEndEvent } from '@ahpd/sdk';
+import type { Bag, Plugin, PluginPeer } from '@ahpd/sdk';
 
 /**
  * The package as a plugin.
  *
  * One provider for the `push:` scheme, keeping its devices beside the daemon's
- * own configuration, and one subscription to the host's own moments: a device
- * hears about a session its person owns, or one that the client which
- * registered it created or opened, and about nothing else by default.
+ * own configuration, and VS Code's sessions window notifier, carried to the
+ * devices of the person a session is for.
  *
- * Which clients those are is what `session_start` and `session_opened` say, and
- * they are the reason this plugin needs no view of a session at all: the host
- * names the client that created a session, the client that wrote a resource and
- * the client that subscribed, and everything here is a set of ids.
+ * The notifier is a client of this host, as that window is. It holds the
+ * host's session list, read with `listSessions` once the daemon listens and
+ * kept by the root channel's `sessionAdded`, `sessionSummaryChanged` and
+ * `sessionRemoved`, and it watches each session's status as the window reads
+ * it. A session that moves into needing input or into failure is told at once.
+ * One that moves into completed is told a second and a half later, and only if
+ * it is still completed then, so a queued turn starting in between tells
+ * nothing. Any move drops a completed notice still to come, and the status a
+ * session is listed at is where it starts, never a move.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/sessions/browser/sessionsWindowNotifier.ts#L76-L101
  *
- * What a notification says is deliberately thin - the host's name and that a
- * session waits, never what it asks - because the text of a push passes through
- * Expo's service and a phone's lock screen, and neither is where a prompt
- * belongs. Which session it is travels in `data`, which only the app reads.
+ * The words are that notifier's, in the language the device registered with:
+ * `Session: <title>` above `Attention needed.`, `Session completed.` or
+ * `Session failed.`, each naming the session's workspace where it has one.
+ * Which session it is travels in `data`, which the app reads to open it.
  */
 
 /** The plugin's id, unique among the plugins a daemon loads. */
@@ -37,30 +44,105 @@ export const defaults = {
   webPushHosts: [...WEB_PUSH_HOSTS],
 } as const;
 
+/** The client this plugin's connection names itself at `initialize`. */
+const CLIENT = 'ahpd-push';
+
+/** The channel whose notifications keep the session list. */
+const ROOT = 'ahp-root://';
+
 /**
- * The kinds of waiting that are a person being asked something.
- *
- * `toolClientExecution` is left out on purpose: the call has cleared its
- * confirmation gate and a client is running it, which the protocol's own
- * reducer does not count as waiting on a person - so a phone that buzzed for
- * one would be a phone woken for work nobody is being asked to do.
+ * How long a completed session waits before it is told, in milliseconds: VS
+ * Code's delay, which swallows the gap between a turn ending and the next
+ * queued turn starting.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/sessions/browser/sessionsWindowNotifier.ts#L58-L66
  */
-const AWAITS_PERSON = ['chatInput', 'toolConfirmation', 'toolAuthentication'];
+export const COMPLETED_DELAY_MS = 1_500;
 
-/** What a notification says, in the words the plan fixed. */
-const wording = (kind: string): string =>
-  (kind === 'toolConfirmation' ? 'A session is waiting for your approval' : 'A session is waiting for your answer');
+/** A session's status, as VS Code's sessions window reads it. */
+type Shown = 'inProgress' | 'needsInput' | 'completed' | 'error';
 
-/** What a notification says when a session's own chat finished a turn. */
-const FINISHED = 'A session finished';
+/** The statuses a person is told about. */
+type Told = Exclude<Shown, 'inProgress'>;
 
-/** The prefix of a worker's chat, whose turns are the session's work and not its end. */
-const WORKER_CHAT = 'ahp-chat://subagent/';
+/**
+ * VS Code's `mapProtocolStatus`: input needed over in progress over error,
+ * and completed for every other status.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostDiffs.ts#L21-L33
+ */
+const shownOf = (status: number): Shown => {
+  if ((status & Status.InputNeeded) === Status.InputNeeded) return 'needsInput';
+  if ((status & Status.InProgress) !== 0) return 'inProgress';
+  if ((status & Status.Error) !== 0) return 'error';
+  return 'completed';
+};
 
-/** One device that should hear about a session. */
-interface Reachable {
-  id: string;
-  device: Device;
+/**
+ * What VS Code titles a session: its summary's title, else `Session` and the
+ * first eight characters of its id.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L1647
+ */
+const titleOf = (session: string, said: unknown): string =>
+  (typeof said === 'string' && said !== '' ? said : `Session ${idOf(session).slice(0, 8)}`);
+
+/**
+ * The workspace a notice names: the project's name, else the last segment of
+ * the first working directory, as VS Code labels an agent host session's
+ * workspace on the machine it runs on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/common/agentHostSessionWorkspace.ts#L260-L290
+ */
+const workspaceOf = (project: unknown, workingDirectories: unknown): string | undefined => {
+  const named = str(bag(project)['displayName']);
+  if (named !== undefined && named !== '') return named;
+  const first = Array.isArray(workingDirectories) ? workingDirectories[0] : undefined;
+  if (typeof first !== 'string') return undefined;
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(first).pathname);
+  }
+  catch {
+    return undefined;
+  }
+  return posix.basename(path) || path;
+};
+
+/**
+ * Each status's body, alone and naming a workspace: VS Code's
+ * `_getNotificationBody`, by the keys its `localize` calls name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/sessions/browser/sessionsWindowNotifier.ts#L176-L194
+ */
+const BODIES: Record<Told, { key: string; english: string; inKey: string; inEnglish: string }> = {
+  needsInput: {
+    key: 'sessions.notification.needsInput',
+    english: 'Attention needed.',
+    inKey: 'sessions.notification.needsInputWithWorkspace',
+    inEnglish: 'Attention needed in {0}.',
+  },
+  completed: {
+    key: 'sessions.notification.completed',
+    english: 'Session completed.',
+    inKey: 'sessions.notification.completedWithWorkspace',
+    inEnglish: 'Completed in {0}.',
+  },
+  error: {
+    key: 'sessions.notification.failed',
+    english: 'Session failed.',
+    inKey: 'sessions.notification.failedWithWorkspace',
+    inEnglish: 'Failed in {0}.',
+  },
+};
+
+/** One session the list holds. */
+interface Listed {
+  /** What it is called, as VS Code titles it. */
+  title: string;
+  /** Its summary's project, which the workspace label reads first. */
+  project: unknown;
+  /** Its summary's working directories, which the workspace label reads after. */
+  workingDirectories: unknown;
+  /** Its status, as VS Code's sessions window reads it. */
+  status: Shown;
+  /** The completed notice still to come, which any move drops. */
+  completed?: ReturnType<typeof setTimeout>;
 }
 
 export const apply: Plugin['apply'] = (host, options) => {
@@ -74,46 +156,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     : [...WEB_PUSH_HOSTS];
   host.registerResourceProvider('push', pushProvider({ store, webPushHosts, ...(vapid === undefined ? {} : { vapid }) }));
 
-  const named = str(options['title']);
-  const title = named === undefined || named.trim() === '' ? host.hostName : named;
   const accessToken = options['accessToken'];
 
-  /** The clients that created or opened each session. */
-  const opened = new Map<string, Set<string>>();
-  /** The `(session, id)` pairs a device has already been told about. */
-  const told = new Set<string>();
-
-  const keyOf = (session: string, id: string): string => `${session}\u0000${id}`;
-
-  const remember = (session: string, client: string): void => {
-    if (client === '') return;
-    const held = opened.get(session);
-    if (held === undefined) opened.set(session, new Set([client]));
-    else held.add(client);
-  };
-
-  /**
-   * Every device that should hear about this session.
-   *
-   * A device hears it when its client created or opened the session, which is
-   * the rule it had before a device could choose. A device set to `person`, or
-   * left without a setting, also hears every session whose owner the host
-   * names as the device's own person. A device with no person has no owner to
-   * match, so it keeps the rule of its client alone.
-   */
-  const audience = async (session: string): Promise<Reachable[]> => {
-    const clients = opened.get(session);
-    const owner = await host.sessionOwner(session);
-    const reachable: Reachable[] = [];
-    for (const id of store.ids()) {
-      const device = store.get(id);
-      if (device === undefined) continue;
-      const byClient = device.client !== undefined && clients?.has(device.client) === true;
-      const byOwner = device.audience !== 'device' && device.owner !== undefined && owner !== undefined && device.owner === owner;
-      if (byClient || byOwner) reachable.push({ id, device });
-    }
-    return reachable;
-  };
+  /** The session list, as this plugin's connection keeps it. */
+  const listed = new Map<string, Listed>();
+  /** Whether the connection has been opened, which happens once. */
+  let connected = false;
 
   /** The token for this send, read now rather than kept. */
   const tokenNow = async (): Promise<string | undefined> => {
@@ -131,7 +179,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       }
     },
   });
-  host.registerClose(() => { sender.close(); });
 
   const contact = str(options['contact']);
   const webSender = vapid === undefined ? undefined : createWebSender({
@@ -141,14 +188,57 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(contact === undefined || contact.trim() === '' ? {} : { contact: contact.trim() }),
   });
 
-  /** Send `body` to every device in the session, naming the session and why in `data`. */
-  const notify = async (session: string, body: string, kind: string): Promise<void> => {
+  /**
+   * The devices of the person a session is for.
+   *
+   * VS Code's window tells its one user of the sessions in their list. A host
+   * with people tells the devices the session's owner registered, and a host
+   * with none has one person, whose devices hear every session.
+   */
+  const audience = async (session: string): Promise<{ id: string; device: Device }[]> => {
+    const owner = host.hasUsers === true ? await host.sessionOwner(session) : undefined;
+    return store.ids().flatMap((id) => {
+      const device = store.get(id);
+      if (device === undefined) return [];
+      if (host.hasUsers === true && (owner === undefined || device.owner !== owner)) return [];
+      return [{ id, device }];
+    });
+  };
+
+  /**
+   * One notice's words in the language a device registered with, `{0}` filled
+   * and backticks made plain quotes, as VS Code makes an OS toast's text.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/sessions/browser/sessionsWindowNotifier.ts#L196-L198
+   */
+  const say = (key: string, english: string, lang: string | undefined, value: string): string =>
+    translated(['messages', key], english, lang, host.i18n).replace('{0}', () => value).replaceAll('`', '\'');
+
+  /**
+   * Tell a session's devices it reached `status`, if it is still there.
+   *
+   * `kind` in `data` is VS Code's notification kind for the status, which its
+   * toast is deduplicated by: `needsInput`, or `idle` for a session that
+   * completed or failed. A wait goes to a browser at high urgency, and the
+   * other two at normal, RFC 8030's urgencies for an alert and a message.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/sessions/browser/sessionsWindowNotifier.ts#L132-L139
+   */
+  const notify = async (session: string, status: Told): Promise<void> => {
+    const held = listed.get(session);
+    if (held === undefined || held.status !== status) return;
     const reachable = await audience(session);
     if (reachable.length === 0) return;
 
-    const phones = reachable.flatMap((one) => (one.device.platform === 'web' ? [] : [one.device]));
-    const browsers = reachable.flatMap((one) => (one.device.platform === 'web' ? [{ id: one.id, device: one.device }] : []));
+    const workspace = workspaceOf(held.project, held.workingDirectories);
+    const words = BODIES[status];
+    const shown = (device: Device): { title: string; body: string } => ({
+      title: say('sessions.notification.title', 'Session: {0}', device.lang, held.title),
+      body: workspace === undefined
+        ? say(words.key, words.english, device.lang, '')
+        : say(words.inKey, words.inEnglish, device.lang, workspace),
+    });
+    const data = { uri: session, kind: status === 'needsInput' ? 'needsInput' : 'idle' };
 
+    const phones = reachable.flatMap((one) => (one.device.platform === 'web' ? [] : [one.device]));
     if (phones.length > 0) {
       let token: string | undefined;
       let sent = true;
@@ -160,71 +250,141 @@ export const apply: Plugin['apply'] = (host, options) => {
         sent = false;
       }
       if (sent) {
-        const messages: PushMessage[] = phones.map((device) => ({
-          to: device.token,
-          title,
-          body,
-          data: { uri: session, kind },
-        }));
+        const messages: PushMessage[] = phones.map((device) => ({ to: device.token, ...shown(device), data }));
         await sender.send(messages, token);
       }
     }
 
     // A host with no VAPID pair has already said so once, at load, and has no
-    // way to sign a request, so a browser is skipped rather than failed.
+    // way to sign a request, so a browser is skipped.
+    const browsers = reachable.flatMap((one) => (one.device.platform === 'web' ? [{ id: one.id, device: one.device }] : []));
     if (browsers.length > 0 && webSender !== undefined) {
       await webSender.send(browsers.map((one) => ({
         id: one.id,
         endpoint: one.device.endpoint,
         keys: one.device.keys,
-        title,
-        body,
-        data: { uri: session, kind },
+        ...shown(one.device),
+        data,
         session,
-        urgency: kind === 'turnComplete' ? 'normal' : 'high',
+        urgency: status === 'needsInput' ? 'high' : 'normal',
       })));
     }
   };
 
-  host.on('session_start', (event) => {
-    if (event.client !== undefined) remember(event.session, event.client);
-  });
+  const tell = (session: string, status: Told): void => {
+    notify(session, status).catch((error: unknown) => { host.log(`${name}: ${session} could not be told: ${reason(error)}`); });
+  };
 
-  host.on('session_opened', (event) => { remember(event.session, event.client); });
+  /** A session the list no longer holds, with its completed notice dropped. */
+  const drop = (session: string): void => {
+    const held = listed.get(session);
+    if (held?.completed !== undefined) clearTimeout(held.completed);
+    listed.delete(session);
+  };
+
+  /** A session the list now holds, at the status it starts from. */
+  const track = (summary: Bag): void => {
+    const session = str(summary['resource']);
+    if (session === undefined || session === '') return;
+    drop(session);
+    listed.set(session, {
+      title: titleOf(session, summary['title']),
+      project: summary['project'],
+      workingDirectories: summary['workingDirectories'],
+      status: shownOf(Number(summary['status'])),
+    });
+  };
 
   /**
-   * A session began waiting, so the phones of the clients in it are told.
+   * One status move, as VS Code's notifier takes it: a pending completed
+   * notice dropped, a completed one scheduled, a wait or a failure told now.
+   */
+  const moved = (session: string, held: Listed, next: Shown): void => {
+    if (held.status === next) return;
+    held.status = next;
+    if (held.completed !== undefined) {
+      clearTimeout(held.completed);
+      delete held.completed;
+    }
+    if (next === 'completed') {
+      const timer = setTimeout(() => {
+        if (held.completed === timer) delete held.completed;
+        tell(session, 'completed');
+      }, COMPLETED_DELAY_MS);
+      timer.unref?.();
+      held.completed = timer;
+    }
+    if (next === 'needsInput' || next === 'error') tell(session, next);
+  };
+
+  /**
+   * What the root channel says about the list. A change to a session the list
+   * does not hold is let go, as the spec lets a client with no cached entry
+   * ignore it.
+   * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/channels-root/notifications.ts#L107-L108
+   */
+  const take = (message: Record<string, unknown>): void => {
+    const params = bag(message['params']);
+    if (message['method'] === 'root/sessionAdded') {
+      track(bag(params['summary']));
+      return;
+    }
+    if (message['method'] === 'root/sessionRemoved') {
+      drop(String(params['session'] ?? ''));
+      return;
+    }
+    if (message['method'] !== 'root/sessionSummaryChanged') return;
+    const session = String(params['session'] ?? '');
+    const held = listed.get(session);
+    if (held === undefined) return;
+    const changes = bag(params['changes']);
+    if ('title' in changes) held.title = titleOf(session, changes['title']);
+    if ('project' in changes) held.project = changes['project'];
+    if ('workingDirectories' in changes) held.workingDirectories = changes['workingDirectories'];
+    if (typeof changes['status'] === 'number') moved(session, held, shownOf(changes['status']));
+  };
+
+  /**
+   * The connection, opened when the daemon listens, which is the first moment
+   * a plugin may connect.
    *
-   * The pair is remembered before anything is sent, because the protocol's own
-   * action is an upsert that raises this event again for the same entry: what a
-   * phone must not get is the same notification twice, and a send that failed
-   * is a cost of that rule rather than a reason to break it.
+   * The root channel is subscribed before the list is read, so a session made
+   * while it is read is already held; a listed session the channel brought in
+   * first is kept as the channel said it. A list that cannot be read is one
+   * line to the log, and the sessions the channel adds from then on are still
+   * told: on a host with people, the list is `session:list`, which this
+   * plugin's entry in the configuration grants.
    */
-  host.on('input_needed_set', async (event: InputNeededSetEvent) => {
-    const pair = keyOf(event.session, event.id);
-    if (told.has(pair)) return;
-    told.add(pair);
-    if (!AWAITS_PERSON.includes(event.kind)) return;
-    await notify(event.session, wording(event.kind), event.kind);
+  host.on('listening', () => {
+    if (connected) return;
+    connected = true;
+    let conn: PluginPeer;
+    try {
+      conn = host.connect();
+    }
+    catch (error) {
+      host.log(`${name}: no connection to this host, so no session is told: ${reason(error)}`);
+      return;
+    }
+    conn.onMessage(take);
+    void (async () => {
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
+      await conn.request('subscribe', { channel: ROOT });
+      let cursor: string | undefined;
+      do {
+        const page = bag(await conn.request('listSessions', { channel: ROOT, ...(cursor === undefined ? {} : { cursor }) }));
+        for (const item of Array.isArray(page['items']) ? page['items'] : []) {
+          const summary = bag(item);
+          const session = str(summary['resource']);
+          if (session !== undefined && !listed.has(session)) track(summary);
+        }
+        cursor = str(page['nextCursor']);
+      } while (cursor !== undefined && cursor !== '');
+    })().catch((error: unknown) => { host.log(`${name}: the host's session list could not be read: ${reason(error)}`); });
   });
 
-  /**
-   * A session's own chat finished a turn, so the phones of the clients in it
-   * are told it is done. A worker's chat ends many turns inside one of the
-   * session's, and a turn somebody stopped was stopped by a person who knows.
-   */
-  host.on('turn_end', async (event: TurnEndEvent) => {
-    if (event.status !== 'complete' || event.chat.startsWith(WORKER_CHAT)) return;
-    await notify(event.session, FINISHED, 'turnComplete');
+  host.registerClose(() => {
+    for (const session of [...listed.keys()]) drop(session);
+    sender.close();
   });
-
-  /**
-   * The wait is over, and nothing is sent to say so.
-   *
-   * A second message that clears the first would be two notifications for one
-   * question, and a phone that has to be told what it no longer has to do is a
-   * phone being made to work for no reason. The pair is forgotten, so a session
-   * that asks the same thing again is a new wait and is sent.
-   */
-  host.on('input_needed_removed', (event) => { told.delete(keyOf(event.session, event.id)); });
 };

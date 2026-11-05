@@ -988,6 +988,7 @@ nothing behaves exactly as it did before the field existed.
 | `version` | The `@ahpd/sdk` version actually in use |
 | `hostName` | What this host is called, for the work nobody started as themselves |
 | `configDir` | The folder the daemon keeps its own configuration in, where a plugin that has to keep a record puts its file |
+| `i18n` | The catalogs the plugin ships in `ahpd.i18n`, by locale, where it looks up the words it sends a person itself; see [Text in the client's language](#text-in-the-client-s-language) |
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
 | `problem(line)` | One item of your own you dropped, said before the daemon says it started, and a `warning` alert on the plugin's row |
@@ -1505,8 +1506,15 @@ The value names a folder in the package. Each `<locale>.json` in it is one catal
 | `meta` | The plugin's `title` and `description` on the plugins screen |
 | `options.<key>` | One property of the `optionsSchema` |
 | `session.<key>` | One key of the new session form that the plugin declares |
+| `messages.<key>` | One thing the plugin says to a person itself, such as a notification it sends, keyed as its code looks it up |
 
-Each key takes `title`, `description`, `enum.<value>` for the label of one value, and `items.title`. A key that sets `enumDynamic` keeps its labels, because its values are data.
+Each key of `options` and `session` takes `title`, `description`, `enum.<value>` for the label of one value, and `items.title`. A key that sets `enumDynamic` keeps its labels, because its values are data.
+
+A message is one string, keyed as VS Code keys a `localize` call. The plugin looks it up itself in `host.i18n`, with the sdk's `translated`, in the locale of the person it is for:
+
+```ts
+const body = translated(['messages', 'sessions.notification.needsInput'], 'Attention needed.', device.lang, host.i18n);
+```
 
 The host looks up each string on its own. It tries the catalogs of the plugin that declared the key, then the host's own catalogs. In each, it tries the tag as given and then its language alone, so `pt.json` answers `pt` and `pt-BR`. A string that no catalog has stays in English. English is never in a catalog: it is the text the manifest and the code hold.
 

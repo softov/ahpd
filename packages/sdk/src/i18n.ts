@@ -2,7 +2,8 @@
  * The text a person reads, in the language their client sent.
  *
  * A catalog is one JSON object keyed by the field path of each text:
- * `meta.title`, `options.<key>.description`, `session.<key>.enum.<value>`.
+ * `meta.title`, `options.<key>.description`, `session.<key>.enum.<value>`, and
+ * `messages.<key>` for what a plugin says to a person itself.
  * English is not in any catalog: it is the text the code already holds, and
  * each lookup is handed it as the answer when no catalog has the path.
  */

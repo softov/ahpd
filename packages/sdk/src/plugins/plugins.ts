@@ -1326,6 +1326,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
 
   const host: PluginHost = {
     ...context,
+    ...(options.i18n === undefined ? {} : { i18n: options.i18n }),
     alert: (alert) => { options.alert?.(alert); },
     clearAlert: (ref) => { options.clearAlert?.(ref); },
     /*

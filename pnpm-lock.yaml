@@ -181,6 +181,9 @@ importers:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@microsoft/agent-host-protocol':
+        specifier: ^1.0.0
+        version: 1.0.0
 
   packages/sdk:
     dependencies:

@@ -70,10 +70,8 @@ it('keeps a device a client registered, and reads it back', async () => {
 
   const read = await provider.read('push://devices/phone-1');
   expect(read.contentType).toBe('application/json');
-  // The client that registered it is the connection's, not the body's, and a
-  // device is sent only the sessions of the client it belongs to.
   // The token is write-only, so a read answers the device without it.
-  expect(JSON.parse(read.data)).toEqual({ platform: 'ios', lang: 'pt-BR', client: 'phone' });
+  expect(JSON.parse(read.data)).toEqual({ platform: 'ios', lang: 'pt-BR' });
 
   expect(await provider.list('push://')).toEqual([{ name: 'devices', type: 'directory' }]);
   expect(await provider.list('push://devices')).toEqual([{ name: 'phone-1', type: 'file' }]);
@@ -90,27 +88,24 @@ it.skipIf(!posix)('writes the devices at a mode only their owner may read', asyn
   expect(statSync(join(where, 'push-devices.json')).mode & 0o777).toBe(0o600);
 });
 
-it('keeps the person a device was written for, and the sessions it hears', async () => {
+it('keeps the person a device was written for, and no sessions setting of the body\'s', async () => {
   const provider = over();
   await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios', audience: 'device' }), 'user:ana', 'phone');
   expect(JSON.parse((await provider.read('push://devices/phone-1')).data)).toEqual({
     platform: 'ios',
-    audience: 'device',
-    client: 'phone',
     owner: 'user:ana',
   });
 });
 
-it('reads a person and an audience back from a device already on disk', async () => {
+it('reads a person back from a device already on disk, and leaves the client and audience it held', async () => {
   const where = dir();
   writeFileSync(join(where, 'push-devices.json'), JSON.stringify({
-    'phone-1': { token: TOKEN, platform: 'ios', owner: 'user:ana', audience: 'person' },
+    'phone-1': { token: TOKEN, platform: 'ios', owner: 'user:ana', client: 'phone', audience: 'person' },
   }));
   const provider = pushProvider({ store: deviceStore(where, () => {}) });
   expect(JSON.parse((await provider.read('push://devices/phone-1')).data)).toEqual({
     platform: 'ios',
     owner: 'user:ana',
-    audience: 'person',
   });
 });
 
@@ -120,7 +115,6 @@ it('keeps a browser subscription, and reads it back without its endpoint and key
   expect(JSON.parse((await provider.read('push://devices/browser-1')).data)).toEqual({
     platform: 'web',
     lang: 'pt-BR',
-    client: 'browser',
     owner: 'user:ana',
   });
 });
@@ -193,8 +187,6 @@ it('refuses a body that is not a device', async () => {
     { token: TOKEN, platform: 'web' },
     { token: TOKEN, platform: 'ios', lang: 3 },
     { token: TOKEN, platform: 'ios', lang: '' },
-    { token: TOKEN, platform: 'ios', audience: 'everyone' },
-    { token: TOKEN, platform: 'ios', audience: 3 },
   ];
   for (const said of refused) {
     await expect(provider.write('push://devices/phone-1', body(said), undefined, 'phone')).rejects.toMatchObject({ code: -32602 });
@@ -260,7 +252,7 @@ it('answers a device\'s etag, and refuses a write whose ifMatch is not it', asyn
   expect(await provider.list('push://devices')).toEqual([{ name: 'phone-1', type: 'file' }]);
 });
 
-it('keeps a device whose writer named no client, and it belongs to none', async () => {
+it('keeps a device whose writer is nobody, and it belongs to no person', async () => {
   const where = dir();
   const provider = pushProvider({ store: deviceStore(where, () => {}) });
   await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios' }));
@@ -311,8 +303,8 @@ it('loads as a plugin, advertises push, and serves a registration through the ho
     const read = await client.handle({
       method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'push://devices/phone-1' },
     }) as { data: string };
-    // The client that wrote it is the one the connection named at initialize.
-    expect(JSON.parse(read.data)).toEqual({ platform: 'ios', client: 'phone' });
+    // What the body said, the token held back as a credential.
+    expect(JSON.parse(read.data)).toEqual({ platform: 'ios' });
 
     // A browser reads the public key its subscription is made against here.
     const vapid = await client.handle({

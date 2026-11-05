@@ -13,11 +13,10 @@ import type { Vapid } from './vapid.js';
  * token; a browser registers the subscription its push service gave it, an
  * endpoint and the two keys a message to it is encrypted with.
  *
- * What a record holds is the platform it belongs to, the person and client it
- * was registered by, and, when a device asked for a language, that language.
- * The client is the host's, as the connection named it, and the body cannot
- * name it: a device with no setting hears the sessions of the client that
- * opened the session or, when its person is the session's owner, the person's.
+ * What a record holds is the platform it belongs to, the person it was
+ * registered by, and, when a device asked for a language, that language. The
+ * person is the host's, as the connection is signed in, and the body cannot
+ * name it: a device hears the sessions of its person.
  *
  * The devices are one JSON file under the daemon's own configuration folder,
  * written whole and read at load, because a token and a subscription are
@@ -53,36 +52,18 @@ export const WEB_PUSH_HOSTS = [
 /** The part of a registration both kinds of device share. */
 interface Kept {
   /**
-   * The language the device asked for, where the client named one.
-   *
-   * Kept as the device gave it and read by nobody yet: a notification is worded
-   * in English, and this is what a sender that words one per device would read.
+   * The language the device asked for, where the client named one, which its
+   * notifications are worded in where the plugin's catalogs have the words.
    */
   lang?: string;
   /**
-   * The client that registered it, as it gave its id at `initialize`.
-   *
-   * Absent when the connection that wrote it never introduced itself, which is
-   * a device kept and sent nothing: what a device hears is the sessions of the
-   * client that registered it.
-   */
-  client?: string;
-  /**
    * The person the registration was written for, as the host named them.
    *
-   * Absent on a host with no users directory, and on a connection that is
-   * neither a person nor the root one. A device with no person hears only the
-   * sessions of its own client, because nobody else's sessions can be shown to
-   * be its person's.
+   * Absent on a host with no users directory, where every device is the one
+   * person's, and on a connection that is neither a person nor the root one,
+   * whose device has no person's sessions to hear.
    */
   owner?: Owner;
-  /**
-   * Which sessions it hears about. Absent means `person`.
-   *
-   * The person's sessions are every session whose owner the host names the
-   * same, plus every session this device's own client created or opened.
-   */
-  audience?: Audience;
 }
 
 /** A phone or a tablet, which Expo reaches through its token. */
@@ -121,8 +102,7 @@ const EXPO_BODY = {
   properties: {
     token: { type: 'string', description: 'The Expo push token this device answers to.' },
     platform: { type: 'string', enum: ['ios', 'android'], description: 'Which service the token belongs to.' },
-    lang: { type: 'string', description: 'The language the device asked for, kept with it. Notifications are worded in English.' },
-    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about. Every session of its person unless this says device.' },
+    lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
   },
   additionalProperties: false,
 } as const;
@@ -142,8 +122,7 @@ const WEB_BODY = {
       },
       additionalProperties: false,
     },
-    lang: { type: 'string', description: 'The language the device asked for, kept with it. Notifications are worded in English.' },
-    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about. Every session of its person unless this says device.' },
+    lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
   },
   additionalProperties: false,
 } as const;
@@ -151,16 +130,6 @@ const WEB_BODY = {
 const MANIFEST = {
   oneOf: [EXPO_BODY, WEB_BODY],
 } as const;
-
-/**
- * Which sessions a device hears about.
- *
- * `person` is every session its person created or opened, and `device` is only
- * the ones the client that registered it created or opened. A device without a
- * setting is a `person` device, which is what a registration written before
- * this setting existed becomes.
- */
-export type Audience = 'person' | 'device';
 
 /**
  * The devices one daemon keeps.
@@ -264,14 +233,10 @@ const keysOf = (said: unknown): SubscriptionKeys | undefined => {
 /** The fields of a registration both kinds of device keep, as they were found. */
 const keptCommon = (one: Record<string, unknown>): Kept => {
   const lang = one['lang'];
-  const client = one['client'];
   const owner = one['owner'];
-  const audience = one['audience'];
   return {
     ...(typeof lang === 'string' ? { lang } : {}),
-    ...(typeof client === 'string' ? { client } : {}),
     ...(typeof owner === 'string' && owner !== '' ? { owner: owner as Owner } : {}),
-    ...(audience === 'person' || audience === 'device' ? { audience } : {}),
   };
 };
 
@@ -400,14 +365,7 @@ const deviceOf = (uri: string, content: Write, webPushHosts: readonly string[]):
   if (lang !== undefined && (typeof lang !== 'string' || lang.trim() === '')) {
     throw new RpcError(-32602, `${uri} has a lang that is not a language`);
   }
-  const audience = body['audience'];
-  if (audience !== undefined && audience !== 'person' && audience !== 'device') {
-    throw new RpcError(-32602, `${uri} has an audience of person or device`);
-  }
-  const common: Kept = {
-    ...(typeof lang === 'string' ? { lang } : {}),
-    ...(audience === 'person' || audience === 'device' ? { audience } : {}),
-  };
+  const common: Kept = typeof lang === 'string' ? { lang } : {};
 
   const platform = body['platform'];
   if (platform === 'ios' || platform === 'android') {
@@ -521,8 +479,8 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * A device is registered here, and re-registered here.
      *
      * The body is the token and the platform, or a browser's endpoint and keys;
-     * the client id is not the body's to name but the connection's, which is
-     * what makes a device the property of the client that wrote it. `createOnly`
+     * the person is not the body's to name but the connection's, which is what
+     * makes a device hear that person's sessions. `createOnly`
      * is the protocol's own word for refusing a device that is already there,
      * and it is honoured because a client that asked for it is a client that
      * did not mean to overwrite a sibling's registration. `ifMatch` is the
@@ -534,7 +492,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L724-L726
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L201-L207
      */
-    write: async (uri, content, owner, client) => {
+    write: async (uri, content, owner) => {
       const place = placeOf(uri);
       if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       const held = store.get(place.id);
@@ -545,11 +503,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
         throw new RpcError(-32011, `ifMatch precondition failed for: ${uri}`);
       }
       const device = deviceOf(uri, content, webPushHosts);
-      store.put(place.id, {
-        ...device,
-        ...(client === undefined || client === '' ? {} : { client }),
-        ...(owner === undefined ? {} : { owner }),
-      });
+      store.put(place.id, { ...device, ...(owner === undefined ? {} : { owner }) });
     },
 
     /**

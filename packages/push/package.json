@@ -58,10 +58,12 @@
     "test": "cd ../.. && vitest run packages/push/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.14 <1"
+    "@ahpd/sdk": ">=0.14 <1",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {
-    "@ahpd/sdk": "workspace:*"
+    "@ahpd/sdk": "workspace:*",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",
@@ -76,12 +78,11 @@
     ],
     "contracts": {
       "resourceProviders": ["push"],
-      "closers": ["the receipt reads still to come"]
+      "closers": ["the receipt reads and the completed notices still to come"]
     },
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "title": { "type": "string", "description": "What a notification is titled. The daemon's own name when absent." },
         "accessToken": { "type": "string", "writeOnly": true, "secretAtUse": true, "description": "An Expo access token, where the project has push security on. A name may be given instead of the token, as {\"$secret\": \"host:expo\"}." },
         "webPushHosts": {
           "type": "array",
