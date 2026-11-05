@@ -50,13 +50,14 @@ export function githubPullRequests(): PullRequests {
       signal: AbortSignal.timeout(10_000),
     });
     if (!answer.ok) throw new Error(`GitHub answered ${answer.status} for ${owner}/${repo}#${branch}`);
-    const items = await answer.json() as { html_url?: unknown; state?: unknown; merged_at?: unknown; title?: unknown }[];
+    const items = await answer.json() as { html_url?: unknown; state?: unknown; merged_at?: unknown; title?: unknown; created_at?: unknown }[];
     return items
       .filter((item) => typeof item.html_url === 'string')
       .map((item) => ({
         url: item.html_url as string,
         state: stateOf(item.state, item.merged_at != null),
         ...(typeof item.title === 'string' ? { title: item.title } : {}),
+        ...(typeof item.created_at === 'string' ? { createdAt: item.created_at } : {}),
       }));
   };
 
@@ -64,13 +65,13 @@ export function githubPullRequests(): PullRequests {
     new Promise((answer, refuse) => {
       execFile('gh', [
         'pr', 'list', '--repo', `${owner}/${repo}`, '--head', branch, '--state', 'all',
-        '--limit', String(MOST), '--json', 'url,state,title,updatedAt',
+        '--limit', String(MOST), '--json', 'url,state,title,updatedAt,createdAt',
       ], { cwd, timeout: 10_000, maxBuffer: 1 << 20, windowsHide: true }, (error, out, bad) => {
         if (error) {
           refuse(new Error(bad.toString().trim() || error.message));
           return;
         }
-        const items = JSON.parse(out.toString()) as { url?: unknown; state?: unknown; updatedAt?: unknown; title?: unknown }[];
+        const items = JSON.parse(out.toString()) as { url?: unknown; state?: unknown; updatedAt?: unknown; title?: unknown; createdAt?: unknown }[];
         answer(items
           .filter((item) => typeof item.url === 'string')
           .sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))
@@ -78,6 +79,7 @@ export function githubPullRequests(): PullRequests {
             url: item.url as string,
             state: stateOf(item.state, String(item.state).toUpperCase() === 'MERGED'),
             ...(typeof item.title === 'string' ? { title: item.title } : {}),
+            ...(typeof item.createdAt === 'string' ? { createdAt: item.createdAt } : {}),
           })));
       });
     });

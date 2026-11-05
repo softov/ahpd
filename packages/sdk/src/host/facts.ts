@@ -5,13 +5,23 @@ import { localPath, uriOf } from '../resources/fileuri.js';
 import { CREATED_BY_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
+import type { PullRequest } from '../types/github.js';
 import type { HostContext } from './context.js';
+
+/**
+ * VS Code's `PULL_REQUEST_CREATION_CLOCK_SKEW_MS`: how much earlier than a
+ * session's start a pull request must say it was opened to be the session's
+ * baseline.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L46
+ */
+const PULL_REQUEST_CLOCK_SKEW_MS = 5 * 60_000;
 
 /** What a session's directory says about it, and what the host asks to move it. */
 export interface Facts {
   describes(uri: string): Bag;
   setArtifacts(uri: string, list: Bag[]): void;
-  captureBaseline(uri: string, urls: string[]): void;
+  /** Add to a session's pull request baseline what VS Code's host adds, from what its directory's branch lists. */
+  captureBaseline(uri: string): void;
   recordPullRequest(uri: string, dir: string, pullRequest: { url: string; title: string; branch: string }): void;
   metaMoved(dir: string): void;
   dirOfFile(uri: string): string | undefined;
@@ -143,20 +153,47 @@ export function createFacts(ctx: HostContext): Facts {
     };
   };
 
-  /**
-   * Capture a session's pull request baseline, once.
-   *
-   * Called the first time GitHub answers for the directory and again when a
-   * session opens onto facts already held. The first answer wins: an empty
-   * array is a captured baseline, and a later answer says what the branch
-   * has now rather than what it had when the session began.
-   */
-  const captureBaseline = (uri: string, urls: string[]): void => {
-    if (kept.pullRequests(idOf(uri)) !== undefined) return;
-    kept.setPullRequests(idOf(uri), { initialPullRequestUrls: [...urls], associatedPullRequestUrls: [] });
-  };
+  /** The pull requests GitHub last listed for each directory's branch, with when each was opened. */
+  const listed = new Map<string, PullRequest[]>();
   /** The comparison the reference makes, so a URL with a trailing slash is the same one. */
   const urlKey = (url: string): string => url.trim().replace(/\/+$/, '').toLowerCase();
+  /**
+   * Add to a session's pull request baseline what VS Code's host adds to one.
+   *
+   * Only a folder-isolated session has a baseline, or one that holds one
+   * already; a worktree session has none. A session on a host with no
+   * worktrees to make works in its folder, so it is a folder session too. A
+   * pull request its directory's
+   * branch lists goes in when GitHub says it was opened before the session
+   * began, less five minutes of clock skew, or, with no time given, while the
+   * session holds no baseline yet; one the session already relates is left as
+   * it is. A folder session whose branch lists none holds an empty one.
+   * Called when GitHub answers for the directory and when a session opens
+   * onto an answer already held.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L396-L411
+   */
+  const captureBaseline = (uri: string): void => {
+    const id = idOf(uri);
+    const held = kept.pullRequests(id);
+    if (ctx.decided.get(uri)?.isolation === 'worktree' && held?.initialPullRequestUrls === undefined) return;
+    const dir = dirOf(uri);
+    const found = dir === undefined ? [] : listed.get(dir) ?? [];
+    const related = new Set([...(held?.initialPullRequestUrls ?? []), ...(held?.associatedPullRequestUrls ?? [])].map(urlKey));
+    const began = Date.parse(sessions.get(uri)?.createdAt ?? '');
+    const added = found.filter((one) => {
+      if (related.has(urlKey(one.url))) return false;
+      const opened = Date.parse(one.createdAt ?? '');
+      return Number.isFinite(opened)
+        ? Number.isNaN(began) || opened < began - PULL_REQUEST_CLOCK_SKEW_MS
+        : held?.initialPullRequestUrls === undefined;
+    }).map((one) => one.url);
+    if (held?.initialPullRequestUrls !== undefined && added.length === 0) return;
+    kept.setPullRequests(id, {
+      ...held,
+      initialPullRequestUrls: [...(held?.initialPullRequestUrls ?? []), ...added],
+      associatedPullRequestUrls: held?.associatedPullRequestUrls ?? [],
+    });
+  };
   /**
    * Move a pull request out of the baseline and into the session's own.
    *
@@ -490,15 +527,11 @@ export function createFacts(ctx: HostContext): Facts {
         pullRequestStateUrl: newest.url,
       }),
     };
+    listed.set(dir, found);
     const before = githubFacts.get(dir);
     if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
     githubFacts.set(dir, now);
-    // Every session in the directory that has no baseline yet began before
-    // this answer, so this is the branch it started on.
-    const urls = Array.isArray(now.pullRequestUrls)
-      ? now.pullRequestUrls.filter((one): one is string => typeof one === 'string')
-      : [];
-    for (const uri of inThere(dir)) captureBaseline(uri, urls);
+    for (const uri of inThere(dir)) captureBaseline(uri);
     return true;
   };
 

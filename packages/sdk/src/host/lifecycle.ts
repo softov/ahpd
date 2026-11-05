@@ -1994,20 +1994,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
     }
     /*
-     * The branch it started on, when that is already known.
-     *
-     * A directory whose facts have answered holds the pull requests the
-     * branch had, and this session began after that answer, so they are its
-     * baseline. Where nothing has answered yet the capture waits for the
-     * first answer, which is the same moment one turn later.
+     * The pull requests its branch already had, when the directory's facts
+     * have answered: the baseline takes the ones opened before the session
+     * began. Where nothing has answered yet the capture waits for the first
+     * answer.
      */
-    const facts = dirOf(uri) === undefined ? undefined : githubFacts.get(dirOf(uri) as string);
-    if (facts !== undefined) {
-      const urls = Array.isArray(facts.pullRequestUrls)
-        ? facts.pullRequestUrls.filter((one): one is string => typeof one === 'string')
-        : [];
-      captureBaseline(uri, urls);
-    }
+    if (dirOf(uri) !== undefined && githubFacts.has(dirOf(uri) as string)) captureBaseline(uri);
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
     // Ready, then announced. A client that hears about a session before
     // it can be subscribed to has been told about something that is not

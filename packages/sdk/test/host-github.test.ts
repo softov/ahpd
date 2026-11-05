@@ -10,6 +10,7 @@ import {
  peer, sdk, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 
 /** The folder the hosts here serve, as its URI on this system: `file:///C:/home/softov` on Windows. */
 const HOME = uriOf('/home/softov');
@@ -33,7 +34,7 @@ describe('what GitHub knows about the branch', () => {
     meta: () => (git === undefined ? undefined : { git: { ...git } }),
     refresh: async () => false,
   });
-  const lookup = (answer: () => { url: string; state: 'open' | 'closed' | 'merged' }[]) => {
+  const lookup = (answer: () => { url: string; state: 'open' | 'closed' | 'merged'; createdAt?: string }[]) => {
     const asked: { branch: string; token: string | undefined }[] = [];
     return {
       asked,
@@ -219,6 +220,67 @@ describe('what GitHub knows about the branch', () => {
     // Only the listing, which the GitHub answer went past.
     expect(store.pullRequests('browsed')).toBeUndefined();
     expect(store.pullRequests('live')).toEqual({ initialPullRequestUrls: [url], associatedPullRequestUrls: [] });
+  });
+
+  /*
+   * VS Code's baseline: a folder session's, of the pull requests GitHub says
+   * were opened before the session began, less five minutes of clock skew;
+   * a worktree session holds none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L396-L411
+   */
+  it('takes into a baseline only the pull requests opened before the session began', async () => {
+    const before = 'https://github.com/softov/ahpd/pull/7';
+    const after = 'https://github.com/softov/ahpd/pull/8';
+    const store = memorySessions();
+    const { port } = lookup(() => [
+      { url: after, state: 'open' as const, createdAt: new Date(Date.now() + 60_000).toISOString() },
+      { url: before, state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' },
+    ]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/old', provider: 'claude' } });
+    await settle();
+    expect(store.pullRequests('old')).toEqual({ initialPullRequestUrls: [before], associatedPullRequestUrls: [] });
+  });
+
+  it('keeps no baseline for a session working in a worktree', async () => {
+    const store = memorySessions();
+    const { port, asked } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' }]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
+      worktrees: {
+        repository: async () => '/home/softov',
+        branches: async () => ['fix/kqueue'],
+        create: async () => {},
+        dirty: async () => false,
+        remove: async () => {},
+      },
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/tree', provider: 'claude', workingDirectories: [HOME], config: { isolation: 'worktree' } },
+    });
+    await settle();
+    // A turn's end is when the worktree's own folder is asked about.
+    const asks = asked.length;
+    const chat = chatUriFor('ahp-session:/tree');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+    expect(asked.length).toBeGreaterThan(asks);
+    expect(store.pullRequests('tree')).toBeUndefined();
   });
 
   it('publishes no GitHub state at all where there is no GitHub port', async () => {
