@@ -286,6 +286,25 @@ it('is an empty list before anybody says otherwise, because the field is require
   expect(await clientsIn(client, URI)).toEqual([]);
 });
 
+/*
+ * A client announcing itself in a session this host does not have is refused
+ * as VS Code's restore refuses a session it finds no agent for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+ */
+it('refuses an announcement in a session nobody has, in VS Code\'s restore words', async () => {
+  const held = host();
+  const { client, peer: p } = await joins(held, 'one');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/nobody', clientSeq: 3, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', tools: [] } } },
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  const refused = p.notes.filter((note) => note.method === 'action')
+    .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
+    .filter((reason) => reason !== undefined);
+  expect(refused).toEqual(['No agent for session: ahp-session:/nobody']);
+});
+
 it('shows one client to another, which is the whole reason a host keeps it', async () => {
   const held = host();
   const a = await joins(held, 'one');

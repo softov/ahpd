@@ -800,30 +800,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
 
     if (type === 'session/activeClientSet') {
-      // `titles` is keyed by the bare id, so the URI has to come off before
-      // it is asked. Under the whole channel this never matched, and every
-      // client announcing itself in a session read from a transcript - the
-      // ordinary way one is opened - was dropped in silence. It became
-      // audible only once dropping stopped being silent.
       /*
-       * Known to this host, which is not the same as running here.
-       *
-       * `owners` is every session the catalogue has listed and every one
-       * this host started; `titles` is only the ones whose transcript
-       * somebody has opened. Asking `titles` turned away a client
-       * announcing itself in a row `listSessions` had returned a moment
-       * earlier - which is the ordinary case, because a client announces
-       * itself when it opens a row rather than after reading it.
+       * A session this host runs, or one the catalogue lists, takes the entry,
+       * whatever became of its backend: a client announces itself when it
+       * opens a row, before or after reading it. Any other session is refused
+       * as the reference host's restore refuses a session it finds no agent
+       * for.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
        */
       if (!sessions.has(channel) && !owners.has(channel)) {
-        no(`${channel} is not a session here`);
-        return;
-      }
-      // A session whose backend has ended takes no client into it, and says why.
-      const running = sessions.get(channel);
-      const over = running === undefined ? undefined : ctx.leadOf(running)?.ended?.();
-      if (over !== undefined) {
-        no(over);
+        no(`No agent for session: ${channel}`);
         return;
       }
       const activeClient = (typeof action.activeClient === 'object' && action.activeClient !== null

@@ -1966,7 +1966,13 @@ it('an agent no plugin registered is refused nested with a sentence, and nothing
   await host.close();
 });
 
-it('a client announcing itself in a nested session that ended is refused with the sentence it ended with', async () => {
+/*
+ * A client announcing itself is taken in a session whose backend ended as in
+ * any other, as VS Code's host takes an active client whatever its agent's
+ * process did.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+ */
+it('a client announcing itself in a nested session that ended is taken', async () => {
   const real: Agent = { ...backend(), runsNested: true };
   const host = createHost({ path: REPO_ROOT, agents: [real], computers: { how: async () => ({ command: 'true', args: [] }) } });
   const peer = watching();
@@ -1975,10 +1981,11 @@ it('a client announcing itself in a nested session that ended is refused with th
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
-  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } } });
-  const refused = (): Bag | undefined => peer.seen.find(({ params }) => params?.action?.type === 'session/activeClientSet' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 200);
-  expect(String(refused()?.rejectionReason)).toMatch(/which plugin/);
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/activeClientSet', activeClient: { clientId: 'window', tools: [] } } } });
+  const answered = (): Bag | undefined => peer.seen.find(({ params }) => params?.action?.type === 'session/activeClientSet' && params?.origin?.clientSeq === 1)?.params;
+  await until(() => answered() !== undefined, 200);
+  expect(answered()?.rejectionReason).toBeUndefined();
   await host.close();
 });
 
