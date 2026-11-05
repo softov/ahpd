@@ -626,7 +626,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
           turns: ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[]),
-          queuedMessages: [],
           ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
         },
       };
@@ -658,7 +657,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             (one.turns ?? []) as Bag[],
             workers.filter((held) => String(held.parentToolCallId ?? '') === wanted),
           )),
-          queuedMessages: [],
         },
       };
     }
@@ -674,7 +672,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           modifiedAt: stamp,
           ...startedBy(nameOf(id)),
           turns: ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers)),
-          queuedMessages: [],
           // Kept in the session's record. A client that typed into this row
           // and came back finds what it typed, which is what a draft is for.
           ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),

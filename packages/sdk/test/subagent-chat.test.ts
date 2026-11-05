@@ -317,6 +317,17 @@ it('answers a subscribe to the worker with its own state, and ends a turn on it 
   expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'readOnly', message: 'This chat is read-only.' } });
 });
 
+/*
+ * A worker chat opens with no queue, as VS Code's host opens a chat's state:
+ * the protocol says a chat has nothing queued by the field's absence.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L660-L676
+ */
+it('opens a worker chat with no queue, as VS Code\'s host opens a chat', async () => {
+  const { ask, worker } = await running();
+  const answer = await ask('subscribe', { channel: worker }) as { snapshot: { state: Bag } };
+  expect(answer.snapshot.state).not.toHaveProperty('queuedMessages');
+});
+
 it('names the worker chat that spawned a nested one as its parent', async () => {
   const { uri, worker, inner } = await running();
   const added = on(uri).filter((one) => one.type === 'session/chatAdded');

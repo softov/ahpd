@@ -391,7 +391,6 @@ export function createSpawn(ctx: HostContext): Spawn {
         origin: { kind: 'tool', chat: parentChat, toolCallId },
         interactivity: 'read-only',
         turns: [],
-        queuedMessages: [],
       });
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
       // The session's row is where a client listing sessions reads its chats,

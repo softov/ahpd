@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
@@ -398,6 +399,89 @@ it('replays to a client back from a drop onto what it holds, its session let go 
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
   });
   expect(answer).toMatchObject({ type: 'replay', missing: [] });
+});
+
+/*
+ * The replay onto a released session holds: a client that held the chat from
+ * before the release, replayed what landed after the chat was read back from
+ * its record, holds what a client subscribing now is served. The actions since
+ * the release apply to the state read back, so this is the condition that
+ * replay rests on.
+ */
+it('leaves a client replayed onto a chat read back after its release with what a new subscriber is served', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as {
+    snapshot: { state: Bag; fromSeq: number };
+  };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  // Read back from its record by another window, and something said after.
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  await other.handle({ method: 'subscribe', params: { channel: one.chatUri } });
+  await other.handle({
+    method: 'dispatchAction',
+    params: { channel: one.chatUri, action: { type: 'chat/draftChanged', draft: { text: 'after the release', origin: { kind: 'user' } } } },
+  });
+  await settle(4);
+
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.chatUri] },
+  }) as { type: string; actions: { channel: string; action: Bag }[] };
+  expect(answer.type).toBe('replay');
+  const replayed = answer.actions
+    .filter((one_) => one_.channel === one.chatUri)
+    .reduce((state, one_) => chatReducer(state as never, one_.action as never) as unknown as Bag, seen.snapshot.state);
+  const newcomer = host.accept(peer());
+  await newcomer.handle({ method: 'initialize', params: { clientId: 'newcomer', protocolVersions: ['0.9.0'] } });
+  const fresh = await newcomer.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as {
+    snapshot: { state: Bag };
+  };
+  /*
+   * Compared with each turn's start and the chat's last change taken off,
+   * which VS Code's own restore reads from the agent's record: a restored turn
+   * starts at its SDK message's time, and a restored default chat last changed
+   * at the agent's modified time, so its replay onto a restored session holds
+   * the record's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L287
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L354
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14773
+   */
+  const untimed = ({ modifiedAt: _at, ...state }: Bag): Bag => ({
+    ...state,
+    turns: ((state.turns ?? []) as Bag[]).map(({ startedAt: _started, ...turn }) => turn),
+  });
+  expect(untimed(replayed)).toEqual(untimed(fresh.snapshot.state));
+});
+
+/*
+ * A chat read back from its record holds no queue where nothing is queued, as
+ * it held none live: the protocol's reducer clears an emptied queue to
+ * nothing, and VS Code's host opens a chat's state with none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L660-L676
+ */
+it('reads a chat back after its release with no queue where nothing is queued, as it held live', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const live = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = await other.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  expect(live.snapshot.state).not.toHaveProperty('queuedMessages');
+  expect(back.snapshot.state).not.toHaveProperty('queuedMessages');
 });
 
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
