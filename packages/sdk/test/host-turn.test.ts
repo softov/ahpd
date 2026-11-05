@@ -971,7 +971,12 @@ describe('running a failed turn again', () => {
     expect(state.turns).toEqual([]);
   });
 
-  it('refuses one that is not the latest turn', async () => {
+  /*
+   * In the words VS Code's host refuses a resume of a turn that is not the
+   * latest resumable errored one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13511-L13513
+   */
+  it('refuses one that is not the latest turn, in VS Code\'s words', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -981,7 +986,26 @@ describe('running a failed turn again', () => {
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('is not the latest turn'))).toBe(true);
+    expect(refused).toContain('The requested turn is not the latest resumable errored turn.');
+  });
+
+  /*
+   * A session filed away takes no resume, in VS Code's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13508-L13510
+   */
+  it('refuses one on an archived session, in VS Code\'s words', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 'nothing' } },
+    });
+    await settle();
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused).toContain('Cannot resume a read-only or archived chat.');
   });
 
   it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
@@ -1010,7 +1034,7 @@ describe('running a failed turn again', () => {
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('did not end with an error that can be resumed'))).toBe(true);
+    expect(refused).toContain('The requested turn is not the latest resumable errored turn.');
     // Nothing started, which is what calling the backend would have begun.
     expect(sessionQueries()).toHaveLength(clis);
     const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {

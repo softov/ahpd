@@ -487,17 +487,13 @@ const REFUSALS: Record<string, {
       && (part.toolCall as { status?: unknown }).status === 'pending-confirmation'),
   }],
   'chat/turnResume': [{
-    said: () => 'A turn is running in this chat',
+    said: () => 'Cannot resume while a turn is active.',
     source: RESUMED,
     holds: (state) => state.activeTurn !== undefined && state.activeTurn !== null,
   }, {
-    said: (action) => `${String(action.turnId)} is not the latest turn`,
+    said: () => 'The requested turn is not the latest resumable errored turn.',
     source: RESUMED,
-    holds: (state, action) => ((state.turns ?? []) as Record<string, unknown>[]).at(-1)?.id !== action.turnId,
-  }, {
-    said: (action) => `${String(action.turnId)} did not end with an error that can be resumed`,
-    source: RESUMED,
-    holds: (state, action) => !resumable(state, action.turnId),
+    holds: (state, action) => ((state.turns ?? []) as Record<string, unknown>[]).at(-1)?.id !== action.turnId || !resumable(state, action.turnId),
   }],
   'chat/inputAnswerChanged': [{
     said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,

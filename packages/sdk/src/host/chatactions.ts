@@ -1497,38 +1497,30 @@ export function chatAction(
     /*
      * The latest turn, run again rather than typed again.
      *
-     * The protocol's own conditions - latest, errored, message and parts
-     * intact - are the backend's to check, because only it knows what
-     * its last turn was. A backend that cannot re-run one says so here
-     * rather than being asked to.
+     * The reference host's conditions, read off the chat's held state in its
+     * order and refused in its words: no turn running, a chat that takes
+     * input, the latest turn errored with a resumable error as its last
+     * part, and a backend that can run a turn again.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13490-L13516
      */
     case 'chat/turnResume': {
-      if (session.resumeTurn === undefined) {
-        no('this backend cannot run a turn again');
-        break;
-      }
-      /*
-       * The protocol's conditions, read off the chat's held state as the
-       * reference reads them: no turn running, and the latest turn errored
-       * with a resumable error as its last part. Asking anyway turns a
-       * client's mistake into the backend's, and a backend that reopens a
-       * turn it should not takes a prompt out of the transcript for nothing.
-       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L354
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L13463-L13489
-       */
       const named = String(action.turnId ?? '');
-      if (activeHeld !== undefined) {
-        no('A turn is running in this chat');
-        break;
-      }
       const last = (Array.isArray(chatHeld.turns) ? chatHeld.turns as Bag[] : []).at(-1);
-      if (last === undefined || String(last.id ?? '') !== named) {
-        no(`${named} is not the latest turn`);
+      const part = (last?.responseParts as Bag[] | undefined)?.at(-1) ?? {};
+      if (activeHeld !== undefined) {
+        no('Cannot resume while a turn is active.');
         break;
       }
-      const part = (last.responseParts as Bag[] | undefined)?.at(-1) ?? {};
-      if (last.state !== 'error' || part.kind !== 'error' || part.resumable !== true) {
-        no(`${named} did not end with an error that can be resumed`);
+      if ((kept.flags(idOf(session.uri)) & Status.IsArchived) !== 0 || chatHeld.interactivity === 'readOnly') {
+        no('Cannot resume a read-only or archived chat.');
+        break;
+      }
+      if (last === undefined || String(last.id ?? '') !== named || last.state !== 'error' || part.kind !== 'error' || part.resumable !== true) {
+        no('The requested turn is not the latest resumable errored turn.');
+        break;
+      }
+      if (session.resumeTurn === undefined) {
+        no('The session provider does not support turn resume.');
         break;
       }
       /*
