@@ -986,8 +986,9 @@ is what the window reads to offer the two.
 
 ### Worktrees the window manages
 
-A session made with `isolation: worktree` gets a tree of its own, and the
-reference window has five requests of its own for such trees, made when
+A session made with `isolation: worktree` gets a tree of its own at its first
+send, and the reference window has five requests of its own for such trees,
+made when
 `initialize` says `_meta['vscode.detachedWorktrees']`. They are served here
 over the same trees, so the window's "new session in a worktree" flow runs
 against this host unchanged. `vscode/createAgentHostDetachedWorktree` answers a

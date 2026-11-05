@@ -570,14 +570,15 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   /** What this host answered, in the shape it answered it, for saying back on the session. */
   const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
     Object.entries(config)
-      // A string, a list of strings for the two pattern keys, or the alias map
-      // `connectors` holds - each said back in the shape it was given - and a
-      // key this host takes, as it was sent.
+      // A string, the strings of a list for the two pattern keys, or the alias
+      // map `connectors` holds, and a key this host takes, as it was sent: an
+      // entry of a pattern list that is no pattern is dropped, and the tree a
+      // first send makes from these brings along the rest.
       .filter(([key, value]) => Object.hasOwn(HOSTS_TAKEN, key) || (HOSTS_OWN.includes(key)
-        && (typeof value === 'string'
-          || (Array.isArray(value) && value.every((one) => typeof one === 'string'))
-          || (key === 'connectors' && isAliasMap(value)))))
-      .map(([key, value]) => [key, value]),
+        && (typeof value === 'string' || Array.isArray(value) || (key === 'connectors' && isAliasMap(value)))))
+      .map(([key, value]) => [key, !Object.hasOwn(HOSTS_TAKEN, key) && Array.isArray(value)
+        ? value.filter((one): one is string => typeof one === 'string')
+        : value]),
   );
 
   return {

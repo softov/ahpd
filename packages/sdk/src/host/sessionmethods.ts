@@ -60,8 +60,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, drafts, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, isolated, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
-    movable, movableMoved, openSession, openedBy, options, orderChats,
+    isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
+    movable, movableMoved, openSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
     snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake,
@@ -990,32 +990,27 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // at. A backend that cannot take them is told none.
         const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
         /*
-         * The worktree, before anything is started in it.
-         *
-         * Made first because the backend is handed a directory and expected
-         * to work in it: a session opened in the folder and then moved would
-         * be an agent whose files changed under it. A failure here is a
-         * session that never existed, which is the right outcome - the
-         * alternative is one running somewhere the person did not choose.
-         */
-        /*
-         * How far along, for the one thing here that takes visible time.
+         * How far along.
          *
          * `root/progress` echoes the `progressToken` the request carried, so
          * it is sent only when the client asked for one - and only to the
          * client that asked, because the token is that request's and means
-         * nothing to anybody else. Making a worktree is `git worktree add`
-         * plus a copy of whatever the client asked to bring along, which on
-         * a large repository is seconds a person otherwise waits through
-         * with nothing on screen.
+         * nothing to anybody else.
          */
         const token = typeof params.progressToken === 'string' ? params.progressToken : undefined;
         const along = (progress: number, message: string): void => {
           if (token === undefined) return;
           connection.peer.notify('root/progress', { channel: ROOT, progressToken: token, progress, total: 2, message });
         };
-        along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
-        const running = await isolated(uri, config, where);
+        along(0, 'Starting the session');
+        /*
+         * A worktree session runs in the folder the client picked until its
+         * first send, which makes the tree and starts the session again in
+         * it, as VS Code's host resolves a session's worktree on the first
+         * send: a folder that cannot hold one fails that send.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
+         */
+        const running = where;
         along(1, 'Starting the agent');
         await settle(uri, where, config, connection.principal);
         /*
@@ -1077,6 +1072,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           if (here?.size === 0) presence.delete(idOf(uri));
           throw error;
         }
+        // The tree its first send makes, owed as the start again that send runs.
+        oweTree(uri, conn.tokensFor(provider), connection, conn.tokensFor);
         // Complete, which the protocol spells as `progress === total`.
         along(2, 'Ready');
         if (activeClient !== undefined) {

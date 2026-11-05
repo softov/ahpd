@@ -1140,6 +1140,11 @@ const openInTree = async (repository_: string, changes: ChangesetSource, agent: 
       config: { isolation: 'worktree', branch: 'main' },
     },
   });
+  // Its first message, at which its tree is cut and it is announced.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
   await waitFor(() => git(repository_, 'worktree', 'list', '--porcelain').includes('refs/heads/agents/'));
   return { client, peer: p, where: cutTree(repository_) };
 };
@@ -1177,7 +1182,8 @@ it('moves a worktree row at a tool call, from its branch, before the turn ends',
   const project = insideAProject();
   const { held, agent } = endable(project);
   const { client, peer: p, where } = await openInTree(project, gitChanges(), agent);
-  await waitFor(() => rowsMoved(p, SESSION).length > 0);
+  await waitFor(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  await settle(8);
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(where, 'from-tool.txt'), 'made\n');

@@ -202,12 +202,16 @@ const hosting = async (setup: Setup = {}) => {
     await (await say(channel)).done;
     return channel;
   };
-  /** Start a turn on a session's default chat, answering once it is over. */
-  const say = async (channel: string): Promise<{ where: string; chat: string; done: Promise<void> }> => {
-    const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
+  /**
+   * Start a turn on a session's default chat. `done` answers once the turn is
+   * over, with the folder the session works in then: a worktree session's
+   * tree is made at its first send.
+   */
+  const say = async (channel: string): Promise<{ chat: string; done: Promise<string> }> => {
+    const state = async () => (await client.handle({ method: 'subscribe', params: { channel } }) as {
       snapshot: { state: { defaultChat: string; workingDirectories: string[] } };
     }).snapshot.state;
-    const chat = state.defaultChat;
+    const chat = (await state()).defaultChat;
     const turns = async (): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { state: { turns: unknown[] } };
     }).snapshot.state.turns.length);
@@ -218,10 +222,12 @@ const hosting = async (setup: Setup = {}) => {
     });
     const done = (async () => {
       for (let tries = 0; tries < 400 && await turns() === before; tries++) await pause();
+      const where = localPath((await state()).workingDirectories[0] ?? '');
       await client.handle({ method: 'unsubscribe', params: { channel: chat } });
       await client.handle({ method: 'unsubscribe', params: { channel } });
+      return where;
     })();
-    return { where: localPath(state.workingDirectories[0] ?? ''), chat, done };
+    return { chat, done };
   };
   /** Archive or unarchive a session, as a person does. */
   const archive = (channel: string, isArchived: boolean) => client.handle({
@@ -399,12 +405,11 @@ describe('the tree of a session the host archived', () => {
     const pulls = github();
     const h = await hosting({ dir: root, agent: echo({ path: project, pace: 0 }), worktrees: gitWorktrees(), port: pulls.port, ...setup });
     const one = await h.open('treed', { isolation: 'worktree', branch: 'main' }, project);
-    const turn = await h.say(one);
-    await turn.done;
+    const where = await (await h.say(one)).done;
     h.owns(one, [PR1]);
     pulls.states.set(PR1, 'merged');
-    const branch = git(turn.where, 'rev-parse', '--abbrev-ref', 'HEAD');
-    return { h, one, where: turn.where, branch, project };
+    const branch = git(where, 'rev-parse', '--abbrev-ref', 'HEAD');
+    return { h, one, where, branch, project };
   };
 
   /** Archive it by the pass. */

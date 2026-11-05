@@ -402,7 +402,7 @@ export function createTooling(ctx: HostContext): Tooling {
     activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
-    isolated, settle, openSession, backendsOwn, removeSession, spawn,
+    settle, openSession, backendsOwn, removeSession, spawn,
   } = ctx;
   /**
    * Where a decision that outlives one session is kept, or nothing for a host
@@ -1891,9 +1891,9 @@ export function createTooling(ctx: HostContext): Tooling {
         ...(model !== undefined ? { model } : {}),
       };
       // The same steps `createSession` takes for a client, in the same order:
-      // the tree before anything runs in it, the host's keys kept apart from
-      // the backend's.
-      const where = await isolated(made, config, asked.workingDirectory);
+      // the host's keys kept apart from the backend's, and a worktree made at
+      // the first send.
+      const where = asked.workingDirectory;
       await settle(made, asked.workingDirectory, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
@@ -1914,6 +1914,7 @@ export function createTooling(ctx: HostContext): Tooling {
        * whichever scheme this host is publishing it by then.
        */
       kept.setParent?.(idOf(made), idOf(uri));
+      ctx.oweTree(made, {}, undefined, () => ({}));
       const lead = byChat.get(chatUriFor(made));
       if (lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
@@ -2114,10 +2115,11 @@ export function createTooling(ctx: HostContext): Tooling {
           ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };
-        const where = await isolated(made, config, asked.workingDirectory);
+        const where = asked.workingDirectory;
         await settle(made, asked.workingDirectory, config);
         openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
+        ctx.oweTree(made, {}, undefined, () => ({}));
         const lead = byChat.get(chatUriFor(made));
         if (lead === undefined) throw new Error(`${made} did not start`);
         const first = crypto.randomUUID();

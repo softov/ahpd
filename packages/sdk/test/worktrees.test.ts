@@ -180,6 +180,14 @@ const say = async (client: Awaited<ReturnType<typeof joined>>['client'], chat: s
   await client.handle({ method: 'unsubscribe', params: { channel: chat } });
 };
 
+/** A session's first send, which makes a worktree session's tree, finished. */
+const firstSent = async (client: Awaited<ReturnType<typeof joined>>['client'], uri: string): Promise<void> => {
+  const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state;
+  await say(client, defaultChat, 'first');
+};
+
 /**
  * A session's tree and its default chat, after one finished turn and with
  * nobody watching either: the state a session has to be in to sleep.
@@ -189,10 +197,14 @@ const spoken = async (
   uri: string,
 ): Promise<{ where: string; chat: string }> => {
   const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-    snapshot: { state: { defaultChat: string; workingDirectories: string[] } };
+    snapshot: { state: { defaultChat: string } };
   }).snapshot.state;
-  const where = localPath(state.workingDirectories[0] ?? '');
+  // Read after the turn: a worktree session's tree is made at its first send.
   await say(client, state.defaultChat, 't1');
+  const after = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { workingDirectories: string[] } };
+  }).snapshot.state;
+  const where = localPath(after.workingDirectories[0] ?? '');
   await client.handle({ method: 'unsubscribe', params: { channel: uri } });
   return { where, chat: state.defaultChat };
 };
@@ -230,7 +242,13 @@ describe('a session with a working tree of its own', () => {
     expect(nothing.schema.properties?.isolation).toBeUndefined();
   });
 
-  it('makes a worktree on a branch of its own, and runs the session there', async () => {
+  /*
+   * The tree is made at the first send, as VS Code's host resolves a session's
+   * worktree on the first send: until then the session reports the folder the
+   * client picked.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
+   */
+  it('makes a worktree on a branch of its own at the first send, and runs the session there', async () => {
     const root = repository();
     const { client } = await joined(root);
     const uri = 'ahp-session:/isolated';
@@ -243,10 +261,15 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main' },
       },
     });
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { workingDirectories: string[] } };
+    const picked = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[]; defaultChat: string } };
     }).snapshot.state;
-    const where = localPath(state.workingDirectories[0] ?? '');
+    expect(picked.workingDirectories.map(localPath)).toEqual([project(root)]);
+    expect(existsSync(worktreesOf(project(root)))).toBe(false);
+
+    await say(client, picked.defaultChat, 't1');
+    const state = await until(client, uri, (held) => (held.workingDirectories ?? []).some((one) => localPath(one).startsWith(worktreesOf(project(root)))));
+    const where = localPath(state.workingDirectories?.[0] ?? '');
     expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
     expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
 
@@ -254,6 +277,26 @@ describe('a session with a working tree of its own', () => {
     // other. `--no-track`, so a push inside it does not go at `main`.
     const said = execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
     expect(said).toMatch(/^agents\//);
+  });
+
+  it('makes a worktree session in a folder with no repository, and fails its first send', async () => {
+    const root = repository();
+    const plain = join(root, 'plain');
+    mkdirSync(plain);
+    const { client, peer: p } = await joined(root);
+    const uri = 'ahp-session:/plain';
+    expect(await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(plain)], config: { isolation: 'worktree' } },
+    })).toBeNull();
+    const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    await say(client, defaultChat, 't1');
+    const failed = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string; part?: unknown } })
+      .find((one) => one.channel === defaultChat && one.action?.type === 'chat/error');
+    expect(failed?.action?.part).toMatchObject({ error: { errorType: 'sendFailed', message: `${plain} is not a git repository, so it has no worktrees` } });
   });
 
   it('puts every session tree under the root the host was given', async () => {
@@ -280,6 +323,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main' },
       },
     });
+    await firstSent(client, uri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state;
@@ -310,6 +354,7 @@ describe('a session with a working tree of its own', () => {
           config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: sent },
         },
       });
+      await firstSent(client, 'ahp-session:/carried');
       const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
         snapshot: { state: { workingDirectories: string[] } };
       }).snapshot.state;
@@ -400,6 +445,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: ['.env', 7] },
       },
     });
+    await firstSent(client, 'ahp-session:/odd');
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/odd' } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state;
@@ -421,6 +467,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['node_modules'] },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -453,6 +500,7 @@ describe('a session with a working tree of its own', () => {
           config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: [pattern] },
         },
       });
+      await firstSent(client, uri);
       const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
         snapshot: { state: { workingDirectories: string[] } };
       }).snapshot.state.workingDirectories[0] ?? '');
@@ -477,6 +525,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['node_modules'] },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -504,6 +553,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['../elsewhere', 'node_modules'] },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -817,6 +867,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main', worktreeBranchPrefix: 'softov/' },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -838,6 +889,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'release', worktreeCreateNewBranch: 'false' },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -879,6 +931,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main' },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -903,6 +956,7 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'worktree', branch: 'main' },
       },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');
@@ -1412,6 +1466,7 @@ describe('a worktree the window holds a handle on', () => {
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))], config: { isolation: 'worktree', branch: 'main' } },
     });
+    await firstSent(client, uri);
     const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '');

@@ -393,6 +393,11 @@ const inWorktree = async (vouching: string[]) => {
       workingDirectories: [uriOf(A)],
     },
   });
+  // Its first message, at which a worktree session's tree is made.
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/tree'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
   await settle(60);
   return { tree: made[0] as string, told };
 };

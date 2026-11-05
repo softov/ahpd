@@ -233,7 +233,7 @@ export function createAutomations(ctx: HostContext): Automations {
   const {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
-    isolated, settle, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
+    settle, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
     turnInstructions,
   } = ctx;
 
@@ -706,9 +706,10 @@ export function createAutomations(ctx: HostContext): Automations {
    * Two roads reach here, and they are the two ways this host starts work for a
    * person who is not at the keyboard: an automation's run, and a plugin asking
    * for one. Neither may take a shorter route than a client, so the steps are
-   * here once - the tree is isolated, the owner's policies and grants are asked
-   * about, the machine the config names is made, and the first turn is sent -
-   * and what each road adds is the question that is its own.
+   * here once - the owner's policies and grants are asked about, the machine
+   * the config names is made, and the first turn is sent, which makes the tree
+   * of a worktree session - and what each road adds is the question that is
+   * its own.
    */
   const beginSession = async (wanted: StartSession, named?: (uri: string) => void): Promise<string> => {
     const provider = wanted.provider ?? ctx.first?.provider;
@@ -719,7 +720,7 @@ export function createAutomations(ctx: HostContext): Automations {
     /*
      * Told before anything is made, which is what puts a plugin's own answer
      * in the first tool list: the backend is spawned with the list built
-     * while the tree is being isolated, so a reader that learns the URI after
+     * while the session is being set up, so a reader that learns the URI after
      * the start answers has already missed it.
      *
      * A door that throws has heard as much as it could and is not this
@@ -733,11 +734,10 @@ export function createAutomations(ctx: HostContext): Automations {
       }
     }
     const config = wanted.config ?? {};
-    // The same two steps a client's `createSession` takes: the tree is made
-    // before anything runs in it, and the host's own keys are not the
-    // backend's to read. An automation asking for isolation is the case this
-    // exists for - nobody is at the keyboard to notice two of them colliding.
-    const where = await isolated(uri, config, wanted.workingDirectory);
+    // The same steps a client's `createSession` takes: the host's own keys
+    // are not the backend's to read, and a worktree is made at the first send,
+    // which a run makes at once.
+    const where = wanted.workingDirectory;
     await settle(uri, wanted.workingDirectory, config);
     /*
      * The two checks a client's `createSession` makes, asked here too and before
@@ -841,6 +841,7 @@ export function createAutomations(ctx: HostContext): Automations {
         ...(wanted.userSettings === undefined ? {} : { userSettings: wanted.userSettings }),
       },
     );
+    ctx.oweTree(uri, {}, undefined, () => ({}));
     fireRun(wanted);
     beginIn(uri, wanted);
     return uri;

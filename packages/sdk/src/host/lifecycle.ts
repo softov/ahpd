@@ -132,6 +132,8 @@ export interface Lifecycle {
     where: string | undefined,
     before?: BeforeWorktree,
   ): Promise<string | undefined>;
+  /** A worktree session's tree, owed to its first send, which starts the session again in it. */
+  oweTree(uri: string, credentials: Record<string, string>, sender: Connection | undefined, tokensFor: (provider: string) => Record<string, string>): void;
   /**
    * An archived session's tree taken away once the session has stopped, with
    * its branch kept for `restore`. `after` is what has to settle first: the
@@ -1137,6 +1139,23 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     chatUri === chatUriFor(uri) ? undefined : own ?? chatIdFor(uri, chatUri);
 
   /**
+   * A worktree session's tree, owed to its first send: the start again that
+   * send runs makes the tree from the config the session holds by then and
+   * starts the session in it, and one its folder cannot hold fails that send,
+   * as VS Code's host resolves a session's worktree on the first send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
+   */
+  const oweTree = (
+    uri: string,
+    credentials: Record<string, string>,
+    sender: Connection | undefined,
+    tokensFor: (provider: string) => Record<string, string>,
+  ): void => {
+    if (options.worktrees === undefined || decided.get(uri)?.isolation !== 'worktree' || worktreeOf(uri) !== undefined) return;
+    ctx.relaunches.set(uri, { config: {}, credentials, sender, tokensFor });
+  };
+
+  /**
    * Where a session actually runs, once isolation has been answered.
    *
    * Answered here rather than in the backend because the tree is the host's:
@@ -1498,9 +1517,38 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const startTurn =(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined => {
     sayStart(session, turnId, text, model, from, attachments);
     const command = commandIn(session, text);
-    if (command === undefined) return sendTurn(session, turnId, text, model, from, attachments);
-    ctx.bang(session, session.chatUri, turnId, command);
-    return undefined;
+    if (command !== undefined) {
+      ctx.bang(session, session.chatUri, turnId, command);
+      return undefined;
+    }
+    /*
+     * A relaunch the session owes runs as the turn's preparation, as it does
+     * for a client's turn, since this is the session's next turn boundary: a
+     * worktree session's tree made at its first send among them. The turn then
+     * goes to the chat the relaunch brought back, and one that fails ends the
+     * turn as a send that failed.
+     */
+    if (ctx.relaunches.has(session.uri)) {
+      const chatUri = session.chatUri;
+      const since = Date.now();
+      const failed = (error: unknown): void => {
+        dispatch(chatUri, {
+          type: 'chat/error',
+          turnId,
+          duration: Math.max(0, Date.now() - since),
+          part: { kind: 'error', error: { errorType: 'sendFailed', message: error instanceof Error ? error.message : String(error) } },
+        });
+      };
+      return relaunch(session.uri).then(() => {
+        const back = byChat.get(chatUri)?.chat;
+        if (back === undefined) {
+          failed(new Error(`${chatUri} did not start again`));
+          return undefined;
+        }
+        return sendTurn(back, turnId, text, model, from, attachments);
+      }, failed);
+    }
+    return sendTurn(session, turnId, text, model, from, attachments);
   };
 
   /**
@@ -2125,7 +2173,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
-    chatAgent, chatConfig, isolated,
+    chatAgent, chatConfig, isolated, oweTree,
     shelve, restore, beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
   };
 }
