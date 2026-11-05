@@ -631,7 +631,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (toolName === 'AskUserQuestion') return {};
     if (ctx.options.getAutoApproval?.('tool', referenceName(toolName, input.mcp_server?.name)) !== 'ask') return {};
     const callId = input.tool_use_id;
-    if (ctx.settings.permissionMode === 'dontAsk') {
+    if (ctx.config.permissionMode === 'dontAsk') {
       remember(callId, 'deny');
       return {
         hookSpecificOutput: {

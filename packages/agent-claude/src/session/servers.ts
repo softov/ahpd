@@ -359,17 +359,17 @@ export function createServers(ctx: SessionContext): Servers {
     try {
       do {
         again = false;
-        if (ctx.closed) return;
+        if (ctx.disposed) return;
         const answered = await Promise.all([
           ctx.query.reloadPlugins().then((r) => bag(r as unknown)),
           ctx.query.reloadSkills().then((r) => list(bag(r as unknown).skills)),
         ]).catch(() => undefined);
-        if (answered === undefined || ctx.closed) continue;
+        if (answered === undefined || ctx.disposed) continue;
         const [plugins, skills] = answered;
         reported.init = { ...reported.init, agents: list(plugins.agents), commands: list(plugins.commands) };
         reported.skills = skills;
         laid(list(plugins.plugins));
-      } while (again && !ctx.closed);
+      } while (again && !ctx.disposed);
     }
     finally {
       rereading = false;
@@ -403,7 +403,7 @@ export function createServers(ctx: SessionContext): Servers {
        */
       ctx.query.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
     ]);
-    ctx.offered = list(init.models)
+    ctx.models = list(init.models)
       .map((raw) => {
         const model = bag(raw);
         // `value`, not `id`. Reading the wrong name costs every model there
@@ -411,7 +411,7 @@ export function createServers(ctx: SessionContext): Servers {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '' && model.id !== SDK_DEFAULT_MODEL_VALUE);
-    if (ctx.options.offerModels) ctx.offered = await ctx.options.offerModels(ctx.offered);
+    if (ctx.options.offerModels) ctx.models = await ctx.options.offerModels(ctx.models);
     /*
      * The style the preset names, applied once the CLI is there to take it.
      *
@@ -434,7 +434,7 @@ export function createServers(ctx: SessionContext): Servers {
      * listed without a restart. Not for a session in a machine, whose CLI
      * reads its own config volume, and not for one closed while it waited.
      */
-    if (ctx.options.spawn === undefined && !ctx.closed && unwatch === undefined) {
+    if (ctx.options.spawn === undefined && !ctx.disposed && unwatch === undefined) {
       unwatch = watchFolders({
         configDir: configDirOf(ctx.options.env),
         ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),

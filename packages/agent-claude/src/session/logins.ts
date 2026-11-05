@@ -320,16 +320,16 @@ export function createLogins(ctx: SessionContext): Logins {
       if (cut.over === true) {
         // Stopped before the delete, so nothing writes the conversation back.
         await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
-        if (ctx.agentId !== undefined) {
-          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, reason);
+        if (ctx.sdkSessionId !== undefined) {
+          failed = await forgetSession(ctx.sdkSessionId, ctx.options.cwd).then(() => undefined, reason);
         }
-        if (ctx.closed) return { started: false, ...(failed === undefined ? {} : { failed }) };
+        if (ctx.disposed) return { started: false, ...(failed === undefined ? {} : { failed }) };
       }
       if (failed === undefined) ctx.ends.delete(turn);
       ctx.gone = undefined;
       ctx.query = cut.over !== true
-        ? ctx.startQuery(ctx.running, false, cut.at)
-        : ctx.startQuery(ctx.running, failed === undefined);
+        ? ctx.startQuery(ctx.appliedAgent, false, cut.at)
+        : ctx.startQuery(ctx.appliedAgent, failed === undefined);
       void ctx.consume();
       return { started: true, ...(failed === undefined ? {} : { failed }) };
     }
@@ -347,9 +347,9 @@ export function createLogins(ctx: SessionContext): Logins {
     const held = move;
     const turn = ctx.active;
     if (held === undefined || turn === undefined || held.turn !== String(turn.id)) return;
-    // The steering messages the CLI owes the turn an answer to, which it takes
-    // with it when it is put away.
-    const steers = [...ctx.owed.values()].filter((owed) => owed.steering && owed.turn === held.turn);
+    // The turn's steering messages still among the yielded entries, which the
+    // CLI takes with it when it is put away.
+    const steers = [...ctx.yielded.values()].filter((pending) => pending.steering && pending.turnId === held.turn);
     const restarted = await restartAt(held.turn, held, login);
     // A session closed while its conversation was deleted starts nothing.
     if (!restarted.started) return;

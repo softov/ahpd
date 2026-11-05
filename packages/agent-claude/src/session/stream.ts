@@ -246,7 +246,7 @@ export function createStream(ctx: SessionContext): Stream {
          * is still read; only the row a client would draw is left out.
          */
         if (ctx.options.plan === true && name === 'TodoWrite') return;
-        scope.calling.set(key, id);
+        scope.activeToolBlocks.set(key, id);
         if (scope.parts.has(id)) return;
         // A spawning call's spawn, recorded at its block's start as VS Code's
         // mapper records it, so its worker's chat opens on the worker's first
@@ -304,7 +304,7 @@ export function createStream(ctx: SessionContext): Stream {
     }
 
     if (type === 'content_block_delta') {
-      const toolCallId = scope.calling.get(key);
+      const toolCallId = scope.activeToolBlocks.get(key);
       if (toolCallId !== undefined) {
         const json = str(bag(event.delta).partial_json);
         const call = bag(scope.parts.get(toolCallId)?.toolCall);

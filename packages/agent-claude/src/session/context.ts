@@ -14,21 +14,26 @@ import type { Stream } from './stream.js';
 import type { Turns } from './turns.js';
 import type { Workers } from './workers.js';
 
-/** A prompt the CLI was handed, for as long as no result has named it. */
-export interface Owed {
+/**
+ * A prompt the CLI was handed, for as long as no result has named it: VS
+ * Code's pending SDK message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L24-L32
+ */
+export interface PendingSdkMessage {
   /** What it said, which a turn opened for its answer carries. */
   message: Bag;
   /** Whether it steers a turn rather than starting one. */
   steering: boolean;
   /** The turn its answer belongs to: its own, or the one it steers. */
-  turn: string;
+  turnId: string;
   /** A steering message's own id, the one a client knows it by. */
   id?: string;
   /**
-   * What the CLI said it did with it, from its `command_lifecycle` frames:
-   * nothing yet, `queued` once it holds it, `started` once it took it in.
+   * What the CLI said it did with it, from the `state` of its
+   * `command_lifecycle` frames: nothing yet, `queued` once it holds it,
+   * `started` once it took it in.
    */
-  cli: 'sent' | 'queued' | 'started';
+  lifecycle: 'sent' | 'queued' | 'started';
 }
 
 /**
@@ -235,8 +240,12 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   ran: string | undefined;
   /** The content block the session's own agent is streaming, by its index. */
   streaming: string | undefined;
-  /** What is let waiting for the input stream to be read again. */
-  wake: (() => void) | undefined;
+  /**
+   * What the input stream's parked read waits on, which a prompt pushed
+   * completes: VS Code's queue's pending-prompt deferred.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L67
+   */
+  pendingPromptDeferred: (() => void) | undefined;
   /**
    * The turns this session has already had.
    *
@@ -245,16 +254,17 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * completes.
    */
   turns: Bag[];
-  /** Whether the input stream has ended, which no later turn can undo. */
-  closed: boolean;
+  /** Whether the session was disposed, which ends its input stream for good. */
+  disposed: boolean;
   /**
-   * The directories beside `cwd`, as this session currently has them.
+   * The directories beside `cwd`, as this session currently has them: the
+   * SDK's `additionalDirectories`, as VS Code's Claude session names them.
    *
-   * Mutable because a client may add and remove peers on a running session;
-   * `cwd` itself never moves, which is what the protocol's `immutablePrimary`
-   * says and what the SDK enforces anyway.
+   * Mutable because a client may add and remove them on a running session;
+   * `cwd` itself is fixed, which is what the protocol's `immutablePrimary`
+   * says and what the SDK enforces.
    */
-  peers: string[];
+  additionalDirectories: string[];
   /**
    * A steering message, for as long as it is waiting to be read.
    *
@@ -267,19 +277,26 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   steering: Bag | undefined;
   /**
-   * Every prompt the CLI was handed that no result has named yet.
+   * Every prompt the CLI was handed that no result has named yet: VS Code's
+   * yielded entries.
    *
    * Keyed by the uuid it was sent under. The CLI names the prompts an answer
    * is for in `user_message_uuids`, on the answer's frames and on its result,
    * and the turn a prompt belongs to is the turn those frames and that result
    * are about. A steering message it reads after the turn's last tool call is
    * run as a turn of its own once the turn's result is out, so a turn is not
-   * over while it owes one. A CLI that is put away, or that dies, takes the
-   * rest with it.
+   * over while one of its prompts is here. A CLI that is put away, or that
+   * dies, takes the rest with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57-L58
    */
-  owed: Map<string, Owed>;
-  /** The prompt the CLI's current answer is for, from the last frame that named it. */
-  answering: string | undefined;
+  yielded: Map<string, PendingSdkMessage>;
+  /**
+   * The uuid of the prompt the CLI's current answer is for, from the last frame
+   * that named it: the pending message VS Code's pipeline routes a frame to
+   * (`peekParent`).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L664-L669
+   */
+  parentSdkUuid: string | undefined;
   /**
    * What the host asked said to the model, and the turn it asked it for.
    *
@@ -291,24 +308,27 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   hostInstructions: { turn: Bag; said: string[] } | undefined;
   /**
-   * The agent the running query was built with, and the CLI answering it.
+   * The agent the running query was built with: what was applied, as VS
+   * Code's pipeline names what it last gave the CLI.
    *
-   * `running` is what a message's pick is compared against: it is what the CLI
-   * is actually running on, so a pick equal to it changes nothing and only a
-   * different one pays for a new CLI.
+   * A message's pick is compared against it: it is what the CLI is running
+   * on, so a pick equal to it changes nothing and a different one pays for a
+   * new CLI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L556-L570
    */
-  running: string | undefined;
+  appliedAgent: string | undefined;
   /**
-   * The id the agent gave this session, which is not the URI it is served at.
+   * The id the SDK gave this conversation, VS Code's `sdkSessionId`, beside
+   * the URI the session is served at.
    *
    * The client picks the URI before anything exists; the CLI picks its own id
    * when it starts and writes the transcript under that. Both name the same
-   * conversation, so the catalogue has to know they do - otherwise the row on
-   * disk and the row in memory are two sessions saying the same thing.
+   * conversation, so the catalogue has to know they do: the row on disk and
+   * the row in memory are one session.
    */
-  agentId: string | undefined;
-  /** The CLI's `init` frame, once it has answered with one. */
-  handshake: Bag | undefined;
+  sdkSessionId: string | undefined;
+  /** The CLI's `init` frame, the SDK's `system`/`init` message, once it has answered with one. */
+  init: Bag | undefined;
   /**
    * Why the CLI this session holds went, while it is held for the next send
    * to start again: a turn preparing while it went fails with this. Cleared
@@ -318,7 +338,7 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** What this session has been told the CLI can do, by customization. */
   customizations: Bag[];
   /** The models the CLI offered, as this session offers them. */
-  offered: { id: string; name: string }[];
+  models: { id: string; name: string }[];
   /*
    * The declared Claude options this session runs on, by field.
    *
@@ -339,22 +359,23 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   valuesOf: (preset: Bag) => Bag;
   /**
-   * The values the running CLI was built from, as a comparison string.
+   * The values the running CLI was built from, as a comparison string: what
+   * was applied, as VS Code's pipeline names it.
    *
    * A turn compares the record's values now with what the CLI was started with,
-   * and restarts it only when the two differ. Set at every `startQuery`, so the
+   * and restarts it when the two differ. Set at every `startQuery`, so the
    * question is always about the CLI that is answering.
    */
-  startedWith: string;
-  /** The config in force, by key. What `session/configChanged` merges into. */
-  /*
-   * What this session was told to run as.
+  appliedValues: string;
+  /**
+   * The config in force, by key: the protocol's config, what
+   * `session/configChanged` merges into.
    *
-   * `unknown` and not `string`, because the protocol declares a config bag
+   * `unknown` values, because the protocol declares a config bag
    * `Record<string, unknown>` and `permissions` is an object. Keys this
    * backend declared a string are narrowed where they are read.
    */
-  settings: Record<string, unknown>;
+  config: Record<string, unknown>;
   /**
    * The tools this session has already been told about, by name.
    *
@@ -399,15 +420,17 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   draft: Bag | undefined;
   /**
-   * The turn `beginTurn` is starting, from the moment it waits on a switch until
-   * it is running or refused.
+   * The turn being prepared, VS Code's `prepareTurn`: the turn `beginTurn` is
+   * starting, from the moment it waits on a switch until it is running or
+   * refused.
    *
    * Until the CLI has taken the model there is no `active`, but the turn has
    * begun: it is this session's, and one started beside it would reach the CLI
-   * beside this one. Held here rather than as a chain of switches, so every
-   * question of whether a turn is running is asked of one thing.
+   * beside this one. One field, so every question of whether a turn is
+   * running is asked of one thing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1260
    */
-  beginning: string | undefined;
+  preparingTurn: string | undefined;
   /**
    * The tools the host handed since the CLI was last given a set, while there
    * are any: VS Code's client-tool diff, which the next send gives the CLI
@@ -433,7 +456,12 @@ export interface Scope {
   chat: SubagentChat | undefined;
   turn: Bag | undefined;
   parts: Map<string, Bag>;
-  calling: Map<string, string>;
+  /**
+   * Which tool call each streaming content block opened: VS Code's mapper's
+   * active tool blocks.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L51
+   */
+  activeToolBlocks: Map<string, string>;
   streaming: string | undefined;
   /**
    * Frames for a worker whose chat is not open yet, in the order they came.

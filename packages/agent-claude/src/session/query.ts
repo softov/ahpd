@@ -280,8 +280,8 @@ export function createQuery(ctx: SessionContext): Query {
           ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
         }
       }
-      if (ctx.closed || mine !== bound) return;
-      await new Promise<void>((resolve) => { ctx.wake = resolve; });
+      if (ctx.disposed || mine !== bound) return;
+      await new Promise<void>((resolve) => { ctx.pendingPromptDeferred = resolve; });
     }
   }
 
@@ -324,8 +324,8 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.rebind = handle;
     ctx.gone = why;
     ctx.waiting.length = 0;
-    ctx.owed.clear();
-    ctx.answering = undefined;
+    ctx.yielded.clear();
+    ctx.parentSdkUuid = undefined;
     ctx.steering = undefined;
     failTurn(why);
     ctx.sendNext();
@@ -428,9 +428,9 @@ export function createQuery(ctx: SessionContext): Query {
         pathToClaudeCodeExecutable: ctx.options.spawnExecutable ?? 'claude',
         spawnClaudeCodeProcess: ctx.options.spawn as never,
       }),
-      // The peers of `cwd`, which the SDK takes at startup. The first entry is
-      // the process root and is not one of these.
-      ...(ctx.peers.length > 0 ? { additionalDirectories: [...ctx.peers] } : {}),
+      // The directories beside `cwd`, which the SDK takes at startup. The first
+      // entry of the session's working directories is the process root, `cwd`.
+      ...(ctx.additionalDirectories.length > 0 ? { additionalDirectories: [...ctx.additionalDirectories] } : {}),
       /*
        * The MCP servers, declared here rather than found by the CLI.
        *
@@ -523,7 +523,7 @@ export function createQuery(ctx: SessionContext): Query {
       ...taskToolsEnv(),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
-      ...(typeof ctx.settings.permissionMode === 'string' ? { permissionMode: ctx.settings.permissionMode } : {}),
+      ...(typeof ctx.config.permissionMode === 'string' ? { permissionMode: ctx.config.permissionMode } : {}),
       /*
        * The model this session is on, which the CLI only reads at startup.
        *
@@ -616,8 +616,8 @@ export function createQuery(ctx: SessionContext): Query {
              */
             ...(!ctx.options.forkAt && ctx.options.rewindAt ? { resumeSessionAt: ctx.options.rewindAt } : {}),
           })
-        : (ctx.agentId !== undefined
-          ? { resume: ctx.agentId, ...(cut === undefined ? {} : { resumeSessionAt: cut }) }
+        : (ctx.sdkSessionId !== undefined
+          ? { resume: ctx.sdkSessionId, ...(cut === undefined ? {} : { resumeSessionAt: cut }) }
           : namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri)))),
       /*
        * The agent the main thread runs as, which the CLI reads at startup.
@@ -631,7 +631,7 @@ export function createQuery(ctx: SessionContext): Query {
   } as Parameters<typeof query>[0]));
 
   /**
-   * What a CLI is started from, as the string `startedWith` holds: the record's
+   * What a CLI is started from, as the string `appliedValues` holds: the record's
    * values and the login, with its token, since a put that replaces a login's
    * token leaves the values as they were.
    */
@@ -646,24 +646,24 @@ export function createQuery(ctx: SessionContext): Query {
    * record is read again and the login chosen again, and it compares both
    * against what the CLI answering now was started with.
    *
-   * The new query is the one that reads `waiting` from here on. The reader of
-   * the one it replaces is woken so that it ends, and the wake is cleared, so a
-   * prompt pushed before the new reader starts waits for it rather than waking
-   * the old one, as the reference wakes a reader whose query is aborted and
-   * gives the next binding a wait of its own.
+   * The new query is the one that reads `waiting` from here on. The pending
+   * prompt the reader of the one it replaces waits on is completed so that it
+   * ends, and cleared, so a prompt pushed before the new reader starts waits
+   * for that reader, as the reference completes the deferred of a reader whose
+   * query is aborted and gives the next binding a deferred of its own.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L518-L522
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L626-L629
    */
   const startQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => {
-    ctx.startedWith = startedFrom(ctx.values, ctx.login);
+    ctx.appliedValues = startedFrom(ctx.values, ctx.login);
     bound += 1;
-    const replaced = ctx.wake;
-    ctx.wake = undefined;
+    const replaced = ctx.pendingPromptDeferred;
+    ctx.pendingPromptDeferred = undefined;
     replaced?.();
-    // A new CLI owes nothing: what the last one was handed went with it, and
-    // it runs at its model's own effort until a turn names one.
-    ctx.owed.clear();
-    ctx.answering = undefined;
+    // A new CLI has no yielded entries: what the last one was handed went with
+    // it, and it runs at its model's own effort until a turn names one.
+    ctx.yielded.clear();
+    ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
     return buildQuery(agent, first, cut);
   };
@@ -719,13 +719,13 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const switchAgent = (uri: string | undefined): string | undefined => {
     const name = uri === undefined ? undefined : agentNameOf(uri);
-    if (name === ctx.running) return undefined;
+    if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
       return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
     }
-    ctx.running = name;
+    ctx.appliedAgent = name;
     ctx.gone = undefined;
     ctx.query = startQuery(name, false);
     void consume();
@@ -751,12 +751,12 @@ export function createQuery(ctx: SessionContext): Query {
         const type = str(message.type);
         // Every message carries it, so this needs no particular one to arrive.
         const said = str(message.session_id);
-        if (said) ctx.agentId = said;
+        if (said) ctx.sdkSessionId = said;
 
         // The message stream's own init. Capabilities come from the control
         // protocol instead (see `describe`), because those are needed before
         // a turn; what this adds is the model the turn actually ran on.
-        if (type === 'system' && str(message.subtype) === 'init') { ctx.handshake = message; continue; }
+        if (type === 'system' && str(message.subtype) === 'init') { ctx.init = message; continue; }
 
         /*
          * The harness compacted its context.
@@ -796,9 +796,9 @@ export function createQuery(ctx: SessionContext): Query {
          * prompt it cancels ends `cancelled`.
          */
         if (type === 'command_lifecycle') {
-          const owed = ctx.owed.get(str(message.command_uuid) ?? '');
+          const pending = ctx.yielded.get(str(message.command_uuid) ?? '');
           const state = str(message.state);
-          if (owed !== undefined && (state === 'queued' || state === 'started')) owed.cli = state;
+          if (pending !== undefined && (state === 'queued' || state === 'started')) pending.lifecycle = state;
           continue;
         }
 
@@ -815,10 +815,10 @@ export function createQuery(ctx: SessionContext): Query {
         if (str(message.parent_tool_use_id) === undefined
           && (type === 'stream_event' || type === 'assistant' || type === 'user')) {
           const named = str(message.user_message_uuid);
-          if (named !== undefined) ctx.answering = named;
-          const owed = ctx.answering === undefined ? undefined : ctx.owed.get(ctx.answering);
+          if (named !== undefined) ctx.parentSdkUuid = named;
+          const pending = ctx.parentSdkUuid === undefined ? undefined : ctx.yielded.get(ctx.parentSdkUuid);
           const running = ctx.active === undefined ? undefined : String(ctx.active.id);
-          if (owed !== undefined && owed.turn !== running) continue;
+          if (pending !== undefined && pending.turnId !== running) continue;
         }
 
         /*
@@ -1020,29 +1020,29 @@ export function createQuery(ctx: SessionContext): Query {
           const wrong = ofLogin ?? errorText;
           if (wrong === undefined) ctx.answered();
           /*
-           * The prompts this result answered, which the CLI no longer owes,
+           * The prompts this result answered, which leave the yielded entries,
            * and the turns they belong to.
            *
            * Named in `user_message_uuids`, or in `user_message_uuid` alone. A
            * result that names none comes from a CLI that names nothing, and
-           * answers whatever was owed.
+           * answers every yielded entry.
            */
           const named = list(message.user_message_uuids).map(String);
           if (str(message.user_message_uuid) !== undefined) named.push(String(message.user_message_uuid));
-          const owners = named.map((uuid) => ctx.owed.get(uuid)?.turn);
-          if (named.length === 0) ctx.owed.clear();
-          for (const uuid of named) ctx.owed.delete(uuid);
-          ctx.answering = undefined;
+          const owners = named.map((uuid) => ctx.yielded.get(uuid)?.turnId);
+          if (named.length === 0) ctx.yielded.clear();
+          for (const uuid of named) ctx.yielded.delete(uuid);
+          ctx.parentSdkUuid = undefined;
           /*
            * A result about turns that have ended, which ends none, and a turn
-           * handed behind them is begun once the CLI owes nothing in front of it.
+           * handed behind them is begun once no yielded entry is in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
             ctx.sendNext();
             continue;
           }
           /*
-           * A turn the CLI still owes an answer in.
+           * A turn with a prompt still among the yielded entries.
            *
            * A steering message the CLI read after the turn's last tool call is
            * run once this result is out, as a turn of the CLI's own, and its
@@ -1051,7 +1051,7 @@ export function createQuery(ctx: SessionContext): Query {
            * only when its prompts are settled. A result that failed ends it.
            * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
            */
-          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) continue;
+          if (turn && wrong === undefined && [...ctx.yielded.values()].some((pending) => pending.turnId === running)) continue;
           if (turn) {
             /*
              * Every turn that ends says how it ended.
@@ -1105,7 +1105,7 @@ export function createQuery(ctx: SessionContext): Query {
             ctx.endedAt(turn);
             ctx.ran = undefined;
             ctx.parts.clear();
-            ctx.calling.clear();
+            ctx.activeToolBlocks.clear();
             ctx.streaming = undefined;
             /*
              * And every preview the turn was still holding. A question left
@@ -1152,7 +1152,7 @@ export function createQuery(ctx: SessionContext): Query {
       // to another login is about to start it, or a stop, a death or the
       // bound above closed it for the next send to start again, a close
       // keeping the reason it was put away for.
-      if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+      if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
        * The failure in its own words, a CLI that never started included, as
        * VS Code's host ends a send that failed with the error's own message.
@@ -1162,7 +1162,7 @@ export function createQuery(ctx: SessionContext): Query {
       return;
     }
     // A stream that ended without a result.
-    if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+    if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
     putAway(mine, 'Claude SDK stream ended without a result message');
   };
 
@@ -1191,7 +1191,7 @@ export function createQuery(ctx: SessionContext): Query {
     const unready = ctx.unready(now);
     if (unready !== undefined) return unready;
     const login = ctx.loginFor(now);
-    if (startedFrom(now, login) === ctx.startedWith) return undefined;
+    if (startedFrom(now, login) === ctx.appliedValues) return undefined;
     const was = ctx.query;
     try { was.close(); }
     catch (error: unknown) {
@@ -1200,7 +1200,7 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.values = now;
     ctx.login = login;
     ctx.gone = undefined;
-    ctx.query = startQuery(ctx.running, false);
+    ctx.query = startQuery(ctx.appliedAgent, false);
     void consume();
     return undefined;
   };

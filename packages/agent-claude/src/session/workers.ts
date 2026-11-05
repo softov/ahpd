@@ -58,8 +58,8 @@ export interface TaskInfo {
 export interface Workers {
   /** Open parts, keyed by message and index; tool calls by their own id. */
   parts: Map<string, Bag>;
-  /** Which tool call a streaming content block belongs to, by content block index. */
-  calling: Map<string, string>;
+  /** Which tool call a streaming content block belongs to, by content block index: VS Code's mapper's active tool blocks. */
+  activeToolBlocks: Map<string, string>;
   /** The session's own agent, which is the scope a frame without a parent is in. */
   mainScope: Scope;
   /** Every conversation in the stream, by the call that spawned it. */
@@ -127,13 +127,14 @@ export function createWorkers(ctx: SessionContext): Workers {
   /** Open parts, keyed by message and index; tool calls by their own id. */
   const parts = new Map<string, Bag>();
   /**
-   * Which tool call a streaming content block belongs to.
+   * Which tool call a streaming content block belongs to: VS Code's mapper's
+   * active tool blocks.
    *
    * A `content_block_delta` names the block by its index and nothing else, so
-   * the id the block opened with has to be kept beside it. Tool calls only:
-   * prose parts are already keyed by the same index.
+   * the id the block opened with is kept beside it. Tool calls only: prose
+   * parts are keyed by the same index.
    */
-  const calling = new Map<string, string>();
+  const activeToolBlocks = new Map<string, string>();
 
   /** The session's own agent, which is the scope a frame without a parent is in. */
   const mainScope: Scope = {
@@ -142,7 +143,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     get turn() { return ctx.active; },
     set turn(next) { ctx.active = next; },
     parts,
-    calling,
+    activeToolBlocks,
     get streaming() { return ctx.streaming; },
     set streaming(next) { ctx.streaming = next; },
   };
@@ -220,7 +221,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     if (ctx.options.subagent === undefined) return mainScope;
     if (ended.has(parent)) {
       return {
-        parent, chat: dropped, turn: { id: '', responseParts: [] }, parts: new Map(), calling: new Map(), streaming: undefined,
+        parent, chat: dropped, turn: { id: '', responseParts: [] }, parts: new Map(), activeToolBlocks: new Map(), streaming: undefined,
       };
     }
     const info = spawning.get(parent);
@@ -240,7 +241,7 @@ export function createWorkers(ctx: SessionContext): Workers {
         chat: undefined,
         turn: undefined,
         parts: new Map(),
-        calling: new Map(),
+        activeToolBlocks: new Map(),
         streaming: undefined,
         waiting: [],
       };
@@ -281,7 +282,7 @@ export function createWorkers(ctx: SessionContext): Workers {
         usage: undefined,
       },
       parts: new Map(),
-      calling: new Map(),
+      activeToolBlocks: new Map(),
       streaming: undefined,
     };
   };
@@ -698,7 +699,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   return {
-    parts, calling, mainScope, scopes, spawning, background, tasks, byAgent, ended,
+    parts, activeToolBlocks, mainScope, scopes, spawning, background, tasks, byAgent, ended,
     taskInfo, live, told,
     scopeFor, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
     workerBlock, noteTask, noteLive, dropTask, closeOutputs, working: () => live.size > 0,

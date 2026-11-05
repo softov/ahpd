@@ -147,7 +147,7 @@ export function createConfig(ctx: SessionContext): Config {
      */
     if (list === undefined) {
       console.warn('@ahpd/agent-claude: ignoring a malformed shellInitScripts; the last valid script stays in force');
-      ctx.settings.shellInitScripts = value;
+      ctx.config.shellInitScripts = value;
       return true;
     }
     const bash = list.find((one) => one.shell === 'bash');
@@ -159,7 +159,7 @@ export function createConfig(ctx: SessionContext): Config {
       return `Could not write the shell init script: ${error instanceof Error ? error.message : String(error)}`;
     }
     sourced = bash !== undefined;
-    ctx.settings.shellInitScripts = list;
+    ctx.config.shellInitScripts = list;
     return true;
   };
   const sourceFirst: HookCallback = async (input) => {
@@ -195,12 +195,12 @@ export function createConfig(ctx: SessionContext): Config {
         const held = listsOf(value);
         if (!held) return `${key} takes an object with allow and deny, not ${typeof value}`;
         ctx.allowed = held;
-        ctx.settings.permissions = held;
+        ctx.config.permissions = held;
         return true;
       }
       if (key === 'shellInitScripts') return setShellInit(value);
       if (key !== 'permissionMode') {
-        ctx.settings[key] = value;
+        ctx.config[key] = value;
         return true;
       }
       // The schema's own property, whose five values are the CLI's.
@@ -208,12 +208,12 @@ export function createConfig(ctx: SessionContext): Config {
       const modes = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
-      ctx.settings.permissionMode = found;
+      ctx.config.permissionMode = found;
       void ctx.query.setPermissionMode(found).catch(() => {});
       return true;
     },
 
-    settings: () => ({ ...ctx.settings, ...(ctx.chosen ? { model: ctx.chosen } : {}) }),
+    settings: () => ({ ...ctx.config, ...(ctx.chosen ? { model: ctx.chosen } : {}) }),
   };
 
   return { initScript, setShellInit, sourceFirst, unprefixed, methods };

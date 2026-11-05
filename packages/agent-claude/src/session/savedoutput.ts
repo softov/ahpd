@@ -210,7 +210,7 @@ export function createSavedOutputs(ctx: SessionContext): SavedOutputs {
       const output = await readOutput(path);
       // A turn stopped while the file was read publishes nothing, and nor
       // does a session that closed: neither has a result left to carry it.
-      if (output === undefined || ctx.closed || ctx.mainScope.turn !== turn) return;
+      if (output === undefined || ctx.disposed || ctx.mainScope.turn !== turn) return;
       const success = result.is_error !== true;
       // Under the call's id, as the reference keeps it, and in the chat's
       // keeping, so it goes with its turn, its chat and its session. A host

@@ -7,7 +7,7 @@ import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
 import { createClientTools } from './session/clienttools.js';
 import { createConfig, listsOf } from './session/config.js';
-import type { ClaudeSessionOptions, Owed, SessionContext } from './session/context.js';
+import type { ClaudeSessionOptions, PendingSdkMessage, SessionContext } from './session/context.js';
 import { createLogins } from './session/logins.js';
 import { createParts } from './session/parts.js';
 import { createQuery } from './session/query.js';
@@ -63,7 +63,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const ctx = {
     options,
     emit,
-    settings: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
+    config: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
     appliedEffort: undefined as string | undefined,
@@ -78,19 +78,19 @@ export function createSession(options: ClaudeSessionOptions): Session {
     rebind: undefined as unknown,
     ran: undefined as string | undefined,
     streaming: undefined as string | undefined,
-    wake: undefined as (() => void) | undefined,
-    closed: false,
-    peers: [...(options.additional ?? [])] as string[],
+    pendingPromptDeferred: undefined as (() => void) | undefined,
+    disposed: false,
+    additionalDirectories: [...(options.additional ?? [])] as string[],
     steering: undefined as Bag | undefined,
-    owed: new Map<string, Owed>(),
-    answering: undefined as string | undefined,
+    yielded: new Map<string, PendingSdkMessage>(),
+    parentSdkUuid: undefined as string | undefined,
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
-    running: undefined as string | undefined,
-    agentId: options.resume as string | undefined,
-    handshake: undefined as Bag | undefined,
+    appliedAgent: undefined as string | undefined,
+    sdkSessionId: options.resume as string | undefined,
+    init: undefined as Bag | undefined,
     gone: undefined as string | undefined,
     customizations: [...(options.seedCustomizations ?? [])] as Bag[],
-    offered: [] as { id: string; name: string }[],
+    models: [] as { id: string; name: string }[],
     /*
      * A preset that says the sandbox is off, which a stored `on` does not
      * override.
@@ -105,9 +105,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
      */
     values: valuesOf(live()),
     valuesOf,
-    startedWith: '',
+    appliedValues: '',
     draft: undefined as Bag | undefined,
-    beginning: undefined as string | undefined,
+    preparingTurn: undefined as string | undefined,
     // The tools the session was built with, which the first CLI is given.
     toolDiff: (options.tools ?? []) as BoundTool[] | undefined,
     turns: [...(options.seed ?? [])] as Bag[],
@@ -148,7 +148,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const stored = options.settings?.model;
   if (typeof stored === 'string' && stored !== 'default'
     && (options.seedModels ?? []).some((model) => model.id === stored)) ctx.chosen = stored;
-  if (ctx.settings.shellInitScripts !== undefined) ctx.setShellInit(ctx.settings.shellInitScripts);
+  if (ctx.config.shellInitScripts !== undefined) ctx.setShellInit(ctx.config.shellInitScripts);
 
   /*
    * The host's own tools and the clients', as the two in-process MCP servers
@@ -164,7 +164,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   // ------------------------------------------------------------------ the run
   // The login the first CLI signs in with, which the query's environment reads.
   ctx.login = ctx.loginFor(ctx.values);
-  ctx.query = ctx.startQuery(ctx.running, true);
+  ctx.query = ctx.startQuery(ctx.appliedAgent, true);
   void ctx.describe().catch(() => {});
 
   void ctx.consume();
@@ -191,8 +191,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     chatUri,
     status: () => ctx.status(),
 
-    models: () => ctx.offered,
-    agentId: () => ctx.agentId,
+    models: () => ctx.models,
+    agentId: () => ctx.sdkSessionId,
     busy: () => ctx.working() || ctx.stopped.sessionCrons.length > 0,
     forkPoint: (turnId) => ctx.ends.get(turnId),
     endPoint: (turnId) => ctx.ends.get(turnId),
@@ -208,7 +208,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     activity: () => undefined,
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
-    workingDirectories: () => [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+    workingDirectories: () => [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -219,7 +219,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       lifecycle: 'ready',
       defaultChat: chatUri,
       chats: [{ resource: chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+      workingDirectories: [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
       customizations: ctx.customizations,
       /*
        * The schema *and* what is in force.
@@ -231,7 +231,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
        */
       config: {
         schema: options.schema?.() ?? { type: 'object', properties: {} },
-        values: { ...ctx.settings, ...(ctx.chosen ? { model: ctx.chosen } : {}) },
+        values: { ...ctx.config, ...(ctx.chosen ? { model: ctx.chosen } : {}) },
       },
       /*
        * The model this session is on, under `_meta` because the protocol has
@@ -245,8 +245,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * `model` beside `title` and `provider` reads like a declared field,
        * which is a mistake somebody has already made with this one.
        */
-      ...(ctx.chosen ?? str(bag(ctx.handshake).model)
-        ? { _meta: { 'ahpd.model': (ctx.chosen ?? str(bag(ctx.handshake).model)) as string } }
+      ...(ctx.chosen ?? str(bag(ctx.init).model)
+        ? { _meta: { 'ahpd.model': (ctx.chosen ?? str(bag(ctx.init).model)) as string } }
         : {}),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.
@@ -259,9 +259,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
       status: ctx.status(),
       modifiedAt: ctx.modified,
       // A chat's own set, which may be narrower than its session's: the
-      // process is rooted at the same place, and which peers it was given is
-      // this chat's to say.
-      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+      // process is rooted at the same place, and which additional directories
+      // it was given is this chat's to say.
+      workingDirectories: [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
       // Every turn this chat holds. A resumed session can be seeded with
       // hundreds of them, and the host cuts the window a subscribe asks for.
       turns: ctx.turns,
@@ -313,7 +313,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
         }
       }
-      ctx.closed = true;
+      ctx.disposed = true;
       servers.unwatch();
       ctx.ended.clear();
       ctx.pastLines.clear();
@@ -331,7 +331,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       ctx.closeOutputs();
       // A worker still waiting for a spawn that will now never be recorded.
       for (const scope of ctx.scopes.values()) scope.waiting = undefined;
-      ctx.wake?.();
+      ctx.pendingPromptDeferred?.();
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The session was disposed' });
