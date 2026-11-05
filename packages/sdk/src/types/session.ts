@@ -756,11 +756,12 @@ export interface Session {
    * those is handed them. `text` is the blocks' words joined, which is what a
    * harness that takes only text reads.
    *
-   * Handed over once the host has found the call running under that client in
-   * the chat's state. False when no call by that id waits on that client here,
-   * a second result for a call among them, and the host refuses it. On true
-   * the host says the client's result to every client of the chat, and what
-   * the backend says of the call afterwards is not said again.
+   * Handed over once the host has said the client's result to every client of
+   * the chat, and for a result its client asks to have confirmed, once a
+   * client has approved it or denied it, a denial handed as a failure. False
+   * when no call by that id waits on that client here, a second result for a
+   * call among them, which the host logs. What the backend says of the call
+   * afterwards is not said again.
    */
   completeToolCall?(
     toolCallId: string,

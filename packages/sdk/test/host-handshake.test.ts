@@ -311,19 +311,11 @@ describe('what it will not pretend', () => {
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
-    // Refusals that used to read `is not served yet`, which is true and tells
-    // a client nothing it can act on. Two of these are now served, so what
-    // they refuse is the particular thing asked for rather than the action:
-    // a turn that is not there, and a question nobody is waiting on.
+    // A refusal names the particular thing asked for: a turn that is not
+    // there, and a question nobody is waiting on.
     expect(why({ type: 'chat/truncated', turnId: 't1' })).toContain('not a completed turn');
     expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: {} }))
       .toContain('not a question this chat is waiting on');
-    expect(why({ type: 'chat/toolCallResultConfirmed', toolCallId: 'c1' }))
-      .toContain('result to be confirmed');
-    // Not the same complaint: this one is a *contributor's* to send, for a
-    // tool the client itself provides, and no call by that name is one.
-    expect(why({ type: 'chat/toolCallContentChanged', toolCallId: 'c1' }))
-      .toContain('not a call a client is running here');
     expect(chatUri).toBeTruthy();
   });
 

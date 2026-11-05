@@ -783,16 +783,51 @@ export function chatAction(
     .some((part) => part.kind === 'inputRequest' && part.response === undefined
       && (part.request as Bag | undefined)?.id === requestId);
   /**
-   * The client a call of the held running turn names as its contributor, which
-   * is the one client the protocol lets say what the call did.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+   * The call `toolCallId` names in the chat's held state, wherever it is: the
+   * running turn's, or a turn that ended.
    */
-  const clientRunning = (toolCallId: string): string | undefined => {
-    const call = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+  const callOf = (toolCallId: string, state: Bag = chatHeld): Bag | undefined =>
+    [...(Array.isArray(state.turns) ? state.turns as Bag[] : []), ...(state.activeTurn === undefined ? [] : [state.activeTurn as Bag])]
+      .flatMap((turn) => (Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : []))
       .map((part) => (part.kind === 'toolCall' ? part.toolCall as Bag | undefined : undefined))
       .find((one) => one?.toolCallId === toolCallId);
-    const contributor = call?.contributor as Bag | undefined;
-    return contributor?.kind === 'client' && typeof contributor.clientId === 'string' ? contributor.clientId : undefined;
+  /**
+   * The contributor a call names, the one client the protocol lets say what
+   * the call did: its client id, `null` for a call no client contributes, or
+   * nothing for a call the chat does not hold.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+   */
+  const contributorOf = (toolCallId: string): string | null | undefined => {
+    const call = callOf(toolCallId);
+    if (call === undefined) return undefined;
+    const contributor = call.contributor as Bag | undefined;
+    return contributor?.kind === 'client' && typeof contributor.clientId === 'string' ? contributor.clientId : null;
+  };
+  /**
+   * What a client's call did, handed to the backend that waits on it.
+   *
+   * The blocks go through whole, because a client's tool can answer with an
+   * image or a file as readily as a sentence and the backend's harness is the
+   * thing that decides which it can take. The joined text is the fallback for
+   * one that takes only text, and an error's message is what a failed call
+   * says. A backend that holds no such call is a line in the log.
+   */
+  const handOn = (toolCallId: string, clientId: string, result: Bag): void => {
+    const ok = result.success !== false;
+    const content = (Array.isArray(result.content) ? result.content : [])
+      .map((block) => (typeof block === 'object' && block !== null ? block as Bag : {}))
+      .filter((block) => typeof block.type === 'string');
+    const text = content
+      .filter((block) => typeof block.text === 'string')
+      .map((block) => String(block.text))
+      .join('\n');
+    const wrong = typeof result.error === 'object' && result.error !== null ? String((result.error as Bag).message ?? '') : '';
+    const took = held?.completeToolCall?.(toolCallId, clientId, {
+      ok,
+      text: ok ? text : (wrong || text || 'The tool failed'),
+      content: content as ClientCallAnswer['content'],
+    });
+    if (took !== true) log(`${held?.chatUri ?? channel}: the backend holds no call ${toolCallId} of ${clientId}'s to complete`);
   };
   switch (type) {
     case 'chat/turnStarted': {
@@ -2230,16 +2265,26 @@ export function chatAction(
       break;
     }
     /*
-     * Approving a tool call's *result*, which nothing here ever asks for.
-     *
-     * It belongs to a call completed with `requiresResultConfirmation`,
-     * and no call this host builds sets it - the confirmation asked for
-     * here is before the tool runs, not after. A client sending one is
-     * answering a question nobody put.
+     * A client's approval of a call's result, said as it sent it, and then
+     * handed to the backend where the reducer left the call: completed, with
+     * the result its client gave, or denied, which the backend is handed as a
+     * failure in the reference host's words. Only a client's call is handed
+     * on: it is the one a backend waits on a client for.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1631-L1671
      */
-    case 'chat/toolCallResultConfirmed':
-      no('No tool call here asks for its result to be confirmed');
+    case 'chat/toolCallResultConfirmed': {
+      const toolCallId = String(action.toolCallId ?? '');
+      const at = worker ? channel : session.chatUri;
+      dispatch(at, action, origin);
+      const call = callOf(toolCallId, ctx.stateOf(at) ?? {});
+      const contributor = contributorOf(toolCallId);
+      if (typeof contributor !== 'string' || call === undefined) break;
+      if (action.approved === true && call.status === 'completed') handOn(toolCallId, contributor, call);
+      else if (action.approved !== true && call.status === 'cancelled' && call.reason === 'result-denied') {
+        handOn(toolCallId, contributor, { success: false, error: { message: 'The user denied the tool result.' } });
+      }
       break;
+    }
     /*
      * What a client's own tool did, said by the client that ran it.
      *
@@ -2249,82 +2294,56 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * The result goes back to the harness, which runs on with it. What every
-     * client is told is the client's own action, said before the backend is
-     * handed it, and the call is completed once: the completion the harness
-     * reports after it is not said, as `dispatch` drops a backend's result
-     * for a call the chat holds completed.
+     * Said as the client sent it, and then handed to the backend: the call is
+     * complete in every client's state with the result its client gave, in
+     * the turn the action names, and what the harness says of the call after
+     * reduces to nothing. A result its client asks to have confirmed waits
+     * for that confirmation before the backend is handed it. The reference
+     * host says a client's action when it takes it and runs the side effect
+     * after, and the protocol's reducer completes a call only in the turn the
+     * action names.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1631-L1645
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
+     *
+     * The contributor a call names, wherever the chat holds it, is the one
+     * client that may say its result, and the protocol has a server refuse
+     * anybody else; a call the chat does not hold is said, as the reference
+     * host says every completion.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
       const clientId = connection.clientId || 'anonymous';
-      const result = (typeof action.result === 'object' && action.result !== null
-        ? action.result
-        : {}) as Bag;
-      if (!session.completeToolCall) {
-        no('This backend runs no tools on a client\'s behalf');
-        break;
-      }
-      // The client the call names in the chat's held state is the one that
-      // may say its result; the protocol has a server refuse anybody else.
-      if (clientRunning(toolCallId) !== clientId) {
+      const contributor = contributorOf(toolCallId);
+      if (contributor !== undefined && contributor !== clientId) {
         no(`${toolCallId} is not a call ${clientId} is running here`);
         break;
       }
-      // The blocks go through whole, because a client's tool can answer with
-      // an image or a file as readily as a sentence and the backend's harness
-      // is the thing that decides which it can take. The joined text is the
-      // fallback for one that takes only text, and an error's message is what
-      // a failed call actually says.
-      const ok = result.success !== false;
-      const content = (Array.isArray(result.content) ? result.content : [])
-        .map((block) => (typeof block === 'object' && block !== null ? block as Bag : {}))
-        .filter((block) => typeof block.type === 'string');
-      const text = content
-        .filter((block) => typeof block.text === 'string')
-        .map((block) => String(block.text))
-        .join('\n');
-      const wrong = typeof result.error === 'object' && result.error !== null
-        ? String((result.error as Bag).message ?? '')
-        : '';
-      /*
-       * Said as the client sent it, and then handed to the backend: the call is
-       * complete in every client's state with the result its client gave, in
-       * the turn the action names, and what the harness says of the call after
-       * reduces to nothing. The reference host says a client's action when it
-       * takes it and runs the side effect after, and the protocol's reducer
-       * completes a call only in the turn the action names.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
-       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
-       */
       dispatch(channel, action, origin);
-      if (!session.completeToolCall(toolCallId, clientId, {
-        ok,
-        text: ok ? text : (wrong || text || 'The tool failed'),
-        content: content as ClientCallAnswer['content'],
-      })) log(`${session.chatUri}: the backend holds no call ${toolCallId} of ${clientId}'s to complete`);
+      if (callOf(toolCallId, ctx.stateOf(channel) ?? {})?.status === 'pending-result-confirmation') break;
+      handOn(toolCallId, clientId, (typeof action.result === 'object' && action.result !== null ? action.result : {}) as Bag);
       break;
     }
     /*
-     * Streaming into a call while it runs, which is a *contributor's* to
-     * do.
+     * Streaming into a call, which is its *contributor's* to do.
      *
      * The protocol has the owning client dispatch this for a tool the
      * client itself provides - the call carries a `ToolCallContributor`
-     * with that client's id, and a server should refuse anyone else. Said on
+     * with that client's id, and a server should refuse anyone else, a
+     * client writing into a call no client contributes among them. Said on
      * the chat the call is in, where the held state takes it as every client
-     * does; what a tool is printing as it runs is the running client's to say.
+     * does, a call the chat does not hold included.
      */
     case 'chat/toolCallContentChanged': {
       const toolCallId = String(action.toolCallId ?? '');
       const clientId = connection.clientId || 'anonymous';
-      const owner = clientRunning(toolCallId);
-      if (owner === undefined) {
+      const contributor = contributorOf(toolCallId);
+      if (contributor === null) {
         no(`${toolCallId} is not a call a client is running here`);
         break;
       }
-      if (owner !== clientId) {
-        no(`${toolCallId} is ${owner}'s call, and its content is ${owner}'s to change`);
+      if (contributor !== undefined && contributor !== clientId) {
+        no(`${toolCallId} is ${contributor}'s call, and its content is ${contributor}'s to change`);
         break;
       }
       dispatch(worker ? channel : session.chatUri, action, origin);

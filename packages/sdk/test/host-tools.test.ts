@@ -1645,7 +1645,76 @@ describe('tools a client contributes', () => {
     expect(answered.map((e) => e.action)).toEqual([action]);
   });
 
-  it('answers the first of two results for one call with its completion, and refuses the second', async () => {
+  /*
+   * A completion of a client's own call is said whatever became of the call,
+   * as VS Code's host says every completion: one after a stop ended the turn
+   * included. The contributor the call names is the one check.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says a client\'s result and its content for its own call after a stop ended the turn', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    await settle();
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } } });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 11, action: { type: 'chat/toolCallContentChanged', turnId: 't1', toolCallId: 'call-1', content: [] } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 12, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } } },
+    });
+    await settle();
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && (e.origin.clientSeq === 11 || e.origin.clientSeq === 12));
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([
+      ['chat/toolCallContentChanged', undefined],
+      ['chat/toolCallComplete', undefined],
+    ]);
+  });
+
+  /*
+   * A result its client asks to have confirmed is said and held for that
+   * confirmation, and the backend is handed it once a client approves it,
+   * as VS Code's host forwards a client's result.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1631-L1671
+   */
+  it('hands a client\'s result to the backend once a client approves it, not before', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    let answered: string | undefined;
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' })
+      .then((answer) => { answered = answer.content[0]?.text; });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 13,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', requiresResultConfirmation: true, result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } },
+      },
+    });
+    await settle();
+    expect(answered).toBeUndefined();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 14, action: { type: 'chat/toolCallResultConfirmed', turnId: 't1', toolCallId: 'call-1', approved: true } },
+    });
+    await settle();
+    expect(answered).toBe('opened /a.txt');
+    const said = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 13 || e.origin?.clientSeq === 14);
+    expect(said.map((e) => [e.action.type, e.rejectionReason])).toEqual([
+      ['chat/toolCallComplete', undefined],
+      ['chat/toolCallResultConfirmed', undefined],
+    ]);
+  });
+
+  /*
+   * A second result for one call is said as the first is, as VS Code's host
+   * says every completion; the backend, handed the first, logs the second.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says both of two results for one call, and hands the backend the first', async () => {
     const { client, peer: p, chatUri } = await providing();
     await calling(client, chatUri);
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
@@ -1660,9 +1729,9 @@ describe('tools a client contributes', () => {
     });
     complete(9, 'opened /a.txt');
     // The client sends its result again before the session says the call is
-    // complete. The harness took the first, so the second is refused.
+    // complete. The harness took the first.
     complete(10, 'opened /a.txt again');
-    await answering;
+    const answer = await answering;
     await emit({
       type: 'user',
       uuid: 'u1',
@@ -1675,7 +1744,8 @@ describe('tools a client contributes', () => {
       .filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === clientSeq)
       .map((e) => [e.action.type, e.rejectionReason === undefined ? 'said' : 'refused']);
     expect(answers(9)).toEqual([['chat/toolCallComplete', 'said']]);
-    expect(answers(10)).toEqual([['chat/toolCallComplete', 'refused']]);
+    expect(answers(10)).toEqual([['chat/toolCallComplete', 'said']]);
+    expect(answer?.content[0]?.text).toBe('opened /a.txt');
   });
 
   it('keeps an answer that arrives before the CLI runs the tool', async () => {

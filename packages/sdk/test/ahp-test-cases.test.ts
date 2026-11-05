@@ -545,10 +545,6 @@ const REFUSALS: Record<string, {
     source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
     holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
   }],
-  'chat/toolCallResultConfirmed': [{
-    said: () => 'No tool call here asks for its result to be confirmed',
-    source: 'host policy, host/chatactions.ts: no call on this host asks for its result to be confirmed',
-  }],
 };
 
 /** The snapshot the host serves for one channel: its state, and the sequence it was taken at. */
