@@ -128,6 +128,61 @@ describe('a capture that has rolled', () => {
   }, 20000);
 });
 
+/*
+ * VS Code's traffic log keeps a credential or a payload out of the file, so a
+ * capture is written through the same replacer:
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/ahpJsonlLogger.ts#L426-L460
+ */
+describe('a capture line that carries a credential', () => {
+  const answered = (text: string): Capture => lineFor('host', text, 1, 'websocket');
+  const url = 'https://canvas.example/board?key=sesame';
+
+  it('writes the token of an authenticate as VS Code redacts it, and a marker already there as it came', () => {
+    const write = writerFor(at);
+    write(said(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'authenticate', params: { resource: 'https://ahpd.local', token: 'sesame' } })));
+    write(said(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'authenticate', params: { resource: 'https://ahpd.local', token: '[REDACTED]' } })));
+    const [first, second] = lines(at);
+    expect(first?.params).toEqual({ resource: 'https://ahpd.local', token: '<redacted>' });
+    expect(second?.params).toEqual({ resource: 'https://ahpd.local', token: '[REDACTED]' });
+    expect(readFileSync(at, 'utf8')).not.toContain('sesame');
+  });
+
+  it('writes an authorization, a channel payload and a list of certificates as VS Code redacts them', () => {
+    const write = writerFor(at);
+    write(said(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { authorization: 'Negotiate sesame' } })));
+    write(said(JSON.stringify({ jsonrpc: '2.0', method: 'channel/frame', params: { channel: 'one', data: 'sesame' } })));
+    write(said(JSON.stringify({ jsonrpc: '2.0', method: 'tcp/data', params: { stream: 'one', data: 'sesame' } })));
+    write(said(JSON.stringify({ jsonrpc: '2.0', id: 4, result: { certificates: ['sesame'] } })));
+    const [authorization, frame, tcp, certificates] = lines(at);
+    expect(authorization).toMatchObject({ result: { authorization: '<redacted>' } });
+    expect(frame).toMatchObject({ params: { channel: 'one', data: '<redacted channel payload>' } });
+    expect(tcp).toMatchObject({ params: { stream: 'one', data: '<redacted channel payload>' } });
+    expect(certificates).toMatchObject({ result: { certificates: '<redacted>' } });
+    expect(readFileSync(at, 'utf8')).not.toContain('sesame');
+  });
+
+  it('writes a canvas source as VS Code redacts it, in an action and in a canvas snapshot', () => {
+    const write = writerFor(at);
+    const canvas = 'ahp-canvas:/Y2hhdA/board';
+    write(answered(JSON.stringify({ jsonrpc: '2.0', method: 'action', params: { channel: canvas, serverSeq: 1, action: { type: 'canvas/stateChanged', canvas: { title: 'Board', url } } } })));
+    write(answered(JSON.stringify({ jsonrpc: '2.0', id: 5, result: { snapshot: { resource: canvas, state: { title: 'Board', url }, fromSeq: 1 } } })));
+    const [action, snapshot] = lines(at);
+    expect(action).toMatchObject({ params: { action: { canvas: { title: 'Board', url: '<redacted canvas source>' } } } });
+    expect(snapshot).toMatchObject({ result: { snapshot: { state: { title: 'Board', url: '<redacted canvas source>' } } } });
+    expect(readFileSync(at, 'utf8')).not.toContain('sesame');
+  });
+
+  it('redacts a line it writes again with its strings cut', () => {
+    const write = writerFor(at, { maxLineLength: 4096 });
+    const big = 'x'.repeat(64 * 1024);
+    write(answered(JSON.stringify({ jsonrpc: '2.0', method: 'action', params: { channel: 'ahp-canvas:/Y2hhdA/board', serverSeq: 2, action: { type: 'canvas/stateChanged', canvas: { title: big, url } } } })));
+    const [line] = lines(at);
+    expect((line?._ahpLog as { truncated?: boolean }).truncated).toBe(true);
+    expect(line).toMatchObject({ params: { action: { canvas: { url: '<redacted canvas source>' } } } });
+    expect(readFileSync(at, 'utf8')).not.toContain('sesame');
+  });
+});
+
 describe('the capture file itself', () => {
   it('starts empty, whatever a previous run left in it', () => {
     writeFileSync(at, 'a line from a daemon that is gone\n');
@@ -136,8 +191,8 @@ describe('the capture file itself', () => {
   });
 
   /*
-   * A capture holds every token a client sent in `authenticate`, so it is
-   * the one file this daemon writes that is nobody else's to read.
+   * A capture holds every root config write a client sent, with the
+   * credentials such a write carries, so it is nobody else's to read.
    */
   // A POSIX mode, which Windows has none of.
   it.skipIf(!posix)('is readable only by its owner when it is new', () => {
@@ -160,7 +215,7 @@ describe('the capture file itself', () => {
 
   it.skipIf(!posix)('is readable only by its owner after a roll', () => {
     // The rolled-into file is a new one, made by the umask rather than by the
-    // writer, and it holds the same tokens as the one before it.
+    // writer, and it holds the same traffic as the one before it.
     const write = writerFor(at, { maxFileSizeBytes: 400 });
     for (let frame = 0; frame < 3; frame++) write(said(JSON.stringify({ jsonrpc: '2.0', id: frame, method: 'ping' })));
     for (const one of files()) expect(statSync(join(home, one)).mode & 0o777).toBe(0o600);

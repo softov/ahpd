@@ -72,13 +72,58 @@ const MAX_LINE_LENGTH = 1024 * 1024;
 /** How much of one string survives that second write. */
 const MAX_STRING_LENGTH = 16 * 1024;
 
+/** What VS Code's traffic log writes in place of a canvas's source. */
+const REDACTED_CANVAS_SOURCE = '<redacted canvas source>';
+
+/** VS Code's test for a value the replacer can look into: any object, an array too. */
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+
+/**
+ * The replacer VS Code's traffic log writes every line through, which keeps a
+ * credential or a payload out of the file wherever in the line it sits: an
+ * `authorization` string, the data of a `channel/frame` or a `tcp/data`, the
+ * `certificates` of a result, the token of an `authenticate` (one already
+ * written as a redaction marker is left as it is), and a canvas's source URL,
+ * in a `canvas/stateChanged` action and in the state of an `ahp-canvas:`
+ * resource.
+ *
+ * VS Code's replacer also writes a URI object back as its string, which an
+ * in-process message carries; a line here is parsed from the frame's text,
+ * where every URI is a string already.
+ *
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/ahpJsonlLogger.ts#L426-L460
+ */
+const redacted = (_key: string, value: unknown): unknown => {
+  if (!isRecord(value)) return value;
+  if (typeof value.authorization === 'string') return { ...value, authorization: '<redacted>' };
+  if ((value.method === 'channel/frame' || value.method === 'tcp/data') && isRecord(value.params)) {
+    return { ...value, params: { ...value.params, data: '<redacted channel payload>' } };
+  }
+  if (isRecord(value.result) && Array.isArray(value.result.certificates)) {
+    return { ...value, result: { ...value.result, certificates: '<redacted>' } };
+  }
+  if (value.method === 'authenticate' && isRecord(value.params) && value.params.token !== undefined
+    && value.params.token !== '<redacted>' && value.params.token !== '[REDACTED]') {
+    return { ...value, params: { ...value.params, token: '<redacted>' } };
+  }
+  if (value.type === 'canvas/stateChanged' && isRecord(value.canvas) && value.canvas.url !== undefined) {
+    return { ...value, canvas: { ...value.canvas, url: REDACTED_CANVAS_SOURCE } };
+  }
+  if (typeof value.resource === 'string' && value.resource.toLowerCase().startsWith('ahp-canvas:')
+    && isRecord(value.state) && value.state.url !== undefined) {
+    return { ...value, state: { ...value.state, url: REDACTED_CANVAS_SOURCE } };
+  }
+  return value;
+};
+
 /**
  * The mode every file of a capture is made at and left at: `0600`.
  *
- * A capture holds every token a client sent in `authenticate`, so it belongs
- * to the person running the daemon and to nobody else - and the one thing it
- * is allowed to be is readable. The process umask decides what a file created
- * without a mode gets, and that is not this decision to leave to it.
+ * A capture holds everything a session said and every root config write a
+ * client sent, with the credentials such a write carries, so it belongs to
+ * the person running the daemon and to nobody else. The process umask decides
+ * what a file created without a mode gets, and that is not this decision to
+ * leave to it.
  */
 const OWNER_ONLY = 0o600;
 
@@ -112,8 +157,9 @@ export const filesOf = (at: string): string[] => {
 /**
  * The one function a tap hands each line to.
  *
- * Serialises, and cuts a line that has outgrown the cap; appends, and rolls a
- * file that has outgrown its cap. Both caps are VS Code's, and both are here
+ * Serialises through VS Code's redactions, and cuts a line that has outgrown
+ * the cap; appends, and rolls a file that has outgrown its cap. Both caps are
+ * VS Code's, and both are here
  * for the same reason it has them: a single `resourceRead` carrying a whole
  * file would otherwise be one line nobody can open, and a capture with no bound
  * eventually stops the daemon writing the thing it was capturing.
@@ -135,8 +181,8 @@ export const writerFor = (at: string, options: WriterOptions = {}): ((line: Capt
    *
    * The mode is set twice because a mode on create says nothing about a file
    * that was already there, and a capture left at whatever a previous run or a
-   * umask gave it is a capture of somebody's tokens at the wrong mode. After a
-   * roll the file is not there at all, so it is made rather than trimmed.
+   * umask gave it is somebody's traffic at the wrong mode. After a roll the
+   * file is not there at all, so it is made rather than trimmed.
    */
   const start = (): void => {
     writeFileSync(at, '', { mode: OWNER_ONLY });
@@ -146,13 +192,15 @@ export const writerFor = (at: string, options: WriterOptions = {}): ((line: Capt
   start();
 
   return (line) => {
-    let body = JSON.stringify(line);
+    let body = JSON.stringify(line, redacted);
     if (body.length > maxLineLength) {
       line._ahpLog.truncated = true;
-      body = JSON.stringify(line, (_key, value: unknown) =>
-        typeof value === 'string' && value.length > MAX_STRING_LENGTH
-          ? `${value.slice(0, MAX_STRING_LENGTH)}…[${String(value.length - MAX_STRING_LENGTH)} more chars elided]`
-          : value);
+      body = JSON.stringify(line, (key, value: unknown) => {
+        const kept = redacted(key, value);
+        return typeof kept === 'string' && kept.length > MAX_STRING_LENGTH
+          ? `${kept.slice(0, MAX_STRING_LENGTH)}…[${String(kept.length - MAX_STRING_LENGTH)} more chars elided]`
+          : kept;
+      });
     }
     const bytes = Buffer.byteLength(body) + 1;
     // An empty file is never rolled, or the first frame of a capture over a
