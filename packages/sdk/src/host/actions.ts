@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
@@ -5,7 +6,7 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
-import { chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { AUTOMATIONS, chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
@@ -648,6 +649,28 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const problem = disableConditionsProblem(written['disableConditions']);
       if (problem !== undefined) { no(problem); return; }
       /*
+       * A create where an automation is already kept: the same definition is
+       * said again as it is held, and another is refused, as the reference
+       * host's service takes a create; an update of none is refused in its
+       * words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L318-L329
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L358-L363
+       */
+      const existing = store.get(resource);
+      if (type === 'automation/createRequested' && existing !== undefined) {
+        if (!isDeepStrictEqual(existing.definition, withPinOf(resource, (action.definition ?? {}) as Bag))) {
+          no(`Automation already exists: ${resource}`);
+          return;
+        }
+        dispatch(AUTOMATIONS, { type: 'automation/set', automation: existing });
+        dispatch(channel, action, origin);
+        return;
+      }
+      if (type === 'automation/updateRequested' && existing === undefined) {
+        no(`Automation not found: ${resource}`);
+        return;
+      }
+      /*
        * Client plugins on the template, copied while the client that named
        * them is still here.
        *
@@ -682,7 +705,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // `onChanged` is what dispatches. A store that told the host
         // nothing would be one whose own timers were invisible, so
         // everything goes out the same way.
-        if (!kept) no(`No automation at ${resource}`);
+        if (!kept) no(`Automation not found: ${resource}`);
         else dispatch(channel, action, origin);
         return;
       }
@@ -711,7 +734,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           const made = type === 'automation/createRequested'
             ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection), undefined, held.copies)
             : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag), held.copies);
-          if (!made) { no(`No automation at ${resource}`); return; }
+          if (!made) { no(`Automation not found: ${resource}`); return; }
           dispatch(channel, action, origin);
           pruneCopies();
         }
@@ -741,8 +764,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         dispatch(channel, action, origin);
         return;
       }
+      // In the reference host's words for an operation an automation does not offer.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1538-L1542
       if (!found.operations.includes('remove')) {
-        no(`${resource} does not offer remove`);
+        no(`Automation operation 'remove' is not available: ${resource}`);
         return;
       }
       store.remove(resource);

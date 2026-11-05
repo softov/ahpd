@@ -244,7 +244,7 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | `automation/createRequested` | Write one into the catalogue |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |
 | `automation/removed` | Take one out |
-| `automationRun/cancelRequested` | Stop a run: the turns of its sessions stop, and the run settles `cancelled` once none is going. Answered to the client that asked; refused for a run that is unknown or already over |
+| `automationRun/cancelRequested` | Stop a run: the turns its sessions are running stop, and the run settles as they end; a run with no session yet settles `cancelled` at once. Answered to the client that asked; refused for a run that is unknown, already over, or running no turn |
 
 The `automation/*` and `automationRun/*` rows, with their origins, are [AHP.md](AHP.md#automation--4-of-4-).
 

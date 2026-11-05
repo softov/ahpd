@@ -302,45 +302,52 @@ export function createAutomations(ctx: HostContext): Automations {
    *
    * A run is sessions and what runs in a session is a turn, so the call is the
    * one `chat/turnCancelled` makes: the chat's backend is asked to stop the
-   * turn it is running, and the backend's own ending is what the run reads. A
-   * session that is not live here has no turn to stop, which is the same
-   * answer as one between turns.
+   * turn it is running, and the backend's own ending is what the run reads.
+   * Answers whether there was a turn to stop: a session that is not live here
+   * has none, as one between turns has none.
    */
-  const stopTurn = (session: string): void => {
+  const stopTurn = (session: string): boolean => {
     const chat = byChat.get(chatUriFor(session))?.chat;
-    if (chat === undefined) return;
+    if (chat === undefined) return false;
     const active = (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-    if (typeof active?.id === 'string') void chat.abort();
+    if (typeof active?.id !== 'string') return false;
+    void chat.abort();
+    return true;
   };
 
   /**
-   * Stop a run, and answer why it did not stop where it did not.
+   * Stop a run, and answer with the reason it did not stop where it did not.
    *
-   * The action is a request with no room for an answer, so the reason travels
-   * back to the one client that asked as a `rejectionReason` rather than as a
-   * result - which is why this hands one out instead of refusing.
+   * The action's one answer is a `rejectionReason` to the client that sent it,
+   * so the caller refuses with the reason this hands back.
    *
-   * A run that has no session running a turn is settled here and now. That is
-   * a run whose session is between turns, one asleep in the catalogue, and one
-   * whose session is still being made: none of the three will ever emit an
-   * ending, and a cancel that waited for one would wait for ever. The
-   * reference host does the same with the last of them, which it answers by
-   * writing the run's own end rather than by asking a session for it.
+   * A run with no session yet is settled here and now, as the reference host
+   * writes such a run's own end. A run with sessions is stopped by stopping
+   * their turns, and its own ending is what their backends' endings make of
+   * it; one none of whose sessions runs a turn is refused, as the reference
+   * host refuses a cancellation none of its sessions accepted. Each refusal
+   * is in the reference host's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L740-L762
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1187-L1203
    *
-   * The wake this automation is holding behind the run goes with it. That wake
-   * was waiting for the slot this run had, and a person pressing Stop is
-   * stopping the work rather than asking for the next piece of it: left where
-   * it is, the run's own ending would release it a turn later and the stop
-   * would have started the automation's next run.
+   * The wake this automation is holding behind the run goes with a run that
+   * stops. That wake was waiting for the slot this run had, and a person
+   * pressing Stop is stopping the work rather than asking for the next piece
+   * of it: left where it is, the run's own ending would release it a turn
+   * later and the stop would have started the automation's next run.
    */
   const cancelRun = (run: string): string | undefined => {
     const store = options.automations;
     const found = store?.runOf?.(run);
     if (found === undefined) return `Automation run not found: ${run}`;
     if (OVER.has(String(found.lifecycle.status))) return `Automation run is already terminal: ${run}`;
+    if (found.sessions.length === 0) {
+      waiting.delete(found.automation);
+      store?.settle?.(run, { status: 'cancelled' });
+      return undefined;
+    }
+    if (!found.sessions.map(stopTurn).some((stopped) => stopped)) return `Automation run cancellation was not accepted: ${run}`;
     waiting.delete(found.automation);
-    for (const session of found.sessions) stopTurn(session);
-    if (!stillGoing(found)) store?.settle?.(run, { status: 'cancelled' });
     return undefined;
   };
 

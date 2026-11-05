@@ -292,6 +292,36 @@ it('answers a create, an update and a removal of nothing by the client\'s own ac
   expect(types.indexOf('automation/set')).toBeLessThan(types.indexOf('automation/createRequested'));
 });
 
+/*
+ * A create where an automation is already kept says the same definition
+ * again as it is held and refuses another, and an update of none is refused,
+ * each in the words of VS Code's automation service.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L318-L363
+ */
+it('says a create of what it holds again, and refuses another create there and an update of none', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, action: Record<string, unknown>) =>
+    client.handle({ method: 'dispatchAction', params: { channel: AUTOMATIONS, clientSeq, action } });
+  await send(1, { type: 'automation/createRequested', resource: ONE, definition: DEFINITION });
+  await send(2, { type: 'automation/createRequested', resource: ONE, definition: DEFINITION });
+  await send(3, { type: 'automation/createRequested', resource: ONE, definition: { ...DEFINITION, title: 'Another' } });
+  await send(4, { type: 'automation/updateRequested', resource: 'ahp-automation:/none', changes: { title: 'Nothing' } });
+  await settle();
+
+  const own = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS && n.origin !== undefined);
+  expect(own.map((n) => [n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [3, `Automation already exists: ${ONE}`],
+    [4, 'Automation not found: ahp-automation:/none'],
+  ]);
+  expect(((await entries(client))[0] as { definition: { title: string } }).definition.title).toBe(DEFINITION.title);
+});
+
 it('patches rather than overwrites, so one client does not revert another', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
@@ -1480,6 +1510,42 @@ const controllable = () => {
     },
   };
 };
+
+/*
+ * A removal of an automation that does not offer it, and a stop of a run none
+ * of whose sessions runs a turn, are refused in the words of VS Code's
+ * automation service; a run with no session yet is settled cancelled at once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L740-L762
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1538-L1542
+ */
+it('refuses a removal not offered and a stop that stopped no turn, in VS Code\'s words', async () => {
+  const driven = controllable();
+  const settled: string[] = [];
+  const store = {
+    ...driven.store,
+    get: (resource: string) => (resource === ONE ? { resource: ONE, definition: {}, runs: [], operations: ['update'], createdAt: '', modifiedAt: '' } : undefined),
+    settle: (run: string) => { settled.push(run); return true; },
+  };
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], automations: store as never });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  await client.handle({ method: 'subscribe', params: { channel: driven.run.resource } });
+
+  await client.handle({ method: 'dispatchAction', params: { channel: AUTOMATIONS, action: { type: 'automation/removed', resource: ONE } } });
+  driven.run.sessions = ['ahp-session:/between-turns'];
+  await client.handle({ method: 'dispatchAction', params: { channel: driven.run.resource, action: { type: 'automationRun/cancelRequested' } } });
+  await settle();
+  expect(refusals(p, AUTOMATIONS)).toEqual([`Automation operation 'remove' is not available: ${ONE}`]);
+  expect(refusals(p, driven.run.resource)).toEqual([`Automation run cancellation was not accepted: ${driven.run.resource}`]);
+  expect(settled).toEqual([]);
+
+  driven.run.sessions = [];
+  await client.handle({ method: 'dispatchAction', params: { channel: driven.run.resource, action: { type: 'automationRun/cancelRequested' } } });
+  await settle();
+  expect(settled).toEqual([driven.run.resource]);
+});
 
 it('says which sessions a run has, one action per session', async () => {
   const driven = controllable();
