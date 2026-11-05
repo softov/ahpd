@@ -64,7 +64,10 @@ export interface Catalogue {
   /** A session this host is making, which no client has a row for until `sessionAdded` says it. */
   sessionComing(uri: string): void;
   sessionAdded(uri: string): void;
+  /** A session's row moved: said with the rest on the 100 ms debounce. */
   summaryMoved(uri: string): void;
+  /** Every row that moved, said now, as the debounce would. */
+  flushPendingSessionSummaries(): void;
   /**
    * Read what the session did, keep it, and say its row moved.
    *
@@ -658,10 +661,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * its first move carries every mutable field.
    */
   const lastSent = new Map<string, Bag>();
-  /** A session's row is gone, so nothing it was sent can be compared to. */
+  /**
+   * The sessions whose row moved since the last flush, said together once the
+   * moves have been quiet for 100 ms, as the reference host marks a session
+   * dirty and flushes on that debounce: a burst of moves is one notification.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
+   */
+  const dirty = new Set<string>();
+  /** Each row as it was when it was last marked, which a move is measured against. */
+  const marked = new Map<string, string>();
+  let flushing: ReturnType<typeof setTimeout> | undefined;
+  /** A session's row is gone, so nothing it was sent can be compared to, and nothing of it is pending. */
   const forgetSent = (uri: string): void => {
     lastSent.delete(uri);
     coming.delete(uri);
+    dirty.delete(uri);
+    marked.delete(uri);
   };
   /**
    * A session already in the catalogue moved.
@@ -683,19 +698,46 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const summaryMoved = (uri: string): void => {
     factsMoved(uri);
-    const summary = summaryOf(uri);
-    /*
-     * Zero counts when there are none, rather than no key: a row whose counts
-     * went to nothing after everything was committed says so, and a client
-     * then draws no counts rather than the last ones it was handed.
-     */
-    const counts = { changes: NO_CHANGES, ...changesOf(uri) };
-    if (summary === undefined) {
-      sayMoved(uri, { status: statusOf(uri), ...counts });
+    // A session nothing runs has its change said at once, as the reference
+    // host applies a change to the summary it announced for a session with no
+    // live state and emits it then.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L234-L250
+    if (!sessions.has(uri)) {
+      sayMoved(uri, rowOf(uri));
       return;
     }
+    // Marked, and the flush put back, only when the row moved since it was
+    // last marked, as the reference host marks a session dirty only when its
+    // summary's fields moved.
+    const row = JSON.stringify(rowOf(uri));
+    if (marked.get(uri) === row) return;
+    marked.set(uri, row);
+    dirty.add(uri);
+    if (flushing !== undefined) clearTimeout(flushing);
+    flushing = setTimeout(flushPendingSessionSummaries, 100);
+    flushing.unref?.();
+  };
+  /**
+   * A row's mutable fields as a client holds them.
+   *
+   * Zero counts when there are none, rather than no key: a row whose counts
+   * went to nothing after everything was committed says so, and a client then
+   * draws no counts rather than the last ones it was handed.
+   */
+  const rowOf = (uri: string): Bag => {
+    const summary = summaryOf(uri);
+    const counts = { changes: NO_CHANGES, ...changesOf(uri) };
+    if (summary === undefined) return { status: statusOf(uri), ...counts };
     const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
-    sayMoved(uri, { ...mutable, ...counts });
+    return { ...mutable, ...counts };
+  };
+  /** Every row that moved, said now, as the debounce would. */
+  const flushPendingSessionSummaries = (): void => {
+    if (flushing !== undefined) clearTimeout(flushing);
+    flushing = undefined;
+    const due = [...dirty];
+    dirty.clear();
+    for (const uri of due) sayMoved(uri, rowOf(uri));
   };
   /**
    * What a running session's state holds of its folder and its backend, said
@@ -1463,8 +1505,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * What a chat's action moved on its session.
    *
    * The chat's row in the session's `chats` takes the fields of the chat's
-   * state that changed, as `session/chatUpdated` - only those, and never its
-   * `resource`. The session's held `activity` takes the activity of the chat
+   * state that changed, as `session/chatUpdated` - only those, its activity
+   * with a status change, and never its `resource`. The session's held
+   * `activity` takes the activity of the chat
    * that now decides it, in place, as the reference host folds its chats into
    * the session's state with no action of its own. And the catalogue row
    * moves with both. Each is done only when the session's state is held: a
@@ -1501,10 +1544,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       else if (row !== undefined) {
         const now = subagents.has(chat) ? subagentSummary(chat, subagents.get(chat) as LiveSubagent) : summaryIn(own, chat);
         const changes: Bag = {};
-        for (const key of ['title', 'status', 'modifiedAt', 'activity', 'interactivity', 'origin']) {
+        for (const key of ['title', 'status', 'modifiedAt', 'interactivity', 'origin']) {
           if (now[key] === undefined) continue;
           if (JSON.stringify(now[key]) !== JSON.stringify(row[key])) changes[key] = now[key];
         }
+        // The chat's activity rides its status change, as the reference host
+        // forwards it, and is said with nothing else.
+        if (changes.status !== undefined && now.activity !== undefined) changes.activity = now.activity;
         if ((now.movable === true) !== (row.movable === true)) changes.movable = now.movable === true;
         if (Object.keys(changes).length > 0) ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes });
       }
@@ -1590,7 +1636,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, chatMoved, answerMirrored, askedLeft, factsMoved, activeCount,
-    activityOf, sessionComing, sessionAdded, summaryMoved, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
+    activityOf, sessionComing, sessionAdded, summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
 }

@@ -964,6 +964,8 @@ it("says a session's chats in its row as the session's own state says them", asy
   await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
   dispatch(client, second, started('t1', 'go'));
   await settle();
+  // Past the catalogue's 100 ms debounce, which says a session's moves together.
+  await new Promise((r) => { setTimeout(r, 120); });
 
   let row: Record<string, unknown> | undefined;
   for (const note of p.notes) {

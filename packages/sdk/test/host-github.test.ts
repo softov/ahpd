@@ -6,7 +6,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, emit, gitChanges, hello, hostTools, machine,
+  resetSdk, actions, claude, createHost, emit, flushed, gitChanges, hello, hostTools, machine,
  peer, sdk, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
@@ -135,6 +135,7 @@ describe('what GitHub knows about the branch', () => {
     // or a producer that wrote its own part would have erased the git facts.
     expect(meta?.workingDirectoryKeys).toEqual({ [HOME]: HOME });
     expect(meta?.githubData?.[HOME]?.pullRequestState).toBe('merged');
+    await flushed();
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     const rowMeta = (row?.params as {
       changes: {
@@ -328,6 +329,7 @@ describe('what a session recorded', () => {
     const meta = moved?.action._meta as Record<string, unknown> | undefined;
     const held = meta?.[KEY] as { id: string; label: string }[] | undefined;
     expect(held?.map((one) => one.label)).toEqual(['Docs']);
+    await flushed();
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     expect(((row?.params as { changes: { _meta?: Record<string, unknown> } }).changes._meta)?.[KEY]).toEqual(held);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { _meta?: Record<string, unknown> } } }).snapshot.state;

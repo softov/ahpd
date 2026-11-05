@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools, machine, open, peer,
+  resetSdk, actions, claude, createHost, echo, emit, flushed, hello, hostTools, machine, open, peer,
  sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
@@ -120,6 +120,19 @@ describe('what it says it is doing', () => {
   });
 
   /*
+   * A chat's row on its session takes the chat's activity with a status change
+   * and with nothing else, as VS Code forwards a chat's summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3280-L3294
+   */
+  it('says a chat\'s activity on its session only with a status change', async () => {
+    const { host, p, uri } = await begun(doing('Reading'));
+    const updates = actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated')
+      .map((e) => e.action.changes as { status?: unknown; activity?: unknown });
+    expect(updates.filter((one) => one.activity !== undefined && one.status === undefined)).toEqual([]);
+    await host.close();
+  });
+
+  /*
    * A backend's own word for what its session is doing is said as it came, as
    * VS Code's host says what its agent reports.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
@@ -154,8 +167,10 @@ describe('what it says it is doing', () => {
       items: { activity?: string }[];
     };
     expect(listed.items[0]?.activity).toBe('Bash ls -la');
+    await flushed();
 
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    await flushed();
     // Cleared, not left saying the last thing it did.
     expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged').at(-1)?.action.activity)
       .toBeUndefined();
@@ -188,6 +203,7 @@ describe('what it says it is doing', () => {
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: 'Paging' } } });
     await settle();
+    await flushed();
     expect(actions(p, uri).find((e) => e.action.type === 'session/titleChanged')?.action.title).toBe('Paging');
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     expect((row?.params as { changes: { title?: string } }).changes.title).toBe('Paging');
@@ -389,6 +405,7 @@ describe('the fields a client reads by name', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
+    await flushed();
 
     const moves = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged');
     expect(moves).not.toHaveLength(0);
@@ -902,6 +919,7 @@ describe('the fields a client reads by name', () => {
     expect(updated?.action.chat).toBe(second);
     expect((updated?.action.changes as { status?: number } | undefined)?.status).toBe(Status.Idle | Status.IsRead);
     // The row a client lists says it too, and says it about that chat alone.
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
     const others = chatsOf(p, 'ahp-session:/live').filter((one) => one.resource !== second);
     expect(others.map((one) => one.status)).toEqual(others.map(() => Status.Idle | Status.IsRead));
@@ -956,6 +974,7 @@ describe('the fields a client reads by name', () => {
     });
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    await flushed();
 
     const worker = chatsOf(p, 'ahp-session:/restored').find((one) => one.interactivity === 'read-only');
     expect(worker?.resource).toContain('toolu_task');
@@ -965,7 +984,7 @@ describe('the fields a client reads by name', () => {
       method: 'dispatchAction',
       params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: true } },
     });
-    await settle();
+    await flushed();
     // Read is the client's own bit and outlives every reason the turns are
     // read-only: somebody who has read what a subagent did does not want it
     // back as unread when they open the session again.
@@ -1036,14 +1055,14 @@ describe('the fields a client reads by name', () => {
     });
 
     archive(true);
-    await settle();
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead | Status.IsArchived);
     // The session is not archived with it. One chat put away is a chat, and a
     // session that went with it would take the other chats off the list too.
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
 
     archive(false);
-    await settle();
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
   });
 
@@ -1121,7 +1140,7 @@ describe('the fields a client reads by name', () => {
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
-    await settle();
+    await flushed();
     // Unread, as the protocol's chat reducer makes it on a turn's start.
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.InProgress);
 
@@ -1129,7 +1148,7 @@ describe('the fields a client reads by name', () => {
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/isReadChanged', isRead: true } },
     });
-    await settle();
+    await flushed();
     // Both bits, because they are different facts about one chat: work is
     // happening in it, and the person has read what it said so far.
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.InProgress | Status.IsRead);

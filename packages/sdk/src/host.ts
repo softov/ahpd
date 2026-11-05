@@ -1850,6 +1850,9 @@ export function createHost(options: HostOptions): Host {
         // A delta still waiting on the timer would otherwise be broadcast by a
         // timer that outlives the host it belongs to.
         deltas.stop();
+        // And the rows that moved, said before the sessions below go, as the
+        // reference host flushes its pending summaries before it settles.
+        ctx.flushPendingSessionSummaries();
         ctx.stopSleep();
         ctx.stopWakes();
         ctx.stopMerged();

@@ -105,6 +105,14 @@ export const settle = async (times = 4): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
+/**
+ * Past the catalogue's 100 ms debounce, so every row that moved has been said,
+ * as VS Code's host says a session's moves together once they are quiet.
+ */
+export const flushed = async (): Promise<void> => {
+  await new Promise((r) => { setTimeout(r, 120); });
+};
+
 /** Say what the session's own CLI said. */
 export async function emit(...frames: Record<string, unknown>[]): Promise<void> {
   const fake = sessionQueries().at(-1);

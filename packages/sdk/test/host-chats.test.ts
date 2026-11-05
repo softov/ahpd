@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk, serving,
+  resetSdk, actions, claude, createHost, echo, emit, flushed, hello, machine, open, peer, sdk, serving,
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -1547,6 +1547,8 @@ describe('more than one chat in a session', () => {
         await settle(20);
       }
       await send(client, PEER, 't1', 'over here');
+      // Each row's moves said before the next, past the catalogue's debounce.
+      await flushed();
       const before = starts.length;
       const lead = (await opened(client, TWO)).state.defaultChat as string;
 
@@ -1555,6 +1557,7 @@ describe('more than one chat in a session', () => {
         params: { channel: PEER, destination: { kind: 'session', session: TWO, after: TAIL } },
       }) as { session: string };
       await settle(20);
+      await flushed();
 
       /*
        * One start, and it is the chat: the destination resumes the

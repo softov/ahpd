@@ -421,6 +421,11 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       type: 'assistant',
       message: { id: 'm1', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/home/softov/a' } }] },
     },
+  );
+  // Past the catalogue's 100 ms debounce, so the row says the tool it is on
+  // and then, once the turn ends, that it is on none.
+  await new Promise((r) => { setTimeout(r, 120); });
+  await said(
     { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'ok' }] } },
     { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'Done.' }] } },
     {
@@ -435,6 +440,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       modelUsage: { 'claude-opus-5': { costUSD: 0.25, costBasis: 'exact' } },
     },
   );
+  await new Promise((r) => { setTimeout(r, 120); });
 
   // The rest of the session channel: a title, the flags a client keeps, a
   // config value, and a client saying it is watching.

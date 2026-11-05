@@ -1017,20 +1017,27 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
 /**
  * The status the catalogue announced as a turn ended.
  *
- * The host moves the session's row on every chat action, reading the status
- * as that action passes; the row sent right after the ending is the one a
- * client's list is left with when nothing else about the session moves.
+ * The first row carrying a status said after the action of `type` that ended
+ * turn `turnId`, or the first such action where no turn is named, once that
+ * row is said: the row a client's list is left with when nothing else about
+ * the session moves. A running session's moves are said together once they
+ * have been quiet for 100 ms, as VS Code's host flushes a session marked dirty.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
  */
-const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
-  const at = p.notes.findIndex((n) => n.method === 'action'
-    && (n.params as Note).channel === chatUri
-    && (n.params as Note).action.type === type);
-  if (at < 0) return undefined;
-  // By id: the row is published under the provider's name, whatever the
-  // client created the session as.
-  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
-    && idOf((n.params as { session: string }).session) === idOf(uri));
-  const status = (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+const statusAtEnd = async (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string, turnId?: string): Promise<unknown> => {
+  const rowAfter = () => {
+    const at = p.notes.findIndex((n) => n.method === 'action'
+      && (n.params as Note).channel === chatUri
+      && (n.params as Note).action.type === type
+      && (turnId === undefined || (n.params as Note).action.turnId === turnId));
+    // By id: the row is published under the provider's name, whatever the
+    // client created the session as.
+    return at < 0 ? undefined : p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+      && idOf((n.params as { session: string }).session) === idOf(uri)
+      && (n.params as { changes: { status?: unknown } }).changes.status !== undefined);
+  };
+  await until(() => rowAfter() !== undefined, 4000);
+  const status = (rowAfter()?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
   // Without the read bit, which is the person's and not the turn's.
   return typeof status === 'number' ? status & ~Status.IsRead : status;
 };
@@ -1040,7 +1047,7 @@ it('announces the session idle with the turnComplete that ends its turn', async 
   const { client, peer: p, uri, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnCancelled that ends its turn', async () => {
@@ -1052,7 +1059,7 @@ it('announces the session idle with the turnCancelled that ends its turn', async
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
 });
 
 /** A model that fails its first `failures` calls and then answers `text`. */
@@ -1078,7 +1085,7 @@ it('announces the session failed with the chat/error that ends its turn', async 
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
 });
 
 it('marks a failed run resumable, on the stream and on the turn', async () => {
@@ -1390,10 +1397,10 @@ it('clears a failure when the next turn starts', async () => {
   const { client, peer: p, uri, chatUri } = await talking(failingModel(1));
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
   begin(client, chatUri, 't2', 'again');
   await until(() => types(p, chatUri).includes('chat/turnComplete'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnComplete that ends a !command', async () => {
@@ -1412,10 +1419,27 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
   const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  begin(client, chatUri, 't1', '!echo cofold-ran-it');
+  const command = 't1';
+  begin(client, chatUri, command, '!echo cofold-ran-it');
   await until(() => ended(p, chatUri), 4000);
   expect(types(p, chatUri)).toContain('chat/toolCallComplete');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  /*
+   * The status a client's list holds once the command's moves were quiet:
+   * idle, whether the command's running was said or its moves were coalesced
+   * into a row that says only what moved since the last one said. Read from
+   * the session's announcement and every row after it, as a list holds them.
+   */
+  const told = () => p.notes.filter((n) => (n.method === 'root/sessionSummaryChanged'
+    && idOf((n.params as { session: string }).session) === idOf(uri))
+    || (n.method === 'root/sessionAdded' && idOf((n.params as { summary: { resource: string } }).summary.resource) === idOf(uri)));
+  const commandEnd = p.notes.findIndex((n) => n.method === 'action' && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === 'chat/turnComplete' && (n.params as Note).action.turnId === command);
+  await until(() => p.notes.slice(commandEnd + 1).some((n) => told().includes(n)), 4000);
+  const held = told()
+    .map((n) => (n.params as { summary?: { status?: unknown } }).summary?.status ?? (n.params as { changes?: { status?: unknown } }).changes?.status)
+    .filter((status) => typeof status === 'number')
+    .at(-1) as number;
+  expect(held & ~Status.IsRead).toBe(Status.Idle);
 });
 
 it('starts a queued turn only after the one before it has ended', async () => {

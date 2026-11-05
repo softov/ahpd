@@ -414,6 +414,8 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
     params: { channel: uri, action: { type: 'session/isReadChanged', isRead: false } },
   });
   await settle();
+  // Past the catalogue's 100 ms debounce, which says a session's moves together.
+  await new Promise((r) => { setTimeout(r, 120); });
   const moved = p.notes
     .filter((n) => n.method === 'root/sessionSummaryChanged')
     .map((n) => n.params as { changes: Record<string, unknown> })

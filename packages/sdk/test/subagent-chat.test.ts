@@ -54,6 +54,14 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
+/**
+ * Past the catalogue's 100 ms debounce, so every row that moved has been said,
+ * as VS Code's host says a session's moves together once they are quiet.
+ */
+const flushed = async (): Promise<void> => {
+  await new Promise((r) => { setTimeout(r, 120); });
+};
+
 /** Every action dispatched on one channel, in order. */
 const on = (channel: string): Bag[] => wire
   .filter((one) => one.method === 'action' && one.params.channel === channel)
@@ -903,13 +911,13 @@ it('reads a session as running while its worker runs after the lead turn, and th
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
-  await settle();
+  await flushed();
   const running = held(row());
   expect(activity(running.status)).toBe(8);
   expect(activity(chatOn(running, worker))).toBe(8);
 
   finishWorker();
-  await settle();
+  await flushed();
   const ended = held(row());
   expect(activity(ended.status)).toBe(1);
   expect(activity(chatOn(ended, worker))).toBe(1);
@@ -918,7 +926,7 @@ it('reads a session as running while its worker runs after the lead turn, and th
 it('reads a session as waiting while its worker asks, though the lead is running', async () => {
   const { ask, lead, row, activity } = await busyHost();
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'ask' } } });
-  await settle();
+  await flushed();
   expect(activity(held(row()).status)).toBe(24);
 });
 
@@ -928,7 +936,7 @@ it('reads a session as running while a second chat runs and its default chat is 
   await ask('createChat', { channel: uri, chat: second });
   await ask('subscribe', { channel: second });
   await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work' } } });
-  await settle();
+  await flushed();
   const moved = held(row());
   expect(activity(moved.status)).toBe(8);
   expect(activity(chatOn(moved, second))).toBe(8);

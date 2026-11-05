@@ -10,7 +10,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, echo, machine, resetSdk, actions, emit, hello, open, peer,
+  claude, createHost, echo, flushed, machine, resetSdk, actions, emit, hello, open, peer,
   sdk, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
@@ -1091,9 +1091,30 @@ describe("a row lists the session's chats", () => {
     expect(status).toBe(Status.InProgress);
     // And the row agrees with the chat, which is what a client listing
     // sessions with no subscription to either reads.
+    await flushed();
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === second)?.status).toBe(status);
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === rowOf(p, 'ahp-session:/live')?.defaultChat)?.status)
       .toBe(Status.Idle | Status.IsRead);
+  });
+
+  /*
+   * VS Code marks a running session's summary dirty and flushes on a 100 ms
+   * debounce, so a burst of moves is one notification.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
+   */
+  it('says a burst of a running session\'s moves as one notification, once they are quiet', async () => {
+    const { client, peer: p, uri } = await running();
+    await flushed();
+    const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
+      && (n.params as { session?: string }).session === uri);
+    const before = said().length;
+    for (const title of ['One', 'Two', 'Three']) {
+      await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title } } });
+    }
+    expect(said()).toHaveLength(before);
+    await flushed();
+    expect(said()).toHaveLength(before + 1);
+    expect((said().at(-1)?.params as { changes: { title?: string } }).changes.title).toBe('Three');
   });
 
   it('says the row again when a chat opens and when one closes', async () => {
@@ -1102,13 +1123,16 @@ describe("a row lists the session's chats", () => {
     const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
       && (n.params as { session?: string }).session === 'ahp-session:/live').length;
 
+    await flushed();
     const before = said();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await flushed();
     expect(said()).toBeGreaterThan(before);
     expect(resourcesOf(p, 'ahp-session:/live')).toContain(second);
 
     const opened = said();
     await client.handle({ method: 'disposeChat', params: { channel: second } });
+    await flushed();
     expect(said()).toBeGreaterThan(opened);
     // The list replaces the catalog, so the chat being gone from it is what
     // takes it out of a client's list.
@@ -1405,12 +1429,15 @@ describe('a summary that did not change', () => {
       // The same conversation, under the same name, added whole: what a client
       // that watched it go now holds, and what the next move is a change from.
       expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
+      await flushed();
       const before = rowsMoved(p, 'ahp-session:/live');
       await retitle(client, uri, 'Paging');
+      await flushed();
       const moved = rowsMoved(p, 'ahp-session:/live');
       expect(moved).toHaveLength(before.length + 1);
       expect(moved.at(-1)).toMatchObject({ title: 'Paging' });
       await retitle(client, uri, 'Paging');
+      await flushed();
       expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
     }
     finally {
@@ -1573,6 +1600,8 @@ describe("a row's counts are the session's own", () => {
 
     files = 6;
     await turn(client, chatUri, 't2');
+    // Said once the session's moves are quiet, on VS Code's 100 ms debounce.
+    await flushed();
     expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 6 });
   });
 
@@ -1588,6 +1617,7 @@ describe("a row's counts are the session's own", () => {
     // work nobody can see.
     files = 5;
     await failed(client, chatUri, 't2');
+    await flushed();
     expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 5 });
   });
 

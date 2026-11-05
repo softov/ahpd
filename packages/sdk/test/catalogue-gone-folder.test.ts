@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
+import { createHost, flushed, hello, machine, peer, resetSdk, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -185,6 +185,7 @@ describe('a folder that has gone', () => {
         params: { channel: 'ahp-session:/live', action: { type: 'session/titleChanged', title: 'Gone' } },
       });
       await settle(4);
+      await flushed();
       const moved = notes.filter((one) => one.method === 'root/sessionSummaryChanged').at(-1)?.params as
         { changes?: { workingDirectories?: string[] } } | undefined;
       expect(moved?.changes?.workingDirectories).toEqual([]);
