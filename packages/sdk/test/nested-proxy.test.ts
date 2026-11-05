@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -1854,6 +1854,13 @@ it('a truncate of a nested session is said, and disposes nothing inside the mach
  */
 it('a command typed into a nested session runs in the host inside, and in no terminal out here', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-nested-bang-'));
+  /*
+   * The folder as the machine names it, which a real machine mounts. The host
+   * inside here runs on this same runner, so on Windows the `/c/...` path it is
+   * handed is made where that host reads it, on the current drive.
+   */
+  const mounted = resolve(machinePathOf(dir));
+  mkdirSync(mounted, { recursive: true });
   const inner = innerHost(backend(), { terminals: shellTerminals() });
   const opened: string[] = [];
   const host = createHost({
@@ -1889,6 +1896,7 @@ it('a command typed into a nested session runs in the host inside, and in no ter
     inner.crash(0, 'SIGTERM');
     await host.close();
     rmSync(dir, { recursive: true, force: true });
+    if (mounted !== dir) rmSync(mounted, { recursive: true, force: true });
   }
 });
 
