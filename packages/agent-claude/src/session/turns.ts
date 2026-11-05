@@ -89,7 +89,7 @@ export function createTurns(ctx: SessionContext): Turns {
     // A CLI put away meanwhile took its yielded entries with it, and the one
     // in its place is sent them by whatever put it there.
     if (ctx.query !== to) return;
-    ctx.waiting.push({
+    ctx.toYield.push({
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
@@ -252,15 +252,15 @@ export function createTurns(ctx: SessionContext): Turns {
      * on the turn after it, with the conversation resumed onto the new CLI.
      * A record that cannot be run fails the turn.
      */
-    const unrunnable = ctx.refreshPreset();
+    const unrunnable = ctx.rebindForSyncedState();
     if (unrunnable !== undefined) {
       ctx.preparingTurn = undefined;
       refuseTurn(turnId, text, unrunnable, began, from, attachments);
       return;
     }
     // The agent this message picked, which decides which CLI the model is switched on.
-    const unswitched = ctx.switchAgent(from?.agent?.uri);
-    if (unswitched !== undefined) console.warn(`@ahpd/agent-claude: ${unswitched}; the turn runs on the agent it has`);
+    const unbound = ctx.rebindForRestart(from?.agent?.uri);
+    if (unbound !== undefined) console.warn(`@ahpd/agent-claude: ${unbound}; the turn runs on the agent it has`);
     // The model this turn names, before the prompt goes out and before the turn is credited to it.
     if (model !== undefined && model.id !== ctx.chosen) {
       const unmoved = await ctx.take(model.id);
@@ -426,9 +426,9 @@ export function createTurns(ctx: SessionContext): Turns {
     withdrawSteeringMessage: (id) => {
       for (const [uuid, pending] of [...ctx.yielded]) {
         if (!pending.steering || pending.id !== id || pending.lifecycle === 'started') continue;
-        const unread = ctx.waiting.findIndex((one) => one.uuid === uuid);
+        const unread = ctx.toYield.findIndex((one) => one.uuid === uuid);
         if (unread >= 0) {
-          ctx.waiting.splice(unread, 1);
+          ctx.toYield.splice(unread, 1);
           ctx.yielded.delete(uuid);
           continue;
         }
@@ -556,7 +556,7 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.rebind = was;
       try { was.close(); }
       catch { /* A CLI already closing is stopped all the same. */ }
-      ctx.waiting.length = 0;
+      ctx.toYield.length = 0;
       ctx.yielded.clear();
       ctx.parentSdkUuid = undefined;
       ctx.steering = undefined;

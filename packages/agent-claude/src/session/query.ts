@@ -40,12 +40,14 @@ const HANDSHAKE_MS = 120000;
 /** What this area offers the rest of the session. */
 export interface Query {
   /**
-   * Messages waiting to go out on the CLI's input stream.
+   * Messages to go out on the CLI's input stream: VS Code's queue's to-yield
+   * list.
    *
    * The SDK's own shape, because a message with attachments goes as content
-   * blocks rather than as the string one without carries.
+   * blocks and one with none as a string.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57
    */
-  waiting: SDKUserMessage[];
+  toYield: SDKUserMessage[];
   /**
    * A query for this session, on the agent named.
    *
@@ -57,16 +59,24 @@ export interface Query {
   ends: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
   take: (id: string) => Promise<string | undefined>;
-  /** Move this session's CLI onto the agent a message picked, if it is not already there. */
-  switchAgent: (uri: string | undefined) => string | undefined;
   /**
-   * Read a record's values again, find the turn's login, and move the CLI onto
-   * them when either changed.
+   * Start this session's CLI again on the agent a message picked, when it is
+   * running another: VS Code's pipeline's `rebindForRestart`, which its
+   * session's send runs for state that moved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L321-L323
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1141-L1145
+   */
+  rebindForRestart: (uri: string | undefined) => string | undefined;
+  /**
+   * Read a record's values again, find the turn's login, and start the CLI
+   * again on them when either changed: VS Code's session's rebind for synced
+   * state, at the send.
    *
    * A preset's values stay as they were read, and only its login can change. A
    * refusal is a sentence for the turn that asked.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
    */
-  refreshPreset: () => string | undefined;
+  rebindForSyncedState: () => string | undefined;
   /** Read one CLI's frames until it ends. */
   consume: () => Promise<void>;
   /** End the turn now running as one that failed, and leave the session as it is. */
@@ -250,11 +260,11 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   // The input stream. A query with a live stream stays open between turns,
-  // which is what makes a session a session rather than a series of them.
-  const waiting: SDKUserMessage[] = [];
+  // which is what makes a session one conversation.
+  const toYield: SDKUserMessage[] = [];
 
   /**
-   * Which query reads `waiting` now: the count of queries this session built.
+   * Which query reads `toYield` now: the count of queries this session built.
    *
    * The list outlives a query, so a prompt pushed while a new CLI starts waits
    * there for that CLI. The SDK reads a new query's input only once its
@@ -269,10 +279,10 @@ export function createQuery(ctx: SessionContext): Query {
    */
   let bound = 0;
 
-  async function* input(mine: number): AsyncGenerator<(typeof waiting)[number]> {
+  async function* input(mine: number): AsyncGenerator<(typeof toYield)[number]> {
     for (;;) {
-      while (mine === bound && waiting.length > 0) {
-        const next = waiting.shift() as (typeof waiting)[number];
+      while (mine === bound && toYield.length > 0) {
+        const next = toYield.shift() as (typeof toYield)[number];
         yield next;
         if (ctx.steering !== undefined) {
           const said = ctx.steering;
@@ -323,7 +333,7 @@ export function createQuery(ctx: SessionContext): Query {
   const putAway = (handle: unknown, why: string): void => {
     ctx.rebind = handle;
     ctx.gone = why;
-    ctx.waiting.length = 0;
+    ctx.toYield.length = 0;
     ctx.yielded.clear();
     ctx.parentSdkUuid = undefined;
     ctx.steering = undefined;
@@ -646,7 +656,7 @@ export function createQuery(ctx: SessionContext): Query {
    * record is read again and the login chosen again, and it compares both
    * against what the CLI answering now was started with.
    *
-   * The new query is the one that reads `waiting` from here on. The pending
+   * The new query is the one that reads `toYield` from here on. The pending
    * prompt the reader of the one it replaces waits on is completed so that it
    * ends, and cleared, so a prompt pushed before the new reader starts waits
    * for that reader, as the reference completes the deferred of a reader whose
@@ -704,20 +714,19 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * Move this session's CLI onto the agent a message picked, if it is not
-   * already there.
+   * Start this session's CLI again on the agent a message picked, when it is
+   * running another.
    *
    * The SDK reads `agent` when the query is built and has nowhere to put a
-   * later one, so a pick that differs cannot be answered by the CLI already
-   * running: it has to be answered by a new CLI, resumed into the same
-   * conversation, before the turn's prompt goes out. A pick equal to what is
-   * running costs nothing, which is the ordinary case - the picker sends the
-   * same agent on every message.
+   * later one, so a pick that differs is answered by a new CLI, resumed into
+   * the same conversation, before the turn's prompt goes out. A pick equal to
+   * the applied agent costs nothing, which is the ordinary case: the picker
+   * sends the same agent on every message.
    *
    * No agent named means the CLI's own default, which is also what a query
    * built without one runs on.
    */
-  const switchAgent = (uri: string | undefined): string | undefined => {
+  const rebindForRestart = (uri: string | undefined): string | undefined => {
     const name = uri === undefined ? undefined : agentNameOf(uri);
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
@@ -1178,14 +1187,13 @@ export function createQuery(ctx: SessionContext): Query {
    * or whose token a put replaced, hands the next turn to a CLI on the first
    * ready one.
    *
-   * The conversation moves as a `switchAgent` restart moves it: the new query
+   * The conversation moves as `rebindForRestart` moves it: the new query
    * resumes the id the CLI gave this session, so the transcript, the model and
    * everything the SDK said are still there. A CLI that will not stop, and a
-   * record whose logins are none of them ready, are the turn's own refusal
-   * rather than a session that died, which is why each comes back as a
-   * sentence.
+   * record whose logins are none of them ready, are the turn's own refusal,
+   * which is why each comes back as a sentence; the session goes on.
    */
-  const refreshPreset = (): string | undefined => {
+  const rebindForSyncedState = (): string | undefined => {
     const live = ctx.options.presetOf;
     const now = live === undefined ? ctx.values : ctx.valuesOf(live());
     const unready = ctx.unready(now);
@@ -1205,5 +1213,5 @@ export function createQuery(ctx: SessionContext): Query {
     return undefined;
   };
 
-  return { waiting, startQuery, ends, take, switchAgent, consume, failTurn, refreshPreset, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, ends, take, rebindForRestart, consume, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }
