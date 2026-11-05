@@ -109,6 +109,8 @@ A tree is made at `<repo>.worktrees/<name>`, beside its repository, which is whe
 
 Every session's turns are written down as commits of their own, under `refs/agents/<sid>/checkpoints/turn/<N>` - `turn/0` is the tree the session started from, and each later one is the tree a turn ended with, which is what a row's Session Changes are diffed between. They are this host's own refs rather than the repository's history: nothing is checked out from them, no branch moves, and they are removed with the session they belong to, on `disposeSession`. A tree of a worktree session has them too, and they are what its own Session Changes would be, though a row counts its branch.
 
+A session that moves to another folder keeps the tree it worked in. The tree stays on disk as the session's, beside the folder it moves to, and is archived, put back and removed with the session by the same rules as the tree it runs in, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1504-L1551) retains a moved session's worktree among its additional worktrees.
+
 The window has five requests of its own for trees it manages, made when `initialize` says `_meta['vscode.detachedWorktrees']`: create, claim, archive, unarchive and reconcile. They are served over the same trees, so the window's "new session in a worktree" flow runs against this host unchanged. Archiving takes a clean tree off the disk once its session is gone and keeps the branch; a tree with somebody's work in it, or a session still running in it, stays.
 
 A worktree the host made is trusted when the repository it came from is.

@@ -1153,6 +1153,26 @@ describe('an archived session\'s tree', () => {
     expect(store.worktree?.('linked')).toMatchObject({ path: one.where, branch });
   });
 
+  it('takes away and puts back a tree a move left the session, as its own', async () => {
+    const root = repository();
+    const { store, logged, open, archive } = await archiving(root);
+    const one = await open('moved');
+    // The tree the session worked in before a move took it to the one it runs in.
+    const left = join(`${project(root)}.worktrees`, 'left');
+    execFileSync('git', ['-C', project(root), 'worktree', 'add', '-q', '-b', 'agents/left', left, 'main'], { stdio: 'pipe' });
+    store.setAdditionalWorktrees?.('moved', [{ repository: project(root), path: left, base: 'main', branch: 'agents/left' }]);
+
+    await archive(one.channel, true);
+    await logged(`removed ${one.where}`);
+    await logged(`removed ${left}`);
+    expect(existsSync(left)).toBe(false);
+    expect(branches(root)).toContain('agents/left');
+
+    await archive(one.channel, false);
+    await logged(`put ${left} back on agents/left`);
+    expect(branchOf(left)).toBe('agents/left');
+  });
+
   it('leaves the tree in place for an archive and an unarchive sent together', async () => {
     const root = repository();
     const { lines, open, archive } = await archiving(root);

@@ -1203,6 +1203,28 @@ it('keeps the worktree a session runs in across a restart, and ignores one that 
   expect(memorySessions().worktree?.('a')).toBeUndefined();
 });
 
+it('keeps the trees a move left a session across a restart, and drops one that is not a record', async () => {
+  const dir = join(root, 'sessions');
+  const left = { repository: '/srv/app', path: '/srv/app.worktrees/a1', base: 'main', branch: 'agents/a1' };
+  const store = fileSessions({ dir });
+  store.setAdditionalWorktrees?.('a', [left]);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', additionalWorktrees: [left] });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
+  expect(second.additionalWorktrees?.('a')).toEqual([left]);
+  expect(second.additionalWorktrees?.('nobody')).toEqual([]);
+  // Each entry is read as the session's own tree is, and one that is not a
+  // tree is left out, since this record decides which trees a host takes away.
+  writeFileSync(join(dir, 'b.json'), JSON.stringify({ version: 1, id: 'b', provider: 'echo', additionalWorktrees: [left, { repository: '/srv/app', path: 7, base: 'main' }] }));
+  const third = fileSessions({ dir });
+  expect(third.additionalWorktrees?.('b')).toEqual([left]);
+  third.setAdditionalWorktrees?.('a', []);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toBeUndefined();
+  expect(memorySessions().additionalWorktrees?.('a')).toEqual([]);
+});
+
 it('keeps the time the host archived a session across a restart, and ignores one that is not a time', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });

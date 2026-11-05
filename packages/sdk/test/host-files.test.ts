@@ -1007,12 +1007,13 @@ describe('a session entering a folder nobody vouched for', () => {
    * folder in hand.
    */
   const hosted = async (here: string, {
-    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, worktrees,
+    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, isolation, worktrees,
   }: {
     trusts?: string[];
     answer?: (asked: Asked) => unknown;
     root?: Record<string, unknown>;
     autoApprove?: string;
+    isolation?: string;
     worktrees?: Worktrees;
   } = {}) => {
     const asked: Asked[] = [];
@@ -1048,7 +1049,12 @@ describe('a session entering a folder nobody vouched for', () => {
       method: 'createSession',
       params: {
         channel: uri, provider: 'claude', workingDirectories: [uriOf(here)],
-        ...(autoApprove === undefined ? {} : { config: { autoApprove } }),
+        ...(autoApprove === undefined && isolation === undefined ? {} : {
+          config: {
+            ...(autoApprove === undefined ? {} : { autoApprove }),
+            ...(isolation === undefined ? {} : { isolation }),
+          },
+        }),
       },
     });
     const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -1172,6 +1178,34 @@ describe('a session entering a folder nobody vouched for', () => {
     expect(created[0]?.repository).toBe(there);
     // And the session runs in it, with nothing asked about it.
     expect(String(cwd())).toContain('two.worktrees');
+  });
+
+  it('keeps the tree a session worked in when it moves, and removes it with the session', async () => {
+    const { here, there } = folders();
+    const created: { path: string; branch?: string }[] = [];
+    const removed: string[] = [];
+    const worktrees: Worktrees = {
+      repository: async (dir) => dir,
+      branches: async () => ['main'],
+      create: async (one) => { created.push(one); },
+      dirty: async () => false,
+      head: async (path) => created.find((one) => one.path === path)?.branch,
+      remove: async (_repository, path) => { removed.push(path); },
+      gitDir: async () => undefined,
+    };
+    const { client, uri, move, cwd } = await hosted(here, { trusts: [here, there], isolation: 'worktree', worktrees });
+    await move(there);
+
+    // The session runs in the folder it moved to, and the tree its turns ran
+    // in is still on disk.
+    expect(cwd()).toBe(there);
+    expect(created).toHaveLength(1);
+    expect(removed).toEqual([]);
+
+    // And it is the session's: a clean one goes when the session does.
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    await settle(8);
+    expect(removed).toEqual([created[0]?.path]);
   });
 
   it('refuses a folder a client adds, and does not add it', async () => {

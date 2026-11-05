@@ -32,6 +32,8 @@ interface Held {
   setWorkingDirectory(id: string, value: string | undefined): void;
   worktree(id: string): StoredWorktree | undefined;
   setWorktree(id: string, value: StoredWorktree | undefined): void;
+  additionalWorktrees(id: string): StoredWorktree[];
+  setAdditionalWorktrees(id: string, value: StoredWorktree[]): void;
   autoArchivedAt(id: string): string | undefined;
   setAutoArchivedAt(id: string, value: string | undefined): void;
   /** Everything held about one session, in the file's field order, or nothing where nothing is. */
@@ -131,6 +133,8 @@ export function memorySessions(): SessionStore & Held {
     setCreatedBy: (id, value) => { patch(id, { createdBy: value }); },
     worktree: (id) => rows.get(id)?.worktree,
     setWorktree: (id, value) => { patch(id, { worktree: value }); },
+    additionalWorktrees: (id) => rows.get(id)?.additionalWorktrees ?? [],
+    setAdditionalWorktrees: (id, value) => { patch(id, { additionalWorktrees: value.length === 0 ? undefined : value }); },
     autoArchivedAt: (id) => rows.get(id)?.autoArchivedAt,
     setAutoArchivedAt: (id, value) => { patch(id, { autoArchivedAt: value === '' ? undefined : value }); },
     workingDirectory: (id) => rows.get(id)?.workingDirectory,
@@ -251,6 +255,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
         ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
         ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
+        ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
         ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
         ...(held.changes === undefined ? {} : { changes: held.changes }),
       };
@@ -437,6 +442,7 @@ interface Row {
   createdBy?: CreatedBy | undefined;
   workingDirectory?: string | undefined;
   worktree?: StoredWorktree | undefined;
+  additionalWorktrees?: StoredWorktree[] | undefined;
   autoArchivedAt?: string | undefined;
   changes?: ChangesSummary | undefined;
 }
@@ -458,7 +464,7 @@ const empty = (row: Row): boolean =>
   && row.chatFlags === undefined && row.chatDrafts === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
   && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
-  && row.autoArchivedAt === undefined && row.changes === undefined;
+  && row.additionalWorktrees === undefined && row.autoArchivedAt === undefined && row.changes === undefined;
 
 /**
  * What is persisted for one session: a `Row` as the file holds it.
@@ -504,6 +510,8 @@ interface Saved {
   workingDirectory?: string;
   /** The worktree this host made for the session. */
   worktree?: StoredWorktree;
+  /** The trees the session worked in before a move, kept as its own. */
+  additionalWorktrees?: StoredWorktree[];
   /** When the host archived the session because its pull requests were merged. */
   autoArchivedAt?: string;
   /** What this session's own work added and removed, as it was last read. */
@@ -648,6 +656,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
       ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
       ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
+      ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
       ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
       ...(held.changes === undefined ? {} : { changes: held.changes }),
     };
@@ -815,6 +824,12 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (typeof row.workingDirectory === 'string' && row.workingDirectory !== '') inner.setWorkingDirectory(row.id, row.workingDirectory);
       const worktree = worktreeOf(row.worktree);
       if (worktree !== undefined) inner.setWorktree(row.id, worktree);
+      // Each read as the session's own tree is, and one that is not a tree
+      // is left out, since this record decides which trees a host takes away.
+      if (Array.isArray(row.additionalWorktrees)) {
+        const additional = row.additionalWorktrees.map(worktreeOf).filter((one): one is StoredWorktree => one !== undefined);
+        inner.setAdditionalWorktrees(row.id, additional);
+      }
       // A time, and anything that is not one is ignored rather than guessed
       // at, since this record decides which session a host deletes.
       if (typeof row.autoArchivedAt === 'string' && !Number.isNaN(Date.parse(row.autoArchivedAt))) {
@@ -862,6 +877,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setCreatedBy: (id, value) => { touched(id, () => { inner.setCreatedBy?.(id, value); }); },
     worktree: (id) => inner.worktree(id),
     setWorktree: (id, value) => { touched(id, () => { inner.setWorktree(id, value); }); },
+    additionalWorktrees: (id) => inner.additionalWorktrees(id),
+    setAdditionalWorktrees: (id, value) => { touched(id, () => { inner.setAdditionalWorktrees(id, value); }); },
     autoArchivedAt: (id) => inner.autoArchivedAt(id),
     setAutoArchivedAt: (id, value) => { touched(id, () => { inner.setAutoArchivedAt(id, value); }); },
     workingDirectory: (id) => inner.workingDirectory(id),

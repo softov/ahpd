@@ -255,7 +255,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * Everything a session this daemon is holding took with it.
    *
    * The part of a delete that is the host's own: the chats closed, the
-   * terminals they claimed killed, the worktree removed if clean, the run that
+   * terminals they claimed killed, its worktrees removed if clean, the run that
    * started it unlinked, and everything this host kept *about* the session
    * let go. What the backend keeps is the backend's, and `removeSession` asks
    * for it once this is done and what it answers has settled: every chat's
@@ -322,7 +322,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     }
     /*
-     * And the worktree, unless somebody's work is still in it.
+     * And its worktrees, the one it ran in and each one a move left it,
+     * unless somebody's work is still in one.
      *
      * The decision this feature turns on. A worktree with uncommitted
      * changes is the one thing here a daemon cannot judge the value of:
@@ -337,29 +338,33 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * killing the daemon.
      */
     const tree = worktreeOf(uri);
+    const additional = kept.additionalWorktrees?.(idOf(uri)) ?? [];
     if (tree) {
       worktrees.delete(uri);
       kept.setWorktree?.(idOf(uri), undefined);
-      const port = options.worktrees;
-      // Read now: the session's config is forgotten below, before the check runs.
-      const linked = linkedOf(uri);
+    }
+    if (additional.length > 0) kept.setAdditionalWorktrees?.(idOf(uri), []);
+    const port = options.worktrees;
+    // Read now: the session's config is forgotten below, before the check runs.
+    const linked = linkedOf(uri);
+    for (const one of [...(tree === undefined ? [] : [tree]), ...additional]) {
       void (async () => {
         if (port === undefined) return;
         // A tree made on an existing checkout has no branch of its own to
         // compare `HEAD` with, and goes on the dirty check alone.
-        const why = tree.branch === undefined ? undefined : await offBranch(port, { ...tree, branch: tree.branch });
+        const why = one.branch === undefined ? undefined : await offBranch(port, { ...one, branch: one.branch });
         if (why !== undefined) {
-          log(`kept ${tree.path}: ${why}`);
+          log(`kept ${one.path}: ${why}`);
           return;
         }
-        if (await port.dirty(tree.path, linked).catch(() => true) !== false) {
-          log(`kept ${tree.path}: it has changes nobody committed`);
+        if (await port.dirty(one.path, linked).catch(() => true) !== false) {
+          log(`kept ${one.path}: it has changes nobody committed`);
           return;
         }
-        await port.remove(tree.repository, tree.path, tree.branch, linked)
-          .then(() => { log(`removed ${tree.path}`); })
+        await port.remove(one.repository, one.path, one.branch, linked)
+          .then(() => { log(`removed ${one.path}`); })
           .catch((error: unknown) => {
-            log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+            log(`kept ${one.path}: ${error instanceof Error ? error.message : String(error)}`);
           });
       })();
     }
@@ -750,7 +755,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // answer put it. Or the directory a move asked for, which is neither.
     const from = keeping?.directory ?? worktreeOf(uri)?.repository ?? held.workingDirectory;
     const was = worktreeOf(uri);
-    if (was) {
+    if (was && keeping?.directory !== undefined) {
+      /*
+       * A move keeps the tree the session worked in, on disk and the
+       * session's, and the tree it moves to takes its place: the session's
+       * turns ran in this one. It is archived, put back and removed with the
+       * session, as VS Code's host retains a moved session's worktree.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L553-L560
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L600-L603
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1504-L1551
+       */
+      worktrees.delete(uri);
+      kept.setWorktree?.(idOf(uri), undefined);
+      kept.setAdditionalWorktrees?.(idOf(uri), [...(kept.additionalWorktrees?.(idOf(uri)) ?? []), was]);
+      log(`kept ${was.path} for ${uri}, which moves to ${keeping.directory}`);
+    }
+    else if (was) {
       worktrees.delete(uri);
       kept.setWorktree?.(idOf(uri), undefined);
       // Removed without asking whether it is dirty, unlike a disposed session:
@@ -1261,11 +1281,20 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /** Whether the window holds a handle on the session's tree, which leaves the tree to it. */
   const handled = (uri: string): boolean => [...detached.values()].some((one) => one.session === uri);
 
+  /** A session's trees: the one it runs in, then each one a move left it. */
+  const treesOf = (uri: string): StoredWorktree[] => {
+    const own = worktreeOf(uri);
+    return [...(own === undefined ? [] : [own]), ...(kept.additionalWorktrees?.(idOf(uri)) ?? [])];
+  };
+
   /** Whether a session is archived now, read when the step runs rather than when it was asked for. */
   const archivedNow = (uri: string): boolean => (kept.flags(idOf(uri)) & Status.IsArchived) !== 0;
 
   /*
-   * An archived session's tree, given back.
+   * An archived session's trees, given back: the one it ran in and each one
+   * a move left it, as VS Code's host archives a session's additional
+   * worktrees with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/additionalWorktreeLifecycle/additionalWorktreeLifecycleService.ts#L47-L53
    *
    * Only once the session has stopped, and only while it is still archived:
    * an unarchive sent before this step ran is the person changing their mind.
@@ -1286,102 +1315,105 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const shelve = (uri: string, after?: Promise<unknown>): Promise<void> => inTurn(uri, async () => {
     await after?.catch(() => undefined);
     const port = options.worktrees;
-    const tree = worktreeOf(uri);
-    if (port === undefined || tree === undefined || !archivedNow(uri) || sessions.has(uri) || handled(uri)) return;
-    if (!await present(tree.path)) return;
-    if (tree.branch === undefined) {
-      log(`kept ${tree.path}: it has no branch of its own to come back on`);
-      return;
-    }
-    const why = await offBranch(port, { ...tree, branch: tree.branch });
-    if (why !== undefined) {
-      log(`kept ${tree.path}: ${why}`);
-      return;
-    }
+    const trees = treesOf(uri);
+    if (port === undefined || trees.length === 0 || !archivedNow(uri) || sessions.has(uri) || handled(uri)) return;
     const linked = linkedOf(uri);
-    const clean = async (): Promise<boolean> => await port.dirty(tree.path, linked).catch(() => true) === false;
-    /*
-     * An archive the host made itself never commits and never loses a commit:
-     * the tree goes only when it is clean and its branch is on a remote as it
-     * is here, whatever `archiveDirtyWorktree` says.
-     */
-    if (kept.autoArchivedAt?.(idOf(uri)) !== undefined) {
-      if (!await clean()) {
-        log(`kept ${tree.path}: it has changes nobody committed`);
-        return;
+    for (const tree of trees) {
+      if (!await present(tree.path)) continue;
+      if (tree.branch === undefined) {
+        log(`kept ${tree.path}: it has no branch of its own to come back on`);
+        continue;
       }
-      if (port.pushed === undefined) {
-        log(`kept ${tree.path}: this host cannot tell whether its branch is pushed`);
-        return;
+      const why = await offBranch(port, { ...tree, branch: tree.branch });
+      if (why !== undefined) {
+        log(`kept ${tree.path}: ${why}`);
+        continue;
       }
-      if (!await port.pushed(tree.path).catch(() => false)) {
-        log(`kept ${tree.path}: its branch has no upstream or has commits nobody pushed`);
-        return;
+      const clean = async (): Promise<boolean> => await port.dirty(tree.path, linked).catch(() => true) === false;
+      /*
+       * An archive the host made itself never commits and never loses a
+       * commit: the tree goes only when it is clean and its branch is on a
+       * remote as it is here, whatever `archiveDirtyWorktree` says.
+       */
+      if (kept.autoArchivedAt?.(idOf(uri)) !== undefined) {
+        if (!await clean()) {
+          log(`kept ${tree.path}: it has changes nobody committed`);
+          continue;
+        }
+        if (port.pushed === undefined) {
+          log(`kept ${tree.path}: this host cannot tell whether its branch is pushed`);
+          continue;
+        }
+        if (!await port.pushed(tree.path).catch(() => false)) {
+          log(`kept ${tree.path}: its branch has no upstream or has commits nobody pushed`);
+          continue;
+        }
       }
-    }
-    else if (!await clean()) {
-      if (ctx.archiveDirtyWorktree !== 'commit') {
-        log(`kept ${tree.path}: it has changes nobody committed`);
-        return;
+      else if (!await clean()) {
+        if (ctx.archiveDirtyWorktree !== 'commit') {
+          log(`kept ${tree.path}: it has changes nobody committed`);
+          continue;
+        }
+        if (port.commit === undefined) {
+          log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
+          continue;
+        }
+        if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
+        const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
+          error instanceof Error ? error.message : String(error));
+        if (failed !== undefined) {
+          log(`kept ${tree.path}: could not commit its changes: ${failed}`);
+          continue;
+        }
+        if (!await clean()) {
+          log(`kept ${tree.path}: it still has changes after the commit`);
+          continue;
+        }
+        log(`committed the changes in ${tree.path} on ${tree.branch}`);
       }
-      if (port.commit === undefined) {
-        log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
-        return;
-      }
+      // Asked again after the check, which waited: a session started in the
+      // tree meanwhile, or an unarchive, keeps it.
       if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
-      const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
-        error instanceof Error ? error.message : String(error));
-      if (failed !== undefined) {
-        log(`kept ${tree.path}: could not commit its changes: ${failed}`);
-        return;
-      }
-      if (!await clean()) {
-        log(`kept ${tree.path}: it still has changes after the commit`);
-        return;
-      }
-      log(`committed the changes in ${tree.path} on ${tree.branch}`);
+      await port.remove(tree.repository, tree.path, undefined, linked)
+        .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
+        .catch((error: unknown) => {
+          log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+        });
     }
-    // Asked again after the check, which waited: a session started in the
-    // tree meanwhile, or an unarchive, keeps it.
-    if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
-    await port.remove(tree.repository, tree.path, undefined, linked)
-      .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
-      .catch((error: unknown) => {
-        log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
-      });
   });
 
   /*
-   * A session's tree, put back where `shelve` took it.
+   * A session's trees, put back where `shelve` took them.
    *
    * At the same path on the same branch, with the folders the session asked
    * to have linked linked again. The include files are not copied again: they
    * were copies, and the branch has what the session made of them.
    *
-   * Nothing to do for a session with no record or whose tree is there, and
-   * nothing for a tree the window holds a handle on, which its own method
-   * puts back.
+   * Nothing to do for a session with no record or a tree that is there, and
+   * nothing for a session whose tree the window holds a handle on, which its
+   * own method puts back.
    */
   const restore = (uri: string): Promise<void> => inTurn(uri, async () => {
     const port = options.worktrees;
-    const tree = worktreeOf(uri);
-    if (port === undefined || tree === undefined || handled(uri)) return;
-    if (await present(tree.path)) return;
-    if (tree.branch === undefined) {
-      log(`could not put ${tree.path} back: it has no branch of its own`);
-      return;
-    }
+    if (port === undefined || handled(uri)) return;
     const symlink = linkedOf(uri);
-    await port.create({
-      repository: tree.repository,
-      base: tree.branch,
-      path: tree.path,
-      ...(symlink.length > 0 ? { symlink } : {}),
-    })
-      .then(() => { log(`put ${tree.path} back on ${tree.branch ?? ''} for ${uri}`); })
-      .catch((error: unknown) => {
-        log(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
-      });
+    for (const tree of treesOf(uri)) {
+      if (await present(tree.path)) continue;
+      if (tree.branch === undefined) {
+        log(`could not put ${tree.path} back: it has no branch of its own`);
+        continue;
+      }
+      await port.create({
+        repository: tree.repository,
+        base: tree.branch,
+        path: tree.path,
+        ...(symlink.length > 0 ? { symlink } : {}),
+      })
+        .then(() => { log(`put ${tree.path} back on ${tree.branch ?? ''} for ${uri}`); })
+        .catch((error: unknown) => {
+          log(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
   });
 
   /**

@@ -377,6 +377,18 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setWorktree?(id: string, value: StoredWorktree | undefined): void;
   /**
+   * The other worktrees the session keeps: each tree it worked in before a
+   * move took it to another folder, kept on disk as the session's, and
+   * archived, put back and removed with it, as VS Code's host keeps a moved
+   * session's worktree among its additional worktrees.
+   *
+   * Optional: a store without it holds none, and a tree a move left stays on
+   * disk with nothing to remove it.
+   */
+  additionalWorktrees?(id: string): StoredWorktree[];
+  /** Record them, or forget them with an empty list. */
+  setAdditionalWorktrees?(id: string, value: StoredWorktree[]): void;
+  /**
    * When the host archived this session itself, because its pull requests
    * were merged, as an ISO time. Nothing for a session a person archived, and
    * for one that is not archived.
