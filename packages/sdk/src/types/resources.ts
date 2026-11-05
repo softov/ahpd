@@ -175,7 +175,8 @@ export interface ResourceStore {
    */
   write?(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
   /**
-   * Remove a file, or a directory when `recursive`.
+   * Delete a file, or a directory when `recursive`: the protocol's
+   * `resourceDelete`.
    *
    * `owner` and `reader` mean what they mean on `write`, and are absent in the
    * same two cases. A delete is the other road that changes what a scheme
@@ -183,7 +184,7 @@ export interface ResourceStore {
    * handed the same writer here - and a delete is the one road nothing takes
    * back, which is the worse of the two to leave unasked.
    */
-  remove?(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete?(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   /** Make a directory, and the parents it needs. */
   mkdir?(uri: string): Promise<void>;
   /** Rename. `failIfExists` refuses a destination already there. */
@@ -258,7 +259,7 @@ export interface SchemeDescription {
   manifest?: Record<string, unknown>;
 }
 
-export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'> & {
+export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'delete' | 'mkdir' | 'move' | 'copy'> & {
   /**
    * One file's bytes, or the range of them that was asked for.
    *

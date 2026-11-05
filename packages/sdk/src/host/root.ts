@@ -15,12 +15,10 @@ import type { ResourceProvider } from '../types/resources.js';
  * The provider's method names, and the words a grant is made of.
  *
  * The order lists what a scheme does and the lookup says how: a provider
- * implements `read`, `write` and `remove` and a role grants `get`, `put`
+ * implements `read`, `write` and `delete` and a role grants `get`, `put`
  * and `delete`, so the advertised word is the one a client can put in a
- * `role://` body and have it mean the method the host will call. They were
- * `read` and `write` before, which named a group rather than an act, and
- * a client that wrote `policy:read` into a role was naming a group the gate
- * never asked for.
+ * `role://` body and have it mean the method the host will call. Each names
+ * an act, as the gate asks for one.
  */
 const ORDER = ['get', 'list', 'resolve', 'watch', 'put', 'delete', 'mkdir', 'move', 'copy'] as const;
 
@@ -30,7 +28,7 @@ const METHOD_OF: Record<typeof ORDER[number], string> = {
   resolve: 'resolve',
   watch: 'watch',
   put: 'write',
-  delete: 'remove',
+  delete: 'delete',
   mkdir: 'mkdir',
   move: 'move',
   copy: 'copy',

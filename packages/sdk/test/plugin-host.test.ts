@@ -456,7 +456,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
     read: async () => ({ data: 'x', encoding: 'utf-8' as const }),
     list: async () => [],
     write: async () => {},
-    remove: async () => {},
+    delete: async () => {},
     describe: () => ({ title: 'Notes', description: 'Files a session keeps.', manifest: { type: 'object', properties: {} } }),
   };
   const { options } = foldHostOptions(base(), [{
@@ -549,7 +549,7 @@ it('names a scheme that says nothing of itself, and keeps one built-in subject o
     // registered under a subject the host decides, which must not be listed
     // twice.
     providers: {
-      bare: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }), remove: async () => {} },
+      bare: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }), delete: async () => {} },
       file: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }) },
     },
     channels: {}, adapters: {}, methods: {},

@@ -152,7 +152,7 @@ it('sends changed with the new state after a write to computer://box/state', asy
 
   // A make and a destroy through the provider are an added and a removed.
   await provider.write('computer://web', { data: '', encoding: 'utf-8' });
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
   await catalogue.refresh();
   expect(heard.slice(1).map((one) => `${String(one.action.type)} ${String(one.action.id)}`))
     .toEqual(['x-ahpd-computers/added web', 'x-ahpd-computers/removed box']);

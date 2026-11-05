@@ -177,7 +177,7 @@ const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = []
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
-  remove(uri: string): Promise<void>;
+  delete(uri: string): Promise<void>;
 };
 
 const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
@@ -1418,7 +1418,7 @@ it('answers the container its labels already name, and refuses a second name for
     'ahpd.name': 'box',
     'devcontainer.metadata': '[{"remoteUser":"dev"}]',
   });
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
   expect(dockerHeld(dockerState).machines).toEqual([]);
   await answered(dockerState, 8);
 });

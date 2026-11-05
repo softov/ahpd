@@ -182,7 +182,7 @@ export interface BotProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string, reader?: Principal): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
-  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   watch(uri: string, options: WatchOptions, onChange: (changes: ResourceChange[]) => void, reader?: Principal): Promise<Watcher>;
   describe(): SchemeDescription;
   authorize(uri: string, reader: Principal | undefined): Promise<boolean>;
@@ -878,7 +878,7 @@ export function botProvider(options: BotOptions): BotProvider {
      * so it is dropped: a bot has no children, and everything about one is in
      * the record.
      */
-    remove: async (uri, _recursive, owner, reader) => {
+    delete: async (uri, _recursive, owner, reader) => {
       await store.ready();
       const held = at(uri);
       if (held.leaf !== '' || held.slug === '') {

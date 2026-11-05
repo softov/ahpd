@@ -1587,8 +1587,8 @@ export interface Clients {
   resolve(client: string, uri: string): Promise<unknown>;
   /** Write a file the client serves. */
   write(client: string, uri: string, content: { data: string; encoding?: string; create?: boolean; overwrite?: boolean }): Promise<unknown>;
-  /** Remove one. */
-  remove(client: string, uri: string, recursive?: boolean): Promise<unknown>;
+  /** Delete one: the protocol's `resourceDelete`. */
+  delete(client: string, uri: string, recursive?: boolean): Promise<unknown>;
   /** Move one. Both URIs must be the same client's. */
   move(client: string, source: string, destination: string, failIfExists?: boolean): Promise<unknown>;
   /** Copy one. Both URIs must be the same client's. */

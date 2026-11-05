@@ -289,7 +289,7 @@ it('refuses a write to the root and to anything under a row', async () => {
   const { policy } = served();
   await expect(policy.write('policy://', body(row()))).rejects.toMatchObject({ code: -32602 });
   await expect(policy.write('policy://M1/limits', body(row()))).rejects.toMatchObject({ code: -32602 });
-  await expect(policy.remove('policy://')).rejects.toMatchObject({ code: -32602 });
+  await expect(policy.delete('policy://')).rejects.toMatchObject({ code: -32602 });
 });
 
 it('refuses a createOnly onto an id that is there', async () => {
@@ -305,9 +305,9 @@ it('takes a row out, and refuses an id nothing holds', async () => {
   const { policy, store } = served();
   await policy.write('policy://M1', body(row()));
 
-  await policy.remove('policy://M1');
+  await policy.delete('policy://M1');
   expect(await store.list()).toEqual([]);
-  await expect(policy.remove('policy://M1')).rejects.toMatchObject({ code: -32008 });
+  await expect(policy.delete('policy://M1')).rejects.toMatchObject({ code: -32008 });
 });
 
 it('refuses a URI in another scheme\'s name', async () => {

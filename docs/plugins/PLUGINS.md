@@ -2444,7 +2444,7 @@ no bytes serves nothing.
 | `list(uri)` | Optional. Directory entries, for a scheme that has directories |
 | `resolve(uri, followSymlinks?)` | Optional. What a URI is, for a client that browses |
 | `watch(uri, options, onChange)` | Optional. `createResourceWatch` answers `-32601` without it |
-| `write`, `remove`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to |
+| `write`, `delete`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to; `delete` serves the protocol's `resourceDelete` |
 
 A URI goes by its scheme: `file:` to the daemon's store, the client scheme
 `vscode-agent-client:` to the connected client it names, and a registered

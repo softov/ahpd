@@ -148,7 +148,7 @@ it('leaves a tombstone where a bot is deleted, and refuses to make it again', as
   const { graves, store, provider } = await made();
   await provider.write('bot://motion', said({ name: 'Motion' }));
 
-  await provider.remove('bot://motion');
+  await provider.delete('bot://motion');
 
   expect(store.get('motion')).toBeUndefined();
   expect(store.gone('motion')).toBe(true);
@@ -161,7 +161,7 @@ it('leaves a tombstone where a bot is deleted, and refuses to make it again', as
 it('reads the collections back, as a daemon that started again does', async () => {
   const { records, provider } = await made();
   await provider.write('bot://motion', said({ name: 'Motion' }));
-  await provider.remove('bot://motion');
+  await provider.delete('bot://motion');
   await provider.write('bot://other', said({ name: 'Other' }));
 
   // A second store over the same collections, which is what a restart is.

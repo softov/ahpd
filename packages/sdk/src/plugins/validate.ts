@@ -293,7 +293,7 @@ const PROVIDER_OPTIONAL: Record<string, Kind> = {
   resolve: 'function',
   watch: 'function',
   write: 'function',
-  remove: 'function',
+  delete: 'function',
   mkdir: 'function',
   move: 'function',
   copy: 'function',

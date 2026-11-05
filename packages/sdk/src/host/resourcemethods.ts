@@ -199,10 +199,10 @@ const CONFLICT = -32011;
        * the same writer here as there.
        */
       const owner = ownerFor(connection);
-      await need(need(storeFor(uri), 'resourceDelete').remove, 'resourceDelete')(
+      await need(need(storeFor(uri), 'resourceDelete').delete, 'resourceDelete')(
         uri, params.recursive === true, owner, connection.principal,
       );
-      log(`${connection.clientId} removed ${uri}`);
+      log(`${connection.clientId} deleted ${uri}`);
       wroteThrough(uri);
       return {};
     },

@@ -368,13 +368,13 @@ async function writeAt(path: string, uri: string, content: Write): Promise<void>
 }
 
 /**
- * Remove one.
+ * Delete one: the protocol's `resourceDelete`.
  *
  * A directory needs `recursive`, and a directory without it is refused rather
  * than emptied: the protocol has the flag so that deleting a tree is
  * something a client asked for in as many words.
  */
-export async function remove(uri: string, recursive = false): Promise<void> {
+export async function erase(uri: string, recursive = false): Promise<void> {
   const path = await writable(uri);
   const found = await stat(path).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
@@ -595,6 +595,6 @@ export async function watch(
  */
 export const fileResources = (): ResourceStore => ({
   list, read, resolve, complete,
-  write, remove, mkdir, move, copy,
+  write, delete: erase, mkdir, move, copy,
   watch,
 });

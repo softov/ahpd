@@ -483,7 +483,7 @@ it('refuses with the sentence a resource write and delete give', async () => {
   // An id nothing holds.
   const gone = await answer(remove, { id: 'nobody' });
   expect(gone).toEqual({ code: -32008, message: 'No team resource at team://nobody' });
-  await expect(provider.remove('team://nobody')).rejects.toMatchObject(gone);
+  await expect(provider.delete('team://nobody')).rejects.toMatchObject(gone);
 });
 
 it('refuses a missing id, an id no URI could name, a missing record and a createOnly that is not a boolean', async () => {
@@ -503,9 +503,9 @@ it('calls changed after a resource write and remove, and not after a refusal', a
   const provider = recordsProvider('team', teams, () => { changed += 1; });
   await provider.write('team://backend', { data: '{}', encoding: 'utf-8' });
   expect(changed).toBe(1);
-  await provider.remove('team://backend');
+  await provider.delete('team://backend');
   expect(changed).toBe(2);
-  await expect(provider.remove('team://backend')).rejects.toMatchObject({ code: -32008 });
+  await expect(provider.delete('team://backend')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.write('team://web', { data: '{"title":7}', encoding: 'utf-8' })).rejects.toMatchObject({ code: -32602 });
   expect(changed).toBe(2);
 });

@@ -15,7 +15,7 @@ import type { HostContext } from './context.js';
 const CONNECTION_GRACE_MS = 5_000;
 
 /** A client's resources as the store their scheme is served by, with the access request a client answers. */
-export type ClientResources = Required<Pick<ResourceProvider, 'list' | 'resolve' | 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'>>
+export type ClientResources = Required<Pick<ResourceProvider, 'list' | 'resolve' | 'watch' | 'write' | 'delete' | 'mkdir' | 'move' | 'copy'>>
   & Pick<ResourceProvider, 'read'>
   & { request(uri: string, access: { read?: boolean; write?: boolean }): Promise<unknown> };
 
@@ -150,7 +150,7 @@ export function createRelay(ctx: HostContext): Relay {
       const at = addressed(uri);
       await ask(at.client, 'resourceWrite', { ...content, uri: at.original });
     },
-    remove: async (uri, recursive) => {
+    delete: async (uri, recursive) => {
       const at = addressed(uri);
       await ask(at.client, 'resourceDelete', { uri: at.original, ...(recursive !== undefined ? { recursive } : {}) });
     },
@@ -283,7 +283,7 @@ export function createRelay(ctx: HostContext): Relay {
     list: async (client, uri) => await ask(client, 'resourceList', { uri }),
     resolve: async (client, uri) => await ask(client, 'resourceResolve', { uri }),
     write: async (client, uri, content) => await ask(client, 'resourceWrite', { uri, ...content }),
-    remove: async (client, uri, recursive) => await ask(client, 'resourceDelete', {
+    delete: async (client, uri, recursive) => await ask(client, 'resourceDelete', {
       uri, ...(recursive !== undefined ? { recursive } : {}),
     }),
     move: async (client, source, destination, failIfExists) => await ask(client, 'resourceMove', {

@@ -247,7 +247,7 @@ it('asks one client directly, which is what the port is for', async () => {
   publisher.peer.answer = (method) => ({ ran: method });
 
   await served.clients.write('plugin', 'virtual://plugin/a.txt', { data: 'x', encoding: 'utf-8' });
-  await served.clients.remove('plugin', 'virtual://plugin/a.txt', true);
+  await served.clients.delete('plugin', 'virtual://plugin/a.txt', true);
   expect(publisher.peer.asked.map((one) => one.method)).toEqual(['resourceWrite', 'resourceDelete']);
   // Every one carries `channel`, which the protocol requires of a request
   // whichever direction it is going.
