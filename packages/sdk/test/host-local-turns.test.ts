@@ -471,7 +471,7 @@ describe('a cut at a command\'s turn', () => {
     expect(keptIn(store, 'live')).toEqual([]);
   });
 
-  it('is refused at a command\'s turn with no turn before it', async () => {
+  it('is said at a command\'s turn with no turn before it, and a backend that cannot delete keeps its history', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client, p, chat } = await opened(k, store);
@@ -480,9 +480,11 @@ describe('a cut at a command\'s turn', () => {
     const starts = k.starts.length;
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle(10);
-    // Refused as a clear of the whole conversation, which it would be for the
-    // backend, and nothing restarted.
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('not a conversation entire');
+    // A clear of the whole conversation for the backend, which this one cannot
+    // make: said all the same, as the reference host says a truncation its
+    // provider cannot make, and nothing restarted.
+    const said = actions(p, chat).filter((e) => e.action.type === 'chat/truncated');
+    expect(said.map((e) => e.rejectionReason)).toEqual([undefined]);
     expect(k.starts.length).toBe(starts);
   });
 

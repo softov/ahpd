@@ -1168,7 +1168,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           throw new RpcError(INVALID_PARAMS, `${String(source.chat ?? '')} is not a chat in ${uri}`);
         fromChat = from.chat.chatUri;
         const turnId = String(source.turnId ?? '');
-        const all = from.chat.allTurns();
+        // A `!` command's turn is the host's, and a fork may be cut at it.
+        const all = ctx.withLocalTurns(uri, from.chat.chatUri, from.chat.allTurns() as Bag[]);
         const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
         if (at < 0)
           throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn in ${String(source.chat ?? '')}`);

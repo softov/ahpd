@@ -2091,7 +2091,9 @@ export function chatAction(
      */
     case 'chat/truncated': {
       const turnId = typeof action.turnId === 'string' ? action.turnId : undefined;
-      const all = session.allTurns();
+      // The backend's turns with this host's local turns put back where they
+      // ran: a `!` command's turn is the host's, and a cut may name it.
+      const all = ctx.withLocalTurns(session.uri, session.chatUri, session.allTurns() as Bag[]);
       /*
        * A cut before every turn the backend saw, which starts the chat over.
        *
