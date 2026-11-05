@@ -649,8 +649,8 @@ export function createStream(ctx: SessionContext): Stream {
        * reference adds it.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L383-L391
        */
-      const saved = id === undefined ? undefined : ctx.savedTerminals.get(id);
-      if (id !== undefined) ctx.savedTerminals.delete(id);
+      const retained = id === undefined ? undefined : ctx.retainedTerminalOutputs.get(id);
+      if (id !== undefined) ctx.retainedTerminalOutputs.delete(id);
       /*
        * The file an edit tool changed, its two sides held by the host for a
        * client to draw the call's diff from, after the text, as VS Code's
@@ -677,7 +677,7 @@ export function createStream(ctx: SessionContext): Stream {
         ...(workerContent !== undefined ? [workerContent] : []),
         ...(text !== undefined ? [{ type: 'text', text }] : []),
         ...(fileEdit !== undefined ? [fileEdit] : []),
-        ...(saved !== undefined ? [saved] : []),
+        ...(retained !== undefined ? [retained] : []),
       ] as OnWire<ToolResultContent>[];
       const result = {
         success: ok,

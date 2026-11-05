@@ -11,7 +11,7 @@ import type { ClaudeSessionOptions, PendingSdkMessage, SessionContext } from './
 import { createLogins } from './session/logins.js';
 import { createParts } from './session/parts.js';
 import { createQuery } from './session/query.js';
-import { createSavedOutputs } from './session/savedoutput.js';
+import { createClaudeTerminalOutputs } from './session/savedoutput.js';
 import { createServers } from './session/servers.js';
 import { createStream } from './session/stream.js';
 import { createTurns } from './session/turns.js';
@@ -124,7 +124,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   Object.assign(ctx, createParts(ctx));
   Object.assign(ctx, workers);
   Object.assign(ctx, createStream(ctx));
-  Object.assign(ctx, createSavedOutputs(ctx));
+  Object.assign(ctx, createClaudeTerminalOutputs(ctx));
   Object.assign(ctx, asking);
   Object.assign(ctx, createLogins(ctx));
   Object.assign(ctx, createQuery(ctx));

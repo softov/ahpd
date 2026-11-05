@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createSession } = await import('../src/session.js');
-const { restoreSavedOutputs, SAVED_BYTES } = await import('../src/session/savedoutput.js');
+const { restoreTerminalOutputs, MAX_TERMINAL_OUTPUT_BYTES } = await import('../src/session/savedoutput.js');
 
 /** The whole output, longer than the preview Claude gives the model. */
 const OUTPUT = `FULL_OUTPUT_BEGIN\n${'x'.repeat(4096)}\nFULL_OUTPUT_END\n`;
@@ -329,7 +329,7 @@ const none: {
       // Sparse, so the size is there without writing the bytes.
       const large = join(path, '..', 'large.txt');
       writeFileSync(large, '');
-      truncateSync(large, SAVED_BYTES + 1);
+      truncateSync(large, MAX_TERMINAL_OUTPUT_BYTES + 1);
       return [called('Bash'), answered(noticeFor(large), structuredFor(large))];
     },
   },
@@ -461,7 +461,7 @@ it('names the terminal again on a call read back whose output the host keeps', (
   const outputs = fakeOutputs();
   outputs.keep('toolu_1', OUTPUT, 0);
   const turns = restored({});
-  restoreSavedOutputs(turns, outputs);
+  restoreTerminalOutputs(turns, outputs);
   expect(restoredContent(turns)).toEqual([
     { type: 'text', text: noticeFor('/tmp/b907a98.txt') },
     {
@@ -475,7 +475,7 @@ it('names the terminal again on a call read back whose output the host keeps', (
 
   // A call that failed says no code, as the live one does.
   const failed = restored({ success: false });
-  restoreSavedOutputs(failed, outputs);
+  restoreTerminalOutputs(failed, outputs);
   expect(restoredContent(failed).at(-1)).toMatchObject({ type: 'terminal', result: { preview: 'FULL_OUTPUT_BEGIN', truncated: true } });
   expect(bag(restoredContent(failed).at(-1)?.result).exitCode).toBeUndefined();
 });
@@ -488,7 +488,7 @@ it.each([
   const outputs = fakeOutputs();
   if (keep) outputs.keep('toolu_1', OUTPUT, 0);
   const turns = restored(call);
-  restoreSavedOutputs(turns, outputs);
+  restoreTerminalOutputs(turns, outputs);
   expect(restoredContent(turns)).toEqual([{ type: 'text', text: noticeFor('/tmp/b907a98.txt') }]);
 });
 

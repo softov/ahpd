@@ -1,7 +1,7 @@
 import { probe } from './probe.js';
 import { offeredServers, serversFor } from './mcp.js';
 import { createSession } from './session.js';
-import { restoreSavedOutputs } from './session/savedoutput.js';
+import { restoreTerminalOutputs } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
 import { watchFolders } from './session/watch.js';
 import { turnsOf, subagentsOf } from './transcript.js';
@@ -553,7 +553,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * as the reference restores a call after building the turns.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2008-L2009
        */
-      if (outputs !== undefined) restoreSavedOutputs(turns, outputs);
+      if (outputs !== undefined) restoreTerminalOutputs(turns, outputs);
       return turns;
     },
 

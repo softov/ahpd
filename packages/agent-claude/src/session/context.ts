@@ -8,7 +8,7 @@ import type { Config } from './config.js';
 import type { Logins } from './logins.js';
 import type { Parts } from './parts.js';
 import type { Query } from './query.js';
-import type { SavedOutputs } from './savedoutput.js';
+import type { ClaudeTerminalOutputs } from './savedoutput.js';
 import type { Servers } from './servers.js';
 import type { Stream } from './stream.js';
 import type { Turns } from './turns.js';
@@ -189,7 +189,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, SavedOutputs, Asking, Logins, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
+export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, ClaudeTerminalOutputs, Asking, Logins, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
   /** The options `createSession` was given. */
   options: ClaudeSessionOptions;
   /** Say one thing on one channel, to every client watching it. */
