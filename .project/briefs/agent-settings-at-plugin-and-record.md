@@ -35,13 +35,14 @@ His example, 2026-11-05: "ACP put the hostTools on plugin while claude put on ag
 The table comes from the four `optionsSchema` blocks and from the schema each engine registers at the checked commit.
 
 - ✓ is a setting at that level, and ✓ host is a record field only a host record may set.
+- `model` is a field at the top of a record, outside `config`. Every other record row is a field of `config`.
 - 🔵 is a setting the harness takes, which ahpd does not offer at that level. *Why each blue circle* gives the fact behind each one.
 - An empty cell is a setting that does not apply there.
 
 | Setting | acp plugin | acp record | claude plugin | claude record | cofold plugin | cofold record | pi plugin | pi record |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Model** | | | | | | | | |
-| `model` |  |  | 🔵 |  | ✓ |  | ✓ |  |
+| `model` (top level) |  | ✓ | 🔵 | 🔵 | ✓ | ✓ | ✓ | ✓ |
 | `models` |  |  |  | ✓ |  |  |  | 🔵 |
 | `modelSources` |  |  |  | ✓ |  |  |  |  |
 | `keepCliModels` |  |  |  | ✓ |  |  |  |  |
