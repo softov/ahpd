@@ -990,15 +990,17 @@ export function createQuery(ctx: SessionContext): Query {
           /*
            * Read before the turn is pushed, because the reason goes inside it.
            * A failure of the turn's login that it did not show says its own
-           * words. `is_error` carries the CLI's words: a `success` that failed
-           * holds them in `result`, as a request the CLI gave up on does, and
-           * an error subtype in `errors`, as the reference reads them. A
-           * subtype that is not `success` is a turn that ended badly with none,
-           * and saying which is better than an error part that says only that
-           * there was one.
-           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L567-L575
+           * words. Otherwise a result fails its turn only as the reference
+           * reads one: a `success` that says `is_error`, in the words it holds
+           * in `result`, and `error_during_execution`, in its `errors`. Every
+           * other subtype is a limit the CLI stopped at, such as its turn or
+           * budget limit, and the turn ends as one that completed.
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L532-L547
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
            */
-          const words = str(message.subtype) === 'success'
+          const subtype = str(message.subtype);
+          const failed = subtype === 'success' ? message.is_error === true : subtype === 'error_during_execution';
+          const words = subtype === 'success'
             ? str(message.result)
             : list(message.errors).map(String).join('\n');
           /*
@@ -1009,11 +1011,7 @@ export function createQuery(ctx: SessionContext): Query {
            * there is either nowhere left to go or a CLI already on it.
            */
           const ofLogin = ctx.failure();
-          const wrong = ofLogin ?? (message.is_error === true
-            ? (words || 'The turn failed')
-            : str(message.subtype) !== 'success'
-              ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
-              : undefined);
+          const wrong = ofLogin ?? (failed ? (words || 'The turn failed') : undefined);
           if (wrong === undefined) ctx.answered();
           /*
            * The prompts this result answered, which the CLI no longer owes,
@@ -1046,8 +1044,9 @@ export function createQuery(ctx: SessionContext): Query {
            * run once this result is out, as a turn of the CLI's own, and its
            * answer is this turn's: the turn stays open until a result has named
            * every prompt handed over in it, as the reference completes a turn
-           * only when its prompts are settled. A result that failed ends it.
-           * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
+           * only when its prompts are settled. A result that failed ends it;
+           * one that stopped at a limit does not.
+           * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
            */
           if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) {
             spanning.add(String(turn.id));
@@ -1131,7 +1130,7 @@ export function createQuery(ctx: SessionContext): Query {
           }
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
+          if (wrong !== undefined) ctx.failed = wrong;
           ctx.doing(undefined);
           ctx.touch();
           /*

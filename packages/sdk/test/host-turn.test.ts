@@ -535,22 +535,45 @@ describe('driving a turn', () => {
   });
 
   it('says a turn ended badly even when the harness gave no words', async () => {
-    const { client, uri, chatUri } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
-    // A subtype that is not `success` and no `errors` at all - which happens,
-    // and used to leave the turn silent.
-    await emit({ type: 'result', subtype: 'error_max_turns', duration_ms: 3 });
+    // A failure in execution with no `errors` at all - which happens, and
+    // used to leave the turn silent.
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
 
     const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: { responseParts: { kind: string; error?: { message?: string } }[] }[] } };
     };
     const failure = after.snapshot.state.turns[0]?.responseParts.find((one) => one.kind === 'error');
-    expect(failure?.error?.message).toContain('error_max_turns');
+    expect(failure?.error?.message).toBe('The turn failed');
   });
+
+  /*
+   * A limit the CLI stopped at is not a failure, as the reference reads a
+   * result: only `error_during_execution` and a `success` that says
+   * `is_error` end a turn in an error.
+   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   */
+  it('completes a turn the CLI stopped at a limit', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'error_max_turns', is_error: true, duration_ms: 3, errors: ['Reached maximum number of turns (1)'] });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { state: string; responseParts: { kind: string }[] }[] } };
+    };
+    expect(after.snapshot.state.turns[0]?.state).toBe('complete');
+    expect(after.snapshot.state.turns[0]?.responseParts.some((one) => one.kind === 'error')).toBe(false);
+  });
+
   it('tells every client when a session goes', async () => {
     const { host, client, peer: p, uri } = await running();
     const other = peer();

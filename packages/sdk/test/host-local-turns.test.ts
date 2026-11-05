@@ -826,8 +826,15 @@ describe('a Claude chat', () => {
     expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual(live);
   });
 
-  it('reads a steering message answered after a failed turn back as the turn of its own it was live', async () => {
-    // The session of agent-claude's capture of a turn that failed at its turn
+  /*
+   * A turn the CLI stopped at its turn limit is not a failed one, as the
+   * reference reads `error_max_turns`: the steering message it then answered
+   * stays in the same turn, which completes at the last result.
+   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
+   */
+  it('keeps a steering message answered after the turn limit in the turn it went into, live and read back', async () => {
+    // The session of agent-claude's capture of a turn that stopped at its turn
     // limit with a steering message queued, which the CLI then answered.
     const SESSION = '2b965eb7-14a6-40b2-a9fa-f65ed1c95121';
     const LIMITED = '0bbc4aff-8f2b-4536-a33a-8d0587e38461';
@@ -843,20 +850,14 @@ describe('a Claude chat', () => {
     await emit(...first);
     await steer(before.client, chat, STEERED, 'Reply with exactly the word BETA and nothing else.');
     await emit(...rest);
-    await ended(before.p, chat, STEERED);
+    await ended(before.p, chat, LIMITED);
     const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
     expect(live).toEqual([
-      [LIMITED, 'error', SLEEP, []],
-      [STEERED, 'complete', 'Reply with exactly the word BETA and nothing else.', ['BETA']],
+      [LIMITED, 'complete', SLEEP, ['steer: Reply with exactly the word BETA and nothing else.', 'BETA']],
     ]);
+    expect(actions(before.p, chat).some((e) => e.action.type === 'chat/error')).toBe(false);
     await before.host.close();
-
-    // Its turn began, so the record holds it and it is not read back inside the
-    // failed one. The transcript says nothing of the failure, so the failed
-    // turn reads back as the turn a read gives every finished one.
-    const read = await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'));
-    const asked = (turns: unknown[][]): unknown[] => turns.map(([id, , text, prose]) => [id, text, prose]);
-    expect(asked(read)).toEqual(asked(live));
+    expect(await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'))).toEqual(live);
   });
 
   it('forks a session asleep since a restart at a command\'s turn, where the Claude turn read back before it ended', async () => {

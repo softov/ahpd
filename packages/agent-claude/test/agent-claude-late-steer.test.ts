@@ -436,14 +436,19 @@ it('opens no turn for a steering message the CLI took in before the stop', async
 /*
  * A steering message is the turn's it went into, as the reference steering
  * entry takes the in-flight send's turn: when that turn fails, no turn opens
- * for the message, and what the CLI answers it with goes nowhere.
+ * for the message, and what the CLI answers it with goes nowhere. The capture
+ * stopped at its turn limit, which is no failure, so its result is made the
+ * one a failure in execution gives.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L454-L470
  */
 it('opens no turn for a steering message the CLI holds when its turn fails', async () => {
   const { session, chat, before } = await opened();
   // The probe sent the steering message as the tool's result arrived, which is the turn's last round.
   const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
-  const [failed, answered] = splitAfter(rest, (frame) => frame.type === 'result');
+  const [limited, answered] = splitAfter(rest, (frame) => frame.type === 'result');
+  const failed = limited.map((frame) => (frame.type === 'result'
+    ? { ...frame, subtype: 'error_during_execution', is_error: true, errors: ['The request failed'] }
+    : frame));
   session.sendMessage(LIMITED, SLEEP_DONE_TEXT);
   await settle();
   sdk.push(...first);
@@ -462,6 +467,41 @@ it('opens no turn for a steering message the CLI holds when its turn fails', asy
     [LIMITED, 'error', SLEEP_DONE_TEXT, 'user', []],
   ]);
   // The CLI owes nothing once it has answered the message, so a turn sent now goes out.
+  expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);
+  await settle();
+  expect(sdk.handed.map((one) => one.uuid)).toEqual([LIMITED, steered, GAMMA]);
+});
+
+/*
+ * A turn the CLI stopped at its turn limit is no failure, as the reference
+ * reads `error_max_turns`: the steering message the CLI then answers stays in
+ * the turn it went into, which completes at the last result.
+ * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+ * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
+ */
+it('keeps a steering message the CLI answers after the turn limit in the turn it went into', async () => {
+  const { session, chat, before } = await opened();
+  const [first, rest] = splitAfter(fixture('claude-failed-steer.jsonl'), (frame) => frame.type === 'user');
+  const [limited, answered] = splitAfter(rest, (frame) => frame.type === 'result');
+  session.sendMessage(LIMITED, SLEEP_DONE_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  expect(session.sendSteeringMessage?.({ id: 's-limit', text: BETA_TEXT })).toBe(true);
+  await settle();
+  const steered = lastSent();
+  sdk.push(...renamed(limited, AFTER_LIMIT, steered));
+  await settle();
+  // The limit ended nothing: the CLI still owes the steering message's answer.
+  expect(chat.some((one) => one.type === 'chat/turnComplete' || one.type === 'chat/error')).toBe(false);
+  sdk.push(...renamed(answered, AFTER_LIMIT, steered));
+  await settle();
+
+  expect(chat.filter((one) => one.type === 'chat/error')).toEqual([]);
+  expect(chat.filter((one) => one.type === 'chat/turnComplete').map((one) => one.turnId)).toEqual([LIMITED]);
+  expect(history(replayed(before, chat).turns as Bag[])).toEqual([
+    [LIMITED, 'complete', SLEEP_DONE_TEXT, 'user', [`steer: ${BETA_TEXT}`, 'BETA']],
+  ]);
   expect(hostSends(session, GAMMA, GAMMA_TEXT)).toBe(true);
   await settle();
   expect(sdk.handed.map((one) => one.uuid)).toEqual([LIMITED, steered, GAMMA]);
