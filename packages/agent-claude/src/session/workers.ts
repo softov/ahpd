@@ -23,11 +23,6 @@ export interface Spawning {
   description?: string;
   prompt?: string;
   parent: string;
-  /**
-   * The lead turn the call was made in, which is the turn whose cancel ends
-   * the worker. For a nested call, the turn its spawning worker was made in.
-   */
-  turn?: string;
   /** The worker chat's URI, once the host has opened it. */
   chat?: string;
   /** Whether the call's own result has been emitted. */
@@ -43,8 +38,8 @@ export interface Spawning {
 /**
  * What one `task_started` said about a task, by the task id.
  *
- * The harness's live level names a task by id alone, so the kind, the call that
- * runs it and the sentence describing it are only ever here. `startedAt` is
+ * The harness's `background_tasks_changed` names a task by id alone, so the
+ * kind, the call that runs it and the sentence describing it are only ever here. `startedAt` is
  * when this frame was read, because nothing else in the stream dates a task.
  */
 export interface TaskInfo {
@@ -72,20 +67,20 @@ export interface Workers {
   tasks: Map<string, string>;
   /** The agent ids a permission ask was seen with, so the next one lands in the same chat. */
   byAgent: Map<string, Scope>;
-  /** The spawning calls whose worker has ended, one id each. */
-  ended: Set<string>;
+  /** The spawning calls whose worker has completed, one id each, as VS Code's registry marks a spawn completed. */
+  completed: Set<string>;
   /** What each `task_started` said about a task, by the task id. */
   taskInfo: Map<string, TaskInfo>;
-  /** The tasks the last live level named, which is every task running now. */
-  live: Set<string>;
+  /** The tasks the SDK's last `background_tasks_changed` named, which is every task running now. */
+  backgroundTasks: Set<string>;
   /** What each chat has been told it is running, by chat URI. */
   told: Map<string, BackgroundTask[]>;
   /** Record what one `task_started` said, and publish whatever that changes. */
   noteTask: (message: Bag) => void;
-  /** Take one live level as the whole set of tasks running now. */
-  noteLive: (message: Bag) => void;
-  /** Whether a background task is running now. */
-  working: () => boolean;
+  /** Take one `background_tasks_changed` as the whole set of tasks running now. */
+  noteBackgroundTasks: (message: Bag) => void;
+  /** Whether a background task is running now: VS Code's active work. */
+  hasActiveWork: () => boolean;
   /** Forget one task the harness said has ended. */
   dropTask: (taskId: string) => void;
   /**
@@ -100,24 +95,25 @@ export interface Workers {
    */
   scopeFor: (parent: string) => Scope;
   /** Record what a spawning call said, and open its worker's chat if one waits. */
-  recordSpawn: (id: string, given: Bag, scope: Scope, turnId?: string) => void;
+  recordSpawn: (id: string, given: Bag, scope: Scope) => void;
   /** The scope a tool call was opened in, whichever conversation that is. */
   scopeOfCall: (toolCallId: string) => Scope | undefined;
   /** One action on the chat a scope writes to. */
   emitOn: (scope: Scope, action: Bag) => void;
   /**
    * A turn's tool calls that never reached an end, ended the way the protocol's
-   * reducer ends them when the turn ends.
+   * reducer ends them when the turn ends: VS Code's mapper's
+   * `clearPendingToolCalls`.
    */
-  settleOpen: (turn: Bag | undefined) => void;
+  clearPendingToolCalls: (turn: Bag | undefined) => void;
   /**
-   * End a worker's turn, once, whichever signal got here first.
+   * End a subagent's turn, once, whichever signal got here first.
    */
-  endWorker: (callId: string, state: 'complete' | 'cancelled') => void;
+  endSubagent: (callId: string, state: 'complete' | 'cancelled') => void;
   /**
-   * The `subagent` content for a worker, as the spawning call's result shows it.
+   * The `subagent` content for a subagent, as the spawning call's result shows it.
    */
-  workerBlock: (callId: string) => Bag | undefined;
+  subagentBlock: (callId: string) => Bag | undefined;
   methods: {
     stopWorker: (toolCallId: string) => void;
   };
@@ -154,31 +150,32 @@ export function createWorkers(ctx: SessionContext): Workers {
   const tasks = new Map<string, string>();
   const byAgent = new Map<string, Scope>();
   /**
-   * The spawning calls whose worker has ended, one id each.
+   * The spawning calls whose worker has completed, one id each, as VS Code's
+   * subagent registry marks a spawn completed.
    *
    * Kept for the life of the session: a frame the harness sends for a worker
-   * after it ended is dropped by this, and without it that frame would open
-   * the worker a second time.
+   * after it completed is dropped by this, so the worker opens once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentRegistry.ts#L91
    */
-  const ended = new Set<string>();
+  const completed = new Set<string>();
 
   /** What each `task_started` said about a task, by the task id. */
   const taskInfo = new Map<string, TaskInfo>();
 
   /**
-   * The tasks the last live level named, one id each.
+   * The tasks the SDK's last `background_tasks_changed` named, one id each.
    *
-   * The harness sends the level as the whole set of tasks running after a
-   * change, so this is replaced rather than patched, and an id that leaves it
-   * has stopped running.
+   * The harness sends the frame with the whole set of tasks running after a
+   * change, so the set is replaced whole, and an id that leaves it has stopped
+   * running.
    */
-  const live = new Set<string>();
+  const backgroundTasks = new Set<string>();
 
   /**
    * What each chat has been told it is running, by chat URI.
    *
-   * Kept so that only a difference is reported: a level that changed nothing
-   * must say nothing. A client that subscribes afterwards reads the same list
+   * Kept so that only a difference is reported: a `background_tasks_changed`
+   * that changed nothing says nothing. A client that subscribes afterwards reads the same list
    * from the host's own records, so this is only what has already been said.
    */
   const told = new Map<string, BackgroundTask[]>();
@@ -219,7 +216,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     const known = scopes.get(parent);
     if (known !== undefined) return known;
     if (ctx.options.subagent === undefined) return mainScope;
-    if (ended.has(parent)) {
+    if (completed.has(parent)) {
       return {
         parent, chat: dropped, turn: { id: '', responseParts: [] }, parts: new Map(), activeToolBlocks: new Map(), streaming: undefined,
       };
@@ -300,12 +297,11 @@ export function createWorkers(ctx: SessionContext): Workers {
    * the record holds when it opens.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentRegistry.ts#L144-L160
    */
-  const recordSpawn = (id: string, given: Bag, scope: Scope, turnId?: string): void => {
+  const recordSpawn = (id: string, given: Bag, scope: Scope): void => {
     const was = spawning.get(id);
     const kind = was?.subagentType ?? str(given.subagent_type);
     const about = was?.description ?? str(given.description);
     const prompt = was?.prompt ?? str(given.prompt);
-    const made = was?.turn ?? (scope === mainScope ? turnId : spawning.get(scope.parent)?.turn);
     spawning.set(id, {
       ...was,
       ...(kind !== undefined ? { subagentType: kind } : {}),
@@ -313,7 +309,6 @@ export function createWorkers(ctx: SessionContext): Workers {
       ...(prompt !== undefined ? { prompt } : {}),
       parent: was?.parent ?? scope.parent,
       foreground: was?.foreground ?? true,
-      ...(made !== undefined ? { turn: made } : {}),
     });
     // A worker that spoke before its spawn was recorded: its chat opens now,
     // and what it held is delivered to it.
@@ -378,7 +373,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     const known = stops.get(id);
     if (known !== undefined) return known;
     const stop = async (): Promise<boolean> => {
-      if (!live.has(id)) return false;
+      if (!backgroundTasks.has(id)) return false;
       try {
         await ctx.query.stopTask(id);
         return true;
@@ -486,9 +481,9 @@ export function createWorkers(ctx: SessionContext): Workers {
   /**
    * Report the difference between what each chat is running and what it was told.
    *
-   * The live level and the per-task frames arrive in no fixed order, so what a
-   * chat has is a function of both rather than of whichever landed last: the
-   * level says which tasks are live and `task_started` says what each one is.
+   * The `background_tasks_changed` frames and the per-task frames arrive in
+   * no fixed order, so what a chat has is a function of both: the first say
+   * which tasks are running and `task_started` says what each one is.
    * A task is reported once, when it appears or changes, and taken back once,
    * when it stops being live. Removals go first, so a client applying them in
    * order never holds a removed row beside the one that replaced it.
@@ -501,7 +496,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     const tasks = ctx.options.backgroundTasks;
     if (tasks === undefined) return;
     const wanted = new Map<string, BackgroundTask[]>();
-    for (const id of live) {
+    for (const id of backgroundTasks) {
       const info = taskInfo.get(id);
       const call = info?.toolUseId;
       const scope = call === undefined ? undefined : scopeOfCall(call);
@@ -554,18 +549,17 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /**
-   * Take one live level as the whole set of tasks running now.
+   * Take one `background_tasks_changed` as the whole set of tasks running now.
    *
-   * Replace semantics, as the harness asks for. Pairing the set's own edges
-   * instead would need every one of them to arrive, and a level that is the
-   * whole truth makes one missed bookend harmless. An `ambient` task is
-   * something the harness runs for itself, so it is never listed.
+   * Replace semantics, as the harness asks for: the frame is the whole set, so
+   * a missed edge of it costs nothing. An `ambient` task is something the
+   * harness runs for itself, so it is not listed.
    */
-  const noteLive = (message: Bag): void => {
-    live.clear();
+  const noteBackgroundTasks = (message: Bag): void => {
+    backgroundTasks.clear();
     for (const one of list(message.tasks) as Bag[]) {
       const id = str(one.task_id);
-      if (id !== undefined && one.ambient !== true) live.add(id);
+      if (id !== undefined && one.ambient !== true) backgroundTasks.add(id);
     }
     reconcileWork();
   };
@@ -574,11 +568,12 @@ export function createWorkers(ctx: SessionContext): Workers {
    * Forget one task the harness said has ended.
    *
    * The terminal notification is an edge of the same set, read on its own
-   * because it can arrive with no level after it. The record goes with the id:
-   * a task that has ended has no description worth keeping.
+   * because it can arrive with no `background_tasks_changed` after it. The
+   * record goes with the id: a task that has ended has no description worth
+   * keeping.
    */
   const dropTask = (taskId: string): void => {
-    live.delete(taskId);
+    backgroundTasks.delete(taskId);
     taskInfo.delete(taskId);
     reconcileWork();
   };
@@ -591,9 +586,11 @@ export function createWorkers(ctx: SessionContext): Workers {
    * No action is sent for them, because a client watching already applied
    * that on the turn's own ending; this is the record a client that
    * subscribes afterwards reads. An ask still waiting on one of them is
-   * declined, since nothing will run the call it is about.
+   * declined, since nothing will run the call it is about. VS Code's mapper's
+   * `clearPendingToolCalls`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L553
    */
-  const settleOpen = (turn: Bag | undefined): void => {
+  const clearPendingToolCalls = (turn: Bag | undefined): void => {
     for (const part of list(turn?.responseParts) as Bag[]) {
       if (part.kind !== 'toolCall') continue;
       const call = bag(part.toolCall);
@@ -624,27 +621,26 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /**
-   * End a worker's turn, once, whichever signal got here first.
+   * End a subagent's turn, once, whichever signal got here first.
    *
-   * A foreground worker ends on the `tool_result` of the call that spawned it
+   * A foreground subagent ends on the `tool_result` of the call that spawned it
    * and a background one on its terminal `task_notification`; both can also
-   * arrive - the harness sends a notification for a foreground worker too -
-   * and a second ending would be a second turn on a chat that has none open.
-   * Anything the worker was still asking is declined rather than left on a
-   * promise nothing will settle.
+   * arrive - the harness sends a notification for a foreground subagent too -
+   * so it ends at the first, its chat holding one turn. Anything the subagent
+   * was still asking is declined, so no promise is left that nothing settles.
    */
-  const endWorker = (callId: string, state: 'complete' | 'cancelled'): void => {
-    if (ended.has(callId)) return;
+  const endSubagent = (callId: string, state: 'complete' | 'cancelled'): void => {
+    if (completed.has(callId)) return;
     const scope = scopes.get(callId);
     if (scope?.chat === undefined) return;
-    ended.add(callId);
+    completed.add(callId);
     for (const one of [...ctx.pending.values()]) {
       if (one.entry.chat !== scope.chat.uri) continue;
       ctx.pending.delete(one.id);
       one.settle({ behavior: 'deny', message: 'The subagent finished' });
       ctx.inputNeededRemoved(one.id);
     }
-    settleOpen(scope.turn);
+    clearPendingToolCalls(scope.turn);
     scope.chat.end(state);
     scopes.delete(callId);
     ctx.rounds.delete(callId);
@@ -655,13 +651,13 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /**
-   * The `subagent` content for a worker, as the spawning call's result shows it.
+   * The `subagent` content for a subagent, as the spawning call's result shows it.
    *
-   * Read off the call's record, which keeps the worker chat's URI after the
-   * worker has ended. A call whose worker was never opened carries nothing -
-   * the chat does not exist and a link to it would be a link to nowhere.
+   * Read off the call's record, which keeps the chat's URI after the subagent
+   * has ended. A call whose subagent's chat was never opened carries nothing:
+   * a link names a chat that exists.
    */
-  const workerBlock = (callId: string): Bag | undefined => {
+  const subagentBlock = (callId: string): Bag | undefined => {
     const info = spawning.get(callId);
     if (info?.chat === undefined) return undefined;
     const title = titleOf(info.description, info.subagentType);
@@ -699,10 +695,10 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   return {
-    parts, activeToolBlocks, mainScope, scopes, spawning, background, tasks, byAgent, ended,
-    taskInfo, live, told,
-    scopeFor, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
-    workerBlock, noteTask, noteLive, dropTask, closeOutputs, working: () => live.size > 0,
+    parts, activeToolBlocks, mainScope, scopes, spawning, background, tasks, byAgent, completed,
+    taskInfo, backgroundTasks, told,
+    scopeFor, recordSpawn, scopeOfCall, emitOn, clearPendingToolCalls, endSubagent,
+    subagentBlock, noteTask, noteBackgroundTasks, dropTask, closeOutputs, hasActiveWork: () => backgroundTasks.size > 0,
     methods: { stopWorker },
   };
 }

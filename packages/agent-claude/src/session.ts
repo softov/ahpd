@@ -193,7 +193,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
     models: () => ctx.models,
     agentId: () => ctx.sdkSessionId,
-    busy: () => ctx.working() || ctx.stopped.sessionCrons.length > 0,
+    busy: () => ctx.hasActiveWork() || ctx.stopped.sessionCrons.length > 0,
     forkPoint: (turnId) => ctx.ends.get(turnId),
     endPoint: (turnId) => ctx.ends.get(turnId),
 
@@ -299,7 +299,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         }
         for (const [callId, running] of ctx.onServer) if (running.blocked) ctx.inputNeededRemoved(`auth:${callId}`);
         for (const scope of [...ctx.scopes.values()]) {
-          if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+          if (scope.parent !== '' && scope.chat !== undefined) ctx.endSubagent(scope.parent, 'cancelled');
         }
         const turn = ctx.active;
         if (turn !== undefined) {
@@ -307,7 +307,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           const attempt = Date.now() - ctx.startedAt;
           turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
           ctx.resumedFrom = undefined;
-          ctx.settleOpen(turn);
+          ctx.clearPendingToolCalls(turn);
           ctx.turns.push(turn);
           ctx.active = undefined;
           ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
@@ -315,7 +315,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       }
       ctx.disposed = true;
       servers.unwatch();
-      ctx.ended.clear();
+      ctx.completed.clear();
       ctx.pastLines.clear();
       // The lines the shell hook kept for the questions that never came.
       config.unprefixed.clear();
@@ -324,7 +324,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // What was running and what each chat was told about it. A session being
       // disposed tells nobody anything.
       ctx.taskInfo.clear();
-      ctx.live.clear();
+      ctx.backgroundTasks.clear();
       ctx.told.clear();
       // And the output terminals a background shell wrote into, which go with
       // the session that made them rather than being finished without it.

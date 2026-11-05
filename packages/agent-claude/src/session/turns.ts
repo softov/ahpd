@@ -548,9 +548,9 @@ export function createTurns(ctx: SessionContext): Turns {
        */
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.waiting !== undefined) ctx.scopes.delete(scope.parent);
-        else if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+        else if (scope.parent !== '' && scope.chat !== undefined) ctx.endSubagent(scope.parent, 'cancelled');
       }
-      ctx.noteLive({ tasks: [] });
+      ctx.noteBackgroundTasks({ tasks: [] });
       // The files the turn's edit calls began changing, as the stop leaves them.
       ctx.editsStopped();
       const was = ctx.query;
@@ -568,7 +568,7 @@ export function createTurns(ctx: SessionContext): Turns {
         const attempt = Date.now() - ctx.startedAt;
         turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
         ctx.resumedFrom = undefined;
-        ctx.settleOpen(turn);
+        ctx.clearPendingToolCalls(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
         ctx.endedAt(turn);

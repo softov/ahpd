@@ -311,7 +311,7 @@ export function createQuery(ctx: SessionContext): Query {
       const attempt = Date.now() - ctx.startedAt;
       turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
       ctx.resumedFrom = undefined;
-      ctx.settleOpen(turn);
+      ctx.clearPendingToolCalls(turn);
       const part = ctx.addFailure(turn, 'sendFailed', why);
       ctx.turns.push(turn);
       ctx.active = undefined;
@@ -876,7 +876,7 @@ export function createQuery(ctx: SessionContext): Query {
             && scope !== undefined
             && str(bag(call._meta).progressMessage) !== line) {
             call._meta = { ...bag(call._meta), progressMessage: line };
-            const worker = id === undefined ? undefined : ctx.workerBlock(id);
+            const worker = id === undefined ? undefined : ctx.subagentBlock(id);
             ctx.emitOn(scope, {
               type: 'chat/toolCallContentChanged',
               turnId: scope.turn?.id,
@@ -901,7 +901,7 @@ export function createQuery(ctx: SessionContext): Query {
           const id = str(message.tool_use_id);
           const task = str(message.task_id);
           if (id !== undefined) ctx.background.add(id);
-          if (id !== undefined && task !== undefined && !ctx.ended.has(id)) ctx.tasks.set(id, task);
+          if (id !== undefined && task !== undefined && !ctx.completed.has(id)) ctx.tasks.set(id, task);
           /*
            * Whether the worker runs in the background is the SDK's own report
            * of its task, as VS Code marks a spawn from `task_started`; a later
@@ -928,7 +928,7 @@ export function createQuery(ctx: SessionContext): Query {
          * lists as its background work.
          */
         if (type === 'system' && str(message.subtype) === 'background_tasks_changed') {
-          ctx.noteLive(message);
+          ctx.noteBackgroundTasks(message);
           continue;
         }
         if (type === 'system' && str(message.subtype) === 'task_notification') {
@@ -940,7 +940,7 @@ export function createQuery(ctx: SessionContext): Query {
             // Complete however the task ended, as VS Code completes a
             // subagent's chat on its terminal notification.
             // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
-            if (id !== undefined && ctx.background.has(id)) ctx.endWorker(id, 'complete');
+            if (id !== undefined && ctx.background.has(id)) ctx.endSubagent(id, 'complete');
           }
           continue;
         }
@@ -1099,7 +1099,7 @@ export function createQuery(ctx: SessionContext): Query {
               turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
-            ctx.settleOpen(turn);
+            ctx.clearPendingToolCalls(turn);
             /*
              * A failure a client may resume: one this result reported, on a
              * conversation with somewhere to cut back to. A login's failure is

@@ -353,7 +353,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * worker whose spawn is only recorded there would have no chat at all.
        */
       if (toolName === 'Task' || toolName === 'Agent') {
-        ctx.recordSpawn(id, bag(raw), scope, str(turn.id));
+        ctx.recordSpawn(id, bag(raw), scope);
       }
       /** Where a question about this call is drawn: the worker's chat, or the lead. */
       const where = scope.chat?.uri ?? ctx.options.chatUri;

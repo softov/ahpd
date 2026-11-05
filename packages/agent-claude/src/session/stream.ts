@@ -252,7 +252,7 @@ export function createStream(ctx: SessionContext): Stream {
         // mapper records it, so its worker's chat opens on the worker's first
         // frame with what the record holds by then.
         // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L646-L653
-        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, {}, scope, str(turn.id));
+        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, {}, scope);
         // Whose tool it is. The reducer refuses `chat/toolCallAuthRequired` on
         // a call with no MCP contributor, so an MCP server's is also what makes
         // a sign-in mid-call sayable at all.
@@ -406,7 +406,7 @@ export function createStream(ctx: SessionContext): Stream {
          * what the scope waits for. Recorded there too, from the permission
          * callback, which is handed the whole input and can be first.
          */
-        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, bag(block.input), scope, str(turn.id));
+        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, bag(block.input), scope);
         // Whose tool this is, which decides who has to run it, as its start
         // said it.
         const contributor = contributorOf(name);
@@ -550,9 +550,9 @@ export function createStream(ctx: SessionContext): Stream {
     const info = ctx.spawning.get(id);
     if (info === undefined) return;
     info.completed = true;
-    if (info.foreground) ctx.endWorker(id, 'complete');
+    if (info.foreground) ctx.endSubagent(id, 'complete');
     // Ended, or never opened and not running on in the background.
-    if (ctx.ended.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
+    if (ctx.completed.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
   };
 
   const results = (message: Bag, parent = '', structured?: unknown): void => {
@@ -642,7 +642,7 @@ export function createStream(ctx: SessionContext): Stream {
        * so its worker is opened here and the completion names it.
        */
       if (ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
-      const workerContent = ctx.workerBlock(id);
+      const workerContent = ctx.subagentBlock(id);
       /*
        * The terminal that shows a `Bash` output too large to send, after the
        * notice that stands in for that output in the text, which is where the
