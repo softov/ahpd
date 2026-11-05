@@ -900,23 +900,25 @@ it('says a customization switch on a nested session to the clients outside once'
 /*
  * A turn the host inside will not run is ended out here as that host ends it,
  * in its words: a turn it refuses after its echo ends in `chat/error`, as the
- * reference host's admission ends one. The session ending later fails no turn
- * a second time.
+ * reference host's admission ends one, and the session inside, whose first
+ * message that was, fails its creation in the same words after it, as the
+ * reference host fails a session its first send could not bring up. The
+ * session ending later fails no turn a second time.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
  */
 it('ends a turn the host inside would not run as the host inside ends it', async () => {
   const inner = innerHost(backend());
   inner.host.refuseTurns('The host inside is stopping');
   const { host, dispatch, told } = await outside(inner);
   await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
-  await until(() => told('chat/error').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
+  await until(() => told('chat/error').length > 0 && told('session/creationFailed').length > 0);
+  const refused = { errorType: 'rejected', message: 'The host inside is stopping' };
   expect(told('chat/turnStarted').map((one) => [one.origin, one.rejectionReason])).toEqual([[{ clientId: 'window', clientSeq: 8 }, undefined]]);
-  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([
-    ['t1', { errorType: 'rejected', message: 'The host inside is stopping' }],
-  ]);
+  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([['t1', refused]]);
+  expect(told('session/creationFailed').map((one) => one.action.error)).toEqual([refused]);
   inner.crash();
-  await until(() => told('session/creationFailed').length > 0);
+  await until(() => told('session/creationFailed').length > 1);
   expect(told('chat/error')).toHaveLength(1);
   await host.close();
 });
@@ -1609,9 +1611,12 @@ it('a nested session moved to this host before its first turn shows its history'
   const first = await daemon();
   const uri = 'ahp-session:/moved';
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await until(() => port.read().length > 0, 1000);
   await first.client.handle({ method: 'subscribe', params: { channel: uri } });
   await first.client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  // Its backend comes up at its first turn, as VS Code's provider materializes
+  // a session at its first send, so nothing has been asked of the machine yet.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  expect(port.read()).toEqual([]);
 
   /*
    * Moved to this host before it has said anything.

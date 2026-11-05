@@ -217,23 +217,43 @@ it('ends the turn that waited on a restart in an error with the failure', async 
 });
 
 /*
- * The turn is where the failure is said, and the session stays ready, as VS
- * Code's host says a creation failed only for a session still being created.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2467-L2480
+ * A first message whose start fails ends in its error, and the session, still
+ * being created, fails its creation after it and is then announced, as VS
+ * Code's host fails a session its first send could not bring up.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
  */
-it('leaves a session ready when the restart a turn waited on fails, as VS Code\'s host', async () => {
+it('fails the creation of a session its first message could not bring up, after the turn\'s error, and announces it, as VS Code\'s host', async () => {
   const { client, p, uri, chatUri } = await opened(undefined, 1);
   void change(client, uri, { fixed: 'two' });
   void turn(client, chatUri);
   await settle();
 
-  const failed = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
-    .filter((one) => one.action.type === 'session/creationFailed');
-  expect(failed).toEqual([]);
+  const said = p.notes.flatMap((one) => {
+    if (one.method === 'root/sessionAdded') return ['root/sessionAdded'];
+    if (one.method !== 'action') return [];
+    const { action } = one.params as Note;
+    return ['chat/turnStarted', 'chat/error', 'session/ready', 'session/creationFailed'].includes(String(action.type))
+      ? [String(action.type)]
+      : [];
+  });
+  expect(said).toEqual(['chat/turnStarted', 'chat/error', 'session/creationFailed', 'root/sessionAdded']);
+  const failed = p.notes.map((one) => one.params as Note).find((one) => one.action?.type === 'session/creationFailed');
+  expect(failed?.action.error).toMatchObject({ errorType: 'sendFailed', message: 'the backend would not start' });
   const read = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { lifecycle: string } };
   };
-  expect(read.snapshot.state.lifecycle).toBe('ready');
+  expect(read.snapshot.state.lifecycle).toBe('failed');
+
+  // A message sent again tries the start again, and ends in its error.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'again', origin: { kind: 'user' } } } },
+  });
+  await settle();
+  const again = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
+    .filter((one) => one.action.turnId === 't2');
+  expect(again.map((one) => [one.action.type, one.rejectionReason])).toEqual([['chat/turnStarted', undefined], ['chat/error', undefined]]);
+  expect(again[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
 });
 
 it('does not start anything again for a value that did not move', async () => {

@@ -292,11 +292,25 @@ describe('a session with a working tree of its own', () => {
     const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state;
+    // The list, which hears a session announced.
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await say(client, defaultChat, 't1');
     const failed = p.notes
       .map((one) => one.params as { channel?: string; action?: { type?: string; part?: unknown } })
       .find((one) => one.channel === defaultChat && one.action?.type === 'chat/error');
     expect(failed?.action?.part).toMatchObject({ error: { errorType: 'sendFailed', message: `${plain} is not a git repository, so it has no worktrees` } });
+    /*
+     * The session, still being created, fails its creation after the turn's
+     * error and is then announced, as VS Code's host fails a session whose
+     * first send could not make its worktree.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
+     */
+    const order = p.notes.flatMap((one) => {
+      if (one.method === 'root/sessionAdded') return ['root/sessionAdded'];
+      const type = (one.params as { action?: { type?: string } }).action?.type;
+      return type === 'chat/error' || type === 'session/ready' || type === 'session/creationFailed' ? [type] : [];
+    });
+    expect(order).toEqual(['chat/error', 'session/creationFailed', 'root/sessionAdded']);
   });
 
   it('puts every session tree under the root the host was given', async () => {

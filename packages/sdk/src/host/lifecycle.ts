@@ -804,8 +804,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * while to go, and until it has, it is still writing what it was doing.
      */
     const stopping: Promise<void>[] = [];
+    // Each chat's road, put back where the start that follows fails.
+    const roads = new Map<string, NonNullable<ReturnType<typeof byChat.get>>>();
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')));
+      const road = byChat.get(chatUri);
+      if (road !== undefined) roads.set(chatUri, road);
       byChat.drop(chatUri);
       // Started again below under this session, which is the relaunch a moved
       // chat owed.
@@ -931,16 +935,26 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       enteredIn.delete(uri);
       sessionMachines.delete(uri);
       /*
+       * The session held where it was, its backend stopped and its start owed
+       * to its next turn, which runs it again on the conversation it holds, as
+       * VS Code's host relaunches a runtime at the next turn boundary and keeps
+       * a session its first send could not bring up for the next send to try
+       * again. Where a chat of it started before the failure, the session is
+       * the one that start holds.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2466
+       *
        * The failure goes to what asked for the restart, which says it where it
        * was needed: the turn a relaunch prepared ends in it, a client's change
        * of folders is refused with it, and a move's continuation tells the
-       * agent. The session stays ready for every client, as VS Code's host
-       * says a creation failed only for a session still being created and
-       * ends the turn a failed relaunch was preparing; whatever reaches it
-       * next opens it as any session not running is opened, from what its
-       * backend recorded.
+       * agent. A session that was ready stays ready, as VS Code's host says a
+       * creation failed only for a session still being created.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2467-L2480
        */
+      if (!sessions.has(uri)) {
+        sessions.set(uri, held);
+        for (const [chatUri, road] of roads) byChat.set(chatUri, road);
+        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, sender, tokensFor: tokensFor ?? (() => ({})) });
+      }
       throw error;
     }
     finally {
@@ -1097,8 +1111,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.restarting.set(uri, held);
     try { await work; }
     catch (error) {
-      lives.delete(uri);
       log(`${uri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+      // Owed again to the next turn, which tries it again.
+      if (sessions.has(uri)) ctx.relaunches.set(uri, due);
       throw error;
     }
     finally {
@@ -1532,6 +1547,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     };
     const send = (): Promise<void> | undefined => {
       if (stopped?.() === true) return undefined;
+      // Handed to its backend, which brings a provisional session up.
+      ctx.materialized(session.uri);
       /*
        * The turn booked as its backend is handed it: its start, as the chat
        * holds it, said again on the chat's road, which keeps what a turn is
@@ -1776,7 +1793,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * the same thing, and the only thing that decides it is what the
        * session holds at the moment the turn starts.
        */
-      if (relayed) relay(session);
+      if (relayed) {
+        // Carried to the host that runs it, which brings a provisional session up.
+        ctx.materialized(session.uri);
+        relay(session);
+      }
       else {
         if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
         else said();

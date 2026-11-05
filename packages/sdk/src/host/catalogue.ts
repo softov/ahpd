@@ -68,8 +68,10 @@ export interface Catalogue {
   sessionAdded(uri: string): void;
   /** Whether a session is made and not yet announced: a fresh one before its first message. */
   provisional(uri: string): boolean;
-  /** A session's first message: a provisional one announced, then ready. */
+  /** A turn handed to its backend: a provisional session announced, and one not ready said ready. */
   materialized(uri: string): void;
+  /** A turn that ended in an error before its backend had it, which fails a provisional session's creation. */
+  failSessionCreationIfStillCreating(uri: string, error: Bag): void;
   /** A session's row moved: said with the rest on the 100 ms debounce. */
   summaryMoved(uri: string): void;
   /** Every row that moved, said now, as the debounce would. */
@@ -649,14 +651,31 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
   /**
-   * A provisional session's first message: announced, then ready, as VS
-   * Code's host persists a session that materialized and then says it ready.
+   * A turn handed to its backend, which is what brings a provisional session
+   * up: announced, then said ready where its state is not, as VS Code's host
+   * persists a session its first send materialized and says it ready unless
+   * it is. A session whose creation a first message failed is said ready by
+   * the next one that reaches its backend.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
    */
   const materialized = (uri: string): void => {
-    if (!coming.has(uri) || !sessions.has(uri)) return;
+    if (!sessions.has(uri)) return;
+    if (coming.has(uri)) sessionAdded(uri);
+    const lifecycle = ctx.stateOf(uri)?.lifecycle;
+    if (lifecycle === 'creating' || lifecycle === 'failed') ctx.dispatch(uri, { type: 'session/ready' });
+  };
+  /**
+   * A provisional session whose first message ended in an error before its
+   * backend had it: its creation failed, said after the turn's error, and the
+   * session announced so every client lists it as failed, as VS Code's host
+   * fails a session its first send could not bring up. A message sent again
+   * brings it up.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
+   */
+  const failSessionCreationIfStillCreating = (uri: string, error: Bag): void => {
+    if (!coming.has(uri)) return;
+    ctx.dispatch(uri, { type: 'session/creationFailed', error });
     sessionAdded(uri);
-    ctx.dispatch(uri, { type: 'session/ready' });
   };
   /**
    * What each session's row said last, as its mutable fields.
@@ -1680,7 +1699,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, chatMoved, answerMirrored, askedLeft, syncToolAuthenticationNeeded, factsMoved, activeCount,
-    activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized,
+    activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized, failSessionCreationIfStillCreating,
     summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
