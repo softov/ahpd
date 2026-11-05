@@ -221,11 +221,11 @@ describe('a fetch checks each redirect', () => {
 });
 
 describe('a fetch reads no answer larger than it may', () => {
-  it('refuses an answer whose content-length is over the limit, before a byte is held', async () => {
+  it('refuses an answer whose content-length is over VS Code\'s 256 KB for an image, before a byte is held', async () => {
     await expect(fetched('https://files.example/a.png', {
       lookup: lookups({ 'files.example': [at('93.184.216.34')] }),
-      request: async () => answered(200, { 'content-length': String(32 * 1024 * 1024 + 1) }),
-    })).rejects.toThrow('files.example answers with more than 32 MB');
+      request: async () => answered(200, { 'content-length': String(256 * 1024 + 1) }),
+    })).rejects.toThrow('files.example answers with more than 256 KB');
   });
 
   it('refuses an answer whose bytes are over the limit it was given', async () => {
@@ -254,8 +254,8 @@ describe('a fetch reads no answer larger than it may', () => {
       }),
       request: async (url) => (url.hostname === 'files.example'
         ? answered(302, { location: 'https://cdn.example/b.png' })
-        : answered(200, { 'content-length': String(32 * 1024 * 1024 + 1) })),
-    })).rejects.toThrow('cdn.example answers with more than 32 MB');
+        : answered(200, { 'content-length': String(256 * 1024 + 1) })),
+    })).rejects.toThrow('cdn.example answers with more than 256 KB');
   });
 });
 

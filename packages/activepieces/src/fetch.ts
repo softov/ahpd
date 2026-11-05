@@ -54,25 +54,21 @@ export interface FetchOptions {
   request?: Requester;
   /** The most redirects to follow; five otherwise. */
   redirects?: number;
-  /** The most bytes one answer may hold; 32 MB otherwise. */
+  /** The most bytes one answer may hold; 256 KB otherwise. */
   maxBytes?: number;
-  /** The longest one request may take; 30 s otherwise. */
+  /** The longest one request may take; 10 s otherwise. */
   timeoutMs?: number;
 }
 
-/** The most redirects one fetch follows before it is refused. */
-const MOST_REDIRECTS = 5;
-
 /**
- * The most bytes one answer may hold.
- *
- * The host reads an attachment up to the same size, so a file this fetch reads
- * is of a size the session already takes in.
+ * The bounds of VS Code's remote image read, which this fetch takes unless a
+ * caller names its own: five redirects followed by hand, ten seconds, and an
+ * image of 256 KB, VS Code's bound for an icon's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
  */
-const MOST_BYTES = 32 * 1024 * 1024;
-
-/** The longest one request may take, so a server that never answers costs 30 s. */
-const WITHIN_MS = 30_000;
+export const MOST_REDIRECTS = 5;
+export const MOST_BYTES = 256 * 1024;
+export const WITHIN_MS = 10_000;
 
 /** The name a URL is for, with the brackets of an IPv6 literal removed. */
 const hostOf = (url: URL): string => url.hostname.replace(/^\[|\]$/gu, '');
@@ -80,6 +76,7 @@ const hostOf = (url: URL): string => url.hostname.replace(/^\[|\]$/gu, '');
 /** A size, as the largest whole unit it is a multiple of. */
 const sizeOf = (bytes: number): string => {
   if (bytes >= 1024 * 1024 && bytes % (1024 * 1024) === 0) return `${String(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${String(bytes / 1024)} KB`;
   return `${String(bytes)} bytes`;
 };
 

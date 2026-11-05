@@ -2,24 +2,34 @@
  * The logo one Activepieces piece publishes, as the icon a client draws.
  *
  * A piece names its logo as a URL, and the plugin turns it into the `data:`
- * form a client draws. The fetch happens once for each piece: what it reads is
- * kept in the daemon's configuration folder, and a start after that reads the
- * file rather than the network. A piece in the host's mark table answers a
- * `mark:` source instead, so its CDN logo is never fetched.
+ * form a client draws, as Activepieces shows a piece with the logo its
+ * `logoUrl` names. The read is VS Code's remote image read: `https:` on every
+ * hop, five redirects followed by hand, ten seconds for the whole read, an
+ * answer that is not an image dropped, and the size checked from
+ * `content-length` and again as the bytes arrive. Each hop goes through the
+ * plugin's guarded fetch, so a logo URL that resolves into the host's own
+ * network is blocked as a piece's would be. A logo is held to 256 KB, VS
+ * Code's bound for an icon's image.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
  *
- * A logo is decoration, so a fetch that fails, takes too long or answers
- * something too large costs the icon and one line; it never fails the load.
+ * The fetch happens once for each piece: what it reads is kept in the daemon's
+ * configuration folder, and a start after that reads the file rather than the
+ * network. A logo is decoration, so a read that fails, takes too long or
+ * answers something too large costs the icon and one line; it never fails the
+ * load.
  */
 
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { MOST_BYTES, WITHIN_MS, fetched } from './fetch.ts';
+import type { Answer } from './fetch.ts';
 import type { Icon } from '@ahpd/sdk';
 
-/** The most one logo may be, in bytes, whether it came from the cache or the network. */
-export const LOGO_LIMIT = 32 * 1024;
+/** The most one logo may be, in bytes, whether it came from the cache or the network: VS Code's 256 KB for an icon. */
+export const LOGO_LIMIT = MOST_BYTES;
 
-/** How long one fetch may take before the icon is given up. */
-const LOGO_TIMEOUT_MS = 5_000;
+/** How long the whole read may take, redirects included: VS Code's ten seconds. */
+const LOGO_TIMEOUT_MS = WITHIN_MS;
 
 /** What one piece's logo came to: an icon, or the line saying why there is none. */
 export interface Logo {
@@ -29,26 +39,14 @@ export interface Logo {
   problem?: string;
 }
 
+/** How one logo URL is read: the guarded fetch, unless a test says otherwise. */
+export type LogoFetcher = (url: string) => Promise<Answer>;
+
 /** One line saying what went wrong, without a stack. */
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** The folder a piece's logo is kept in. */
 const folderOf = (dir: string): string => join(dir, 'activepieces', 'icons');
-
-/**
- * The host mark each piece shows, by adapter name.
- *
- * A piece in this table is sent `{ src: "mark:<name>" }`, which the host
- * resolves from the marks it ships. Its CDN logo is neither fetched nor cached,
- * because the mark is the better drawing and the CDN file is over 32 KB.
- */
-const MARKS: Record<string, string> = {
-  'ap-github': 'github',
-  'ap-jira-cloud': 'jira',
-  'ap-linear': 'linear',
-  'ap-resend': 'resend',
-  'ap-whatsapp': 'whatsapp',
-};
 
 /** The extension a logo of one type is kept under. */
 const extensionOf = (contentType: string): string => {
@@ -87,38 +85,43 @@ const cachedOf = (folder: string, piece: string): { at: string; contentType: str
   return { at: join(folder, name), contentType: typeOf(name.slice(prefix.length)) };
 };
 
-/** The type an answer is taken to be: only an image is drawn, and anything else is a PNG. */
-const typeOfHeader = (header: string | null): string => {
-  const held = (header ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-  return held.startsWith('image/') ? held : 'image/png';
-};
-
 /** One logo as the icon a client draws, with the type it is kept under. */
 const iconOf = (bytes: Buffer, contentType: string): Icon => ({
   src: `data:${contentType};base64,${bytes.toString('base64')}`,
   contentType,
 });
 
+/** The guarded fetch, whose bounds are VS Code's on an image read. */
+const guarded: LogoFetcher = async (url) => await fetched(url);
+
+/** A read, or the refusal when the whole of it takes longer than the bound. */
+const withinBound = async (read: Promise<Answer>): Promise<Answer> => {
+  let late: NodeJS.Timeout | undefined;
+  void read.catch(() => undefined);
+  const timer = new Promise<never>((_answer, refuse) => {
+    late = setTimeout(() => { refuse(new Error(`the read took longer than ${LOGO_TIMEOUT_MS / 1000} seconds`)); }, LOGO_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([read, timer]);
+  }
+  finally {
+    if (late !== undefined) clearTimeout(late);
+  }
+};
+
 /**
  * The icon of one piece, read from the cache or fetched once.
  *
- * A piece in the host's mark table answers that mark before the cache is read,
- * so it makes no fetch. `dir` is the daemon's configuration folder, which is
- * where the cache lives. Absent, there is nowhere to keep the logo, so the
- * promise of one fetch for each piece cannot be kept and no fetch is made.
- *
- * `fetcher` is a parameter so a test can answer without a network, and the
- * same argument `fetch` takes otherwise.
+ * `dir` is the daemon's configuration folder, which is where the cache lives.
+ * Absent, there is nowhere to keep the logo, so the promise of one fetch for
+ * each piece cannot be kept and no fetch is made.
  */
 export async function logoOf(
   piece: string,
   url: string | undefined,
   dir: string | undefined,
-  fetcher: typeof fetch = fetch,
+  fetcher: LogoFetcher = guarded,
 ): Promise<Logo> {
-  const mark = MARKS[piece];
-  if (mark !== undefined) return { icon: { src: `mark:${mark}` } };
-
   if (dir === undefined || dir === '') return {};
   const folder = folderOf(dir);
 
@@ -137,40 +140,35 @@ export async function logoOf(
 
   if (url === undefined || url === '') return {};
 
-  let answer: Response;
+  let answer: Answer;
   try {
-    answer = await fetcher(url, { signal: AbortSignal.timeout(LOGO_TIMEOUT_MS) });
+    answer = await withinBound(fetcher(url));
   }
   catch (error) {
     return { problem: `the logo of ${piece} could not be fetched: ${reason(error)}` };
   }
-  if (!answer.ok) {
+  if (answer.status < 200 || answer.status >= 300) {
     return { problem: `the logo of ${piece} could not be fetched: HTTP ${String(answer.status)}` };
   }
-
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(await answer.arrayBuffer());
+  const contentType = (answer.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (!contentType.startsWith('image/')) {
+    return { problem: `the logo of ${piece} is not an image` };
   }
-  catch (error) {
-    return { problem: `the logo of ${piece} could not be read: ${reason(error)}` };
-  }
-  if (bytes.length > LOGO_LIMIT) {
+  if (answer.bytes.length > LOGO_LIMIT) {
     return { problem: `the logo of ${piece} is larger than ${LOGO_LIMIT / 1024} KB` };
   }
 
-  const contentType = typeOfHeader(answer.headers.get('content-type'));
   const cache = join(folder, `${piece}.${extensionOf(contentType)}`);
   try {
     mkdirSync(folder, { recursive: true });
-    writeFileSync(cache, bytes);
+    writeFileSync(cache, answer.bytes);
   }
   catch (error) {
     // The icon is still drawn this time; only the next start fetches again.
     return {
-      icon: iconOf(bytes, contentType),
+      icon: iconOf(answer.bytes, contentType),
       problem: `the logo of ${piece} could not be cached: ${reason(error)}`,
     };
   }
-  return { icon: iconOf(bytes, contentType) };
+  return { icon: iconOf(answer.bytes, contentType) };
 }

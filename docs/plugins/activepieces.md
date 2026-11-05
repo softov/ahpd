@@ -14,9 +14,9 @@ That session has the tool `ap_resend_send_email` with no `connector` argument, b
 
 ## Each piece shows its logo
 
-Each piece becomes an adapter, and the adapter carries the logo Activepieces publishes for the piece. The plugin fetches each logo once, at load, and keeps it at `<configDir>/activepieces/icons/<piece>.<ext>`, with the extension of the image type the CDN sent. A client receives it as a `data:` icon, so a second start makes no fetch. A fetch that fails, or a logo larger than 32 KB, costs the icon and one line. The adapter is still registered, without it. A daemon with no configuration directory to cache in fetches nothing.
+Each piece becomes an adapter, and the adapter carries the logo Activepieces publishes for the piece, as Activepieces shows each piece with its own logo. The plugin fetches each logo once, at load, and keeps it at `<configDir>/activepieces/icons/<piece>.<ext>`, with the extension of the image type the CDN sent. A client receives it as a `data:` icon, so a second start makes no fetch. A daemon with no configuration directory to cache in fetches nothing.
 
-Four pieces show a mark the host ships instead: Jira, Linear, Resend and WhatsApp. Their adapters carry `{ "src": "mark:<name>" }`, so the host resolves the mark and the CDN logo is neither fetched nor kept.
+A logo is read as VS Code reads a remote image: `https:` on every hop, five redirects followed by hand, ten seconds for the whole read, and its size checked from `content-length` and again as the bytes arrive, up to 256 KB, VS Code's bound for an icon's image. Each hop's address is checked as [the network](#the-network) below checks a piece's, so a logo URL that resolves into the host's own network is blocked. An answer that is not an image, a read that fails and a logo past the bound cost the icon and one line. The adapter is still registered, without it.
 
 The logos are the brands' own marks, and the plugin passes on what Activepieces publishes for each piece. They belong to their owners: a host that shows one is showing the piece, not claiming the mark.
 
