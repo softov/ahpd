@@ -1225,6 +1225,19 @@ it('keeps the trees a move left a session across a restart, and drops one that i
   expect(memorySessions().additionalWorktrees?.('a')).toEqual([]);
 });
 
+it('keeps the multi-root workspace a session was made from across a restart, and ignores one that is not one', async () => {
+  const dir = join(root, 'sessions');
+  const workspace = { workspaceFile: 'file:///srv/app/app.code-workspace' };
+  const store = fileSessions({ dir });
+  store.setMultiRoot?.('a', workspace);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', multiRoot: workspace });
+  // Read back by a second store on the same folder, which is what a restart is.
+  expect(fileSessions({ dir }).multiRoot?.('a')).toEqual(workspace);
+  writeFileSync(join(dir, 'b.json'), JSON.stringify({ version: 1, id: 'b', provider: 'echo', multiRoot: { workspaceFile: 'app.code-workspace' } }));
+  expect(fileSessions({ dir }).multiRoot?.('b')).toBeUndefined();
+});
+
 it('keeps the time the host archived a session across a restart, and ignores one that is not a time', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });

@@ -1674,7 +1674,10 @@ it('a nested session whose folders change starts the host inside again, and disp
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/wide';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
+  await client.handle({
+    method: 'createSession',
+    params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' }, workingDirectories: [uriOf(REPO_ROOT)] },
+  });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await until(() => port.read().length > 0, 1000);
   const subscribed = (): number =>
@@ -1683,9 +1686,11 @@ it('a nested session whose folders change starts the host inside again, and disp
 
   const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-wide-'));
   try {
+    // Another folder in the first one's place, which starts the host inside
+    // again there.
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) } },
+      params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectoryReplaced', directory: uriOf(REPO_ROOT), replacement: uriOf(elsewhere) } },
     });
     // The second subscription to the session, from the host that replaces the
     // one the restart closed.
@@ -1693,7 +1698,7 @@ it('a nested session whose folders change starts the host inside again, and disp
     expect(subscribed()).toBeGreaterThanOrEqual(2);
     // The action landed, so this is a session started again rather than a
     // change this host refused.
-    expect(peer.seen.some(({ params }) => params?.action?.type === 'session/workingDirectorySet')).toBe(true);
+    expect(peer.seen.some(({ params }) => params?.action?.type === 'session/workingDirectoryReplaced' && params?.rejectionReason === undefined)).toBe(true);
     expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   }
   finally {

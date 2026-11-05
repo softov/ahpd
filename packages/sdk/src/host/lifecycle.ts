@@ -11,7 +11,7 @@ import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
-import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
+import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
 import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -1045,7 +1045,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.relaunches.delete(uri);
     if (due === undefined || owning === undefined) return;
     const work = (async (): Promise<void> => {
-      await restart(uri, due.credentials, undefined, due.sender, undefined, due.tokensFor);
+      // In the folders the session now holds, its conversation resumed, where
+      // the folders are what changed.
+      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, due.sender, undefined, due.tokensFor);
       const made = Object.entries(due.config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
       if (made.length === 0) return;
       const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
@@ -2106,6 +2108,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (sentFrom !== undefined) kept.setRemoteOrigin?.(idOf(uri), sentFrom);
     const madeBy = readCreatedBy(config);
     if (madeBy !== undefined) kept.setCreatedBy?.(idOf(uri), madeBy);
+    // And the multi-root workspace the window made it from, which is what lets
+    // a window add and remove its folders.
+    const multiRoot = readMultiRoot(config);
+    if (multiRoot !== undefined) kept.setMultiRoot?.(idOf(uri), multiRoot);
     /*
      * The opt-in tools the request asked for, written down before the session
      * spawns: which tools are offered is read off the store while the first

@@ -589,6 +589,58 @@ describe('more than one directory', () => {
   const THREE = join(tmpdir(), 'ahpd-more-three');
   const EXTRA = join(tmpdir(), 'ahpd-more-extra');
   const ELSEWHERE = join(tmpdir(), 'ahpd-more-elsewhere');
+  /*
+   * A VS Code editor window, by the name it gives itself, and the multi-root
+   * workspace it makes a session from: the two a window's folder change is
+   * taken from, as VS Code's host takes one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostClientInfo.ts#L8-L35
+   */
+  const EDITOR_WINDOW = {
+    clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+    _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+  };
+  const MULTI_ROOT = { multiRoot: { workspaceFile: uriOf(join(tmpdir(), 'ahpd-more.code-workspace')) } };
+
+  /**
+   * A first turn on a chat, run to its end: what makes a session ready for a
+   * window's folder change. The CLI names the conversation `sdk-spoken` as it
+   * starts, which is the name a resume asks for once the CLI has written it.
+   */
+  const spoken = async (client: { handle(r: { method: string; params: unknown }): unknown }, chatUri: string): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-spoken' });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+  };
+
+  /** A window's session over the given folders, made from a multi-root workspace or not, and spoken in. */
+  const windowed = async (folders: string[], multiRoot = true) => {
+    const host = serving('/home/softov');
+    const p = peer();
+    p.request = async () => ({ trusted: true });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], EDITOR_WINDOW));
+    const uri = 'ahp-session:/windowed';
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'claude', workingDirectories: folders.map(uriOf), ...(multiRoot ? { _meta: MULTI_ROOT } : {}) },
+    });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    await spoken(client, chatUri);
+    return { host, client, peer: p, uri, chatUri };
+  };
+
+  /** What `channel` was told of the folder actions, with the sender's number and any refusal. */
+  const folderActions = (p: ReturnType<typeof peer>, channel: string) => actions(p, channel)
+    .filter((one) => String(one.action.type).startsWith('session/workingDirectory'))
+    .map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason]);
 
   it('advertises that it can, and which slot is fixed', async () => {
     const client = open();
@@ -628,62 +680,69 @@ describe('more than one directory', () => {
     expect(state.workingDirectories).toEqual([uriOf(ONE), uriOf(TWO)]);
   });
 
-  it('starts the agent again, resumed, when a directory is added to a running session', async () => {
-    const { client, uri, peer: p } = await running();
-    // The window vouches for the folder it is adding, because a folder is
-    // untrusted until a client says otherwise and this case is about the
-    // restart rather than about the question.
-    p.request = async () => ({ trusted: true });
-    // The CLI names the conversation, and that name is what a resume asks for,
-    // once the CLI has written it.
-    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-wide' });
-    wrote('sdk-wide', String(sessionQueries().at(-1)?.options.cwd));
+  it('says a directory added to a running session at once, and starts the agent again in it, resumed, at the next turn', async () => {
+    const { client, uri, chatUri, peer: p } = await windowed([ONE]);
+    wrote('sdk-spoken', String(sessionQueries().at(-1)?.options.cwd));
     const before = sessionQueries().length;
-    client.handle({
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    // Said at once, as VS Code's host applies it, with nothing started yet.
+    expect(folderActions(p, uri)).toEqual([['session/workingDirectorySet', 1, undefined]]);
+    expect(sessionQueries().length).toBe(before);
+
+    await client.handle({
       method: 'dispatchAction',
-      params: {
-        channel: uri,
-        action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) },
-      },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } } },
     });
-    await settle();
+    await settle(8);
     /*
-     * A new CLI, on the same conversation.
-     *
-     * The SDK takes its directories when the process starts and offers no way
-     * to add one after, so the honest implementation is to start it again and
-     * *resume* - which is what makes this the same conversation in a wider
-     * place rather than a new one.
+     * A new CLI, on the same conversation, at the turn boundary: the SDK takes
+     * its directories when the process starts and offers no way to add one
+     * after, so it starts again and *resumes*, the same conversation in a
+     * wider place.
      */
     expect(sessionQueries().length).toBe(before + 1);
     expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([EXTRA]);
     expect(sessionQueries().at(-1)?.options.resume).toBeDefined();
   });
 
-  it('refuses to remove the directory the agent runs in', async () => {
-    const host = serving('/home/softov');
-    const p = peer();
-    const client = host.accept(p);
-    await client.handle(hello(['0.9.0']));
-    const uri = 'ahp-session:/rooted';
-    await client.handle({
-      method: 'createSession',
-      params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(ONE)] },
-    });
-    client.handle({
-      method: 'dispatchAction',
-      params: {
-        channel: uri,
-        action: { type: 'session/workingDirectoryRemoved', directory: uriOf(ONE) },
-      },
-    });
+  it('refuses to remove the directory the agent runs in, in VS Code\'s words', async () => {
+    const { client, uri, peer: p } = await windowed([ONE, TWO]);
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 2, action: { type: 'session/workingDirectoryRemoved', directory: uriOf(ONE) } } });
     await settle();
-    // The protocol says a client MUST NOT remove index 0. Said out loud rather
-    // than ignored, so a client that tried learns why nothing happened.
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('cannot be removed'))).toBe(true);
+    expect(folderActions(p, uri)).toEqual([['session/workingDirectoryRemoved', 2, 'The primary working directory cannot be removed.']]);
+  });
+
+  /*
+   * A window's folder change on VS Code's conditions, refused in its words
+   * where they do not hold: from an editor window, on the session's channel,
+   * for a session made from a multi-root workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13634-L13650
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12669-L12689
+   */
+  it('takes a folder change from an editor window, on the session channel, for a session made from a multi-root workspace', async () => {
+    const { host, client, uri, chatUri, peer: p } = await windowed([ONE]);
+    const before = sessionQueries().length;
+    // A client that is no editor window.
+    const other = peer();
+    const plain = host.accept(other);
+    await plain.handle(hello(['0.9.0'], { clientId: 'plain' }));
+    await plain.handle({ method: 'subscribe', params: { channel: uri } });
+    await plain.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 3, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    // The editor window, on the chat's channel.
+    await client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 4, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(other, uri)).toEqual([['session/workingDirectorySet', 3, 'Session working-directory actions require an Editor Window client.']]);
+    expect(folderActions(p, chatUri)).toEqual([['session/workingDirectorySet', 4, 'Session working-directory actions require a session channel.']]);
+
+    // A session the window made from no multi-root workspace.
+    const single = await windowed([ONE], false);
+    await single.client.handle({ method: 'dispatchAction', params: { channel: single.uri, clientSeq: 5, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(single.peer, single.uri)).toEqual([
+      ['session/workingDirectorySet', 5, `Session does not support dynamic working-directory changes: ${single.uri}`],
+    ]);
+    expect(sessionQueries().length).toBe(before + 1);
   });
 
   /*
@@ -697,13 +756,14 @@ describe('more than one directory', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.9.0']));
+    await client.handle(hello(['0.9.0'], EDITOR_WINDOW));
     const uri = 'ahp-session:/split';
     await client.handle({
       method: 'createSession',
       params: {
         channel: uri, provider: 'claude',
         workingDirectories: [uriOf(ONE), uriOf(TWO), uriOf(THREE)],
+        _meta: MULTI_ROOT,
       },
     });
     return { host, client, peer: p, uri };
@@ -787,10 +847,14 @@ describe('more than one directory', () => {
 
   it('says a folder set again, one removed that is not there, and a replacement of one that is not there, to every client, starting nothing', async () => {
     const { host, client, peer: p, uri } = await watched();
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    await spoken(client, chatUri);
     const other = peer();
     const watching = host.accept(other);
-    await watching.handle(hello(['0.9.0']));
+    await watching.handle(hello(['0.9.0'], { clientId: 'other' }));
     await watching.handle({ method: 'subscribe', params: { channel: uri } });
     const before = sessionQueries().length;
     await send(client, uri, 4, { type: 'session/workingDirectorySet', directory: uriOf(TWO) });
@@ -1007,7 +1071,7 @@ describe('a session entering a folder nobody vouched for', () => {
    * folder in hand.
    */
   const hosted = async (here: string, {
-    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, isolation, worktrees,
+    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, isolation, worktrees, window = false,
   }: {
     trusts?: string[];
     answer?: (asked: Asked) => unknown;
@@ -1015,6 +1079,11 @@ describe('a session entering a folder nobody vouched for', () => {
     autoApprove?: string;
     isolation?: string;
     worktrees?: Worktrees;
+    /**
+     * Whether the client is a VS Code editor window making the session from a
+     * multi-root workspace, the one a session's folders are set by.
+     */
+    window?: boolean;
   } = {}) => {
     const asked: Asked[] = [];
     const lines: string[] = [];
@@ -1033,7 +1102,13 @@ describe('a session entering a folder nobody vouched for', () => {
       onEvent: (line) => { lines.push(line); },
     });
     const client = host.accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], {
+      initialSubscriptions: ['ahp-root://'],
+      ...(window ? {
+        clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+        _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+      } : {}),
+    }));
     await client.handle({
       method: 'dispatchAction',
       params: {
@@ -1049,6 +1124,7 @@ describe('a session entering a folder nobody vouched for', () => {
       method: 'createSession',
       params: {
         channel: uri, provider: 'claude', workingDirectories: [uriOf(here)],
+        ...(window ? { _meta: { multiRoot: { workspaceFile: uriOf(join(here, 'vouched.code-workspace')) } } } : {}),
         ...(autoApprove === undefined && isolation === undefined ? {} : {
           config: {
             ...(autoApprove === undefined ? {} : { autoApprove }),
@@ -1208,9 +1284,12 @@ describe('a session entering a folder nobody vouched for', () => {
     expect(removed).toEqual([created[0]?.path]);
   });
 
-  it('refuses a folder a client adds, and does not add it', async () => {
+  it('refuses a folder a window adds that nobody vouched for, and does not add it', async () => {
     const { here, there } = folders();
-    const { client, peer: p, uri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }) });
+    const { client, peer: p, uri, chatUri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }), window: true });
+    // Ready from its first turn, which a working-directory change waits for.
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     const before = sessionQueries().length;
     await client.handle({
       method: 'dispatchAction',

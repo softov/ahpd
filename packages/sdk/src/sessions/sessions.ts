@@ -3,10 +3,10 @@
 import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { readJson, writeJsonAtomic } from '../utils/jsonfile.js';
-import { asCreatedBy, asOrigin } from './remotesession.js';
+import { asCreatedBy, asMultiRoot, asOrigin } from './remotesession.js';
 import type { Scope } from '../usage/scopes.js';
 import type { ChangesSummary } from '../types/changes.js';
-import type { CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
+import type { CreatedBy, MultiRoot, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
 import type { Owner } from '../types/usage.js';
 import { ownerOf } from '../utils/values.js';
 
@@ -131,6 +131,8 @@ export function memorySessions(): SessionStore & Held {
     setRemoteOrigin: (id, value) => { patch(id, { remoteOrigin: value }); },
     createdBy: (id) => rows.get(id)?.createdBy,
     setCreatedBy: (id, value) => { patch(id, { createdBy: value }); },
+    multiRoot: (id) => rows.get(id)?.multiRoot,
+    setMultiRoot: (id, value) => { patch(id, { multiRoot: value }); },
     worktree: (id) => rows.get(id)?.worktree,
     setWorktree: (id, value) => { patch(id, { worktree: value }); },
     additionalWorktrees: (id) => rows.get(id)?.additionalWorktrees ?? [],
@@ -253,6 +255,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.chats === undefined ? {} : { chats: held.chats }),
         ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
         ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+        ...(held.multiRoot === undefined ? {} : { multiRoot: held.multiRoot }),
         ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
         ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
         ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
@@ -440,6 +443,7 @@ interface Row {
   chats?: StoredChat[] | undefined;
   remoteOrigin?: RemoteOrigin | undefined;
   createdBy?: CreatedBy | undefined;
+  multiRoot?: MultiRoot | undefined;
   workingDirectory?: string | undefined;
   worktree?: StoredWorktree | undefined;
   additionalWorktrees?: StoredWorktree[] | undefined;
@@ -463,7 +467,7 @@ const empty = (row: Row): boolean =>
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined && row.chatDrafts === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
-  && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
+  && row.remoteOrigin === undefined && row.createdBy === undefined && row.multiRoot === undefined && row.worktree === undefined
   && row.additionalWorktrees === undefined && row.autoArchivedAt === undefined && row.changes === undefined;
 
 /**
@@ -506,6 +510,8 @@ interface Saved {
   remoteOrigin?: RemoteOrigin;
   /** The session that made this one, as a window recorded it. */
   createdBy?: CreatedBy;
+  /** The multi-root workspace the session was made from, as a window recorded it. */
+  multiRoot?: MultiRoot;
   /** The folder the session works in, as a path. */
   workingDirectory?: string;
   /** The worktree this host made for the session. */
@@ -654,6 +660,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.chats === undefined ? {} : { chats: held.chats }),
       ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
       ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+      ...(held.multiRoot === undefined ? {} : { multiRoot: held.multiRoot }),
       ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
       ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
       ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
@@ -819,6 +826,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (origin !== undefined) inner.setRemoteOrigin?.(row.id, origin);
       const createdBy = asCreatedBy(row.createdBy);
       if (createdBy !== undefined) inner.setCreatedBy?.(row.id, createdBy);
+      const multiRoot = asMultiRoot(row.multiRoot);
+      if (multiRoot !== undefined) inner.setMultiRoot?.(row.id, multiRoot);
       // A path, and anything that is not a non-empty string is ignored rather
       // than guessed at, as every other field here is.
       if (typeof row.workingDirectory === 'string' && row.workingDirectory !== '') inner.setWorkingDirectory(row.id, row.workingDirectory);
@@ -875,6 +884,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setRemoteOrigin: (id, value) => { touched(id, () => { inner.setRemoteOrigin?.(id, value); }); },
     createdBy: (id) => inner.createdBy?.(id),
     setCreatedBy: (id, value) => { touched(id, () => { inner.setCreatedBy?.(id, value); }); },
+    multiRoot: (id) => inner.multiRoot?.(id),
+    setMultiRoot: (id, value) => { touched(id, () => { inner.setMultiRoot?.(id, value); }); },
     worktree: (id) => inner.worktree(id),
     setWorktree: (id, value) => { touched(id, () => { inner.setWorktree(id, value); }); },
     additionalWorktrees: (id) => inner.additionalWorktrees(id),

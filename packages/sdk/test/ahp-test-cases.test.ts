@@ -534,9 +534,16 @@ const REFUSALS: Record<string, {
     source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
   }],
   'session/workingDirectorySet': [{
+    said: () => 'Session working-directory actions require an Editor Window client.',
+    source: 'VS Code host, agentService.ts L13634-L13640 at 6b68d3fe: a session working-directory action is taken only from an editor window',
+  }, {
     // The folder as it resolves, which on Windows is on the daemon's drive.
     said: (action) => `Workspace trust was not granted for '${resolve(localPath(String(action.directory)))}'`,
     source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
+  }],
+  'session/workingDirectoryRemoved': [{
+    said: () => 'Session working-directory actions require an Editor Window client.',
+    source: 'VS Code host, agentService.ts L13634-L13640 at 6b68d3fe: a session working-directory action is taken only from an editor window',
   }],
 };
 

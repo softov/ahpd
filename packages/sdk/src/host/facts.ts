@@ -3,7 +3,7 @@ import { sep } from 'node:path';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
 import { idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
-import { CREATED_BY_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
+import { CREATED_BY_META, MULTI_ROOT_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { PullRequest } from '../types/github.js';
@@ -304,6 +304,7 @@ export function createFacts(ctx: HostContext): Facts {
      */
     const origin = kept.remoteOrigin?.(idOf(uri));
     const made = kept.createdBy?.(idOf(uri));
+    const multiRoot = kept.multiRoot?.(idOf(uri));
     /*
      * The map has two producers and both have to be in it.
      *
@@ -324,6 +325,7 @@ export function createFacts(ctx: HostContext): Facts {
         ? {}
         : { [REMOTE_ORIGIN_META]: { session: origin.session, chat: origin.chat, depth: origin.depth }, [SPAWN_DEPTH_META]: depthOf(byAgent, origin) }),
       ...(made === undefined ? {} : { [CREATED_BY_META]: made }),
+      ...(multiRoot === undefined ? {} : { [MULTI_ROOT_META]: multiRoot }),
     };
     if (dir === undefined) {
       const meta = { ...byAgent, ...pluginMeta(uri), ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };

@@ -86,6 +86,17 @@ export interface CreatedBy {
 }
 
 /**
+ * The multi-root workspace a session was made from, as the window that made
+ * it recorded it: the URI of its workspace file. VS Code's
+ * `ISessionMultiRootMetadata`, under `_meta.multiRoot`, which is what lets a
+ * window add and remove the session's folders.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1119-L1127
+ */
+export interface MultiRoot {
+  workspaceFile: string;
+}
+
+/**
  * One chat of a session, as the store keeps it.
  *
  * A session is a container and a chat is a conversation in it, and what makes
@@ -408,6 +419,16 @@ export interface SessionStore {
   createdBy?(id: string): CreatedBy | undefined;
   /** Record it, or forget it with `undefined`. */
   setCreatedBy?(id: string, value: CreatedBy | undefined): void;
+  /**
+   * The multi-root workspace the session was made from, as the window that
+   * made it recorded it, or nothing.
+   *
+   * Optional: a store without it holds none, and a window's folder changes
+   * are then refused for every session.
+   */
+  multiRoot?(id: string): MultiRoot | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setMultiRoot?(id: string, value: MultiRoot | undefined): void;
   /**
    * The folder this session works in, as a path, or nothing where none was
    * recorded.

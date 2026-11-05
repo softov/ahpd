@@ -826,17 +826,17 @@ describe('more than one chat in a session', () => {
    * a move between sessions changes two catalogues at once - and a client that
    * hears only one of them is holding a chat in two places or in none.
    */
-  const apart = async (dir: string, agent: Agent) => {
+  const apart = async (dir: string, agent: Agent, beside: string[] = []) => {
     const { client, p } = await hostAt(dir, agent);
     /*
      * Both sessions work in `DIR`, which is what a chat's own folder set is
      * read against: a chat is its session's primary directory plus what it has
      * narrowed itself to, so a session with no directory has no folders for a
-     * move to carry.
+     * move to carry. `beside` are the folders the first works in beside it.
      */
     await client.handle({
       method: 'createSession',
-      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`, ...beside.map((one) => `file://${one}`)] },
     });
     await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await client.handle({
@@ -915,18 +915,19 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client } = await hostAt(join(root, 'sessions'), backend(starts));
-      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await settle();
       await send(client, LIVE, 't1', 'first');
       await send(client, PEER, 't2', 'second');
       const before = starts.length;
 
-      // The window adds a folder, which a backend that takes its folders at
-      // startup can only answer by starting again: the in-process restart.
+      // The window puts another folder in the first one's place, which a
+      // backend that takes its folders at startup answers by starting again
+      // there, resumed: the in-process restart.
       void client.handle({
         method: 'dispatchAction',
-        params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${DIR}/extra` } },
+        params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: `file://${DIR}`, replacement: `file://${DIR}/extra` } },
       });
       await settle(20);
 
@@ -1569,20 +1570,13 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const starts: Start[] = [];
-      const { client, p } = await apart(join(root, 'sessions'), backend(starts));
       /*
        * Folders for the chat to work in beside its session's first.
        *
        * What travels is the chat's own set: one moved beside a session working
        * somewhere else goes on where it was, with every folder it had.
        */
-      for (const directory of [EXTRA, MORE]) {
-        void client.handle({
-          method: 'dispatchAction',
-          params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${directory}` } },
-        });
-        await settle(20);
-      }
+      const { client, p } = await apart(join(root, 'sessions'), backend(starts), [EXTRA, MORE]);
       // The destination's first message, which announces it, so its row moves
       // are said, and then the chat's newer one.
       await send(client, TWO, 'w1', 'over there');
@@ -2228,11 +2222,14 @@ describe('a chat of another backend', () => {
 
     const beganLead = startsOne.length;
     const beganTwo = startsTwo.length;
-    // A folder added to the session, which a backend that takes its folders at
-    // startup can only answer by starting again.
+    // Another folder put in the first one's place, which a backend that takes
+    // its folders at startup answers by starting again there.
+    const first = ((await second.client.handle({ method: 'subscribe', params: { channel: LIVE } })) as {
+      snapshot: { state: { workingDirectories?: string[] } };
+    }).snapshot.state.workingDirectories?.[0];
     second.client.handle({
       method: 'dispatchAction',
-      params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${EXTRA}` } },
+      params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: first, replacement: `file://${EXTRA}` } },
     });
     await settle(20);
     expect(resuming(startsTwo.slice(beganTwo))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);

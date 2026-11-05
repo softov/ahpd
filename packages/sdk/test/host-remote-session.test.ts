@@ -201,6 +201,20 @@ describe('a session a window sent here', () => {
     expect(row?._meta?.[ORIGIN]).toEqual({ session: FROM, chat: CHAT, depth: 2 });
   });
 
+  /*
+   * The multi-root workspace a window made the session from, kept on the
+   * session's `_meta` as VS Code's host keeps it, and none where the value is
+   * not a workspace file's URI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10672-L10684
+   */
+  it('keeps the multi-root workspace the window made it from, and none that is not one', async () => {
+    const workspace = { workspaceFile: 'file:///home/softov/work.code-workspace' };
+    const { meta } = await made({}, {}, undefined, { multiRoot: workspace });
+    expect(meta?.multiRoot).toEqual(workspace);
+    const bare = await made({}, {}, undefined, { multiRoot: { workspaceFile: 'work.code-workspace' } });
+    expect(bare.meta?.multiRoot).toBeUndefined();
+  });
+
   it('has none of the three for a session this host began itself', async () => {
     const { meta } = await made();
     expect(meta?.[ORIGIN]).toBeUndefined();

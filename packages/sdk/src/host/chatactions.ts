@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
+import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
@@ -948,22 +949,125 @@ export function chatAction(
       break;
     }
     /*
-     * A folder added to, taken from, or put in place of one in the session's
-     * set, each as the protocol's reducers apply it: a set adds a folder the
-     * set lacks, a removal takes out one it holds, and a replacement puts the
-     * folder `replacement` names where `directory` was, a replacement the set
-     * holds already keeping the earlier of its two places.
+     * A folder a window adds to the session's set or takes from it, on VS
+     * Code's conditions and in its words: an editor window, on the session's
+     * channel, a session that is ready, was made from a multi-root workspace,
+     * works in its folders rather than in a worktree and has its default chat
+     * alone, on a backend that works in more than one folder; the first folder
+     * stays, and so does a folder a chat is scoped to. The set and the removal
+     * are the protocol's reducers', and an action that changes nothing goes to
+     * every client of the session.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13634-L13650
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12669-L12703
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionWorkingDirectories.ts#L67-L89
+     *
+     * The change is said at once. The SDK takes its directories when the CLI
+     * starts, so the backend is started again in them, resumed, at the
+     * session's next turn boundary, as the reference host relaunches a
+     * runtime there.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+     */
+    case 'session/workingDirectorySet':
+    case 'session/workingDirectoryRemoved': {
+      const owner = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
+      if (owner === undefined) {
+        no(`${channel} is not a session this host is running`);
+        break;
+      }
+      if (ctx.clientNames.get(connection.clientId) !== 'vscode-editor-window') {
+        no('Session working-directory actions require an Editor Window client.');
+        break;
+      }
+      const uri = session.uri;
+      if (channel !== uri) {
+        no('Session working-directory actions require a session channel.');
+        break;
+      }
+      const state = ctx.stateOf(uri);
+      const folders = (Array.isArray(state?.workingDirectories) ? state.workingDirectories : [])
+        .filter((one): one is string => typeof one === 'string');
+      if (state === undefined || state.lifecycle !== 'ready' || folders.length === 0) {
+        no(`Session is not ready for working-directory changes: ${uri}`);
+        break;
+      }
+      const chats = (Array.isArray(state.chats) ? state.chats : []) as Bag[];
+      const values = (typeof state.config === 'object' && state.config !== null ? (state.config as Bag).values : undefined) as Bag | undefined;
+      if (readMultiRoot(state) === undefined || values?.isolation === 'worktree'
+        || chats.length !== 1 || state.defaultChat !== chats[0]?.resource) {
+        no(`Session does not support dynamic working-directory changes: ${uri}`);
+        break;
+      }
+      if (owner.agent.multipleDirectories !== true) {
+        no(`Provider does not support dynamic working-directory changes: ${owner.agent.provider}`);
+        break;
+      }
+      const named = String(action.directory ?? '');
+      if (!URL.canParse(named) || new URL(named).protocol !== 'file:') {
+        no(`Working directory must be a file URI: ${named}`);
+        break;
+      }
+      const one = localPath(named);
+      const root = owner.workingDirectory;
+      const was = root === undefined ? owner.additional ?? [] : [root, ...(owner.additional ?? [])];
+      if (type === 'session/workingDirectoryRemoved') {
+        // The primary is pinned: this host advertises `immutablePrimary`.
+        if (folders.findIndex((folder) => localPath(folder) === one) === 0) {
+          no('The primary working directory cannot be removed.');
+          break;
+        }
+        const scoped = chats.find((chat) => Array.isArray(chat.workingDirectories)
+          && chat.workingDirectories.some((folder) => typeof folder === 'string' && localPath(folder) === one));
+        if (scoped !== undefined) {
+          no(`Cannot remove working directory ${named} because chat ${String(scoped.resource)} is scoped to it.`);
+          break;
+        }
+      }
+      const next = type === 'session/workingDirectorySet'
+        ? (was.includes(one) ? was : [...was, one])
+        : was.filter((other) => other !== one);
+      if (next.length === was.length) {
+        dispatch(channel, action, origin);
+        break;
+      }
+      const auto = autoApproved({ ...owner.agent.defaults(), ...contributedDefaults(), ...owner.config }, rootConfig);
+      void (async () => {
+        try {
+          // The window is asked about a folder the session enters, before
+          // anything is written, and an answer of no means it never went there.
+          if (type === 'session/workingDirectorySet') {
+            await requireTrust({ folder: one, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
+          }
+          owner.additional = root === undefined ? next : next.slice(1);
+          const due = ctx.relaunches.get(uri);
+          ctx.relaunches.set(uri, {
+            config: due?.config ?? {},
+            folders: true,
+            credentials: conn.tokensFor(owner.agent.provider),
+            sender: connection,
+            tokensFor: conn.tokensFor,
+          });
+          dispatch(uri, action, origin);
+        }
+        catch (error) {
+          no(error instanceof Error ? error.message : String(error));
+        }
+      })();
+      break;
+    }
+    /*
+     * A folder put in place of one in the session's set, as the protocol's
+     * reducer applies it: the folder `replacement` names where `directory`
+     * was, a replacement the set holds already keeping the earlier of its two
+     * places. It is the one way the first folder moves, which is why this host
+     * advertises `primaryReplacement`: a new first folder is a move, made by
+     * starting the backend again there, resumed.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts
      *
-     * The SDK takes its directories when the CLI starts, so a change starts the
-     * backend again, resumed: the same conversation in the folders it now has.
      * Not while a turn is running, since a CLI replaced mid-answer is an answer
      * that stops halfway. An action that changes nothing starts nothing and
      * goes to every client of the session, and one that names no folder is
      * refused.
      */
-    case 'session/workingDirectorySet':
-    case 'session/workingDirectoryRemoved':
     case 'session/workingDirectoryReplaced': {
       const owner = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
       if (owner === undefined) {
@@ -981,14 +1085,9 @@ export function chatAction(
       }
       const path = (value: unknown): string => localPath(String(value ?? ''));
       const one = path(action.directory);
-      const into = type === 'session/workingDirectoryReplaced' ? path(action.replacement) : one;
+      const into = path(action.replacement);
       if (one === '' || into === '') {
         no(`${type} names no folder`);
-        break;
-      }
-      // The first is the process root, which a removal MUST NOT take out.
-      if (type === 'session/workingDirectoryRemoved' && one === owner.workingDirectory) {
-        no('the first working directory is the one the agent runs in, and cannot be removed');
         break;
       }
       const root = owner.workingDirectory;
@@ -996,13 +1095,7 @@ export function chatAction(
       const at = was.indexOf(one);
       const there = was.indexOf(into);
       let next = was;
-      if (type === 'session/workingDirectorySet') {
-        if (at < 0) next = [...was, one];
-      }
-      else if (type === 'session/workingDirectoryRemoved') {
-        next = was.filter((other) => other !== one);
-      }
-      else if (at >= 0 && there !== at) {
+      if (at >= 0 && there !== at) {
         // In the entry's place when the replacement is new or held later, and
         // the entry gone when the replacement is held earlier.
         const placed = was.map((other, index) => (index === at ? into : other));
@@ -1462,6 +1555,7 @@ export function chatAction(
           const due = ctx.relaunches.get(uri);
           ctx.relaunches.set(uri, {
             config: { ...due?.config, ...config },
+            ...(due?.folders ? { folders: true } : {}),
             credentials: conn.tokensFor(owning.agent.provider),
             sender: connection,
             tokensFor: conn.tokensFor,

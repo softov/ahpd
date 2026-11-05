@@ -167,9 +167,15 @@ function serving({
       asked.push({ method, params });
       return answer(method, params);
     }));
+    // A VS Code editor window, which is the client a session's folders are
+    // changed from.
     await client.handle({
       method: 'initialize',
-      params: { clientId: token ?? 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+      params: {
+        clientId: token ?? 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT],
+        clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+        _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+      },
     });
     if (token !== undefined && people) {
       await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: RESOURCE, token } });
@@ -193,14 +199,32 @@ const trusting = (client: Client, folders: string[]) => client.handle({
   },
 });
 
-/** A session somebody asked for, in one folder, watched by the client that made it. */
+/**
+ * A session somebody asked for, in one folder, watched by the client that made
+ * it, from a multi-root workspace so a window may change its folders.
+ */
 const opening = async (client: Client, name: string, folder: string): Promise<void> => {
   const uri = `ahp-session:/${name}`;
   await client.handle({
     method: 'createSession',
-    params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(folder)] },
+    params: {
+      channel: uri, provider: 'echo', workingDirectories: [uriOf(folder)],
+      _meta: { multiRoot: { workspaceFile: uriOf(join(DIR, 'work.code-workspace')) } },
+    },
   });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
+};
+
+/** One turn in a session's default chat, which the echo backend answers and ends. */
+const saying = async (client: Client, name: string, turnId: string): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUriFor(`ahp-session:/${name}`),
+      action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } },
+    },
+  });
+  await settle(60);
 };
 
 it('tells a backend the folders the last trust push names, whichever window pushed it', async () => {
@@ -427,7 +451,7 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
   const ana = await signedIn('ana');
   await trusting(ana, [A]);
   await opening(ana, 'ana-one', A);
-  await settle();
+  await saying(ana, 'ana-one', 't1');
   expect(about(told(), B)).toBe(false);
 
   await ana.handle({
@@ -438,8 +462,9 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
 
   // Asked, because B is not a folder this window pushed.
   expect(questions()).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } }]);
-  // And the backend started again in B is told B is trusted, on the window's
-  // own answer rather than on anything it pushed.
+  // And the backend started again in B at the next turn is told B is trusted,
+  // on the window's own answer rather than on anything it pushed.
+  await saying(ana, 'ana-one', 't2');
   expect(about(told(), B)).toBe(true);
 
   // A new push is the window answering for every folder at once.
@@ -455,12 +480,12 @@ it('asks about a folder that only begins like one the window trusted', async () 
   const ana = await signedIn('ana');
   await trusting(ana, [A]);
   await opening(ana, 'ana-one', A);
-  await settle();
+  await saying(ana, 'ana-one', 't1');
 
-  // Written by hand rather than with `join`, which resolves `..` itself: this
-  // is a path a client can send, and reading it as the folder it names is the
-  // host's job.
-  const outOfA = `${A}/../../etc`;
+  // Written by hand rather than with `join` or `uriOf`, which resolve `..`
+  // themselves: this is a URI a client can send, and reading it as the folder
+  // it names is the host's job.
+  const outOfA = `file://${A}/../../etc`;
   await ana.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/ana-one', action: { type: 'session/workingDirectorySet', directory: outOfA } },
