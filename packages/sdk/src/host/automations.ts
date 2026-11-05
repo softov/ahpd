@@ -37,13 +37,16 @@ const ENDING = new Set<SessionEventKind>(['turnCompleted', 'turnFailed', 'turnCa
 const OVER = new Set(['completed', 'failed', 'cancelled']);
 
 /**
- * Who a run's own plugins are announced as.
+ * Who a run's own plugins are announced as: VS Code's
+ * `AUTOMATION_ACTIVE_CLIENT_ID`, shown as "Automation", which each captured
+ * plugin names as its client too.
  *
  * An active client, as a person's window is, and named for what it is rather
  * than for anybody: the plugins it carries are the automation's, and a client
  * reading a session that began at nine is owed something that says so.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L101-L108
  */
-const AUTOMATION_CLIENT = 'Automation';
+const AUTOMATION_CLIENT = 'vscode.automation';
 
 /** The event ids a saved trigger names, in the order the client put them. */
 const eventsOf = (trigger: Bag): string[] => (Array.isArray(trigger.events) ? trigger.events : [])
@@ -802,9 +805,9 @@ export function createAutomations(ctx: HostContext): Automations {
       options.clientPlugins?.spare(wanted.customizations.map((one) => localPath(one.uri)));
       ctx.presence.set(idOf(uri), new Map([[AUTOMATION_CLIENT, {
         clientId: AUTOMATION_CLIENT,
-        displayName: AUTOMATION_CLIENT,
+        displayName: 'Automation',
         tools: [],
-        customizations: wanted.customizations,
+        customizations: wanted.customizations.map((one) => ({ ...one, clientId: AUTOMATION_CLIENT })),
       }]]));
       ctx.retool(uri);
       await ctx.pluginsSettled(uri);

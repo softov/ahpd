@@ -742,9 +742,14 @@ describe('a host that keeps client plugins', () => {
     const state = await runState(client, run.resource);
     const opened = await client.handle({
       method: 'subscribe', params: { channel: state.sessions[0] ?? '' },
-    }) as { snapshot: { state: { activeClients?: { clientId: string; customizations?: { uri?: string }[] }[] } } };
-    const mine = (opened.snapshot.state.activeClients ?? []).find((one) => one.clientId === 'Automation');
+    }) as { snapshot: { state: { activeClients?: { clientId: string; displayName?: string; customizations?: { uri?: string; clientId?: string }[] }[] } } };
+    // Under VS Code's automation client id, which each captured plugin names
+    // as its client too.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L101-L108
+    const mine = (opened.snapshot.state.activeClients ?? []).find((one) => one.clientId === 'vscode.automation');
+    expect(mine?.displayName).toBe('Automation');
     expect(mine?.customizations).toHaveLength(1);
+    expect(mine?.customizations?.[0]?.clientId).toBe('vscode.automation');
     expect(localPath(mine?.customizations?.[0]?.uri ?? '')).toBe(given[0]?.path);
     expect(asked.length).toBe(before);
   });
