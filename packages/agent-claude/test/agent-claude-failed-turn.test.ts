@@ -422,6 +422,8 @@ it('refuses a turn that cannot be resumed', async () => {
   sdk.reset();
   const gone = live();
   await settle();
+  // A CLI that died: a closed stream alone is one the next send starts again.
+  sdk.failing = new Error('the CLI went away');
   sdk.queries.at(-1)?.close();
   await settle();
   gone.session.sendMessage('t1', 'one');

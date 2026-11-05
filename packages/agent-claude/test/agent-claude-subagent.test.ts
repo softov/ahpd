@@ -35,8 +35,10 @@ const sdk = vi.hoisted(() => {
     stopped: [] as string[],
     /** How many times the query was interrupted. */
     interrupted: 0,
+    /** How many times a query was closed, which is how a stop ends the turn. */
+    closed: 0,
     /** Start a new feed for the next session. */
-    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; },
+    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; state.closed = 0; },
     /** Queue frames for the current session to read. */
     push(...frames: Record<string, unknown>[]) {
       const feed = state.feed;
@@ -76,7 +78,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
-      close: () => {},
+      close: () => { sdk.closed += 1; },
     };
   },
 }));
@@ -570,8 +572,9 @@ it('cancels the lead turn instead when configured to stop the session', async ()
   const { workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6), { workerStop: 'session' });
   session.stopWorker?.(call);
   await settle();
+  // The lead turn's stop closes the CLI, as the reference stop aborts its query.
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
+  expect(sdk.closed).toBe(1);
   expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
 });
 
@@ -582,7 +585,7 @@ it('cancels the lead turn when the worker has no task id yet', async () => {
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual([]);
-  expect(sdk.interrupted).toBe(1);
+  expect(sdk.closed).toBe(1);
 });
 
 /** A session with a lead turn open, and the asks and frames a test drives it with. */
