@@ -199,7 +199,7 @@ A host with no user directory has nobody to ask, and its tools act as they alway
 | `requireApproval` | `false` | Whether `task_set` refuses to move a task to `doing` until it has an `approved` stamp. `ready` in `task_list` also asks for one |
 | `sweepAfterDays` | absent | How many days a `done` or `dropped` plan is kept, with the tasks that name it. Absent keeps it forever, which is the default |
 
-The sweep looks once when the plugin is applied and then every hour. It removes a finished plan and every task that names it, once the newest stamp among them is older than the setting. A plan that is `draft` or `active` never goes.
+The sweep looks once when the plugin is applied and then every hour. It removes a finished plan and every task that names it, once the newest stamp among them is older than the setting. A plan that is `draft` or `active` never goes. A pass that fails is written to the daemon's log, and the next hour's pass looks again.
 
 ## How the tools reach a session
 
