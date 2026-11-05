@@ -195,8 +195,10 @@ const directory = (): Users => ({
   mint: async () => 'nonsense',
 });
 
+/** A window's peer, which vouches for a folder it asks a dev container in. */
 const peer = (): Peer => ({
-  send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+  send: () => {}, notify: () => {}, answered: () => {}, close: () => {},
+  request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: true } : {}),
 });
 
 /** A host opened on one connection, signed in as ana. */

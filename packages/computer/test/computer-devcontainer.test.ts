@@ -180,13 +180,14 @@ const providerOf = (options: HostOptions) => options.resourceProviders?.computer
   delete(uri: string): Promise<void>;
 };
 
+/** A window's peer, which vouches for a folder it asks a dev container in. */
 const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
   const notes: { method: string; params: unknown }[] = [];
   return {
     notes,
     send: () => {},
     notify: (method, params) => notes.push({ method, params }),
-    request: async () => ({}),
+    request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: true } : {}),
     answered: () => {},
     close: () => {},
   };

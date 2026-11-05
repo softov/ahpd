@@ -53,12 +53,17 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
   mint: async () => '',
 });
 
-/** A peer that keeps what it was told, for the half that answers with a notification. */
-const watching = (): Peer & { seen: { method: string; params: Bag }[] } => {
+/**
+ * A peer that keeps what it was told, for the half that answers with a
+ * notification, and vouches for a folder it is asked about unless told not to.
+ */
+const watching = (trusts = true): Peer & { seen: { method: string; params: Bag }[] } => {
   const seen: { method: string; params: Bag }[] = [];
   return {
     seen,
-    send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    send: () => {},
+    request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: trusts } : {}),
+    answered: () => {}, close: () => {},
     notify: (method: string, params: unknown) => { seen.push({ method, params: params as Bag }); },
   };
 };
@@ -234,6 +239,27 @@ it('refuses a second container under a name the client is already using', async 
   expect(again).toMatchObject({ code: -32602 });
   expect(again.message).toContain('already in use');
   expect(fake.opened).toBe(1);
+});
+
+/*
+ * The window asking vouches for the folder first, as VS Code's host asks it
+ * before a Dev Container is started, stopped or removed there.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L103-L108
+ */
+it('refuses a container in a folder the window does not vouch for, as VS Code\'s host', async () => {
+  const fake = launcher();
+  const host = createHost({
+    path: root,
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'base', displayName: 'Base' }],
+    containers: fake.port,
+  });
+  const client = host.accept(watching(false));
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  expect(await call(client, 'vscode/devContainers/connect', connect))
+    .toMatchObject({ code: -32009, message: 'Workspace trust is required to start a Dev Container' });
+  expect(await call(client, 'vscode/devContainers/stop', { workspaceFolder: connect.workspaceFolder }))
+    .toMatchObject({ code: -32009, message: 'Workspace trust is required to manage a Dev Container' });
+  expect(fake.opened).toBe(0);
 });
 
 it('asks for the container operation rather than assuming it', async () => {

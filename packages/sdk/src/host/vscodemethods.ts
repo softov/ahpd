@@ -10,6 +10,7 @@ import { localPath, uriOf } from '../resources/fileuri.js';
 import { ROOT, spaceOf } from './channels.js';
 import { need, reason } from './common.js';
 import { symlinkFolders } from './lifecycle.js';
+import { requireTrust } from './trust.js';
 import type { LogFile } from '../sessions/debuglogs.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from '../types/containers.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -89,6 +90,18 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
 
   /** The folders linked into a session's tree, whose links are not work in it. */
   const linkedOf = (session: string): string[] => symlinkFolders(kept.config(idOf(session)) ?? ctx.decided.get(session) ?? {});
+
+  /*
+   * A Dev Container's folder vouched for by the window asking, before one is
+   * started, stopped or removed there, and refused PermissionDenied in the
+   * reference host's words otherwise.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L103-L108
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L166-L169
+   */
+  const vouchedFor = async (folder: string, refusal: string): Promise<void> => {
+    await requireTrust({ folder, sender: connection, trust: ctx.rootConfig.workspaceTrust, autoApproved: false })
+      .catch(() => { throw new RpcError(AhpErrorCodes.PermissionDenied, refusal); });
+  };
 
   /**
    * The backend's own file for a session, or for one chat of it.
@@ -241,6 +254,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     // A launcher that cannot reach the runtime's own stop is refused as an
     // absent launcher is, a method this host does not have.
     if (act === undefined) throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${method}`);
+    await vouchedFor(folder, 'Workspace trust is required to manage a Dev Container');
     if (relayedByAnother(folder) || placedOn(folder)) return false;
     const here = atPath(folder);
     for (const [id, held] of [...conn.containers]) {
@@ -659,6 +673,8 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       // Held before the first await, so a second connect under the same
       // name cannot slip in while this one is building an image.
       conn.containers.set(one.connectionId, { name: one.name, folder: one.workspaceFolder, tail: [] });
+      await vouchedFor(one.workspaceFolder, 'Workspace trust is required to start a Dev Container')
+        .catch((refused: unknown) => { conn.containers.delete(one.connectionId); throw refused; });
       /*
        * A starting line, because "asked for" and "never asked" otherwise
        * look the same in this log: the only other thing written about a
