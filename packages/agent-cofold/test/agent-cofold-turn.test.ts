@@ -111,7 +111,10 @@ it('turns text into turnStarted, an opened part, deltas and turnComplete, in tha
     || type === 'chat/delta');
   expect(order.slice(0, 3)).toEqual(['chat/turnStarted', 'chat/responsePart', 'chat/delta']);
   expect(types(p, chatUri)).toContain('chat/turnComplete');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
@@ -1217,7 +1220,8 @@ it('runs a failed turn again on chat/turnResume, with its prompt said once', asy
   // what it did, as a live run does.
   expect(said.filter((type) => type === 'chat/turnResume')).toHaveLength(1);
   expect(said.indexOf('chat/turnResume')).toBeGreaterThan(said.indexOf('chat/error'));
-  expect(said.at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(said.slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   expect(said.filter((type) => type === 'chat/turnStarted')).toHaveLength(1);
   // The cut dropped the failed prompt with what the run wrote after it, so the
   // conversation holds the prompt once rather than once per attempt.

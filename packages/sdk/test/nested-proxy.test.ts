@@ -849,9 +849,9 @@ it('carries a read of the lead chat to the host inside, which answers it, and re
   await settleInner();
   const carried = (type: string): Bag[] => inner.messages
     .filter((message) => message.method === 'dispatchAction' && message.params?.action?.type === type);
-  // The turn's start moved the bit inside, where a client's reducer clears it
-  // from the start itself, so out here nothing was said of it.
-  expect(told('chat/isReadChanged').map((one) => [one.action.isRead, one.origin])).toEqual([]);
+  // The turn's end said the chat unread inside, and out here a client heard
+  // it once.
+  expect(told('chat/isReadChanged').map((one) => [one.action.isRead, one.origin])).toEqual([[false, undefined]]);
 
   await dispatch(2, { type: 'chat/isReadChanged', isRead: true });
   await until(() => told('chat/isReadChanged').some((one) => one.origin?.clientSeq === 2));

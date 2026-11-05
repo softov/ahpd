@@ -153,25 +153,28 @@ describe('a command typed into the conversation', () => {
     expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   });
 
-  it('leaves the chat and the session read', async () => {
+  /*
+   * A command turn's end says nothing of read state, as the reference host's
+   * markUnread leaves a local command's: the chat stays as the turn's start
+   * left it, and the session as it was.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L31
+   */
+  it('says nothing of read state at a command turn\'s end, the chat unread from its start and the session read', async () => {
     const { client, peer: p, uri, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo read' } } },
     });
     const said = await ended(p, chatUri);
-    // Unread while it runs, as a client reduces the turn's start, and read
-    // again at its end: somebody who ran a command watched it run.
-    expect(said.filter((one) => one.type === 'chat/isReadChanged').map((one) => one.isRead)).toEqual([true]);
-    for (const channel of [uri, chatUri]) {
-      const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
-        snapshot: { state: { status: number } };
-      }).snapshot.state;
-      expect(state.status & 32).toBe(32);
-    }
+    expect(said.filter((one) => one.type === 'chat/isReadChanged')).toEqual([]);
+    const read = async (channel: string): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel } }) as {
+      snapshot: { state: { status: number } };
+    }).snapshot.state.status & 32);
+    expect(await read(chatUri)).toBe(0);
+    expect(await read(uri)).toBe(32);
   });
 
-  it('leaves each chat read when two chats run a command turn of the same id', async () => {
+  it('leaves each session read when two chats run a command turn of the same id', async () => {
     // A client names its own turns, so two chats can each run turn `t1` at
     // once. The short one ends first, and the long one still ends as a
     // command turn of its own chat.
@@ -192,11 +195,13 @@ describe('a command typed into the conversation', () => {
     });
     await ended(p, otherChat);
     await ended(p, chatUri);
-    for (const channel of [uri, chatUri, other, otherChat]) {
+    // Each end is its own chat's command turn, so neither session is marked
+    // unread, and each chat stays as its turn's start left it.
+    for (const [channel, read] of [[uri, 32], [chatUri, 0], [other, 32], [otherChat, 0]] as const) {
       const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
         snapshot: { state: { status: number } };
       }).snapshot.state;
-      expect([channel, state.status & 32]).toEqual([channel, 32]);
+      expect([channel, state.status & 32]).toEqual([channel, read]);
     }
   });
 

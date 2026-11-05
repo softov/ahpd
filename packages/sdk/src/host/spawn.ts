@@ -16,7 +16,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING } from './common.js';
-import { chatFlag, commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -448,12 +448,16 @@ export function createSpawn(ctx: HostContext): Spawn {
             part: { kind: 'error', error: { errorType: 'turnFailed', message: why ?? 'The subagent failed' } },
           });
         }
-        // Something new to read in the worker's chat, which a turn's end marks
-        // unread as the reference host marks every chat's. A worker's chat is
-        // a tool's, so its end leaves the session's bit as it is.
-        // https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
+        // Something new to read in the worker's chat, which a turn's end says
+        // unread, whatever its bit, as the reference host's markUnread says
+        // every chat's. A worker's chat is a tool's, so its end leaves the
+        // session's bit as it is.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
         // https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
-        if (sessions.has(held.session)) chatFlag(ctx, held.session, uri, Status.IsRead, false);
+        if (sessions.has(held.session)) {
+          kept.setChatFlags(idOf(held.session), uri, kept.chatFlags(idOf(held.session), uri) & ~Status.IsRead);
+          dispatch(uri, { type: 'chat/isReadChanged', isRead: false });
+        }
       },
     };
   };
@@ -1397,20 +1401,20 @@ export function createSpawn(ctx: HostContext): Spawn {
          * it from: the reference host says nothing more at a turn's start.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
          *
-         * At a turn's end the chat is marked unread again, because a client may
-         * have marked it read while it ran, and then a read session is marked
-         * unread with this host's own `session/isReadChanged`, as the reference
-         * host does at a turn's end. A chat a tool opened, or a hidden one,
-         * keeps its own bit and leaves the session's as it is, which is the
-         * reference's `isChatInSessionReadAggregate`. After the action and the
-         * chat's row, so a client applies those first.
-         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
+         * At a turn's end the chat is said unread, whatever its bit, and then a
+         * read session is marked unread with this host's own
+         * `session/isReadChanged`, as the reference host's markUnread does at
+         * every turn's end. A chat a tool opened, or a hidden one, keeps its
+         * own bit and leaves the session's as it is, which is the reference's
+         * `isChatInSessionReadAggregate`. After the action and the chat's row,
+         * so a client applies those first. The bits move while the session
+         * holds the chat, whose row they mark.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
          * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
          *
-         * A `!` command turn ran what the person typed, which is nothing new
-         * to them, so its end puts back the bit its chat had when it started
-         * and leaves the session's as it is. The bits move while the session
-         * holds the chat, whose row they mark.
+         * A `!` command turn's end says nothing of either bit, as the
+         * reference's leaves a local command's: the chat stays as its start
+         * left it.
          *
          * A chat whose backend runs it on another host has its read bit moved
          * there, and said as the chat's action.
@@ -1418,14 +1422,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         const commandKey = commandTurnKey(chatUri, turn);
         const ownBit = moved !== undefined && moved.flag === undefined;
         if (ownBit && clearsRead(action.type)) {
-          if (action.type === 'chat/turnStarted' && ctx.commandTurns.has(commandKey)) {
-            ctx.commandTurns.set(commandKey, (ctx.kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0);
-          }
           kept.setChatFlags(idOf(uri), chatUri, kept.chatFlags(idOf(uri), chatUri) & ~Status.IsRead);
         }
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
           const command = ctx.commandTurns.has(commandKey);
-          const wasRead = ctx.commandTurns.get(commandKey) === true;
           /*
            * A `!` command's turn is the host's, so no transcript holds it: the
            * host keeps it for its chat once it has ended, as the chat's state
@@ -1437,10 +1437,13 @@ export function createSpawn(ctx: HostContext): Spawn {
             ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
           }
           ctx.commandTurns.delete(commandKey);
-          if (moved !== undefined) {
-            if (ownBit) chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
+          if (moved !== undefined && !command) {
+            if (ownBit) {
+              kept.setChatFlags(idOf(uri), chatUri, kept.chatFlags(idOf(uri), chatUri) & ~Status.IsRead);
+              dispatch(chatUri, { type: 'chat/isReadChanged', isRead: false });
+            }
             const row = chatSummary(uri, chatUri, moved);
-            if (!command && (row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
+            if ((row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
               sessionFlag(ctx, uri, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
             }
           }

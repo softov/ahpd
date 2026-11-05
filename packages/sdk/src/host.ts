@@ -1349,7 +1349,7 @@ export function createHost(options: HostOptions): Host {
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
-    closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
+    closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Set<string>(), described, links,
     watches, marksOf, resumedSessions, activeClientsOf, drafts,
     restartNeeded: false,
     markRestart: () => {

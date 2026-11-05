@@ -725,6 +725,18 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(said.lastIndexOf(`chat/isReadChanged ${chatUri}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
+  it('says a chat unread at a turn\'s end though nobody read it while the turn ran', async () => {
+    const { client, peer: p, chatUri } = await running();
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
+    expect(await isRead(client, chatUri)).toBe(false);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    const said = actions(p, chatUri).map((e) => e.action);
+    const ended = said.findIndex((one) => one.type === 'chat/turnComplete');
+    expect(ended).toBeGreaterThanOrEqual(0);
+    expect(said.slice(ended).filter((one) => one.type === 'chat/isReadChanged')).toEqual([chatRead(false)]);
+  });
+
   it('marks a chat and its session unread when a turn fails', async () => {
     const { client, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });

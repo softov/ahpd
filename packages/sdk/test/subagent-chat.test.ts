@@ -998,6 +998,23 @@ it('says nothing of its own when a worker chat\'s turn starts, and the chat read
   await settle();
 });
 
+it('says a worker chat unread when its turn ends, though nobody read it', async () => {
+  const { host, ask, uri, lead } = await busyHost();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
+  await settle();
+  finishWorker();
+  await settle();
+  const answer = await host.accept(peer()).handle({
+    method: 'reconnect',
+    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+  }) as { type: string; actions?: { channel: string; action: { type: string; isRead?: boolean } }[] };
+  const said = (answer.actions ?? []).filter((one) => one.channel === worker).map((one) => one.action);
+  const ended = said.findIndex((one) => one.type === 'chat/turnComplete' || one.type === 'chat/turnCancelled' || one.type === 'chat/error');
+  expect(ended).toBeGreaterThanOrEqual(0);
+  expect(said.slice(ended).filter((one) => one.type === 'chat/isReadChanged')).toEqual([{ type: 'chat/isReadChanged', isRead: false }]);
+});
+
 /*
  * A subagent's chat is a tool's, and VS Code's host refuses an archive of a
  * chat a tool made, in the words it refuses a default chat's.

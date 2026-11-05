@@ -318,7 +318,10 @@ it('settles the call from the owning client and gives the model the result', asy
   expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(2);
   const call = callIn(reduced(p, chatUri).turns[0]?.responseParts ?? []);
   expect(call).toMatchObject({ status: 'completed', success: true, pastTenseMessage: 'Opened it' });
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('refuses a result from a client that does not own the call', async () => {
@@ -386,7 +389,8 @@ it('fails a call whose client went away and finishes the turn', async () => {
   expect(error?.message).toContain('no longer here');
   // The failure is the tool result the model read, and the run went on.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('no longer here');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('raises one entry for a call a client runs, and removes it when the client answers', async () => {
@@ -473,7 +477,8 @@ it('fails a call nobody answers in the time the host allows, and the turn finish
   expect((done?.error as { message?: string } | undefined)?.message).toContain('got no answer from probe');
   // The failure is the tool result the model read, and the run went on.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('got no answer from probe');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   // And nothing is being asked for any more.
   expect(needed(p, uri)).toHaveLength(0);
 });

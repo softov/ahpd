@@ -263,7 +263,10 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   expect(session.inputNeeded).toBeUndefined();
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string; confirmed: string };
   expect(call).toMatchObject({ status: 'completed', confirmed: 'user-action' });
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 /** Two turns, each writing once, so a second call of the same tool can be watched for a second ask. */
@@ -613,7 +616,8 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   // The answer reached the run as the tool's result, and the entry came down.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('monday');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   // And the chat's request carries the answer it was completed with.
   const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
   expect(requested(after.snapshot.state, 'last').map((part) => part.response)).toEqual(['accept']);
@@ -675,7 +679,8 @@ it('leaves cofold\'s ask tool out when a host tool already answers to that name'
   expect(mine).toHaveLength(1);
   expect(needed(p, uri, 'chatInput')).toBeUndefined();
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('the host answered');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('asks about a destructive host tool with no policy configured', async () => {
@@ -758,7 +763,8 @@ it('lands a steer sent during a pause after the answer', async () => {
   expect(ran).toEqual(['hi']);
   expect(JSON.stringify(model.requests[0]?.messages)).not.toContain('make it short');
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('make it short');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('answers a second pause on the same run', async () => {
@@ -849,5 +855,6 @@ it('refuses a decision for a turn that already ended to its sender, and throws n
   expect(after.map((e) => [e.action.type, e.rejectionReason !== undefined])).toEqual([['chat/toolCallConfirmed', true]]);
   expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
   expect(ran).toEqual(['hi']);
-  expect(types(p, chatUri).at(said - 1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(said - 2, said)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });

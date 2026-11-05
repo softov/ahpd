@@ -315,9 +315,11 @@ it('holds a turn open until the handle answers it', async () => {
     responseParts: [{ id: 't1:reply', kind: 'markdown', content: 'hello yourself' }],
   }]);
   // A part, then the turn it belongs to: a part after the end is a part of a
-  // turn nobody is holding any more.
+  // turn nobody is holding any more. The turn's end says the chat unread, as
+  // VS Code's markUnread does at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
   const answered = actions(notes, CHAT).map((one) => one['type']);
-  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete']);
+  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete', 'chat/isReadChanged']);
 
   // The second line is the turn as it ended, and it is what a restart reads.
   const kept = lines(configDir, 'one');
@@ -1154,11 +1156,14 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
     },
   });
   expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'done' });
+  // The turn's end says the chat unread, as VS Code's markUnread does.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
   const kinds = actions(notes, CHAT).map((one) => one['type']);
-  expect(kinds.slice(-3)).toEqual([
+  expect(kinds.slice(-4)).toEqual([
     'chat/toolCallComplete',
     'chat/responsePart',
     'chat/turnComplete',
+    'chat/isReadChanged',
   ]);
   expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
   // And the line a restart reads holds the same two parts, as JSON writes

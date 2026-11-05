@@ -190,7 +190,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     };
     const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
     const startedAt = typeof turn?.startedAt === 'string' ? turn.startedAt : new Date().toISOString();
-    ctx.commandTurns.set(commandTurnKey(chat, turnId), false);
+    ctx.commandTurns.add(commandTurnKey(chat, turnId));
     if (road !== undefined) say({ type: 'chat/turnStarted', turnId, startedAt, message: turn?.message ?? { text: `${BANG}${command}`, origin: { kind: 'user' } } });
     const toolCallId = crypto.randomUUID();
     const began = Date.now();
