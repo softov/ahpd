@@ -1102,10 +1102,14 @@ export function createTooling(ctx: HostContext): Tooling {
   /**
    * Copy what a session's clients announced, and say what happened.
    *
-   * The entries go out before the copies are made: a copy is a client's whole
-   * plugin tree read over its connection, and a session whose list waited for
-   * it would show nothing at all for as long as that took - while `loading` is
-   * exactly what the field is for.
+   * As the reference host's plugin controller says a client's plugins: the
+   * session's list whole first, each new plugin in it `loading`, and then each
+   * plugin on its own as its copy settles. The list goes out before the copies
+   * are made: a copy is a client's whole plugin tree read over its
+   * connection, and a session whose list waited for it would show nothing at
+   * all for as long as that took - while `loading` is exactly what the field
+   * is for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L11243-L11330
    */
   const reconcile = async (uri: string): Promise<void> => {
     const at = idOf(uri);
@@ -1131,42 +1135,36 @@ export function createTooling(ctx: HostContext): Tooling {
     if (signatureOf(fresh) === signatureOf(before)) return;
     if (fresh.size === 0) plugins.delete(at);
     else plugins.set(at, fresh);
+    dispatch(uri, { type: 'session/customizationsChanged', customizations: reportedBy(uri) });
 
-    const settled: { clientId: string; one: HeldPlugin }[] = [];
+    /** One plugin whose copy settled, said on its own. */
+    const settle = (clientId: string, one: HeldPlugin): void => {
+      dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
+    };
     const port = options.clientPlugins;
-    if (port === undefined) {
-      // A host with nowhere to put a copy is a host that keeps none, and each
-      // plugin is owed the reason rather than a promise that never settles.
-      for (const [clientId, list] of added) {
+    for (const [clientId, list] of added) {
+      if (port === undefined) {
+        // A host with nowhere to put a copy is a host that keeps none, and each
+        // plugin is owed the reason rather than a promise that never settles.
         for (const one of list) {
           one.load = { kind: 'error', message: KEEPS_NONE };
-          settled.push({ clientId, one });
+          settle(clientId, one);
         }
+        continue;
       }
-    } else {
-      for (const [clientId, list] of added) {
-        for (const one of list) dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
-      }
-      for (const [clientId, list] of added) {
-        const answers = await copyOf(port, clientId, list);
-        list.forEach((one, position) => {
-          const answer = answers[position];
-          if (answer !== undefined && 'path' in answer) {
-            one.path = answer.path;
-            one.parts = partsWith(one, answer.path);
-            one.load = { kind: 'loaded' };
-          } else {
-            one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
-          }
-          settled.push({ clientId, one });
-        });
-      }
+      const answers = await copyOf(port, clientId, list);
+      list.forEach((one, position) => {
+        const answer = answers[position];
+        if (answer !== undefined && 'path' in answer) {
+          one.path = answer.path;
+          one.parts = partsWith(one, answer.path);
+          one.load = { kind: 'loaded' };
+        } else {
+          one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
+        }
+        settle(clientId, one);
+      });
     }
-    for (const { clientId, one } of settled) dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
-    // One list for the whole batch, after every copy it contains has settled:
-    // the actions above carry the one plugin that changed, and this carries the
-    // session's customizations as they now are.
-    dispatch(uri, { type: 'session/customizationsChanged', customizations: reportedBy(uri) });
   };
 
   /**

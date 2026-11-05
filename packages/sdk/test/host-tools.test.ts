@@ -955,11 +955,16 @@ describe('the MCP servers a session is offered', () => {
     await holder.handle(hello(['0.9.0'], { clientId: 'holder' }));
     await holder.handle({ method: 'subscribe', params: { channel: uri } });
 
-    /** Whether the plugin has been reported on the session, and settled. */
+    /**
+     * Whether the plugin has been reported on the session settled: in the
+     * session's whole list, or as its own update once its copy settles, as
+     * VS Code's host reports a client's plugin.
+     */
     const loaded = (): boolean => actions(watching, uri)
-      .filter((one) => one.action.type === 'session/customizationsChanged')
-      .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
-        .some((one) => one.uri === PLUGIN && (one.load as { kind: string }).kind === 'loaded'));
+      .flatMap((one) => (one.action.type === 'session/customizationsChanged'
+        ? (one.action.customizations as Record<string, unknown>[] | undefined) ?? []
+        : one.action.type === 'session/customizationUpdated' ? [one.action.customization as Record<string, unknown>] : []))
+      .some((one) => one.uri === PLUGIN && (one.load as { kind: string } | undefined)?.kind === 'loaded');
     /** How many turns have been watched to their end. */
     const finished = (): number => actions(watching, chat)
       .filter((one) => one.action.type === 'chat/turnComplete').length;

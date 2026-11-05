@@ -245,24 +245,21 @@ it('watches a client plugin load, then reports it beside the backend\'s own', as
   await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', name: 'one' }]);
   await settle();
 
-  const said = actions(a.peer, URI);
-  const updated = said.filter((one) => one.type === 'session/customizationUpdated')
-    .map((one) => one.customization as Record<string, unknown>);
-  // The whole of a load: it is here before it is copied, because a copy is a
-  // client's tree read over its connection and the session must not sit empty
-  // while that happens.
-  expect(updated.map((one) => (one.load as { kind: string }).kind)).toEqual(['loading', 'loaded']);
-  expect(updated.map((one) => one.clientId)).toEqual(['plugin', 'plugin']);
-  expect(updated[1]).toMatchObject({ type: 'plugin', uri: PLUGIN, name: 'one', clientId: 'plugin', load: { kind: 'loaded' } });
-
-  // And the list, once, after the copy settled - the backend's own entries
-  // first, this host's after them.
-  const changed = said.filter((one) => one.type === 'session/customizationsChanged');
-  expect(changed).toHaveLength(1);
-  const listed = changed[0]?.customizations as Record<string, unknown>[];
+  /*
+   * The whole of a load, as VS Code's plugin controller says one: the list
+   * once, with the plugin in it `loading` before it is copied - a copy is a
+   * client's tree read over its connection and the session must not sit
+   * empty while that happens - the backend's own entries first and this
+   * host's after them; then the plugin on its own once its copy settled.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L11243-L11330
+   */
+  const said = actions(a.peer, URI).filter((one) => String(one.type).startsWith('session/customization'));
+  expect(said.map((one) => one.type)).toEqual(['session/customizationsChanged', 'session/customizationUpdated']);
+  const listed = said[0]?.customizations as Record<string, unknown>[];
   expect(listed.map(names)).toContain('plugin');
-  expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
+  expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin', load: { kind: 'loading' } });
   expect(listed.some((one) => one.type !== 'plugin')).toBe(true);
+  expect(said[1]?.customization).toMatchObject({ type: 'plugin', uri: PLUGIN, name: 'one', clientId: 'plugin', load: { kind: 'loaded' } });
 });
 
 it('lists what a plugin holds, each part named by the file it was read from', async () => {
@@ -272,9 +269,10 @@ it('lists what a plugin holds, each part named by the file it was read from', as
   // Nothing while the copy is on its way: the protocol reads `children`
   // absent as a container nobody has parsed, and an empty list as one that
   // was parsed and holds nothing. These are not the same answer.
-  expect(entries[0]?.children).toBeUndefined();
+  const listed = actions(a.peer, URI).find((one) => one.type === 'session/customizationsChanged')?.customizations as Record<string, unknown>[];
+  expect(listed.find((one) => one.uri === PLUGIN)?.children).toBeUndefined();
 
-  const children = entries[1]?.children as Record<string, unknown>[];
+  const children = entries[0]?.children as Record<string, unknown>[];
   expect(children.map((one) => [one.type, one.name])).toEqual([
     ['agent', 'reviewer'],
     ['mcpServer', 'one'],
@@ -295,8 +293,8 @@ it('lists no parts for a plugin whose format this host does not read', async () 
 
   // The plugin loaded, and what it holds was never read - so there is nothing
   // to claim about it, which is the absent field rather than an empty list.
-  expect(entries[1]?.load).toEqual({ kind: 'loaded' });
-  expect(entries[1]?.children).toBeUndefined();
+  expect(entries[0]?.load).toEqual({ kind: 'loaded' });
+  expect(entries[0]?.children).toBeUndefined();
 });
 
 it('carries a client\'s decision about a server, most specific first', async () => {
@@ -308,7 +306,7 @@ it('carries a client\'s decision about a server, most specific first', async () 
       two: [{ kind: 'global', enabled: true }, { kind: 'workspace', uri: 'file:///work', enabled: false }],
     },
   });
-  const children = published(a.peer)[1]?.children as Record<string, unknown>[];
+  const children = published(a.peer)[0]?.children as Record<string, unknown>[];
   const server = (name: string) => children.find((one) => one.name === name);
 
   expect(server('two')?.enablement).toEqual([
