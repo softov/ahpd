@@ -812,6 +812,11 @@ export function chatAction(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
        */
       const since = Date.now();
+      // Whether the session ran nothing before this start, read before the
+      // start is said: said, it is a turn in progress itself.
+      const idle = ctx.answered(origin)
+        ? String(activeHeld?.id ?? '') === turnId
+        : (statusOf(session.uri) & Status.InProgress) === 0;
       if (!ctx.answered(origin)) dispatch(session.chatUri, action, origin);
       if ((kept.flags(idOf(session.uri)) & Status.IsArchived) !== 0) {
         unsent(session.chatUri, 'archived', 'This session is archived and read-only. Restore the session to continue the conversation.');
@@ -836,7 +841,7 @@ export function chatAction(
        * a turn waits its turn, and the sets are compared again at the next.
        */
       let live = session;
-      if (owner !== undefined && (statusOf(session.uri) & Status.InProgress) === 0 && pluginsMoved(session.uri, session.chatUri)) {
+      if (owner !== undefined && idle && pluginsMoved(session.uri, session.chatUri)) {
         restartChat(session.uri, session.chatUri, conn.tokensFor(chatAgent(owner, session.chatUri).provider), connection);
         // The chat that was running is closed and this is the one that took its
         // place, so the turn below goes to the agent listening now.
@@ -2346,6 +2351,15 @@ export function chatAction(
       // may say its result; the protocol has a server refuse anybody else.
       if (clientRunning(toolCallId) !== clientId) {
         no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
+      // A call completes once: a second result, sent before the first was
+      // taken, finds the call complete in the held state.
+      const held = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+        .map((part) => (part.kind === 'toolCall' ? part.toolCall as Bag | undefined : undefined))
+        .find((one) => one?.toolCallId === toolCallId);
+      if (held?.status !== 'running') {
+        no(`${toolCallId} is not running`);
         break;
       }
       // The blocks go through whole, because a client's tool can answer with

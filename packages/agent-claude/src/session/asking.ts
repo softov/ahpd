@@ -27,6 +27,12 @@ interface PendingInput {
   options?: Bag[];
   /** The SDK's `suggestions` for this call, returned as `updatedPermissions` when "always" is picked. */
   suggestions?: unknown[];
+  /**
+   * The name the CLI called a tool confirmation's tool by. The call's row names
+   * a client's tool as its client announced it, and the session answers the
+   * CLI, and finds the tool to run, by the CLI's own name.
+   */
+  cliName?: string;
   settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
 }
 
@@ -446,6 +452,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       pending.set(id, {
         id,
         entry,
+        cliName: toolName,
         asked: new Map(),
         answers: new Map(),
         ...(options !== undefined ? { options, suggestions } : {}),
@@ -711,7 +718,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * A refused call runs nowhere, and whoever waits for it is told so.
        */
       const call = bag(held.entry.toolCall);
-      const name = str(call.toolName) ?? '';
+      const name = held.cliName ?? str(call.toolName) ?? '';
       if (approved) {
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
