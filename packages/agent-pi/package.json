@@ -2,17 +2,19 @@
   "name": "@ahpd/agent-pi",
   "version": "0.15.0-rc.1",
   "type": "module",
-  "description": "A pi backend for ahpd: the pi coding agent, embedded in process and served over the Agent Host Protocol",
+  "description": "Pi coding agent integration for the Agent Host Protocol. Run it in process as an ahpd plugin or use it directly with @ahpd/sdk.",
   "keywords": [
     "ahp",
+    "ahpd",
     "agent-host-protocol",
-    "agent-host",
-    "agent",
-    "ai",
-    "plugin",
+    "ahpio",
+    "ai-agent",
     "pi",
     "pi-coding-agent",
-    "coding-agent"
+    "coding-agent",
+    "agent-backend",
+    "agent-sdk",
+    "plugin"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
@@ -67,7 +69,7 @@
     "entry": "./dist/index.js",
     "i18n": "i18n",
     "title": "Agent pi",
-    "description": "Runs the Pi coding agent, embedded in process and served as an agent provider.",
+    "description": "Run the pi coding agent inside the daemon.",
     "categories": ["agent"],
     "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
     "icons": [{ "src": "./icon.svg" }],
@@ -77,13 +79,13 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "model": { "type": "string", "description": "The model a record that names none runs on, as provider/modelId." },
+        "model": { "type": "string", "description": "Default model for agents that don't set one, as 'provider/modelId'." },
         "projectTrust": {
           "type": "string",
           "enum": ["trust", "deny"],
-          "description": "Whether a record that names none loads a project's own pi extensions, skills and prompts. trust by default."
+          "description": "Whether pi loads a project's own extensions, skills and prompts. 'trust' (default) loads them in folders the host trusts; 'deny' never loads them. Each agent can override it."
         },
-        "sessionDir": { "type": "string", "description": "The folder a record that names none keeps its pi sessions in. pi's own by default." }
+        "sessionDir": { "type": "string", "description": "Folder where pi keeps its sessions. Defaults to pi's own. Each agent can override it." }
       }
     }
   }

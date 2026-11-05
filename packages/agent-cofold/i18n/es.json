@@ -1,41 +1,41 @@
 {
   "meta": {
     "title": "Agente Cofold",
-    "description": "Ejecuta el runtime de agentes Cofold, con acceso a endpoints de API compatibles con OpenAI."
+    "description": "Ejecuta el runtime de agentes Cofold en cualquier endpoint compatible con OpenAI."
   },
   "options": {
     "model": {
-      "description": "El id del modelo que usa un registro que no indica ninguno."
+      "description": "Modelo por defecto para los agentes que no definen uno."
     },
     "baseUrl": {
-      "description": "El endpoint compatible con OpenAI que usa un registro que no indica ninguno."
+      "description": "Endpoint compatible con OpenAI por defecto para los agentes que no definen uno."
     },
     "instructions": {
-      "description": "El prompt de sistema con el que se crea un registro que no indica ninguno."
+      "description": "Prompt de sistema por defecto para los agentes que no definen uno."
     },
     "computerConfigDir": {
-      "description": "La carpeta de configuración que lee el harness dentro de una máquina. Por defecto, /ahpd/cofold; false deja la de la propia imagen."
+      "description": "Carpeta de configuración de Cofold dentro de una computadora. Por defecto, '/ahpd/cofold'. Usa false para mantener la configuración propia de la imagen."
     },
     "store": {
-      "description": "La carpeta donde vive el almacenamiento de archivos de cofold de cada registro, una carpeta por registro. Por defecto, la carpeta de datos de la propia herramienta."
+      "description": "Carpeta del almacén de archivos de cada agente, una subcarpeta por agente. Por defecto, '$XDG_DATA_HOME/ahpd/cofold'."
     },
     "memory": {
-      "description": "true para guardar el almacenamiento de cada registro en memoria, para una prueba."
+      "description": "Mantiene el almacén de cada agente en memoria en lugar de en disco. Para pruebas."
     },
     "tools": {
-      "description": "Qué capacidades ejecuta una sesión, de dónde toma web_search sus proveedores, y si una escritura exige leer antes el archivo."
+      "description": "Qué herramientas recibe una sesión, dónde encuentra web_search sus proveedores y si un archivo debe leerse antes de escribirse."
     },
     "strictTools": {
-      "description": "false somete la opción tools a la comprobación flexible, y una clave que el harness no conoce se descarta en lugar de rechazarse."
+      "description": "Rechaza claves desconocidas en tools. Activado por defecto; usa false para descartarlas."
     },
     "apiKey": {
-      "description": "La clave del propio daemon, para un registro que no indica ninguna."
+      "description": "Clave de API por defecto para los agentes que no definen una."
     },
     "resource": {
-      "description": "El recurso protegido ante el que se autentica un cliente."
+      "description": "Recurso protegido contra el que se autentican los clientes. Por defecto, el origen del endpoint cuando usa https."
     },
     "autoCompactTokens": {
-      "description": "El tamaño estimado del historial en el que una sesión se compacta, nunca por encima del 80% del contexto indicado del modelo, o de 32000. Por defecto, ese 80%."
+      "description": "Tamaño del historial, en tokens estimados, en el que una sesión se compacta. Por defecto, el 80% del contexto del modelo, o de 32000 si no se conoce, y nunca más que eso."
     }
   },
   "session": {

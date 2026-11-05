@@ -1,71 +1,71 @@
 {
   "meta": {
     "title": "Computadora",
-    "description": "Proporciona entornos aislados en Docker o contenedores para las sesiones de agente, con gestión del ciclo de vida y herramientas."
+    "description": "Máquinas aisladas para sesiones de agente: contenedores Docker, VMs de libvirt o Proxmox y máquinas por ssh."
   },
   "options": {
     "runtime": {
-      "description": "Qué runtime usar: docker, que crea máquinas, o ssh, que solo las lista."
+      "description": "Cómo se proporcionan las máquinas. 'docker' (predeterminado) las crea; 'ssh' solo lista las máquinas de ssh."
     },
     "command": {
-      "description": "El programa que se ejecuta. docker."
+      "description": "El programa que ejecuta las máquinas. Predeterminado: 'docker'."
     },
     "args": {
-      "description": "Argumentos que van antes de los suyos, para un wrapper o un contexto."
+      "description": "Argumentos que van antes de los del programa, para un wrapper o un contexto de Docker."
     },
     "ssh": {
-      "description": "Máquinas a las que este host llega por ssh. Cada una se lista, no se crea: nada de este host está en ella, así que ninguna se puede crear, iniciar ni eliminar desde aquí."
+      "description": "Máquinas que este host alcanza por ssh. Se listan, nunca se crean, inician ni eliminan aquí."
     },
     "libvirt": {
-      "description": "Cómo un perfil con runtime libvirt crea sus máquinas: cada una es una VM en el libvirt de su servidor, un clon enlazado de un disco plantilla, alcanzada por ssh a través de ese servidor."
+      "description": "VMs para perfiles con runtime 'libvirt': clones enlazados de un disco plantilla en el libvirt del servidor, accesibles por ssh a través de ese servidor."
     },
     "env": {
-      "description": "Variables de entorno combinadas sobre las del daemon. Una variable es una credencial dondequiera que la imagen guarde una, así que cada una aparece como <set>."
+      "description": "Variables de entorno que se suman a las del daemon. Los valores se tratan como secretos y se muestran como <set>."
     },
     "image": {
-      "description": "La imagen con la que se crea una máquina cuando una llamada no indica ninguna."
+      "description": "La imagen con la que se crean las máquinas cuando no se indica ninguna. Predeterminado: 'debian:bookworm-slim'."
     },
     "cpus": {
-      "description": "Un límite de CPU para cada máquina que crea este host."
+      "description": "Límite de CPU de cada máquina, con el formato de --cpus de Docker."
     },
     "memory": {
-      "description": "Un límite de memoria para cada máquina que crea este host."
+      "description": "Límite de memoria de cada máquina, con el formato de --memory de Docker."
     },
     "max": {
-      "description": "Cuántas pueden existir a la vez."
+      "description": "Máximo de máquinas que pueden existir a la vez. Predeterminado: 3."
     },
     "label": {
-      "description": "La etiqueta que lleva cada máquina."
+      "description": "La etiqueta que lleva cada máquina. Predeterminado: 'ahpd.computer=1'."
     },
     "prefix": {
-      "description": "Con qué empieza el nombre de cada máquina que crea este host."
+      "description": "Prefijo del nombre de cada máquina. Predeterminado: 'ahpd-computer'."
     },
     "sessionSetting": {
-      "description": "Si un ajuste de sesión indica la máquina en la que se ejecuta una sesión."
+      "description": "Muestra un ajuste de sesión para la máquina donde corre la sesión. Activado por defecto."
     },
     "sessionDefault": {
-      "description": "El valor por defecto de ese ajuste."
+      "description": "La máquina predeterminada de ese ajuste, como una URI computer://<id>."
     },
     "needs": {
-      "description": "Valores para las necesidades de máquina de cualquier agente, por nombre de necesidad."
+      "description": "Valores para las necesidades de máquina de los agentes, por nombre de necesidad."
     },
     "mounts": {
-      "description": "Lo que puede ver cada máquina que crea este plugin."
+      "description": "Montajes que recibe cada máquina de este plugin."
     },
     "profiles": {
-      "description": "Los conjuntos con nombre que una persona elige al crear una máquina."
+      "description": "Configuraciones de máquina con nombre, que una persona elige al crear una máquina."
     },
     "bodyMounts": {
-      "description": "Si quien crea una máquina puede indicar sus propios montajes."
+      "description": "Permite que una persona indique sus propios montajes al crear una máquina. Desactivado por defecto."
     },
     "imageMounts": {
-      "description": "Si una part se puede montar desde su propia imagen. false monta cada part desde un volumen que se llena una vez a partir de ella."
+      "description": "Permite montar una part desde su propia imagen. Usa false para montar cada part desde un volumen llenado una vez a partir de ella."
     },
     "images": {
-      "description": "Los patrones de imagen con los que se puede crear una máquina."
+      "description": "Patrones de imagen con los que se pueden crear máquinas. Sin esto, se permite cualquier imagen."
     },
     "devcontainer": {
-      "description": "La CLI de Dev Container, como launcher y como creador de máquinas, y las carpetas desde las que puede crear una; false desactiva todas las rutas de dev container."
+      "description": "La CLI de Dev Containers, como launcher y creadora de máquinas, y las carpetas desde las que puede crear. Usa false para desactivar los dev containers."
     }
   },
   "session": {

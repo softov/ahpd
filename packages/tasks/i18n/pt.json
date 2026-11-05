@@ -1,14 +1,14 @@
 {
   "meta": {
     "title": "Tarefas",
-    "description": "Uma lista de tarefas e planos que todos os agentes leem e escrevem."
+    "description": "Uma lista compartilhada de tarefas e planos para todos os agentes."
   },
   "options": {
     "requireApproval": {
-      "description": "Se um agente pode colocar uma tarefa em doing antes de alguém aprová-la. Desligado por padrão."
+      "description": "Exige aprovação antes que um agente comece uma tarefa. Desativado por padrão."
     },
     "sweepAfterDays": {
-      "description": "Por quantos dias um plano done ou dropped é mantido. Sem valor, um plano encerrado é mantido para sempre."
+      "description": "Dias que um plano concluído ou descartado é mantido. Sem valor, fica para sempre."
     }
   }
 }

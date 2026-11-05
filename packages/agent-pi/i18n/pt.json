@@ -1,17 +1,17 @@
 {
   "meta": {
     "title": "Agente pi",
-    "description": "Roda o agente de código Pi, embutido no processo e servido como provedor de agente."
+    "description": "Execute o agente de código pi dentro do daemon."
   },
   "options": {
     "model": {
-      "description": "O modelo usado por um registro que não indica nenhum, como provider/modelId."
+      "description": "Modelo padrão para os agentes que não definem um, como 'provider/modelId'."
     },
     "projectTrust": {
-      "description": "Se um registro que não indica nada carrega as extensões, skills e prompts do pi do próprio projeto. Por padrão, trust."
+      "description": "Se o pi carrega as extensões, skills e prompts do próprio projeto. 'trust' (padrão) carrega em pastas em que o host confia; 'deny' nunca carrega. Cada agente pode alterar."
     },
     "sessionDir": {
-      "description": "A pasta onde um registro que não indica nenhuma guarda suas sessões do pi. Por padrão, a do próprio pi."
+      "description": "Pasta onde o pi guarda suas sessões. Por padrão, a do próprio pi. Cada agente pode alterar."
     }
   },
   "session": {
