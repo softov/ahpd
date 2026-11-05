@@ -484,6 +484,36 @@ it('reports what a machine is using, as numbers a gauge can be drawn from', asyn
   expect(used.cpu.cores).toBe(2);
 });
 
+/*
+ * The runtime's answer is read as VS Code reads a listing: a line that does
+ * not parse, or whose fields are not the text asked for, fails the read.
+ */
+it('fails a stats read whose line does not parse or holds a field that is not text', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-stats-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    read(uri: string): Promise<{ data: string }>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({ cpus: '2' }), encoding: 'utf-8' });
+  const answer = (line: string): void => {
+    const held = JSON.parse(readFileSync(state, 'utf8')) as { machines: Record<string, unknown>[] };
+    for (const one of held.machines) one.statsLine = line;
+    writeFileSync(state, JSON.stringify(held));
+  };
+
+  answer('not json');
+  await expect(provider.read('computer://box/stats')).rejects.toThrow(SyntaxError);
+  answer(JSON.stringify({ CPUPerc: '1%', MemUsage: 5, MemPerc: '1%', NetIO: '0B / 0B', BlockIO: '0B / 0B', PIDs: '1' }));
+  await expect(provider.read('computer://box/stats')).rejects.toThrow('Error in property \'MemUsage\': Expected string, but got number');
+});
+
 it('makes a machine from a named profile, and refuses one it does not define', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-profiles-'));
   const state = join(loose, 'docker.json');

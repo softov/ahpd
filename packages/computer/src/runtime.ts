@@ -977,19 +977,24 @@ const ran = (options: CommandOptions, args: string[], input?: Buffer, env?: Reco
   child.on('close', (code) => { resolve({ code: code ?? 0, stdout, stderr }); });
 });
 
-/** The lines of a `--format {{json .}}` listing, as objects. */
-const rows = (text: string): Record<string, unknown>[] => text
-  .split('\n')
-  .map((line) => line.trim())
-  .filter((line) => line !== '')
-  .flatMap((line) => {
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? [parsed as Record<string, unknown>]
-        : [];
+/**
+ * The lines of a `--format {{json .}}` answer, as objects, each line read as
+ * VS Code's dev container host reads a listing (devContainerAgentHostService.ts
+ * L973-L977 at 6b68d3fe): parsed, and checked as an object whose `strings`
+ * fields are strings, in its validator's words (src/vs/base/common/validation.ts).
+ * A line that fails either fails the whole answer.
+ */
+const rows = (text: string, strings: readonly string[] = []): Record<string, unknown>[] => text
+  .split(/\r?\n/)
+  .filter((line) => line.trim() !== '')
+  .map((line) => {
+    const parsed: unknown = JSON.parse(line);
+    if (typeof parsed !== 'object' || parsed === null) throw new Error('Expected object');
+    const row = parsed as Record<string, unknown>;
+    for (const key of strings) {
+      if (typeof row[key] !== 'string') throw new Error(`Error in property '${key}': Expected string, but got ${typeof row[key]}`);
     }
-    catch { return []; }
+    return row;
   });
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -1879,7 +1884,7 @@ export const adoptedDevContainer = async (
 ): Promise<{ id: string; remoteWorkspaceFolder: string } | undefined> => {
   const listed = await ran(options, ['ps', '-a', '--filter', `label=${LOCAL_FOLDER}=${folder}`, '--format', '{{json .}}']);
   if (listed.code !== 0) return undefined;
-  const named = text(rows(listed.stdout)[0]?.Names);
+  const named = text(rows(listed.stdout, ['Names'])[0]?.Names);
   if (named === '') return undefined;
   const held = rows((await ran(options, ['inspect', '--format', '{{json .}}', named])).stdout)[0];
   if (held === undefined) return undefined;
@@ -2329,7 +2334,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       '--filter', `label=${options.label}`,
       '--filter', `label=${DEVCONTAINER_FOLDER}=${folder}`,
       '--format', '{{json .}}',
-    ]));
+    ]), ['Names']);
     const name = held.map((row) => text(row.Names)).find((one) => one !== '');
     return name ?? containerId;
   };
@@ -2379,7 +2384,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       '--filter', `label=${options.label}`,
       '--filter', `label=${MACHINE_NAME}=${id}`,
       '--format', '{{json .}}',
-    ]));
+    ]), ['Names']);
     const name = text(held[0]?.Names);
     if (name !== '') return name;
     /*
@@ -3382,9 +3387,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (at === undefined) return undefined;
       const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', at]);
       if (held.code !== 0) return undefined;
-      const row = rows(held.stdout)[0];
+      const row = rows(held.stdout, ['MemUsage', 'MemPerc', 'NetIO', 'BlockIO', 'PIDs', 'CPUPerc'])[0];
       if (row === undefined) return undefined;
-      const said = (key: string): string => (typeof row[key] === 'string' ? row[key] : '');
+      const said = (key: string): string => row[key] as string;
       const memory = pairOf(said('MemUsage'));
       if (memory === undefined) return undefined;
       const network = pairOf(said('NetIO'));

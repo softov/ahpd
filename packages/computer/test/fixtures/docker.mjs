@@ -497,6 +497,12 @@ if (verb === 'stats') {
     keep();
     process.exit(1);
   }
+  // A line a test writes in place of the answer, to see a malformed one read.
+  if (typeof found.statsLine === 'string') {
+    process.stdout.write(`${found.statsLine}\n`);
+    keep();
+    process.exit(0);
+  }
   process.stdout.write(`${JSON.stringify({
     Container: id,
     Name: id,
