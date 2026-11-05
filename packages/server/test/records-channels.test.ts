@@ -103,14 +103,14 @@ it('shows a person without user:read only their own record on the users channel'
 });
 
 /*
- * Two people on one client id, as a relay that passes no id of its own gives
- * them: each is sent only what they may read, and each keeps their own state,
- * whichever subscribed first.
+ * Two people on the empty client id, as a relay that passes no id of its own
+ * gives them: each is sent only what they may read, and each keeps their own
+ * state, whichever subscribed first.
  */
 for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
   it(`keeps the users channel apart for two people on one client id, ${order.join(' first, then ')}`, async () => {
     const { host, users, close } = served();
-    const people = { ana: await as(host, users, 'ana', 'anonymous'), bo: await as(host, users, 'bo', 'anonymous') };
+    const people = { ana: await as(host, users, 'ana', ''), bo: await as(host, users, 'bo', '') };
     const answers: Record<string, string[]> = {};
     for (const one of order) answers[one] = ids(await people[one].call('subscribe', { channel: 'x-ahpd-users://' }));
     expect(answers).toEqual({ ana: ['ana', 'bo', 'cy'], bo: ['bo'] });
@@ -135,7 +135,7 @@ for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
       users: [{ id: 'ana', roles: ['clerk'] }, { id: 'bo', roles: ['clerk'] }],
     }));
     const { host, users, close } = served();
-    const people = { ana: await as(host, users, 'ana', 'anonymous'), bo: await as(host, users, 'bo', 'anonymous') };
+    const people = { ana: await as(host, users, 'ana', ''), bo: await as(host, users, 'bo', '') };
     for (const one of order) expect(ids(await people[one].call('subscribe', { channel: 'x-ahpd-teams://' }))).toEqual(['backend']);
     await wait(50);
 
@@ -159,8 +159,8 @@ for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
 
 it('replays to a person on a shared client id nothing sent to another person on it', async () => {
   const { host, users, close } = served();
-  const ana = await as(host, users, 'ana', 'anonymous');
-  const bo = await as(host, users, 'bo', 'anonymous');
+  const ana = await as(host, users, 'ana', '');
+  const bo = await as(host, users, 'bo', '');
   await ana.call('subscribe', { channel: 'x-ahpd-users://' });
   const answer = await bo.call('subscribe', { channel: 'x-ahpd-users://' });
   const from = answer.result.snapshot.fromSeq as number;
@@ -175,7 +175,7 @@ it('replays to a person on a shared client id nothing sent to another person on 
   const back = host.accept({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} }, person);
   const replay = await back.handle({
     method: 'reconnect',
-    params: { clientId: 'anonymous', lastSeenServerSeq: from, subscriptions: ['x-ahpd-users://'] },
+    params: { clientId: '', lastSeenServerSeq: from, subscriptions: ['x-ahpd-users://'] },
   }) as Bag;
   expect(replay.type).toBe('replay');
   expect((replay.actions as Bag[]).filter((one) => one.channel === 'x-ahpd-users://')).toEqual([]);

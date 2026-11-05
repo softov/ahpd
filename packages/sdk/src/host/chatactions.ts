@@ -2379,7 +2379,7 @@ export function chatAction(
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
-      const clientId = connection.clientId || 'anonymous';
+      const clientId = connection.clientId;
       const contributor = contributorOf(toolCallId);
       if (contributor !== undefined && contributor !== clientId) {
         no(`${toolCallId} is not a call ${clientId} is running here`);
@@ -2402,7 +2402,7 @@ export function chatAction(
      */
     case 'chat/toolCallContentChanged': {
       const toolCallId = String(action.toolCallId ?? '');
-      const clientId = connection.clientId || 'anonymous';
+      const clientId = connection.clientId;
       const contributor = contributorOf(toolCallId);
       if (contributor === null) {
         no(`${toolCallId} is not a call a client is running here`);

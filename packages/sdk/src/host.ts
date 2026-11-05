@@ -1516,7 +1516,7 @@ export function createHost(options: HostOptions): Host {
     connection?: Connection,
     view?: SubscribeView,
   ): Promise<Record<string, unknown> | undefined> => {
-    if (connection !== undefined) waitsOver(connection.clientId || 'anonymous');
+    if (connection !== undefined) waitsOver(connection.clientId);
     return backendSnapshot(channel, connection, view);
   };
   /*
@@ -2111,7 +2111,7 @@ export function createHost(options: HostOptions): Host {
         ...vscode,
       };
       /** The id this connection's dispatches wait under, with every other connection of its client. */
-      const queuedAs = (): string => connection.clientId || 'anonymous';
+      const queuedAs = (): string => connection.clientId;
       /**
        * A dispatch whose apply failed, logged and refused to the client that
        * sent it.
@@ -2168,7 +2168,7 @@ export function createHost(options: HostOptions): Host {
           releaseRelayed(channel);
           // And unsubscribing from a session is one of the three ways the
           // protocol says a client stops being active in it.
-          leaves(channel, connection.clientId || 'anonymous');
+          leaves(channel, connection.clientId);
           leftChannel(connection.clientId, channel);
           // A session nobody watches is one the residency may let go.
           // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11752
@@ -2188,7 +2188,7 @@ export function createHost(options: HostOptions): Host {
          */
         dispatchAction: (params) => {
           const origin: Origin = {
-            clientId: connection.clientId || 'anonymous',
+            clientId: connection.clientId,
             clientSeq: typeof params.clientSeq === 'number' ? params.clientSeq : 0,
           };
           if (dispatchQueues.has(queuedAs())) {
@@ -2357,7 +2357,7 @@ export function createHost(options: HostOptions): Host {
            * client is in waits, the ones this connection never watched among
            * them, as the reference host times out a client's every session.
            */
-          const gone = connection.clientId || 'anonymous';
+          const gone = connection.clientId;
           for (const [id, held] of presence) if (held.has(gone)) waitsOut(ctx.nameOf(id), gone);
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.

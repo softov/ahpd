@@ -39,9 +39,9 @@ export function createRelay(ctx: HostContext): Relay {
 
   /**
    * Whether a client id is one a person can hold: a client that names none
-   * is `anonymous` (or empty), which is every such client and nobody's.
+   * has the empty one, which is every such client's and nobody's.
    */
-  const ownId = (clientId: string): boolean => clientId !== '' && clientId !== 'anonymous';
+  const ownId = (clientId: string): boolean => clientId !== '';
   /**
    * Whether a connection answers for its client id: always with no users
    * directory and for the door, never for a connection with no id of its

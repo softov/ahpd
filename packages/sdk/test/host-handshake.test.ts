@@ -241,6 +241,24 @@ describe('the handshake', () => {
     expect(result.protocolVersion).toBe(PROTOCOL_VERSION);
   });
 
+  /*
+   * A client that gives no id has none: VS Code's host takes the id an
+   * initialize carries as it was sent, and what such a client dispatches is
+   * said under no client id.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1061
+   */
+  it('names a client that gives no id with none, as VS Code\'s host takes the id as sent', async () => {
+    const p = peer();
+    const client = serving('/home/softov', []).accept(p);
+    await client.handle({ method: 'initialize', params: { protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+    const uri = 'ahp-session:/unnamed';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    void client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/titleChanged', title: 'Named' } } });
+    await settle();
+    expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.origin).toEqual({ clientId: '', clientSeq: 1 });
+  });
+
   it('refuses a second introduction on the same connection', async () => {
     const client = open();
     await client.handle(hello(['0.9.0']));

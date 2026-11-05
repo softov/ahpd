@@ -341,7 +341,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       const containersReady = options.containers === undefined
         ? false
         : await options.containers.available().catch(() => false);
-      connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
+      /*
+       * The id the client gave, as VS Code's host takes it from the
+       * initialize; a client that gives none has none, which nobody holds and
+       * nothing is routed to (`ownId`).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1061
+       */
+      connection.clientId = typeof params.clientId === 'string' ? params.clientId : '';
       /*
        * What this connection agreed to, kept for every later delivery: an
        * action introduced after this version is not sent to it, live or in a

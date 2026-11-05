@@ -238,7 +238,7 @@ export interface ClientConnectEvent {
 /** A client whose connection went away. */
 export interface ClientDisconnectEvent {
   type: 'client_disconnect';
-  /** The id it had given, or `anonymous` where it never introduced itself. */
+  /** The id it had given, or `anonymous` where it gave none. */
   client: string;
 }
 

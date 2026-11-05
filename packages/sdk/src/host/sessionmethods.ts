@@ -960,7 +960,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
         ? params.activeClient as Bag
         : undefined;
-      const clientId = connection.clientId || 'anonymous';
+      const clientId = connection.clientId;
       if (claimed !== undefined && claimed.clientId !== clientId)
         throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
       unheld(uri);
