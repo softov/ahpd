@@ -397,11 +397,16 @@ const CONFLICT = -32011;
         const message = error instanceof Error ? error.message : String(error);
         inFlight.delete(key);
         lastError.set(key, message);
+        // The failure as the protocol's ErrorInfo, named and traced as the
+        // reference host's changeset operations say one.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
         dispatch(channel, {
           type: 'changeset/operationStatusChanged',
           operationId,
           status: 'error',
-          error: { message },
+          error: error instanceof Error
+            ? { errorType: error.name, message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
+            : { errorType: 'Error', message },
         });
         log(`${operationId} on ${channel} failed: ${message}`);
         // With the source's code and data when it chose them: a refusal

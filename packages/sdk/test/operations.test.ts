@@ -304,8 +304,11 @@ it('keeps the failure on the operation, and hands it to the next reader', async 
   }));
   expect(broke.message).toContain('git said no');
 
+  // Said as the protocol's ErrorInfo, named and traced, as VS Code says it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
   const last = actions(p, changeset).filter((one) => one.type === 'changeset/operationStatusChanged').pop();
-  expect(last).toMatchObject({ status: 'error', operationId: 'commit', error: { message: 'git said no' } });
+  expect(last).toMatchObject({ status: 'error', operationId: 'commit', error: { errorType: 'Error', message: 'git said no' } });
+  expect(typeof (last?.error as { stack?: unknown } | undefined)?.stack).toBe('string');
 
   // And the next client to look sees it, because the status is the
   // changeset's rather than the reply's.
