@@ -232,15 +232,18 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * Whether a chat, or any worker chat beneath it, is running a turn.
    *
-   * Asked of a chat's backend, which is the one doing the work, and of a
-   * worker's held state, which is the whole of what a worker is. Walked to the
-   * bottom because a worker's own call can open another one, and a move
-   * carries all of them: a chat whose worker is mid-turn is a chat with
-   * something in flight.
+   * Asked of a chat's backend, which is the one doing the work, of the chat's
+   * held state, which holds a turn from its start, and of a worker's held
+   * state, which is the whole of what a worker is. Walked to the bottom
+   * because a worker's own call can open another one, and a move carries all
+   * of them: a chat whose worker is mid-turn is a chat with something in
+   * flight.
    */
   const running = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
     if (lead !== undefined && (lead.status() & Status.InProgress) !== 0) return true;
+    // A turn this host said the start of, which runs before its backend is handed it.
+    if (lead !== undefined && ctx.stateOf(uri)?.activeTurn !== undefined) return true;
     const seen = new Set([uri]);
     const queue = [uri];
     while (queue.length > 0) {
