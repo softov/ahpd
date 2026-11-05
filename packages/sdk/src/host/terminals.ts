@@ -304,10 +304,11 @@ export function createTerminals(ctx: HostContext): Terminals {
         emit: (_channel, action) => {
           dispatch(uri, action);
           // The root list says whether a terminal is still running, so it is
-          // stale the moment one exits and reaches nobody unless it moves.
+          // stale the moment one exits and reaches nobody unless it moves. A
+          // terminal closed and taken off the list was said as it went.
           if ((action as Bag).type === 'terminal/exited') {
             ctx.keepExited(chatUri, key, sessionUri, terminal.state(), terminal.exitCode());
-            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+            if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
             // A command that ran in this session's directory may have moved it.
             const ranIn = dirOfFile(asked.cwd);
             if (ranIn !== undefined) void refreshWatched(ranIn);
@@ -549,7 +550,8 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
            * been told something untrue.
            */
           if ((action as Bag).type === 'terminal/exited') {
-            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+            // A terminal closed and taken off the list was said as it went.
+            if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
             // A command that ran in this session's directory may have moved
             // it: a commit, a checkout, or anything that wrote a file.
             const ranIn = dirOfFile(asked);

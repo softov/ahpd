@@ -1010,13 +1010,12 @@ export function createHost(options: HostOptions): Host {
     else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
-     * so the list is said again when either moves it: the root's state holds
-     * the list it was last told.
+     * so the list is said again after every title and every claim, as the
+     * reference host's terminal manager broadcasts its list at each.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L626-L641
      */
     if (action.type === 'terminal/titleChanged' || action.type === 'terminal/claimed') {
-      const listed = ctx.terminalInfo();
-      const held = states.get(ROOT)?.state.terminals ?? [];
-      if (JSON.stringify(listed) !== JSON.stringify(held)) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: listed });
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     }
     /*
      * The catalogue narrowed to the caller's own is a channel of its own.

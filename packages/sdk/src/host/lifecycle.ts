@@ -303,15 +303,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * too, and what is left is a channel in the root catalogue that
      * nobody can reach. `!` commands are the ordinary way these
      * accumulate - one terminal each, kept so the finished tool call
-     * points somewhere real.
+     * points somewhere real. The root's list is said as each one goes, as
+     * the reference host's terminal manager broadcasts it at each disposal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L941-L946
      */
     for (const [terminalUri, terminal] of [...ctx.terminals]) {
       const claim = terminal.claim();
       if (claim.kind !== 'session' || claim.session !== uri) continue;
       terminal.close();
       ctx.terminals.delete(terminalUri);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     }
-    dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     /*
      * And the worktree, unless somebody's work is still in it.
      *

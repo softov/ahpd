@@ -8,6 +8,7 @@ import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { OpenedTerminal, SpawnPty } from '../src/types/terminals.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine,
   peer, sdk, settle, shellTerminals,
@@ -761,6 +762,60 @@ describe('a shell on this machine', () => {
       .at(-1)?.action.terminals as { resource: string; lifecycle?: { status?: string; exitCode?: number } }[] | undefined;
     expect(listed?.find((one) => one.resource === uri)?.lifecycle)
       .toEqual({ status: 'exited', exitCode: 5 });
+  });
+
+  /*
+   * The root's list is said after every title and every claim, a title set
+   * again to what it was included, as VS Code's terminal manager broadcasts
+   * its list at each.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L626-L641
+   */
+  it('says the root\'s list after every title and claim, one that moved nothing included', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/titled';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    const listed = (): number => actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').length;
+    const before = listed();
+    for (const action of [
+      { type: 'terminal/titleChanged', title: 'Build' },
+      { type: 'terminal/titleChanged', title: 'Build' },
+      { type: 'terminal/claimed', claim: { kind: 'client', clientId: 'probe' } },
+    ]) client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+    await settle();
+    expect(listed() - before).toBe(3);
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
+  /*
+   * A session's terminals go with it, the root's list said as each one goes,
+   * and not at all for a session that held none, as VS Code's terminal
+   * manager broadcasts its list at each disposal.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L941-L946
+   */
+  it('says the root\'s list once per terminal a disposed session held, and not for one that held none', async () => {
+    const { client, peer: p } = await opened();
+    const listed = (): number => actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').length;
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shelled', provider: 'claude' } });
+    for (const name of ['one', 'two']) {
+      await client.handle({
+        method: 'createTerminal',
+        params: { channel: `ahp-terminal:/${name}`, claim: { kind: 'session', session: 'ahp-session:/shelled', chat: chatUriFor('ahp-session:/shelled') }, cwd: uriOf(tmpdir()) },
+      });
+    }
+    await settle();
+    let before = listed();
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/bare' } });
+    await settle();
+    expect(listed() - before).toBe(0);
+    before = listed();
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/shelled' } });
+    await settle();
+    expect(listed() - before).toBe(2);
   });
 
   it('says a terminal that is still running is running', async () => {
