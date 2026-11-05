@@ -687,15 +687,18 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(actions(p, uri).at(-1)?.action).toEqual({ type: 'session/isReadChanged', isRead: false });
   });
 
-  it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
+  /*
+   * A client's reducer clears the bit from the turn's start itself, and the
+   * reference host says nothing more there.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
+   */
+  it('marks a chat unread when a turn starts, as a client reduces it, saying nothing of its own, and leaves its session read', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
 
     expect(await isRead(client, chatUri)).toBe(false);
     expect(await isRead(client, uri)).toBe(true);
-    // After the turn's start, which is where a client's reducer clears it.
-    const types = actions(p, chatUri).map((e) => e.action.type);
-    expect(types.indexOf('chat/turnStarted')).toBeLessThan(types.indexOf('chat/isReadChanged'));
+    expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/isReadChanged')).toEqual([]);
     expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
   });
 

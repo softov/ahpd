@@ -323,8 +323,11 @@ export function createSpawn(ctx: HostContext): Spawn {
     const action = withWorkerUri(uri, given);
     const was = ctx.stateOf(uri)?.status;
     dispatch(uri, action);
-    // Unread where the protocol's chat reducer makes it so.
-    if (clearsRead(String(action.type)) && sessions.has(ref.session)) chatFlag(ctx, ref.session, uri, Status.IsRead, false);
+    // Unread where the protocol's chat reducer makes it so, from the action a
+    // client reduces, with nothing said of this host's own.
+    if (clearsRead(String(action.type)) && sessions.has(ref.session)) {
+      kept.setChatFlags(idOf(ref.session), uri, kept.chatFlags(idOf(ref.session), uri) & ~Status.IsRead);
+    }
     /*
      * And whether the chat that carries it may still be moved.
      *
@@ -1387,11 +1390,11 @@ export function createSpawn(ctx: HostContext): Spawn {
           operationsMoved(uri);
         }
         /*
-         * The chat's read bit, and the session's at a turn's end, each moved by
-         * its own action on its own channel.
+         * The chat's read bit, and the session's at a turn's end.
          *
          * Cleared where the protocol's chat reducer clears it, so the bit kept
-         * here is the one a client reduces.
+         * here is the one a client reduces, from the action the client reduces
+         * it from: the reference host says nothing more at a turn's start.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
          *
          * At a turn's end the chat is marked unread again, because a client may
@@ -1418,7 +1421,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           if (action.type === 'chat/turnStarted' && ctx.commandTurns.has(commandKey)) {
             ctx.commandTurns.set(commandKey, (ctx.kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0);
           }
-          chatFlag(ctx, uri, chatUri, Status.IsRead, false);
+          kept.setChatFlags(idOf(uri), chatUri, kept.chatFlags(idOf(uri), chatUri) & ~Status.IsRead);
         }
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
           const command = ctx.commandTurns.has(commandKey);

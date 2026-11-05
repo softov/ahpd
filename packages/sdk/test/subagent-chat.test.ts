@@ -891,7 +891,7 @@ async function busyHost(stoppable = false) {
     .map((one) => (one.method === 'root/sessionAdded' ? one.params.summary : one.params.changes) as Bag);
   /** The activity bits of a status, without the read and archived flags. */
   const activity = (status: unknown): number => Number(status) & 31;
-  return { ask, uri, lead, row, activity };
+  return { host, ask, uri, lead, row, activity };
 }
 
 /** The row as a client holds it: each change spread over the one before. */
@@ -972,6 +972,30 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
    */
   expect(await readOn(ask, uri)).toBe(true);
+});
+
+/*
+ * A client's reducer clears a chat's read bit from its turn's start, and the
+ * reference host says nothing more there, a worker's chat as every chat.
+ */
+it('says nothing of its own when a worker chat\'s turn starts, and the chat reads unread', async () => {
+  const { host, ask, uri, lead } = await busyHost();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
+  await settle();
+  expect(await readOn(ask, worker)).toBe(false);
+  // What the worker's channel has said since it opened, as a client coming
+  // back to it is replayed.
+  const answer = await host.accept(peer()).handle({
+    method: 'reconnect',
+    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+  }) as { type: string; actions?: { channel: string; action: { type: string } }[] };
+  expect(answer.type).toBe('replay');
+  const said = (answer.actions ?? []).filter((one) => one.channel === worker).map((one) => one.action.type);
+  expect(said).toContain('chat/turnStarted');
+  expect(said).not.toContain('chat/isReadChanged');
+  finishWorker();
+  await settle();
 });
 
 /*
