@@ -82,14 +82,14 @@ The state is `{ plan: PlanRecord, tasks: TaskRecord[] }`, the records above as t
 
 | Action | When the client gets it |
 | --- | --- |
-| `{ type: 'x-ahpd-plans/taskAdded', task: TaskRecord }` | A task of the plan was made |
+| `{ type: 'x-ahpd-plans/taskAdded', task: TaskRecord }` | A task of the plan was made, or a task moved to the plan |
 | `{ type: 'x-ahpd-plans/taskSet', task: TaskRecord }` | A task of the plan changed |
 | `{ type: 'x-ahpd-plans/taskRemoved', taskId: string }` | A task left the plan, and `taskId` is the one it had |
 | `{ type: 'x-ahpd-plans/set', plan: PlanRecord }` | The plan itself changed |
 
 A subscribe needs `session:read`, which every built-in role holds. A client cannot dispatch an action to the channel: the records are the only writer, so a change made through a tool, a translation or a hand edit is the one the channel sends.
 
-A URI under the scheme with no plan behind it is refused rather than answered with an empty state. A task is published to the plan it now names. A removed task is the one action with no record to carry, so it says the id it had: the sweep removes a finished plan's tasks this way, and the channel the removal goes to is the one the task was last seen on.
+A subscribe to a URI under the scheme with no plan behind it is refused with `-32001` and `Resource not found: <uri>`, as VS Code's host refuses a subscribe it has no state for. A task is published to the plan it now names. A task that leaves a plan, for another plan or for none, is `taskRemoved` on the plan it left and `taskAdded` on the one it joined, as a chat that moves between sessions is removed from one catalog and added to the other. A removal says the id the task had: the sweep removes a finished plan's tasks this way, and the channel the removal goes to is the one the task was last seen on.
 
 The channel is an `x-ahpd` extension and not part of the protocol yet. [The proposal](../../.project/proposals/agent-host-protocol-plan-channel.md) is the text for filing it upstream.
 
