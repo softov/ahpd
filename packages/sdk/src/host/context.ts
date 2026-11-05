@@ -105,6 +105,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   known: Set<string>;
   /** When each client with no connection open went, by client id: what its record's retention counts from. */
   lastSeen: Map<string, number>;
+  /** Every wait one client's closed connections began is over, because it is back. */
+  waitsOver(clientId: string): void;
   /**
    * The last locale each client sent, by client id.
    *

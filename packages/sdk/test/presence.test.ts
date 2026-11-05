@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -619,6 +620,68 @@ it('has not gone anywhere when it subscribes again inside the window', async () 
   expect(actions(a.peer, URI).filter((one) => one.type === 'session/activeClientSet')).toHaveLength(announced);
   expect(offered.at(-1)).toContain('back-soon__openFile');
   expect(spawned).toHaveLength(1);
+});
+
+/*
+ * A subscription to any chat of a session is presence in it, as VS Code's host
+ * counts one, so a client that left the session's own channel but still
+ * watches one of its chats stays.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
+ */
+it('keeps a client in while it watches one of the session\'s chats', async () => {
+  const held = host();
+  const a = await joins(held, 'watcher');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  const b = await joins(held, 'chatty');
+  await enter(b.client, 'chatty');
+  await b.client.handle({ method: 'subscribe', params: { channel: chatUriFor(URI) } });
+  await b.client.handle({ method: 'unsubscribe', params: { channel: URI } });
+  await settle();
+  expect(removals(a.peer, URI)).toEqual([]);
+  expect(await clientsIn(a.client, URI)).toEqual(['chatty']);
+
+  await b.client.handle({ method: 'unsubscribe', params: { channel: chatUriFor(URI) } });
+  await settle();
+  expect(removals(a.peer, URI)).toMatchObject([{ clientId: 'chatty' }]);
+});
+
+/*
+ * A client that comes back has every wait called off, whichever sessions it
+ * subscribes to again, as VS Code's host disposes all of a returning client's
+ * disconnect timeouts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1412-L1414
+ */
+it('calls off every wait of a client that comes back', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const held = host();
+  const a = await joins(held, 'watcher');
+  const OTHER = 'ahp-session:/other';
+  for (const session of [URI, OTHER]) {
+    await a.client.handle({ method: 'createSession', params: { channel: session, provider: 'echo' } });
+    await a.client.handle({ method: 'subscribe', params: { channel: session } });
+  }
+  const b = await joins(held, 'traveller');
+  for (const session of [URI, OTHER]) {
+    await b.client.handle({ method: 'subscribe', params: { channel: session } });
+    await b.client.handle({
+      method: 'dispatchAction',
+      params: { channel: session, action: { type: 'session/activeClientSet', activeClient: { clientId: 'traveller', tools: [] } } },
+    });
+  }
+  b.client.close();
+  await settle();
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  // Back on a new connection, watching the first session alone.
+  const again = await joins(held, 'traveller');
+  await again.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await settle();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(removals(a.peer, URI)).toEqual([]);
+  expect(removals(a.peer, OTHER)).toEqual([]);
+  expect(await clientsIn(a.client, OTHER)).toEqual(['traveller']);
 });
 
 it('leaves no wait running when the host closes', async () => {

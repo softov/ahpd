@@ -1225,21 +1225,28 @@ export function createHost(options: HostOptions): Host {
   /** Who this session currently has in it. Always a list, because the field is required. */
   const activeClientsOf = (uri: string): Bag[] => [...(presence.get(idOf(uri))?.values() ?? [])];
 
+  /** The session a channel is, or the session that holds the chat it is. */
+  const sessionOfChannel = (channel: string): string => (spaceOf(channel) === 'chat' ? sessionFor(channel) : channel);
+
   /**
    * Take a client out of a session, if nothing else is holding it there.
    *
    * The protocol names three ways this happens - unsubscribe, disconnect
    * without reconnecting, reconnect without resubscribing - and they are the
    * same condition seen from three places: no connection with that client id
-   * is watching that session any more. Checked rather than assumed, because
-   * one person can have two windows open on one session and closing the first
-   * must not remove them from it.
+   * is watching that session, or any chat it holds, any more, as the
+   * reference host counts a subscription to any chat of a session as
+   * presence in it. Checked rather than assumed, because one person can have
+   * two windows open on one session and closing the first must not remove
+   * them from it. `channel` is the session or one of its chats.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
    */
-  const leaves = (uri: string, clientId: string): void => {
+  const leaves = (channel: string, clientId: string): void => {
+    const uri = sessionOfChannel(channel);
     const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
     for (const connection of connections) {
-      if (connection.clientId === clientId && connection.watching.has(uri)) return;
+      if (connection.clientId === clientId && [...connection.watching].some((one) => sessionOfChannel(one) === uri)) return;
     }
     // The entry held under this client's id, which is the id the entry carries.
     held.delete(clientId);
@@ -1258,35 +1265,30 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
-   * The places a client's closed connection left behind, by session and client.
+   * The places a client's closed connections left behind, by client and then
+   * session.
    *
    * Keyed by what a returning connection comes back as rather than by the
    * connection, because that is the whole of what the wait is about: the client
    * is one client under one id, and a socket that drops and a socket that
    * arrives a moment later are the same client to every session it was in.
    */
-  const graces = new Map<string, ReturnType<typeof setTimeout>>();
-
-  /** The key one client's wait in one session is held under. */
-  const waitKey = (uri: string, clientId: string): string => `${uri}\u0000${clientId}`;
+  const graces = new Map<string, Map<string, ReturnType<typeof setTimeout>>>();
 
   /**
-   * The wait is over, because this client is watching this session.
-   *
-   * Called from every subscription, which is why it takes a channel rather
-   * than a session: what a client subscribes to is a chat as often as the
-   * session itself, and either one means the client is here for both.
+   * Every wait of one client is over, because the client is back: a
+   * connection of it arrived or subscribed, as the reference host disposes
+   * all of a client's disconnect timeouts when it connects again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1412-L1414
    */
-  const waitingOver = (channel: string, clientId: string): void => {
-    const key = waitKey(channel, clientId);
-    const timer = graces.get(key);
-    if (timer === undefined) return;
-    clearTimeout(timer);
-    graces.delete(key);
+  const waitsOver = (clientId: string): void => {
+    for (const timer of graces.get(clientId)?.values() ?? []) clearTimeout(timer);
+    graces.delete(clientId);
   };
 
   /**
-   * A client's connection has closed: its place in this session is kept.
+   * A client's connection has closed: its place in the session the channel
+   * is, or holds, is kept.
    *
    * Nothing is kept for a client that holds no place there, which is every
    * session a connection watched without ever announcing itself in it -
@@ -1296,18 +1298,22 @@ export function createHost(options: HostOptions): Host {
    * running: what is being measured is how long this client has been gone, and
    * a second window closing is a client that is still here until it does.
    */
-  const waitsOut = (uri: string, clientId: string): void => {
+  const waitsOut = (channel: string, clientId: string): void => {
+    const uri = sessionOfChannel(channel);
     if (!presence.get(idOf(uri))?.has(clientId)) return;
-    waitingOver(uri, clientId);
-    graces.set(waitKey(uri, clientId), setTimeout(() => {
-      graces.delete(waitKey(uri, clientId));
+    const waits = graces.get(clientId) ?? new Map<string, ReturnType<typeof setTimeout>>();
+    graces.set(clientId, waits);
+    clearTimeout(waits.get(uri));
+    waits.set(uri, setTimeout(() => {
+      waits.delete(uri);
+      if (waits.size === 0 && graces.get(clientId) === waits) graces.delete(clientId);
       leaves(uri, clientId);
     }, CLIENT_DISCONNECT_GRACE_MS));
   };
 
   /** Let every wait go, for a host that is closing and will remove nothing later. */
   const gracesOver = (): void => {
-    for (const timer of graces.values()) clearTimeout(timer);
+    for (const waits of graces.values()) for (const timer of waits.values()) clearTimeout(timer);
     graces.clear();
   };
 
@@ -1338,7 +1344,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, lastSeen, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, lastSeen, waitsOver, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -1446,7 +1452,7 @@ export function createHost(options: HostOptions): Host {
     connection?: Connection,
     view?: SubscribeView,
   ): Promise<Record<string, unknown> | undefined> => {
-    if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
+    if (connection !== undefined) waitsOver(connection.clientId || 'anonymous');
     return backendSnapshot(channel, connection, view);
   };
   /*
@@ -2289,10 +2295,13 @@ export function createHost(options: HostOptions): Host {
            * and the one that waits rather than leaving at once. The connection
            * is out of the set above before the wait begins, so what the wait
            * finds at the end of it is every *other* connection this client has
-           * and not this one; a client that subscribes again inside the window
-           * has not gone anywhere, and the wait is called off.
+           * and not this one; a client that comes back inside the window has
+           * not gone anywhere, and every wait is called off. Each session the
+           * client is in waits, the ones this connection never watched among
+           * them, as the reference host times out a client's every session.
            */
-          for (const channel of was) waitsOut(channel, connection.clientId || 'anonymous');
+          const gone = connection.clientId || 'anonymous';
+          for (const [id, held] of presence) if (held.has(gone)) waitsOut(ctx.nameOf(id), gone);
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);

@@ -374,23 +374,32 @@ it('refuses a result from a client that does not own the call', async () => {
 
 it('fails a call whose client went away and finishes the turn', async () => {
   const model = createFakeModel({ script: script('carried on'), stream: true });
-  const { client, peer: p, uri, chatUri } = await offering(model);
+  const { host, client, peer: p, uri, chatUri } = await offering(model);
+  // Somebody else on the chat, who sees how the turn ends.
+  const watcher = await outsider(host);
+  await watcher.client.handle({ method: 'subscribe', params: { channel: chatUri } });
   begin(client, chatUri, 't1', 'open it');
   await until(() => called(p, chatUri));
 
-  // The protocol's way a client stops being active: it lets the session go,
-  // which takes its tools with it and fails the call it was running.
+  /*
+   * The protocol's way a client stops being active: it lets the session and
+   * every chat of it go, which takes its tools with it and fails the call it
+   * was running, as VS Code counts a subscription to the session or to any of
+   * its chats as presence.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
+   */
   await client.handle({ method: 'unsubscribe', params: { channel: uri } });
-  await until(() => ended(p, chatUri));
+  await client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
+  await until(() => ended(watcher.peer, chatUri));
 
-  const done = completion(p, chatUri);
+  const done = completion(watcher.peer, chatUri);
   expect(done?.success).toBe(false);
   const error = done?.error as { message?: string } | undefined;
   expect(error?.message).toContain('no longer here');
   // The failure is the tool result the model read, and the run went on.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('no longer here');
   // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
-  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
+  expect(types(watcher.peer, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('raises one entry for a call a client runs, and removes it when the client answers', async () => {

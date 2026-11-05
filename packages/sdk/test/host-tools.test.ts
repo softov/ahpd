@@ -1501,7 +1501,9 @@ describe('tools a client contributes', () => {
     await settle();
 
     // Unsubscribing is one of the three ways the protocol says a client stops
-    // being active in a session.
+    // being active in a session, from the session and every chat of it it
+    // watches, as VS Code's host keeps a client watching any of them.
+    client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
     client.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
     const answer = await answering;
@@ -2392,14 +2394,16 @@ describe('a client\'s call, held by the backend', () => {
   });
 
   it('fails the call of a client that leaves, naming the other client\'s tool', async () => {
-    const { held, clients, uri } = await open(['a', 'b']);
+    const { held, clients, uri, chatUri } = await open(['a', 'b']);
     const { calls } = held();
     const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
     const waiting = calls.wait('call-1');
     await settle();
 
     // Unsubscribing is one of the three ways the protocol says a client stops
-    // being active in a session.
+    // being active in a session, from the session and every chat of it it
+    // watches, as VS Code's host keeps a client watching any of them.
+    clients[0]?.handle({ method: 'unsubscribe', params: { channel: chatUri } });
     clients[0]?.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
 
