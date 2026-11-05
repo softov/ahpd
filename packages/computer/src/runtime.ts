@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix } from 'node:path';
+import { delimiter, dirname, join, posix, resolve } from 'node:path';
 import { hostPathOf, machinePathOf, ownerOf, partTarget } from '@ahpd/sdk';
 import type { BroughtBack, Owner, ResolvedSeed, Spawn, SpawnOptions } from '@ahpd/sdk';
 import { parse as parseJsonc } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
+import { isMap, isScalar, parseDocument as parseYamlDocument } from 'yaml';
 import { cliOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, readConfiguration, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
@@ -1328,14 +1329,15 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  * - the working directory, as `workspaceFolder` with the `workspaceMount` that
  *   puts the folder there, since the CLI mounts at `/workspaces/<basename>`
  *   without it and the path a command is given would name nothing;
- * - the name, the agents, the profile and the limits as `runArgs`, which is the one place a
- *   plain Docker label and a limit reach a container the CLI makes;
- * - each part, as a `--mount type=image` in `runArgs` where `route` is
- *   `image`, or as a read-only volume in `mounts` where it is `volume`, and the
- *   `ahpd.parts` label beside them;
+ * - the machine's `docker run` options (`runOptionsOf`), as `runArgs` for an
+ *   image or Dockerfile definition, the place the CLI takes a plain Docker
+ *   label and a limit from, and for a Compose definition as a Compose file of
+ *   their own (`composeOverrideOf`);
+ * - each part, as an image mount among those options where `route` is
+ *   `image`, or as a read-only volume in `mounts` where it is `volume`;
  * - the git mounts, as `mounts` too: the host's objects read-only, the file a
  *   linked worktree's `.git` is replaced by, and the volume the machine commits
- *   into, with the guard as the `ahpd.git` label in `runArgs`.
+ *   into, with the guard as the `ahpd.git` label.
  *
  * A read-only mount is the CLI's own string spelling and not the object form,
  * because the CLI renders an object mount as `type`, `source` and `target` and
@@ -1406,33 +1408,133 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       held.workspaceFolder = machinePathOf(spec.devcontainer);
     }
   }
-  const runArgs = [...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : [])];
-  runArgs.push('--label', `${MACHINE_NAME}=${spec.name}`);
-  if (spec.user !== undefined) runArgs.push('--label', `${MACHINE_USER}=${spec.user}`);
-  if (spec.gitDir !== undefined) runArgs.push('--label', `${MACHINE_GIT}=${guard}`);
-  const agents = spec.agents ?? [];
-  if (agents.length > 0) {
-    runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
+  // A Compose definition takes its `docker run` options from a Compose file of
+  // their own, which `composeOverrideOf` writes.
+  if (config.dockerComposeFile === undefined) {
+    const options = runOptionsOf(spec, guard, route);
+    held.runArgs = [
+      ...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : []),
+      ...Object.entries(options.labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
+      ...(options.cpus === undefined ? [] : ['--cpus', options.cpus]),
+      ...(options.memory === undefined ? [] : ['--memory', options.memory]),
+      // A part from its own image, which only `runArgs` can spell: the CLI
+      // passes the entry to its `docker run` as written.
+      ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
+    ];
   }
-  // The profile, so a daemon that did not make the container still reads its
-  // recipe - the needs whose vault-named values it reads again among them.
-  if (spec.profile !== undefined && spec.profile !== '') {
-    runArgs.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
-  }
-  if (spec.cpus !== undefined) runArgs.push('--cpus', spec.cpus);
-  if (spec.memory !== undefined) runArgs.push('--memory', spec.memory);
-  // A part from its own image, which only `runArgs` can spell: the CLI passes
-  // the entry to its `docker run` as written.
-  if (route === 'image') {
-    for (const part of spec.parts ?? []) runArgs.push('--mount', imageMountOf(part));
-  }
-  // The parts it was made with, which is what a session needing one is
-  // checked against and what puts each part's `bin` on every command's `PATH`.
-  if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts, spec.hostParts)}`);
-  // Whether its agents' state lives in volumes, which a remove reads back.
-  if ((spec.states ?? []).length > 0) runArgs.push('--label', `${MACHINE_STATE}=volume`);
-  held.runArgs = runArgs;
   return held;
+};
+
+/**
+ * The `docker run` options a container the CLI makes is given: the machine's
+ * labels, its limits, and each part mounted from its own image where `route`
+ * is `image`.
+ *
+ * The labels are the name; the user and the guard a git directory is made
+ * with; the agents; the profile, so a daemon that did not make the container
+ * still reads its recipe, the needs whose vault-named values it reads again
+ * among them; the parts, which a session needing one is checked against and
+ * which put each part's `bin` on every command's `PATH`; and whether its
+ * agents' state lives in volumes, which a remove reads back.
+ */
+const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
+  labels: Record<string, string>;
+  cpus?: string;
+  memory?: string;
+  images: MadePart[];
+} => {
+  const agents = spec.agents ?? [];
+  return {
+    labels: {
+      [MACHINE_NAME]: spec.name,
+      ...(spec.user === undefined ? {} : { [MACHINE_USER]: spec.user }),
+      ...(spec.gitDir === undefined ? {} : { [MACHINE_GIT]: guard }),
+      ...(agents.length === 0 ? {} : { [MACHINE_AGENTS]: agents.join(',') }),
+      ...(spec.profile === undefined || spec.profile === '' ? {} : { [MACHINE_PROFILE]: spec.profile }),
+      ...(spec.parts === undefined ? {} : { [MACHINE_PARTS]: partsLabel(spec.parts, spec.hostParts) }),
+      ...((spec.states ?? []).length === 0 ? {} : { [MACHINE_STATE]: 'volume' }),
+    },
+    ...(spec.cpus === undefined ? {} : { cpus: spec.cpus }),
+    ...(spec.memory === undefined ? {} : { memory: spec.memory }),
+    images: route === 'image' ? spec.parts ?? [] : [],
+  };
+};
+
+/**
+ * A Compose definition's `docker run` options, as a Compose override of its
+ * service.
+ *
+ * The CLI gives `runArgs` to an image or Dockerfile definition alone, so these
+ * are written as VS Code writes its sandbox's options for a definition with
+ * `dockerComposeFile` (devContainerSandbox.ts L67-L94 and L107-L141 at
+ * 6b68d3fe): a `compose.json` in the override's own directory, owner-only,
+ * carrying the first Compose file's `version` as the CLI carries it into its
+ * own overrides, and added after the definition's files. Where the definition
+ * names `[]`, the CLI's own discovery is followed (`COMPOSE_FILE`, the
+ * workspace's `.env`, else `docker-compose.yml` with its override beside it),
+ * and the list goes to the CLI as `COMPOSE_FILE`, which keeps the workspace's
+ * `.env` reaching it.
+ *
+ * The labels are the service's `labels`, the limits its `cpus` and
+ * `mem_limit`, and a part from its own image a `volumes` entry of Compose's
+ * `image` type.
+ */
+const composeOverrideOf = (
+  options: ReturnType<typeof runOptionsOf>,
+  configuration: DevContainerConfiguration,
+  config: Record<string, unknown>,
+  folder: string,
+  directory: string,
+  environment: Record<string, string | undefined>,
+): { dockerComposeFile: string[] } | { COMPOSE_FILE: string } => {
+  const declared = config.dockerComposeFile;
+  const service = configuration.service ?? config.service;
+  const files = typeof declared === 'string' ? [declared] : declared;
+  if (!Array.isArray(files) || files.some((one) => typeof one !== 'string') || typeof service !== 'string' || service === '') {
+    throw new Error('A computer requires a Dev Container Compose configuration with files and a service.');
+  }
+  const implicit = files.length === 0;
+  const configured = configuration.dockerComposeFile ?? (files as string[]);
+  const named = typeof configured === 'string' ? [configured] : configured;
+  // The CLI's discovery, with its deliberately limited `.env` syntax, as VS
+  // Code's `discoverComposeFiles` matches it (devContainerSandbox.ts L67-L94).
+  const discovered = (): string[] => {
+    let composeFile = environment.COMPOSE_FILE;
+    if (composeFile === undefined || composeFile === '') {
+      const env = join(folder, '.env');
+      composeFile = existsSync(env) && statSync(env).isFile() ? /^COMPOSE_FILE=(.+)$/m.exec(readFileSync(env, 'utf8'))?.[1]?.trim() : undefined;
+    }
+    if (composeFile !== undefined && composeFile !== '') return composeFile.split(delimiter).map((one) => resolve(folder, one));
+    const override = resolve(folder, 'docker-compose.override.yml');
+    return [resolve(folder, 'docker-compose.yml'), ...(existsSync(override) && statSync(override).isFile() ? [override] : [])];
+  };
+  const read = implicit ? discovered() : named;
+  const source = readFileSync(resolve(implicit ? folder : dirname(configuration.configPath), read[0] ?? ''), 'utf8');
+  const document = parseYamlDocument(/^\s*(version:.*)$/m.exec(source)?.[1] ?? source);
+  const version = isMap(document.contents) ? document.contents.get('version', true) : undefined;
+  const composePath = join(directory, 'compose.json');
+  writeFileSync(composePath, JSON.stringify({
+    ...(isScalar(version) ? { version: version.source ?? String(version.value) } : {}),
+    services: {
+      [service]: {
+        labels: options.labels,
+        ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
+        ...(options.memory === undefined ? {} : { mem_limit: options.memory }),
+        ...(options.images.length === 0 ? {} : {
+          volumes: options.images.map((part) => ({
+            type: 'image',
+            source: part.tag,
+            target: partTarget(part.id),
+            read_only: true,
+            image: { subpath: partTarget(part.id).slice(1) },
+          })),
+        }),
+      },
+    },
+  }), { mode: 0o600 });
+  return implicit
+    ? { COMPOSE_FILE: [...read, composePath].join(delimiter) }
+    : { dockerComposeFile: [...(files as string[]), composePath] };
 };
 
 /**
@@ -2811,9 +2913,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (spec.devcontainer !== undefined) {
         const cli = cliOf(options.devcontainerCli);
         // The CLI's two runs, `read-configuration` and `up`, each saying what
-        // installs the CLI where it could not be started.
-        const run = (argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
-          runCli(cli, argv).catch((error: unknown) => {
+        // installs the CLI where it could not be started, `up` with the
+        // `COMPOSE_FILE` a Compose override may give it.
+        const run = (argv: string[], env?: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> =>
+          runCli(env === undefined ? cli : { ...cli, env: { ...(cli.env ?? {}), ...env } }, argv).catch((error: unknown) => {
             throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer ?? ''} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
           });
         const argv = [
@@ -2886,12 +2989,24 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         const override = join(scratch, 'override.json');
         let ran: { code: number; stdout: string; stderr: string };
         try {
-          writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route, git), undefined, 2), { mode: 0o600 });
+          const held = overrideOf(withParts, config, reached.route, git);
+          const compose = config.dockerComposeFile === undefined
+            ? undefined
+            : composeOverrideOf(
+              runOptionsOf(withParts, guard, reached.route),
+              configuration,
+              config,
+              spec.devcontainer,
+              scratch,
+              { ...process.env, ...(cli.env ?? {}) },
+            );
+          if (compose !== undefined && 'dockerComposeFile' in compose) held.dockerComposeFile = compose.dockerComposeFile;
+          writeFileSync(override, JSON.stringify(held, undefined, 2), { mode: 0o600 });
           // The folder's own file stays the base for its relative paths and
           // its identity, as VS Code passes it beside its override
           // (devContainerSandbox.ts L101 and L151 at 6b68d3fe).
           argv.push('--config', configuration.configPath, '--override-config', override);
-          ran = await run(argv);
+          ran = await run(argv, compose !== undefined && 'COMPOSE_FILE' in compose ? compose : undefined);
         }
         finally {
           // The directory holds the definition's own values, so it goes whether

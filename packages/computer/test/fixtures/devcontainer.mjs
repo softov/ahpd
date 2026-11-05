@@ -13,7 +13,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from 'jsonc-parser';
 
@@ -182,6 +182,20 @@ if (verb === 'up') {
       keep();
       process.exit(1);
     }
+    /*
+     * A Compose definition's files, which the CLI reads in place of `runArgs`:
+     * the override's `dockerComposeFile`, or for `[]` the `COMPOSE_FILE` it is
+     * run with. A JSON one is kept as the CLI was handed it, mode and all,
+     * since it is gone once `up` answers.
+     */
+    if (said.dockerComposeFile !== undefined) {
+      const listed = typeof said.dockerComposeFile === 'string' ? [said.dockerComposeFile] : said.dockerComposeFile;
+      const files = listed.length === 0 ? String(process.env.COMPOSE_FILE ?? '').split(delimiter).filter((one) => one !== '') : listed;
+      held.composeFiles = files;
+      for (const file of files.filter((one) => one.endsWith('.json'))) {
+        (held.composes ??= []).push({ where: file, mode: statSync(file).mode & 0o777, config: JSON.parse(readFileSync(file, 'utf8')) });
+      }
+    }
     const recipes = ['image', 'dockerFile', 'dockerComposeFile'];
     if (!recipes.some((one) => said[one] !== undefined)) {
       const at = args.indexOf('--workspace-folder');
@@ -261,7 +275,13 @@ if (verb === 'up') {
          * what keeps a name among them from giving a folder a second
          * container.
          */
-        const runArgs = Array.isArray(said.runArgs) ? said.runArgs : [];
+        // `runArgs` reach an image or Dockerfile definition's container alone;
+        // a Compose one takes its service's labels from its Compose files.
+        const runArgs = said.dockerComposeFile === undefined && Array.isArray(said.runArgs) ? said.runArgs : [];
+        for (const one of held.composes ?? []) {
+          const service = one.config?.services?.[said.service] ?? {};
+          Object.assign(labels, service.labels ?? {});
+        }
         const typed = [];
         for (let i = 0; i < runArgs.length; i++) {
           if (runArgs[i] === '--label') {

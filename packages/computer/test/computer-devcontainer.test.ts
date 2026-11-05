@@ -76,6 +76,10 @@ interface DevHeld {
   commands: string[];
   /** Every override config an `up` was handed, as it was on disk. */
   overrides?: { where: string; mode: number; config: Record<string, unknown> }[];
+  /** A Compose definition's files, as the last `up` read them. */
+  composeFiles?: string[];
+  /** Every JSON Compose file an `up` was handed, as it was on disk. */
+  composes?: { where: string; mode: number; config: Record<string, unknown> }[];
 }
 const devHeld = (state: string): DevHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DevHeld
@@ -1384,6 +1388,65 @@ it('records the agents a body was made for, and the limits, in the override conf
     'ahpd.devcontainer.folder': folder,
     'ahpd.name': 'box',
   });
+  await answered(dockerState, 6);
+});
+
+/*
+ * The CLI gives `runArgs` to an image or Dockerfile definition alone, so a
+ * Compose definition's labels and limits are a Compose override of its
+ * service, added after its own files, as VS Code adds its sandbox's options.
+ */
+it('gives a Compose definition its labels and limits in a Compose override of its service', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: 'compose.yml', service: 'app', workspaceFolder: '/workspaces/app' }));
+  writeFileSync(join(folder, '.devcontainer', 'compose.yml'), 'version: \'3.8\'\nservices:\n  app:\n    image: base\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ source: 'devcontainer', runtime: 'docker', image: '', devcontainer: folder, cpus: '2', memory: '2g', workdir: '' }),
+    encoding: 'utf-8',
+  });
+
+  const config = overrideOf(devState)?.config ?? {};
+  expect(config.runArgs).toBeUndefined();
+  const files = config.dockerComposeFile as string[];
+  expect(files[0]).toBe('compose.yml');
+  const compose = devHeld(devState).composes?.[0];
+  expect(compose?.where).toBe(files[1]);
+  expect(compose?.mode).toBe(0o600);
+  expect(compose?.config).toEqual({
+    version: '3.8',
+    services: { app: { labels: { 'ahpd.name': 'box' }, cpus: '2', mem_limit: '2g' } },
+  });
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box' });
+  await answered(dockerState, 6);
+});
+
+/*
+ * A Compose definition naming `[]` leaves its files to the CLI's discovery,
+ * which is followed here, and the override goes after them in `COMPOSE_FILE`.
+ */
+it('gives a Compose definition naming no files its override after the files the CLI finds', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: [], service: 'app' }));
+  writeFileSync(join(folder, 'docker-compose.yml'), 'services:\n  app:\n    image: base\n');
+  writeFileSync(join(folder, 'docker-compose.override.yml'), 'services:\n  app:\n    environment: [A=1]\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+
+  expect(overrideOf(devState)?.config.dockerComposeFile).toEqual([]);
+  const files = devHeld(devState).composeFiles ?? [];
+  expect(files.slice(0, 2)).toEqual([join(folder, 'docker-compose.yml'), join(folder, 'docker-compose.override.yml')]);
+  expect(devHeld(devState).composes?.[0]?.config).toEqual({ services: { app: { labels: { 'ahpd.name': 'box' } } } });
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box' });
   await answered(dockerState, 6);
 });
 
