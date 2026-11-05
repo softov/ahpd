@@ -1,5 +1,5 @@
 import { probe } from './probe.js';
-import { offeredServers, serversFor } from './mcp.js';
+import { serversFor, toClaudeMcpServers } from './mcp.js';
 import { createSession } from './session.js';
 import { restoreTerminalOutputs } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
@@ -650,7 +650,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        */
       mcpServers: {
         ...serversFor([cwd, ...(start.additional ?? [])], start.trusted),
-        ...offeredServers(start.mcpServers, cwd, options.log),
+        ...toClaudeMcpServers(start.mcpServers, cwd, options.log),
       },
       /*
        * The client plugins, as the directories the host copied them into.

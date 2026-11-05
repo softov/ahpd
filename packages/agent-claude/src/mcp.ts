@@ -15,10 +15,11 @@ import type { Bag, McpServer } from '@ahpd/sdk';
  * as it is. A stdio server goes without its directory, which the SDK has no
  * field for: the CLI starts it in the session's own folder, so one whose
  * directory is another folder is left out and said, as the reference leaves
- * out a server whose directory it cannot represent.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L235-L266
+ * out a server whose directory it cannot represent: VS Code's Claude's
+ * `toClaudeMcpServers`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L235-L266
  */
-export function offeredServers(
+export function toClaudeMcpServers(
   servers: Record<string, McpServer> | undefined,
   folder: string,
   say?: (line: string) => void,

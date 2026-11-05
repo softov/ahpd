@@ -20,7 +20,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 vi.mock('../../agent-claude/src/mcp.js', () => ({
   // The host offers none of its own here.
-  offeredServers: () => ({}),
+  toClaudeMcpServers: () => ({}),
   serversFor: () => ({ desk: { type: 'http', url: 'https://desk.example/desk' } }),
   urlOf: (config: { url?: string }) => config.url,
   protectedResource: async () => ({ resource: 'https://desk.example/', authorization_servers: ['https://login.example'] }),
