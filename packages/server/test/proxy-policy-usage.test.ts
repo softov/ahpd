@@ -576,7 +576,7 @@ describe('the call is recorded', () => {
     const { served, usage } = await setup();
     const key = await who.users.mintToken!('ana', { meta: { env: 'prod' } });
     const sent = await send(served.port, CHAT, {
-      headers: { 'x-api-key': key.secret, 'x-ahp-meta': 'env=dev,client=pi' },
+      headers: { 'x-api-key': key.secret, 'x-ahp-meta': '{"env":"dev","client":"pi"}' },
       body: { model: 'local/default' },
     });
     expect(sent.status).toBe(200);

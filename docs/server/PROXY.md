@@ -72,7 +72,7 @@ A person needs `proxy:call` to call and `proxy:models` to list the models; a tea
 
 A person's call is charged to a team and project, named in an `X-AHP-Scope` header or a `?scope=` query (`backend` or `backend:billing`), and to their primary otherwise. Neither the header nor the query goes to the provider.
 
-A call adds meta to what its key holds with an `X-AHP-Meta` header, written `k=v,k=v` such as `env=dev,client=pi`. The record carries the key's meta and the header's entries together, and a name the key holds keeps the key's value. A header that does not parse is refused with 400, and the call is not sent. No `X-AHP-*` header goes to the provider.
+A call adds meta to what its key holds as LiteLLM takes a call's `spend_logs_metadata`: an `X-AHP-Meta` header whose value is a JSON object of string values, such as `{"env":"dev","client":"pi"}`, and the same object as the body's `metadata.spend_logs_metadata`. The record carries the key's meta, the header's entries and the body's together; a name the key holds keeps the key's value, and a name the header holds keeps the header's over the body's. A header or a body meta that is not such an object is refused with 400, and the call is not sent. No `X-AHP-*` header goes to the provider, and neither does `spend_logs_metadata`.
 
 A key can carry its own scope, so a client that is handed nothing but a base URL and a key is charged where the key says. That is what pi needs:
 
