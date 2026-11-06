@@ -223,19 +223,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * chat's state, changesets, canvases and in-progress turn: a canvas's
      * resource names the chat, and the chat keeps its URI.
      */
-    /*
-     * A session that did not exist a moment ago, and is running now with the
-     * moved chat's turns: announced, then said ready, as VS Code's host
-     * announces a session made with its conversation and then says it ready.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6398-L6411
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6488-L6490
-     */
-    if (to === undefined) {
-      keepProvider(into, held.agent, found.chat);
-      sessionAdded(into);
-      dispatch(into, { type: 'session/ready' });
-      activeSessionsMoved();
-    }
+    if (to === undefined) keepProvider(into, held.agent, found.chat);
     /*
      * And every worker chat the moved chat carries, which the protocol says
      * goes with it: a worker is a conversation inside a call of this chat, and
@@ -284,16 +272,28 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * destination that was there before has its default chat take its own
      * title first, as the reference host's move does.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1921
+     *
+     * A session made for the chat is announced once the chat has left the
+     * source, ready and holding it in its catalogue, as VS Code's host
+     * promotes a chat: its state is made ready with the chats it takes, so
+     * neither a ready nor a chat added is said on it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2025-L2079
      */
     if (to !== undefined) ctx.snapshotDefaultChatTitle(into);
     dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
     for (const one of carried) dispatch(found.uri, { type: 'session/chatRemoved', chat: one });
-    dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, found.chat) });
-    for (const one of carried) {
-      const ref = subagents.get(one);
-      if (ref !== undefined) dispatch(into, { type: 'session/chatAdded', summary: subagentSummary(one, ref) });
+    if (to === undefined) {
+      sessionAdded(into);
+      activeSessionsMoved();
     }
-    await chatsReordered(into);
+    else {
+      dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, found.chat) });
+      for (const one of carried) {
+        const ref = subagents.get(one);
+        if (ref !== undefined) dispatch(into, { type: 'session/chatAdded', summary: subagentSummary(one, ref) });
+      }
+      await chatsReordered(into);
+    }
     /*
      * The read bits, where an unread chat that counts toward its session's
      * read state moved: a destination that was read is unread now, and a

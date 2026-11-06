@@ -2060,6 +2060,38 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  it('announces a session made for a moved chat once the chat has left its source, ready with the chat, as VS Code\'s host promotes one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const first = await chatty(join(root, 'sessions'), backend([]));
+      await send(first.client, PEER, 't1', 'over here');
+      const outgoing = (await opened(first.client, LIVE)).state.defaultChat as string;
+      await send(first.client, outgoing, 't0', 'the one it leaves');
+      const from = first.p.notes.length;
+      const answer = await first.client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'newSession' } },
+      }) as { session: string };
+      await settle(20);
+      const told = first.p.notes.slice(from);
+      const removedAt = told.findIndex((one) => one.method === 'action'
+        && (one.params as Bag).channel === LIVE && ((one.params as Bag).action as Bag).type === 'session/chatRemoved');
+      const addedAt = told.findIndex((one) => one.method === 'root/sessionAdded'
+        && ((one.params as Bag).summary as Bag).resource === answer.session);
+      expect(removedAt).toBeGreaterThanOrEqual(0);
+      expect(addedAt).toBeGreaterThan(removedAt);
+      // Nothing said on the new session itself: it is made ready, holding the chat.
+      expect(told.filter((one) => one.method === 'action' && (one.params as Bag).channel === answer.session)
+        .map((one) => ((one.params as Bag).action as Bag).type)).toEqual([]);
+      const there = await opened(first.client, answer.session);
+      expect((there.state as { lifecycle?: string }).lifecycle ?? 'ready').toBe('ready');
+      expect(listed(there)).toEqual([PEER]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('makes a session for a moved chat, and it lists once after a restart', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
