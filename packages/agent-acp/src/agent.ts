@@ -59,8 +59,17 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
   const provider = options.provider ?? 'acp';
   const displayName = options.displayName ?? 'ACP';
 
-  /** The modes the preset names for this agent, which are the agent's own. */
-  const presetModes = (options.modes ?? []).map((one) => ({ ...one }));
+  /**
+   * The modes this agent lists: the preset's, refreshed from the modes the
+   * last session's server reported.
+   *
+   * The preset's list is what a client draws before any session of this agent
+   * has opened, and a session that hears its server's modes hands them here,
+   * so the next session a client sets up offers what the server last named.
+   * Kept in memory: the preset is the answer after a restart, and the server
+   * repeats its own list on every `session/new`.
+   */
+  let lastModes = (options.modes ?? []).map((one) => ({ ...one }));
 
   /**
    * What a session may be told.
@@ -71,9 +80,9 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
    * arrives on `sendMessage`, so advertising a model here would be a second
    * answer to a question the server already owns.
    *
-   * The approvals control carries the modes the preset names, as its `enum`
+   * The approvals control carries the modes this agent lists, as its `enum`
    * and their names as its labels, so a harness nobody has found the modes for
-   * keeps a text box. The modes each session's server offers are that
+   * keeps a text box. The modes each session's server offers are also that
    * session's own, reported as its read-only `availableApprovalModes`, as VS
    * Code's Copilot agent reports the approval modes its session may take.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L162
@@ -92,9 +101,9 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
         description: 'How the agent handles tool approvals.',
         sessionMutable: true,
         chatMutable: true,
-        ...(presetModes.length === 0 ? {} : {
-          enum: presetModes.map((one) => one.id),
-          enumLabels: presetModes.map((one) => one.name),
+        ...(lastModes.length === 0 ? {} : {
+          enum: lastModes.map((one) => one.id),
+          enumLabels: lastModes.map((one) => one.name),
         }),
       },
       availableApprovalModes: {
@@ -215,7 +224,7 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
       if (told.length > 0) {
         options.log?.(`${provider}: ${String(told.length)} instruction(s) for the model open the first prompt, because an ACP server keeps its own system prompt`);
       }
-      return acpSession(options, start);
+      return acpSession(options, start, (heard) => { lastModes = heard; });
     },
   };
 }

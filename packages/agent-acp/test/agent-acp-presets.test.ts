@@ -406,7 +406,7 @@ it('lists the modes a row found, and keeps a text box where it found none', asyn
   expect(approvalsOf('cline')).not.toHaveProperty('enum');
 });
 
-it('keeps a row\'s modes on the agent, and the modes a session hears on that session', async () => {
+it('refreshes a row\'s modes on the agent from the ones a session hears, and keeps them on that session', async () => {
   const { kind } = await load();
   const log = join(scratch('heard'), 'requests.jsonl');
   const agent = kind.open(viewOf('codex', () => ({
@@ -429,7 +429,8 @@ it('keeps a row\'s modes on the agent, and the modes a session hears on that ses
   expect(ended).toEqual(['chat/turnComplete']);
 
   // The fixture names `ask` and `code`, which are not the row's own: they are
-  // that session's, and the next session of the agent is offered the row's.
-  expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
+  // that session's, and the agent's from here, so the next session a client
+  // sets up for the agent is offered what its server last named.
+  expect(approvalsOf()).toMatchObject({ enum: ['ask', 'code'], enumLabels: ['Ask', 'Code'] });
   expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
 });

@@ -50,10 +50,14 @@ const CLOSE_GRACE_MS = 1000;
  * `options` is the backend's identity and wiring; `start` is what this
  * particular session was told. The session is answered once its server has
  * opened, so what the server offers is in the first state a client is served.
+ *
+ * `heardModes` is how this session tells its agent the modes its server named,
+ * which the agent's schema lists until a later session hears others.
  */
 export function acpSession(
   options: AcpOptions,
   start: Start,
+  heardModes?: (modes: { id: string; name: string }[]) => void,
 ): Promise<Session> {
   const provider = options.provider ?? 'acp';
   const emit = start.emit;
@@ -106,6 +110,7 @@ export function acpSession(
   const ctx = {
     options,
     start,
+    heardModes,
     provider,
     emit,
     cwd,

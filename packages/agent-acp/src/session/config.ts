@@ -58,6 +58,8 @@ export function createConfig(ctx: SessionContext): Config {
     ctx.modes = { ...state };
     values.permissionMode = state.currentModeId;
     values.availableApprovalModes = state.availableModes.map((one) => one.id);
+    // And the agent's, which lists the modes the last session's server named.
+    ctx.heardModes?.(state.availableModes.map((one) => ({ id: one.id, name: one.name })));
   };
 
   /** The option a model choice is set through, when the server named one. */
@@ -104,9 +106,12 @@ export function createConfig(ctx: SessionContext): Config {
     if (list === null || list === undefined) return;
     configOptions = [...list];
     for (const option of configOptions) values[keyOf(option)] = option.currentValue;
-    // A `mode` option's values are the modes the session may take.
+    // A `mode` option's values are the modes the session may take, and the
+    // agent's, which lists the modes the last session's server named.
     const mode = modeOption();
-    if (mode !== undefined) values.availableApprovalModes = choicesOf(mode).map((one) => one.value);
+    if (mode === undefined) return;
+    values.availableApprovalModes = choicesOf(mode).map((one) => one.value);
+    ctx.heardModes?.(choicesOf(mode).map((one) => ({ id: one.value, name: one.name })));
   };
 
   /**

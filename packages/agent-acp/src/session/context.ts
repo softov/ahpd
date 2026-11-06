@@ -59,6 +59,14 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   options: AcpOptions;
   /** What this particular session was told. */
   start: Start;
+  /**
+   * How this session tells its agent the modes the server named.
+   *
+   * The agent's schema lists a preset's modes until a session of it hears the
+   * server's own, so this is where the next session a client sets up for the
+   * same agent reads the list the server last gave.
+   */
+  heardModes: ((modes: { id: string; name: string }[]) => void) | undefined;
   /** The provider id this session reports, the backend's own or `acp`. */
   provider: string;
   /**
