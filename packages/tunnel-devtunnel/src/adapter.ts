@@ -69,8 +69,10 @@ export const TUNNEL_VIEW: PluginView = {
   root: 'account',
   components: {
     account: { id: 'account', component: 'Column', children: ['accountName', 'refreshed'] },
-    accountName: { id: 'accountName', component: 'Text', text: { path: '/account' } },
-    refreshed: { id: 'refreshed', component: 'Text', text: { path: '/refreshed' } },
+    accountName: { id: 'accountName', component: 'KeyValue', label: 'Account', value: { path: '/account' } },
+    // The time is the line's value, shown in the reader's own zone.
+    refreshed: { id: 'refreshed', component: 'KeyValue', label: 'Last refresh', child: 'refreshedAt' },
+    refreshedAt: { id: 'refreshedAt', component: 'DateTime', value: { path: '/refreshed' }, format: 'auto' },
   },
 };
 
