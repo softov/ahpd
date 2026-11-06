@@ -84,8 +84,8 @@ The properties come in the order VS Code's agent host composes them, which is th
 
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
-| `isolation` | `folder` or `worktree` | `folder` | Whether the agent works in the folder itself or in a worktree of its own. Offered only when the directory is a git repository |
-| `branch` | one of the repository's branches | the most recently committed one | The base a worktree starts from. A picker while the worktree is being made, a value you cannot open otherwise: a folder session works on the branch already checked out |
+| `isolation` | `folder` or `worktree` | `folder` | Whether the agent works in the folder itself or in a worktree of its own. Outside a git repository a folder is all there is, offered read-only, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003) offers it |
+| `branch` | one of the repository's branches | for a folder, the branch checked out; for a worktree, the repository's default branch (the upstream its remote's `HEAD` names), else the one checked out | The base to work from: one seed and a picker that asks for the rest as they are typed, for either isolation, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063) seeds it |
 | `worktreeBranchPrefix` | a string | empty | Prepended to the branch the worktree creates |
 | `worktreeIncludeFiles` | a list of patterns, in `.gitignore` syntax | none | Git-ignored files to copy into a worktree, such as `.env`. A comma-separated string is read as the list it spells |
 | `worktreeSymlinkFolders` | the same | none | Git-ignored folders to link into a worktree, such as `node_modules` |

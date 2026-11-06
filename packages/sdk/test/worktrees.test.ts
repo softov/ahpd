@@ -210,7 +210,7 @@ const spoken = async (
 };
 
 describe('a session with a working tree of its own', () => {
-  it('offers the choice only where there is a repository to make one in', async () => {
+  it('offers a worktree only where there is a repository to make one in, and a folder alone elsewhere, as VS Code\'s host', async () => {
     const root = repository();
     const { client } = await joined(root);
     const offered = await client.handle({
@@ -218,12 +218,10 @@ describe('a session with a working tree of its own', () => {
       params: { channel: 'ahp-root://', provider: 'echo', workingDirectories: [uriOf(project(root))] },
     }) as { schema: { properties: Record<string, { enum?: string[] }> }; values: Record<string, string> };
     expect(offered.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
-    // The branches it actually has, with the one it is on first: a picker that
-    // opens on the oldest branch is one somebody has to search. `release` was
-    // made after `main` and sorts above it by commit date, but `main` is
-    // checked out.
-    expect(offered.schema.properties.branch?.enum?.[0]).toBe('main');
-    expect(offered.schema.properties.branch?.enum).toContain('release');
+    // One seed, the branch it is on: `release` was made after `main` and sorts
+    // above it by commit date, but `main` is checked out. The rest are asked
+    // for as they are typed.
+    expect(offered.schema.properties.branch?.enum).toEqual(['main']);
     expect(offered.values.branch).toBe('main');
     // `folder`, because every session this daemon has run has been one, and a
     // default that moved them all would be changing where an agent works
@@ -237,9 +235,10 @@ describe('a session with a working tree of its own', () => {
       method: 'resolveSessionConfig',
       params: { channel: 'ahp-root://', provider: 'echo', workingDirectories: [uriOf(plain)] },
     }) as { schema: { properties?: Record<string, unknown> } };
-    // Not a repository, so there is no isolation to offer and the control is
-    // absent rather than present with one value.
-    expect(nothing.schema.properties?.isolation).toBeUndefined();
+    // Not a repository: a folder is all there is, and the row says so read-only.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003
+    expect(nothing.schema.properties?.isolation).toMatchObject({ enum: ['folder'], default: 'folder', readOnly: true });
+    expect(nothing.schema.properties?.branch).toBeUndefined();
   });
 
   /*
@@ -711,8 +710,17 @@ describe('a session with a working tree of its own', () => {
     expect(none.items).toEqual([]);
   });
 
-  it('offers the branch as a choice only while a worktree is being made', async () => {
+  it('offers the branch as a choice for either isolation, a folder from the branch checked out and a worktree from the default branch, as VS Code\'s host', async () => {
     const root = repository();
+    const run = (...args: string[]) => execFileSync('git', ['-C', project(root), ...args], { stdio: 'pipe' });
+    // A remote whose `HEAD` is `main`, which `main` tracks, and `release`
+    // checked out.
+    run('clone', '-q', '--bare', project(root), join(root, 'remote.git'));
+    run('remote', 'add', 'origin', join(root, 'remote.git'));
+    run('fetch', '-q', 'origin');
+    run('remote', 'set-head', 'origin', 'main');
+    run('branch', '-q', '-u', 'origin/main', 'main');
+    run('checkout', '-q', 'release');
     const { client } = await joined(root);
     const ask = async (isolation: string) => (await client.handle({
       method: 'resolveSessionConfig',
@@ -721,16 +729,11 @@ describe('a session with a working tree of its own', () => {
         workingDirectory: uriOf(project(root)),
         config: { isolation },
       },
-    }) as { schema: { properties: Record<string, { enumDynamic?: boolean; readOnly?: boolean }> } }).schema.properties;
+    }) as { schema: { properties: Record<string, { enum?: string[]; default?: string; enumDynamic?: boolean; readOnly?: boolean }> } }).schema.properties;
 
-    // A folder session works on the branch that is checked out, so choosing
-    // another there is a control that changes nothing.
-    expect((await ask('folder')).branch?.readOnly).toBe(true);
-    expect((await ask('folder')).branch?.enumDynamic).toBe(false);
-
-    const making = await ask('worktree');
-    expect(making.branch?.enumDynamic).toBe(true);
-    expect(making.branch?.readOnly).toBeUndefined();
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063
+    expect((await ask('folder')).branch).toMatchObject({ enum: ['release'], default: 'release', enumDynamic: true, readOnly: false });
+    expect((await ask('worktree')).branch).toMatchObject({ enum: ['origin/main'], default: 'origin/main', enumDynamic: true, readOnly: false });
   });
 
   it('answers about the folder the question named, not the host\'s own', async () => {

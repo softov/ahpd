@@ -101,7 +101,8 @@ describe('the new session form in a locale', () => {
   it('never translates a branch name, also one equal to a catalog entry', async () => {
     HOST_CATALOGS.pt = { session: { branch: { enum: { main: 'principal' } } } };
     const properties = await form({ locale: 'pt' });
-    expect(properties.branch?.enumLabels).toEqual(['main', 'Pasta']);
+    // The one seed, the branch checked out, named as git names it.
+    expect(properties.branch?.enumLabels).toEqual(['main']);
   });
 
   it('never translates the labels an answerer gives a plugin key', async () => {

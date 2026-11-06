@@ -28,11 +28,8 @@ export interface SessionConfig {
 }
 
 /**
- * How many branches ride along in the schema before a client has to ask.
- *
- * The list is ordered by most recent commit, so the first few are the ones
- * somebody means. The rest arrive through `sessionConfigCompletions` as they
- * are typed for.
+ * How many branches a completion of the branch answers with, the most
+ * recent first: the first few are the ones somebody means.
  */
 export const SEEDS = 20;
 
@@ -47,12 +44,40 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     const port = options.worktrees;
     if (!port || where === undefined) return { schema: {}, defaults: {} };
     const repository = await port.repository(where).catch(() => undefined);
-    if (repository === undefined) return { schema: {}, defaults: {} };
-    // Most useful first, which the port defines: the checked-out branch is
-    // what "work from here" means, and it is what somebody who does not open
-    // the picker gets.
-    const offered = await port.branches(repository).catch(() => [] as string[]);
-    const base = offered[0];
+    /*
+     * A folder outside a repository is offered folder isolation alone, and
+     * read-only, as VS Code's host offers it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003
+     */
+    if (repository === undefined) {
+      return {
+        defaults: { isolation: 'folder' },
+        schema: {
+          properties: {
+            isolation: {
+              type: 'string',
+              title: 'Isolation',
+              description: 'Where the agent should make changes',
+              enum: ['folder'],
+              enumLabels: ['Folder'],
+              enumDescriptions: ['Work directly in the folder'],
+              default: 'folder',
+              readOnly: true,
+              sessionMutable: false,
+            },
+          },
+        },
+      };
+    }
+    /*
+     * The branch a session starts from, one seed and the rest asked for as
+     * they are typed, as VS Code's host seeds it: a worktree from the
+     * repository's default branch, and a folder on the branch checked out,
+     * which the port lists first.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063
+     */
+    const head = (await port.branches(repository).catch(() => [] as string[]))[0];
+    const base = chosen === 'worktree' ? await port.defaultBranch?.(repository).catch(() => undefined) ?? head : head;
     return {
       repository,
       defaults: {
@@ -87,31 +112,23 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * The branches, as seeds rather than as the whole list.
+           * The branch, seeded with the one a session starts from.
            *
            * `enumDynamic` is the protocol's word for "there are more of these
-           * than a picker can hold": the `enum` becomes the rows shown before
+           * than a picker can hold": the `enum` is the row shown before
            * anybody types, and `sessionConfigCompletions` answers what they
-           * type. A repository with four hundred branches used to send four
-           * hundred, on every resolve, to fill a list nobody can read.
-           *
-           * Dynamic only while a worktree is being made, which is the one time
-           * the choice means anything - the reference host does the same, and
-           * marks the row read-only otherwise, because a folder session works
-           * on the branch that is checked out and choosing another would be a
-           * control that changes nothing.
+           * type.
            */
-          ...(offered.length > 0 ? {
+          ...(base !== undefined ? {
             branch: {
               type: 'string',
               title: 'Branch',
-              description: 'Base branch the worktree starts from',
-              enum: offered.slice(0, SEEDS),
-              enumLabels: offered.slice(0, SEEDS),
-              ...(base !== undefined ? { default: base } : {}),
-              ...(chosen === 'worktree'
-                ? { enumDynamic: true }
-                : { enumDynamic: false, readOnly: true }),
+              description: 'Base branch to work from',
+              enum: [base],
+              enumLabels: [base],
+              default: base,
+              enumDynamic: true,
+              readOnly: false,
               sessionMutable: false,
             },
           } : {}),

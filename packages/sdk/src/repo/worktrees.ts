@@ -164,6 +164,31 @@ export function gitWorktrees(): Worktrees {
       return [...seen];
     },
 
+    /*
+     * The remote's `HEAD`, `origin`'s where there is one and the first
+     * remote's otherwise, named as VS Code's host names it: the upstream of
+     * the local branch it points at, the local branch where that tracks
+     * nothing, or the remote branch where there is no local one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L107-L137
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1036-L1044
+     */
+    defaultBranch: async (repository) => {
+      const remotes = (await git(repository, ['remote'], 5_000).catch(() => '')).split('\n').map((one) => one.trim()).filter((one) => one !== '');
+      const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+      if (remote === undefined) return undefined;
+      const prefix = `refs/remotes/${remote}/`;
+      const pointed = (await git(repository, ['symbolic-ref', '--quiet', `${prefix}HEAD`], 5_000).catch(() => '')).trim();
+      if (!pointed.startsWith(prefix)) return undefined;
+      const name = pointed.slice(prefix.length);
+      const local = await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`], 5_000).then(() => true, () => false);
+      if (!local) {
+        const remoteBranch = await git(repository, ['show-ref', '--verify', '--quiet', pointed], 5_000).then(() => true, () => false);
+        return remoteBranch ? `${remote}/${name}` : undefined;
+      }
+      const upstream = (await git(repository, ['rev-parse', '--abbrev-ref', `${name}@{upstream}`], 5_000).catch(() => '')).trim();
+      return upstream === '' ? name : upstream;
+    },
+
     create: async (worktree: Worktree) => {
       await mkdir(dirname(worktree.path), { recursive: true });
       /*
