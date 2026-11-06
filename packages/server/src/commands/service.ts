@@ -10,9 +10,9 @@
  * the manager rather than to a signal. `uninstall` takes it out again.
  *
  * Nothing here starts a daemon of its own. The manager owns the process, so
- * this writes, asks, and then waits for the record the daemon writes about
- * itself - the announcement `start` reads out of a log is one a supervised
- * daemon has no log to write.
+ * this writes, asks, and says the service started, as VS Code's CLI installs
+ * its own; the daemon writes its record about itself once it is up, which is
+ * what `ahpd status` reads.
  */
 
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -21,8 +21,7 @@ import { dirname, resolve } from 'node:path';
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import { configDir, configPath, daemonLog } from '../config.js';
-import { READY_TIMEOUT_MS, forget, running, statusLine } from '../daemon.js';
-import type { Running } from '../daemon.js';
+import { forget, running } from '../daemon.js';
 import { installFile, installStarts, installText, managedAs, ownConfigHome, realManager, serviceOn } from '../service.js';
 import { checkingUpdates, updateLine } from '../update.js';
 import { manifest } from '../version.js';
@@ -31,33 +30,11 @@ import { conflict, namedOptionsFrom, secret, serverFields, stop } from './option
 /** What went wrong, as the words of an error already written for a person. */
 const wordsOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/**
- * The record of the daemon the manager started, waited for the way `start`
- * waits: `READY_TIMEOUT_MS`, and then a refusal saying where to look.
- *
- * The wait is on the record rather than on a log, because this process spawned
- * nothing: the manager owns the daemon, and the record the daemon writes about
- * itself is the only thing here that says it is up. `previous` is the pid of a
- * daemon that was already running, whose record does not count - the restart
- * this asked for is a new process, and until it writes a record of its own the
- * file on disk is still the old one's.
- */
-const upWithin = async (previous: number | undefined): Promise<Running> => {
-  const until = Date.now() + READY_TIMEOUT_MS;
-  for (;;) {
-    const now = running();
-    if (now !== undefined && now.pid !== previous) return now;
-    if (Date.now() > until) break;
-    await new Promise((wait) => { setTimeout(wait, 200); });
-  }
-  return conflict(`It did not come up within ${String(READY_TIMEOUT_MS / 1000)} seconds; run ahpd status.`);
-};
-
 export const declareService = (registry: Registry<object>): Command[] => {
   const install = registry.action({
     id: 'service.install',
     summary: 'Let the service manager start it at login and keep it running',
-    description: 'Writes the unit or the agent for this install\'s configuration file, hands it to the service manager, and waits for the daemon to say where it is listening. It refuses while a daemon from `ahpd start` runs, and it prints where the token comes from and never the token.',
+    description: 'Writes the unit or the agent for this install\'s configuration file, hands it to the service manager, which starts it, and says so; ahpd status says where the daemon listens once it is up. It refuses while a daemon from `ahpd start` runs, and it prints where the token comes from and never the token.',
     surfaces: { cli: { pattern: ['service', 'install'] } },
     // A new service: the file is written whether or not one was there, and an
     // install over a running service replaces what it was started from.
@@ -138,18 +115,17 @@ export const declareService = (registry: Registry<object>): Command[] => {
       catch (error) {
         conflict(`Could not install the service: ${wordsOf(error)}. The file it wrote is at ${file}.`);
       }
-      const record = await upWithin(found?.pid);
-      let text = `${statusLine(record)}\n`;
-      if (record.paths.length > 0) text += `sessions in ${record.paths.join(', ')}\n`;
-      if (record.automations !== undefined) text += `automations ${record.automations}\n`;
+      /*
+       * Said once the manager has taken the start, as VS Code's CLI says its
+       * service started once systemd has the start job
+       * (cli/src/tunnels/service_linux.rs L108-L113 at 6b68d3fe): the daemon
+       * comes up on its own, and ahpd status reads its record.
+       */
+      const unit = managedAs(service, name);
+      let text = `${unit} service successfully started under ${service}; ahpd status says where it listens\n`;
       text += `${from}\n`;
       if (checkingUpdates(options.updateCheck)) text += updateLine(manifest()) ?? '';
-      return output({
-        url: record.url,
-        pid: record.pid,
-        paths: record.paths,
-        service,
-      }, text);
+      return output({ service, unit, file }, text);
     },
   });
 

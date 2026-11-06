@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { alive, BACKEND, cli, config, fakeSystemctl, gone, home, MAIN, put, recordOf, REPO, spawned, systemctlAsked } from './cli.js';
+import { alive, BACKEND, cli, config, fakeSystemctl, gone, home, MAIN, put, recordOf, recordWithin, REPO, spawned, systemctlAsked } from './cli.js';
 
 /** Where a unit goes, under the configuration home a case is given: the plain one unless another is named. */
 const unitPath = (unit = 'ahpd'): string => join(home, 'systemd', 'user', `${unit}.service`);
@@ -44,20 +44,20 @@ const started = (unit = unitPath()): string =>
 // A service is a systemd unit or a launchd agent, and Windows has neither:
 // `ahpd service install` refuses there, which `service.test.ts` asks directly.
 describe.skipIf(!posix)('service install', () => {
-  it('writes the unit, enables it, and prints where the daemon it started is', async () => {
+  // VS Code's CLI says its service started once systemd has the start
+  // (cli/src/tunnels/service_linux.rs L108-L113 at 6b68d3fe), and waits for
+  // nothing more.
+  it('writes the unit, enables it, and says the service started', async () => {
     const did = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started()) });
     expect({ code: did.code, stderr: did.stderr }).toEqual({ code: 0, stderr: '' });
-    // The daemon the manager started writes its own record, which is what the
-    // install waited on: this command spawns nothing and has no log to read.
-    const record = recordOf();
-    spawned.push(record.pid);
     expect(did.stdout).toBe([
-      `ahpd on ${record.url} (pid ${String(record.pid)}), started ${record.startedAt}, under systemd`,
-      `sessions in ${record.paths.join(', ')}`,
-      `automations ${String(record.automations)}`,
+      'ahpd service successfully started under systemd; ahpd status says where it listens',
       'no token: loopback only',
       '',
     ].join('\n'));
+    // The daemon the manager started writes its own record once it is up.
+    const record = await recordWithin();
+    spawned.push(record.pid);
     expect(record.service).toBe('systemd');
 
     // What the unit says: this machine's node, this ahpd, this configuration,
@@ -79,7 +79,7 @@ describe.skipIf(!posix)('service install', () => {
     // The cli runs in REPO, and the unit starts the daemon in the home folder.
     const did = await cli(['service', 'install', '--config-file', relative(REPO, config)], { env: fakeSystemctl(started()) });
     expect({ code: did.code, stderr: did.stderr }).toEqual({ code: 0, stderr: '' });
-    spawned.push(recordOf().pid);
+    spawned.push((await recordWithin()).pid);
     expect(readFileSync(unitPath(), 'utf8')).toContain(`--config-file ${config}\n`);
   }, 60000);
 
@@ -88,7 +88,7 @@ describe.skipIf(!posix)('service install', () => {
     const unit = unitPath('ahpd@two');
     const did = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started(unit)) });
     expect({ code: did.code, stderr: did.stderr }).toEqual({ code: 0, stderr: '' });
-    spawned.push(recordOf().pid);
+    spawned.push((await recordWithin()).pid);
     // A unit under a configuration home of its own is outside the folder
     // systemd reads units from, so it is enabled by its path, which links it in.
     expect(systemctlAsked()).toEqual(installCalls(unit));
@@ -102,7 +102,7 @@ describe.skipIf(!posix)('service install', () => {
   it('refuses a second service for the daemon a service already holds, and writes nothing', async () => {
     const plain = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started()) });
     expect(plain.code).toBe(0);
-    spawned.push(recordOf().pid);
+    spawned.push((await recordWithin()).pid);
     const before = systemctlAsked();
 
     put({ service: { name: 'two' } });
@@ -117,9 +117,7 @@ describe.skipIf(!posix)('service install', () => {
     put({ connectionToken: 'abc' });
     const did = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started()) });
     expect(did.code).toBe(0);
-    const record = recordOf();
-    spawned.push(record.pid);
-    expect(did.stdout).toContain(`ahpd on ${record.url} (pid ${String(record.pid)})`);
+    spawned.push((await recordWithin()).pid);
     expect(did.stdout).toContain('token: from --connection-token');
     expect(did.stdout).not.toContain('abc');
     expect(did.stdout).not.toContain('tkn=');
@@ -152,7 +150,7 @@ describe.skipIf(!posix)('service install', () => {
     const starts = join(home, 'starts');
     const did = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(`echo started >> '${starts}'; ${started()}`) });
     expect(did.code).toBe(0);
-    spawned.push(recordOf().pid);
+    spawned.push((await recordWithin()).pid);
     expect(systemctlAsked()).toContain('daemon-reload');
     expect(readFileSync(starts, 'utf8')).toBe('started\n');
   }, 60000);
@@ -163,7 +161,7 @@ describe.skipIf(!posix)('service uninstall', () => {
   it('takes the service out, stops the daemon it held, and leaves no file', async () => {
     const installed = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started()) });
     expect(installed.code).toBe(0);
-    const record = recordOf();
+    const record = await recordWithin();
     spawned.push(record.pid);
     expect(systemctlAsked()).toEqual(installCalls());
 
@@ -185,7 +183,7 @@ describe.skipIf(!posix)('service uninstall', () => {
     const unit = unitPath('ahpd@two');
     const installed = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started(unit)) });
     expect(installed.code).toBe(0);
-    const record = recordOf();
+    const record = await recordWithin();
     spawned.push(record.pid);
 
     // The name the record holds, and not the file's: a name changed while the
@@ -204,7 +202,7 @@ describe.skipIf(!posix)('service uninstall', () => {
     const unit = unitPath('ahpd@two');
     const installed = await cli(['service', 'install', '--config-file', config], { env: fakeSystemctl(started(unit)) });
     expect(installed.code).toBe(0);
-    const record = recordOf();
+    const record = await recordWithin();
     spawned.push(record.pid);
     const stopped = await cli(['stop'], { env: fakeSystemctl(`kill -TERM ${String(record.pid)}`) });
     expect(stopped.code).toBe(0);
