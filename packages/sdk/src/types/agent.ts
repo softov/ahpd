@@ -963,6 +963,16 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
   transcript?(id: string, at?: SessionAt, outputs?: TerminalOutputs): Promise<WireTurn<Turn>[] | undefined>;
 
   /**
+   * Read a recorded transcript identity back as the caller turn that began it.
+   *
+   * Opt-in: native transcript ids remain unchanged by default. A backend that
+   * opts in must accept the caller ids in restored seeds and fork points; the
+   * host's existing recorded native ids still anchor local turns. Unmatched
+   * entries remain separate rather than being guessed to be steering messages.
+   */
+  transcriptTurnIds?: 'recorded';
+
+  /**
    * The worker chats one past session holds, read without starting anything.
    *
    * What makes a restored session's worker chats openable again: the host

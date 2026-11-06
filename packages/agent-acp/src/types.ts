@@ -447,6 +447,8 @@ export interface AcpReach {
 export interface AcpTurn {
   /** The turn the client began. */
   turnId: string;
+  /** The first assistant-message id already reported for this prompted turn. */
+  recordedMessageId?: string;
   /** Every response part this turn holds, shared with the session's snapshot. */
   parts: Bag[];
   /** Tool calls this turn opened, by the server's own id. */

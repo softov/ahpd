@@ -418,7 +418,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * was given a turn of its own to draw.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
    */
-  const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[], records: readonly Recorded[] = recordedIn(session, chat)): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
+  const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[], records: readonly Recorded[] = recordedIn(session, chat), restoreIds = false): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
     const joined = new Map<string, string>();
     const began = new Map(records.map((one) => [one.transcriptId, one.turnId]));
     if (began.size === 0) return { turns: [...turns], joined };
@@ -434,13 +434,16 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       // A notice is the system's own and stays a turn of its own, however
       // little the record says of it.
       const notice = str(bag(bag(turn.message).origin).kind) === 'systemNotification';
-      if (into !== undefined && recorded && (as === undefined || as === last) && !isLocal(session, chat, id) && !notice) {
+      const grouped = as === undefined ? !restoreIds : as === last;
+      if (into !== undefined && recorded && grouped && !isLocal(session, chat, id) && !notice) {
         // One the chat never began is a steer; one recorded again is the same turn.
         out[out.length - 1] = joinedTurn(into, turn, as === undefined);
         joined.set(id, String(into.id));
         continue;
       }
-      out.push(turn);
+      const restored = restoreIds && as !== undefined ? { ...turn, id: as } : turn;
+      out.push(restored);
+      if (restoreIds && as !== undefined) joined.set(id, as);
       last = as;
     }
     return { turns: out, joined };
@@ -476,7 +479,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     // as the turns it keeps, as a nested session opens from its record.
     if (turns === undefined) return keptIn(session, chat).length > 0 ? withLocalTurns(session, chat, []) : undefined;
     const records = recordedIn(session, chat);
-    const begun = asBegun(session, chat, begunWithOrigins(turns, records), records);
+    const begun = asBegun(session, chat, begunWithOrigins(turns, records), records, agent.transcriptTurnIds === 'recorded');
     return withLocalTurns(session, chat, begun.turns, begun.joined);
   };
 
