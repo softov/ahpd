@@ -208,15 +208,11 @@ export interface Connection {
    * The prefix a model this endpoint serves is offered under.
    *
    * The harness provider that owns the endpoint, so a choice selects the same
-   * provider back; this backend's own id only for an endpoint no entry owns,
-   * which is an explicit `baseUrl` or the local endpoint when the file carries
-   * no provider.
+   * provider back; this backend's own id for an endpoint no entry owns, which
+   * is an explicit `baseUrl`.
    */
   prefix: string;
 }
-
-/** The endpoint a model is asked for when nothing named one; LM Studio's own port. */
-const LOCAL_ENDPOINT = 'http://127.0.0.1:1234/v1';
 
 /**
  * The model reference a turn runs on, where nothing here builds an adapter.
@@ -297,9 +293,9 @@ const connectionOf = (
       throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
     }
     /*
-     * This backend's own id is not a provider the file has to carry. It names
-     * an endpoint only where one was given outright, or where the file carries
-     * no provider at all; any other reference has to match a file provider.
+     * This backend's own id is not a provider the file has to carry: it names
+     * the endpoint given outright, and any other reference has to match a file
+     * provider.
      */
     if (named !== undefined && provider === undefined && explicitBase === undefined) {
       const known = harness.providers.map((one) => one.id);
@@ -309,7 +305,16 @@ const connectionOf = (
     }
   }
   const model = reference === undefined ? undefined : (named === undefined ? reference : named.modelId);
-  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl ?? LOCAL_ENDPOINT;
+  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl;
+  /*
+   * A turn with no endpoint is refused as a turn with no model is: nothing
+   * named one, and cofold's model adapter takes its target server from
+   * configuration alone.
+   * https://www.npmjs.com/package/@cofold/model-openai-compat
+   */
+  if (baseUrl === undefined) {
+    throw new Error(`${own}: no endpoint is configured and this backend has no default; add a provider with its "baseUrl" to ${harness.path}`);
+  }
   const key = keyOf(baseUrl, options, credentials, harness, provider);
   return {
     ...(reference === undefined ? {} : { reference }),
@@ -326,10 +331,9 @@ const connectionOf = (
  *
  * Without an explicit endpoint, the harness configuration's providers are
  * asked one by one, each under its own id and with its own key, so every
- * provider a person wrote in the file is listed rather than the first alone.
- * An explicit `baseUrl` has no provider id to be offered under, and a file
- * with no provider leaves only this backend's own endpoint, so both answer the
- * one connection `connectionOf` resolves.
+ * provider a person wrote in the file is listed, and a file with no provider
+ * names nothing to list. An explicit `baseUrl` has no provider id to be
+ * offered under, so it answers the one connection `connectionOf` resolves.
  */
 const connectionsOf = (
   options: CofoldOptions,
@@ -338,7 +342,7 @@ const connectionsOf = (
   harness: HarnessConfig,
 ): Connection[] => {
   const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
-  if (explicitBase !== undefined || harness.providers.length === 0) {
+  if (explicitBase !== undefined) {
     return [connectionOf(options, settings, credentials, harness, false)];
   }
   return harness.providers.map((provider) => {

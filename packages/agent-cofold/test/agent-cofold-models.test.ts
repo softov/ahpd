@@ -348,10 +348,15 @@ it('refuses this backend own prefix for a provider the file carries', () => {
   expect(() => modelOf({}, { model: 'cofold/qwen/qwen3-8b' })).toThrow(/configures open_router/);
 });
 
-it('resolves this backend own prefix to the local endpoint when the file has no provider', () => {
+/*
+ * A turn with nothing to name an endpoint, no `baseUrl` and no provider in the
+ * file, refused as a turn with no model is: cofold's model adapter takes its
+ * target server from configuration alone.
+ * https://www.npmjs.com/package/@cofold/model-openai-compat
+ */
+it('refuses a turn nothing names an endpoint for, as a turn with no model is', () => {
   put({ providers: [] });
-  const resolved = modelOf({}, { model: 'cofold/qwen/qwen3-8b' });
-  expect(resolved.modelId).toBe('qwen/qwen3-8b');
+  expect(() => modelOf({}, { model: 'cofold/qwen/qwen3-8b' })).toThrow(/no endpoint is configured and this backend has no default/);
 });
 
 it('refuses a named provider when the file carries none', () => {

@@ -2176,7 +2176,10 @@ Where a value comes from, highest first:
 | The record | The same keys, as they are written for one agent |
 | The plugin's `options` | The same keys, as defaults for every record |
 | The harness file | The provider and model the harness was configured with |
-| The built-in default | `http://127.0.0.1:1234/v1`, a local endpoint |
+
+A turn that none of them gives an endpoint is refused, as one that none of them
+gives a model is, in the backend's own words naming the file to add a provider
+to.
 
 A token a client lent with `authenticate` beats every key above it; then the
 record's own `apiKey`, then the plugin's, then the named provider's key from the
