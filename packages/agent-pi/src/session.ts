@@ -161,7 +161,8 @@ export function piSession(
    */
   let recordedModel = options.model;
 
-  const settings: Record<string, unknown> = { ...start.settings };
+  /** The config values in force, by key, which `setConfig` moves and each turn reads. */
+  const values: Record<string, unknown> = { ...start.settings };
   /**
    * The tools this session offers the model, as the host and its clients bound
    * them.
@@ -525,7 +526,7 @@ export function piSession(
     // own tools keep their own.
     const ruled = offering.some((one) => one.definition.name === toolName) ? `host/${toolName}` : toolName;
     if (start.getAutoApproval?.('tool', ruled) === 'ask') {
-      return modeOf(settings.permissionMode) === 'dontAsk'
+      return modeOf(values.permissionMode) === 'dontAsk'
         ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
         : 'ask';
     }
@@ -543,7 +544,7 @@ export function piSession(
     };
     const onEffects = (): ToolCallEventResult | 'ask' | undefined => (asks() ? 'ask' : undefined);
     const byMode = (): ToolCallEventResult | 'ask' | undefined => {
-      switch (modeOf(settings.permissionMode)) {
+      switch (modeOf(values.permissionMode)) {
         case 'bypassPermissions':
           return undefined;
         case 'plan':
@@ -949,7 +950,7 @@ export function piSession(
     if (first && start.forkAt !== undefined && start.rewindAt !== undefined) {
       throw new Error('pi: a session cannot fork and rewind at once');
     }
-    const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
+    const trust = values.projectTrust ?? options.projectTrust ?? 'trust';
     // What this backend is built with, so a turn it runs judges owner and
     // effects against the list pi was handed and not one a client changed
     // while the turn ran.
@@ -1358,7 +1359,7 @@ export function piSession(
        * and a contributed key beside it; `schemaOf()` is the fallback for a
        * session started without one.
        */
-      config: { schema: start.schema?.() ?? schemaOf(), values: { ...settings } },
+      config: { schema: start.schema?.() ?? schemaOf(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -1607,19 +1608,19 @@ export function piSession(
     setConfig: async (key, value) => {
       if (key === 'projectTrust') {
         if (value !== 'trust' && value !== 'deny') return 'projectTrust is "trust" or "deny"';
-        settings[key] = value;
+        values[key] = value;
         return true;
       }
       if (key === 'permissionMode') {
         if (typeof value !== 'string' || !(PERMISSION_MODES as readonly string[]).includes(value)) {
           return `permissionMode is one of ${PERMISSION_MODES.join(', ')}`;
         }
-        settings[key] = value;
+        values[key] = value;
         return true;
       }
       return `pi sessions have no "${key}" setting`;
     },
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     /*
      * pi's extensions and skills are loaded when it opens and have no runtime
