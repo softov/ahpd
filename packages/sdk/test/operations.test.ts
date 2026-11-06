@@ -160,6 +160,55 @@ it('offers a contribution\'s operations after the source\'s, and runs one throug
   await host.close();
 });
 
+/*
+ * What an operation undid of the agent's edits is told to the session's agent
+ * with its next turn, once, in VS Code's words, as the reference host reports
+ * the edits a discard undid to the agent that made them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L40-L56
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+ */
+it('tells the session\'s agent with its next turn what an operation undid of its edits, once', async () => {
+  const { source } = scripted();
+  source.invoke = async () => ({
+    message: 'Reverted',
+    discarded: [{ resource: `file://${DIR}/a.txt`, deleted: false }, { resource: `file://${DIR}/b.txt`, deleted: true }],
+  });
+  const told: string[][] = [];
+  const base = echo({ path: DIR, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start) => {
+      const session = base.create(start);
+      return {
+        ...session,
+        sendMessage: (turnId, text, from, attachments, options) => {
+          told.push(options?.instructions?.() ?? []);
+          return session.sendMessage(turnId, text, from, attachments, options);
+        },
+      };
+    },
+  };
+  const { client, changeset, chatUri } = await watching(source, 0, agent);
+  await client.handle({
+    method: 'invokeChangesetOperation',
+    params: { channel: changeset, operationId: 'discard', target: { kind: 'resource', resource: `file://${DIR}/a.txt` } },
+  });
+  for (const turnId of ['t1', 't2']) {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+    });
+    await settle(20);
+  }
+  expect(told).toEqual([
+    [
+      `The user undid your changes to ${DIR}/a.txt. Read the file again before you edit it, and don't make those changes again unless the user asks you to.`,
+      `The user undid your creation of ${DIR}/b.txt, so the file no longer exists. Don't create it again unless the user asks you to.`,
+    ],
+    [],
+  ]);
+});
+
 it('puts the verbs on the changeset, idle, alongside the files', async () => {
   const { snapshot } = await watching(scripted().source);
   const state = snapshot.state as { operations?: Record<string, unknown>[] };

@@ -28,6 +28,7 @@ import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
 import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy, ToolSession } from '../types/host.js';
 import type { Agent, BoundTool, McpServer } from '../types/agent.js';
 import type { Session, TurnOptions } from '../types/session.js';
+import type { DiscardedFileEdits } from '../types/changes.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { ToolsEndpoint } from '../tools/server.js';
 import type { Held } from './state.js';
@@ -376,10 +377,16 @@ export interface Tooling {
   /**
    * What one turn of a session is given, for the backend to read when it begins.
    *
-   * Empty for every session this host began itself, and for one another window
-   * sent here whose clients offer nothing to report back with.
+   * What the session's clients undid of its agent's edits since its last turn,
+   * told once, and for a session another window sent here whose clients can
+   * report back, how to report.
    */
   turnInstructions(uri: string): TurnOptions;
+  /**
+   * An agent's changes to a file that an operation on `session`'s changeset
+   * undid, told to the session's agent with its next turn.
+   */
+  reportDiscarded(session: string, edits: DiscardedFileEdits): void;
   /**
    * A second chat in a running session, on the backend it is asked for.
    *
@@ -2494,27 +2501,55 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
-   * What a turn of a session another window delegated here is told.
+   * What a turn of a session is told.
    *
-   * Report back to the chat the work came from, given only where such a
-   * session has a client that can report - the window's own rule over the
-   * origin it wrote and the tool it names. Handed to the backend as the words
-   * to read when the turn begins rather than as the words themselves, because
-   * this is the instruction that cannot be settled once: a client that joins,
-   * or leaves, reaches the next turn and not the one already running.
+   * What its clients undid of its agent's edits since the turn before, told
+   * once. And for a session another window delegated here, report back to the
+   * chat the work came from, given only where such a session has a client
+   * that can report - the window's own rule over the origin it wrote and the
+   * tool it names. Handed to the backend as the words to read when the turn
+   * begins rather than as the words themselves, because neither can be
+   * settled once: an undo meanwhile, or a client that joins or leaves,
+   * reaches the next turn and not the one already running.
    */
   const turnInstructions = (uri: string): TurnOptions => ({
-    instructions: () => (kept.remoteOrigin?.(idOf(uri)) === undefined || !offersSendRemoteMessage(uri)
-      ? []
-      : [REMOTE_SESSION_ORIGIN_INSTRUCTION]),
+    instructions: () => {
+      const undone = discardedNotes.get(uri) ?? [];
+      discardedNotes.delete(uri);
+      return [
+        ...undone,
+        ...(kept.remoteOrigin?.(idOf(uri)) === undefined || !offersSendRemoteMessage(uri) ? [] : [REMOTE_SESSION_ORIGIN_INSTRUCTION]),
+      ];
+    },
   });
+
+  /*
+   * What a session's clients undid of its agent's edits, kept until the
+   * agent's next turn reads it, once, in VS Code's words: the agent reads the
+   * file again before it edits it, and does not redo what was undone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L40-L56
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2287-L2291
+   */
+  const discardedNotes = new Map<string, string[]>();
+  const reportDiscarded = (session: string, edits: DiscardedFileEdits): void => {
+    const path = edits.resource.startsWith('file:') ? localPath(edits.resource) : edits.resource;
+    const lines = edits.lines;
+    const where = lines === undefined ? ''
+      : lines.endLineNumberExclusive - lines.startLineNumber > 1 ? ` on lines ${lines.startLineNumber}-${lines.endLineNumberExclusive - 1}`
+        : lines.endLineNumberExclusive > lines.startLineNumber ? ` on line ${lines.startLineNumber}`
+          : ` near line ${lines.startLineNumber}`;
+    const note = edits.deleted
+      ? `The user undid your creation of ${path}, so the file no longer exists. Don't create it again unless the user asks you to.`
+      : `The user undid your changes to ${path}${where}. Read the file again before you edit it, and don't make those changes again unless the user asks you to.`;
+    discardedNotes.set(session, [...(discardedNotes.get(session) ?? []), note]);
+  };
 
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions, serverToolsMoved,
     clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, workingDirectoryOf, withEntries, tellOff, forgetTold, recordCustomizationEnablement, publishSessionCustomizations,
     retool, pluginsSettled, chatMeant, renameChat, renameSession, snapshotDefaultChatTitle, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
-    toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,
+    toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, reportDiscarded, openChat,
     moving, served,
   };
 }

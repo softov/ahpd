@@ -1869,12 +1869,13 @@ export function gitChanges(): ChangesetSource {
          * it decides whether to draw a `before` side at all - one rule, so a
          * row that shows as a creation reverts as one.
          */
+        // And the agent is told what was undone of its edits, as its file.
         if (sides.before === undefined || sides.before === '') {
           await rm(at, { force: true });
-          return { message: `Removed ${named}, which this changeset created` };
+          return { message: `Removed ${named}, which this changeset created`, discarded: [{ resource: uriOf(at), deleted: true }] };
         }
         await writeFile(at, sides.before, 'utf8');
-        return { message: `Reverted ${named}` };
+        return { message: `Reverted ${named}`, discarded: [{ resource: uriOf(at), deleted: false }] };
       }
 
       if (operationId === 'stage') {

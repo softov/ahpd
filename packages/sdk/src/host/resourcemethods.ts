@@ -396,6 +396,12 @@ const CONFLICT = -32011;
           ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
           // Before the refresh, so GitHub's later answer is what survives.
           if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
+          /*
+           * The agent's edits the operation undid, told to the session's agent
+           * with its next turn, as the reference host's discard reports them.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+           */
+          for (const edits of result.discarded ?? []) ctx.reportDiscarded(at.owner, edits);
           // Something wrote to the tree, so every changeset of this session
           // is now describing a directory that has moved. The catalogue
           // first, because `refresh` is what makes the next read fresh.

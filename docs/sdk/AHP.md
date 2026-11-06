@@ -920,7 +920,7 @@ Operations are server-advertised per scope, `disabled` while a turn is running,
 and destructive ones carry the `confirmation` a client MUST show. `commit` takes
 one file, or on the whole changeset the index when it holds anything and the whole
 working tree when it holds nothing, `discard` puts a file or the whole changeset back to HEAD, `revert` puts a file
-back to the state the agent found it in, and `stage` and `unstage` move a file, a
+back to the state the agent found it in and tells the session's agent so with its next turn, in [VS Code's words](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L40-L56) (an operation's result names the files under `discarded`), and `stage` and `unstage` move a file, a
 folder or the whole changeset in or out of the index. A call with no `target` is
 the whole changeset: every change under the session's folder, untracked files
 included. `discard` on the whole changeset removes untracked files too, and its

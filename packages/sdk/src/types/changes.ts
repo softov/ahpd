@@ -297,6 +297,30 @@ export interface ChangesetOperationResult {
    * branch it pushed to.
    */
   pullRequest?: { url: string; title: string; branch: string };
+  /**
+   * The agent's changes to files that the operation undid, so the session's
+   * agent is told before it edits them again, as VS Code's host reports the
+   * changes a discard undid to the agent that made them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+   */
+  discarded?: DiscardedFileEdits[];
+}
+
+/**
+ * An agent's changes to one file that an operation undid, as VS Code's host
+ * reports them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L19-L31
+ */
+export interface DiscardedFileEdits {
+  /** The file's URI. */
+  resource: string;
+  /**
+   * The one-based lines of the undone changes in the file as the agent last
+   * wrote it, or none when every change to it was undone.
+   */
+  lines?: { startLineNumber: number; endLineNumberExclusive: number };
+  /** Whether undoing the changes deleted the file, which the agent had created. */
+  deleted: boolean;
 }
 
 /**
