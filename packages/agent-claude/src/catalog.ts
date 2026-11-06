@@ -65,6 +65,24 @@ const fileNamed = (id: string): boolean => /^[A-Za-z0-9-]+$/.test(id);
 /** The transcript for `id` in `project`, where the CLI writes it. */
 const transcriptIn = (project: string, id: string): string => join(projectsDir(), project, `${id}.jsonl`);
 
+/** The longest name the CLI gives a project folder before it cuts the name and adds the path's hash. */
+const NAME_MAX = 200;
+
+/**
+ * The name of the folder the CLI keeps a path's transcripts in: the path with
+ * every character that is not a letter or a digit made a dash, and a name
+ * longer than 200 characters cut there with the whole path's hash after it,
+ * the CLI's 32-bit string hash in base 36, as CLI 2.1.301 names the folder.
+ * https://code.claude.com/docs/en/sessions#where-transcripts-are-stored
+ */
+const projectFolderName = (path: string): string => {
+  const name = path.replace(/[^A-Za-z0-9]/g, '-');
+  if (name.length <= NAME_MAX) return name;
+  let hash = 0;
+  for (let at = 0; at < path.length; at++) hash = ((hash << 5) - hash + path.charCodeAt(at)) | 0;
+  return `${name.slice(0, NAME_MAX)}-${Math.abs(hash).toString(36)}`;
+};
+
 /**
  * The project folder of `folder`, spelled the way the SDK spells it: from its
  * real path where it has one and as given where it does not.
@@ -73,7 +91,7 @@ const projectOf = (folder: string): string => {
   let real = folder;
   try { real = realpathSync(folder); }
   catch { /* a folder that is gone keeps its transcript under the name it had */ }
-  return real.replace(/[^A-Za-z0-9]/g, '-');
+  return projectFolderName(real);
 };
 
 /** What every entry of a conversation carries, and the CLI's other lines in a transcript do not. */
@@ -194,10 +212,9 @@ export function sharedCatalogue(): () => Promise<Listed[]> {
 /**
  * The transcript on disk for one session, or nothing when it has none.
  *
- * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory spelled the
- * way the CLI spells it - every character that is not a letter or a digit
- * made a dash - and `CLAUDE_CONFIG_DIR` in place of `~/.claude` where it is
- * set.
+ * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory named as the
+ * CLI names its project folder (`projectFolderName`), and `CLAUDE_CONFIG_DIR`
+ * in place of `~/.claude` where it is set.
  *
  * A session resumed elsewhere may have been written under the directory it
  * *started* in, so the other projects are looked through before answering
@@ -209,7 +226,7 @@ export function transcriptOf(id: string, directory: string | undefined): string 
   if (!/^[A-Za-z0-9-]+$/.test(id)) return undefined;
   const projects = projectsDir();
   if (directory !== undefined) {
-    const own = join(projects, directory.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
+    const own = join(projects, projectFolderName(directory), `${id}.jsonl`);
     if (existsSync(own)) return own;
   }
   let names: string[];

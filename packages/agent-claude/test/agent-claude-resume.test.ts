@@ -128,6 +128,7 @@ const FORKED = '0a0a0a0a-1111-4111-8111-000000000005';
 const LEFT = '5433a783-2e55-4412-9afc-6b77ac92ac7b';
 const OWN = '0a0a0a0a-1111-4111-8111-000000000006';
 const KEPT = '0a0a0a0a-1111-4111-8111-000000000007';
+const LONG = '0a0a0a0a-1111-4111-8111-000000000008';
 
 it('starts a conversation the CLI never wrote under the id it was asked to resume', async () => {
   const options = await started({ resume: NEVER });
@@ -175,6 +176,28 @@ it('clears a transcript with no entry of a conversation under the id a session s
   const options = await started({ uri: `ahp-session:/${OWN}` });
   expect(options).toMatchObject({ sessionId: OWN });
   expect(existsSync(file)).toBe(false);
+});
+
+/*
+ * A path whose project name is longer than 200 characters: the CLI cuts the
+ * name there and adds the whole path's hash, and that folder is the one cleared.
+ * https://code.claude.com/docs/en/sessions#where-transcripts-are-stored
+ */
+it('clears a transcript with no entry of a conversation in the folder the CLI names for a long path', async () => {
+  const top = '/tmp/ahpd-claude-long-name';
+  const long = join(top, 'a'.repeat(120), 'b'.repeat(120));
+  mkdirSync(long, { recursive: true });
+  try {
+    // The CLI's name for that path, its hash as CLI 2.1.301 computes it.
+    const project = join(home, 'config', 'projects', `${long.replace(/[^A-Za-z0-9]/g, '-').slice(0, 200)}-nkqd48`);
+    mkdirSync(project, { recursive: true });
+    const file = join(project, `${LONG}.jsonl`);
+    writeFileSync(file, `${JSON.stringify({ type: 'last-prompt', lastPrompt: 'ok', sessionId: LONG })}\n`);
+    const options = await started({ uri: `ahp-session:/${LONG}`, workingDirectory: long });
+    expect(options).toMatchObject({ sessionId: LONG });
+    expect(existsSync(file)).toBe(false);
+  }
+  finally { rmSync(top, { recursive: true, force: true }); }
 });
 
 it('keeps a conversation the CLI wrote under the id a session starts a new one under', async () => {
