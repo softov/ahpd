@@ -1,7 +1,7 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
 import { mergeLogicalTurnUsage, statusOf, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
-import { bag } from './common.js';
+import { bag, str } from './common.js';
 import type { Scope, SessionContext } from './context.js';
 
 /** What this area offers the rest of the session. */
@@ -378,3 +378,71 @@ export function createParts(ctx: SessionContext): Parts {
     }),
   };
 }
+
+/** What one model's results said it can hold and answer. */
+export interface ModelLimit {
+  /** The context window, in tokens. */
+  contextWindow?: number;
+  /** The most the model may answer in one call, in tokens. */
+  maxOutputTokens?: number;
+}
+
+/**
+ * What every result so far has said of each model, by every name it used.
+ *
+ * The CLI's model list names a model and a display name but no limit, and each
+ * result's `modelUsage` names the window and the output cap of the model that
+ * answered. A row is matched by its `resolvedModel` or the entry's
+ * `canonicalModel`, so both are kept beside the raw key. This is process-wide
+ * because a limit belongs to a model and not to a session, and a restart
+ * starts over, which costs one turn.
+ */
+const limits = new Map<string, ModelLimit>();
+
+/** Who to tell when a result teaches a limit nobody had yet. */
+const limitListeners = new Set<() => void>();
+
+/** What is known of one model's limits, by any name it has been seen under. */
+export const limitOf = (model: string | undefined): ModelLimit | undefined =>
+  model === undefined ? undefined : limits.get(model);
+
+/** Listen for a learned limit, and answer the function that stops listening. */
+export const onLimitLearned = (listen: () => void): (() => void) => {
+  limitListeners.add(listen);
+  return () => { limitListeners.delete(listen); };
+};
+
+/**
+ * Keep each model's context window and output cap from one result.
+ *
+ * A result that names neither teaches nothing, and a result that names one
+ * leaves the other as it was. The listeners hear only about a limit that
+ * changed, so a probe refresh is one per model and not one per turn.
+ *
+ * @returns Whether this result taught a limit that was not known before.
+ */
+export const learnLimits = (message: Bag): boolean => {
+  const models = bag(message.modelUsage);
+  let learned = false;
+  for (const [model, value] of Object.entries(models)) {
+    const entry = bag(value);
+    const contextWindow = typeof entry.contextWindow === 'number' ? entry.contextWindow : undefined;
+    const maxOutputTokens = typeof entry.maxOutputTokens === 'number' ? entry.maxOutputTokens : undefined;
+    if (contextWindow === undefined && maxOutputTokens === undefined) continue;
+    const said: ModelLimit = {
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+    };
+    const names = new Set([model, str(entry.canonicalModel) ?? '']);
+    for (const name of names) {
+      if (name === '') continue;
+      const was = limits.get(name);
+      const merged: ModelLimit = { ...was, ...said };
+      if (was !== undefined && was.contextWindow === merged.contextWindow && was.maxOutputTokens === merged.maxOutputTokens) continue;
+      limits.set(name, merged);
+      learned = true;
+    }
+  }
+  if (learned) for (const listen of limitListeners) listen();
+  return learned;
+};

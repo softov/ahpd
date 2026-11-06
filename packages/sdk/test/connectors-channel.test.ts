@@ -981,6 +981,80 @@ it('keeps a call the plugin of the connector\'s adapter notes, and refuses a not
   await close();
 });
 
+it('keeps the plan limits a plugin notes, and refuses a map that is not a snapshot', async () => {
+  const { host, users, connectors, close } = await served();
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', { id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a' } });
+  const iv = await as(host, users, 'iv');
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+  const quotaSnapshots = {
+    session: { remainingPercentage: 60, resetDate: '2026-11-04T15:00:00.000Z' },
+    weekly: { remainingPercentage: 90, overage: 250, overageAllowedWithExhaustedQuota: true },
+  };
+
+  // The plan limits alone, which are no call: the health gains them and no last call.
+  await onFakeClock(async () => {
+    await connectors.methods['x-ahpd/connectors/note']!.handle({ id: 'shared', quotaSnapshots }, plugin, 'webhook');
+  });
+  const alone = (await iv.rows())['shared'] as { health?: Record<string, unknown> };
+  expect(alone.health?.quotaSnapshots).toEqual(quotaSnapshots);
+  expect(alone.health?.lastCall).toBeUndefined();
+
+  await onFakeClock(async () => {
+    await connectors.methods['x-ahpd/connectors/note']!.handle({ id: 'shared', ok: true, quotaSnapshots }, plugin, 'webhook');
+  });
+  expect((await iv.rows())['shared']).toMatchObject({
+    health: { lastCall: { ok: true }, quotaSnapshots },
+  });
+
+  await expect(connectors.methods['x-ahpd/connectors/note']!.handle({ id: 'shared' }, plugin, 'webhook'))
+    .rejects.toThrow('needs ok, whether the call worked, quotaSnapshots or account');
+
+  await expect(connectors.methods['x-ahpd/connectors/note']!.handle(
+    { id: 'shared', ok: true, quotaSnapshots: { weekly: { remainingPercentage: 'lots' } } }, plugin, 'webhook',
+  )).rejects.toThrow('quotaSnapshots.weekly.remainingPercentage is not a number');
+  await close();
+});
+
+it('keeps the plan a plugin notes, only its plan type and provider, and refuses one that is not', async () => {
+  const { host, users, connectors, close } = await served();
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', { id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a' } });
+  const iv = await as(host, users, 'iv');
+  const plugin: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => true };
+
+  // The plan alone, which is no call. Any other field of the account is not kept.
+  await onFakeClock(async () => {
+    await connectors.methods['x-ahpd/connectors/note']!.handle({
+      id: 'shared',
+      account: { subscriptionType: 'max', apiProvider: 'firstParty', email: 'someone@example.com', organization: 'Example Org' },
+    }, plugin, 'webhook');
+  });
+  const alone = (await iv.rows())['shared'] as { health?: Record<string, unknown> };
+  expect(alone.health?.account).toEqual({ subscriptionType: 'max', apiProvider: 'firstParty' });
+  expect(alone.health?.lastCall).toBeUndefined();
+  expect(JSON.stringify(alone)).not.toContain('someone@example.com');
+
+  // With the limits, as the Claude plugin sends both.
+  const quotaSnapshots = { weekly: { remainingPercentage: 90 } };
+  await onFakeClock(async () => {
+    await connectors.methods['x-ahpd/connectors/note']!.handle(
+      { id: 'shared', quotaSnapshots, account: { apiProvider: 'bedrock' } }, plugin, 'webhook',
+    );
+  });
+  expect((await iv.rows())['shared']).toMatchObject({
+    health: { quotaSnapshots, account: { apiProvider: 'bedrock' } },
+  });
+
+  await expect(connectors.methods['x-ahpd/connectors/note']!.handle(
+    { id: 'shared', account: 'max' }, plugin, 'webhook',
+  )).rejects.toThrow('account is not an object');
+  await expect(connectors.methods['x-ahpd/connectors/note']!.handle(
+    { id: 'shared', account: { subscriptionType: 5 } }, plugin, 'webhook',
+  )).rejects.toThrow('account.subscriptionType is not a string');
+  await close();
+});
+
 it('writes a refreshed secret the adapter\'s plugin sends, and never reopens the connector', async () => {
   const { host, users, connectors, collection, opened, problems, vault, close } = await served();
   const ha = await as(host, users, 'ha');

@@ -160,7 +160,7 @@ const CLIENT = 'agent-claude';
  * `packages/sdk/src/channels/owners.ts` holds. A command the host refuses is
  * one line in the log.
  */
-const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'> => {
+const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' | 'onLimits'> => {
   let opened: Promise<PluginPeer> | undefined;
   const connection = (): Promise<PluginPeer> => {
     opened ??= (async () => {
@@ -180,6 +180,11 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'>
       void connection()
         .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...outcome }))
         .catch((error: unknown) => { host.log(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
+    },
+    onLimits: (id, said) => {
+      void connection()
+        .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...said }))
+        .catch((error: unknown) => { host.log(`${name}: the host did not note the plan limits of login ${id}: ${reason(error)}`); });
     },
   };
 };

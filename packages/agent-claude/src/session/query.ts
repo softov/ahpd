@@ -5,6 +5,10 @@ import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
+import { contextOf } from './contextusage.js';
+import type { ContextFigure } from './contextusage.js';
+import { accountOf, limitsOf, noteAccount, noteLimit, refreshLimits } from './limits.js';
+import { learnLimits, limitOf } from './parts.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
@@ -80,6 +84,14 @@ export interface Query {
   keepStopped: HookCallback;
   /** The `UserPromptSubmit` hook that gives the turn now running what the host asked said. */
   giveHostInstructions: HookCallback;
+  /**
+   * The usage keys of the session's `_meta`: `contextAttribution` and
+   * `ahpd.context` from the last breakdown, `quotaSnapshots` and
+   * `ahpd.account`, each only once something has said it.
+   */
+  usageMeta: () => Bag;
+  /** Tell the session's clients its `_meta` moved, when the usage keys differ from what they were told. */
+  sayMeta: () => void;
 }
 
 /**
@@ -672,7 +684,9 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.owed.clear();
     ctx.answering = undefined;
     ctx.appliedEffort = undefined;
-    return buildQuery(agent, first, cut);
+    const built = buildQuery(agent, first, cut);
+    void built.initializationResult().then(() => introduce(built), () => {});
+    return built;
   };
 
   /**
@@ -748,6 +762,134 @@ export function createQuery(ctx: SessionContext): Query {
    * `handle` is not the query it was reading, so its ending is this host's own
    * doing and the session is exactly where it was.
    */
+
+  /**
+   * How long a turn waits for its context breakdown before it ends without one,
+   * and how long a handshake waits for each of its answers.
+   *
+   * The answer is a control round-trip, and a turn is ended by the CLI before
+   * it is asked, so the normal wait is a fraction of this. A CLI that is slow
+   * or gone costs the turn its figure rather than its ending.
+   */
+  const CONTEXT_WAIT_MS = 2000;
+
+  /** What `inTime` answers for a control request that did not answer in time. */
+  const LATE = Symbol('late');
+
+  /** A control request's answer, or `LATE` once `CONTEXT_WAIT_MS` has passed. */
+  const inTime = async <T>(asked: Promise<T>): Promise<T | typeof LATE> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const overdue = new Promise<typeof LATE>((resolve) => {
+      timer = setTimeout(() => resolve(LATE), CONTEXT_WAIT_MS);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([asked, overdue]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
+  /**
+   * Ask the CLI what fills the context window, and stop waiting for it.
+   *
+   * `getContextUsage` is a `Query` method this SDK build has and an older one
+   * may not, so a missing method is no answer rather than a failure. A late
+   * answer and a failed one are both logged once and left out: nothing a
+   * person reads is worth holding a turn open for.
+   */
+  const askContext = async (): Promise<ContextFigure | undefined> => {
+    const handle = ctx.query as unknown as {
+      getContextUsage?: (opts: { detail: 'summary' }) => Promise<unknown>;
+    };
+    const ask = handle.getContextUsage;
+    if (typeof ask !== 'function') return undefined;
+    try {
+      const answer = await inTime(ask.call(handle, { detail: 'summary' }));
+      if (answer === LATE) {
+        console.warn('@ahpd/agent-claude: the context breakdown took too long; it is left out');
+        return undefined;
+      }
+      const model = str(bag(answer).model) ?? ctx.ran;
+      const figure = contextOf(answer, limitOf(model)?.contextWindow);
+      if (figure === undefined) {
+        console.warn('@ahpd/agent-claude: the context breakdown held no token count; it is left out');
+      }
+      return figure;
+    } catch (error) {
+      console.warn(`@ahpd/agent-claude: the context breakdown failed: ${reason(error)}`);
+      return undefined;
+    }
+  };
+
+  /**
+   * Ask the CLI which account it signs in to, and stop waiting for it.
+   *
+   * The answer goes straight to `noteAccount`, which keeps its plan type and
+   * provider and nothing else. A missing method, a late answer and a failed
+   * one are no answer.
+   */
+  const askAccount = async (handle: ReturnType<typeof query>): Promise<unknown> => {
+    const ask = (handle as unknown as { accountInfo?: () => Promise<unknown> }).accountInfo;
+    if (typeof ask !== 'function') return undefined;
+    try {
+      const answer = await inTime(ask.call(handle));
+      return answer === LATE ? undefined : answer;
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * What a CLI says of the session's usage once it has answered its handshake.
+   *
+   * The CLI starts with the session, so its account, its context and its plan
+   * limits are there before any turn. The account is asked first, because it
+   * says whether an account with no windows has no plan; the breakdown and the
+   * usage request then run together. A CLI this session has since put away
+   * says nothing.
+   */
+  const introduce = async (handle: ReturnType<typeof query>): Promise<void> => {
+    const current = (): boolean => ctx.query === handle && !ctx.closed;
+    if (!current()) return;
+    const account = await askAccount(handle);
+    if (!current()) return;
+    noteAccount(ctx, account);
+    const held = ctx.contextFigure;
+    const [figure] = await Promise.all([askContext(), refreshLimits(ctx).catch(() => {})]);
+    if (!current()) return;
+    // A turn that ended meanwhile gave a later breakdown, which stands.
+    if (figure !== undefined && ctx.contextFigure === held) ctx.contextFigure = figure;
+    sayMeta();
+  };
+
+  /** The usage keys of the session's `_meta`, from what the session last heard. */
+  const usageMeta = (): Bag => {
+    const figure = ctx.contextFigure;
+    const plans = limitsOf(ctx);
+    const account = accountOf(ctx);
+    return {
+      ...(figure === undefined ? {} : { contextAttribution: figure.attribution, 'ahpd.context': figure.context }),
+      ...(plans === undefined ? {} : { quotaSnapshots: plans }),
+      ...(account === undefined ? {} : { 'ahpd.account': account }),
+    };
+  };
+
+  /**
+   * Send `session/metaChanged` when the usage keys moved.
+   *
+   * The action carries the backend's whole `_meta`, as the session's state
+   * does, and the host lays the rest of the map over it. A session with no
+   * usage key yet has nothing to say.
+   */
+  const sayMeta = (): void => {
+    const text = JSON.stringify(usageMeta());
+    if (text === (ctx.usageSaid ?? '{}')) return;
+    ctx.usageSaid = text;
+    const meta = bag(ctx.self.sessionState())._meta;
+    ctx.emit('session', { type: 'session/metaChanged', ...(meta === undefined ? {} : { _meta: meta }) });
+  };
+
   const consume = async (): Promise<void> => {
     const mine = ctx.query;
     try {
@@ -976,7 +1118,14 @@ export function createQuery(ctx: SessionContext): Query {
          * unified rate-limit headers, which comes before the assistant frame
          * that carries a failure's `error` and names when the login is back.
          */
-        if (type === 'rate_limit_event') { ctx.limited(bag(message.rate_limit_info)); continue; }
+        if (type === 'rate_limit_event') {
+          const info = bag(message.rate_limit_info);
+          ctx.limited(info);
+          // The one window whose state changed also goes to the turn's plan,
+          // its login's or its own, beside the windows the usage request answered.
+          noteLimit(ctx, info);
+          continue;
+        }
         // The status of a request the CLI retries, which says whether the API
         // answered it at all.
         if (type === 'system' && str(message.subtype) === 'api_retry') ctx.retried(message);
@@ -1012,6 +1161,13 @@ export function createQuery(ctx: SessionContext): Query {
         }
 
         if (type === 'result') {
+          /*
+           * The result names each model's window and output cap, which is the
+           * only place a model's limit is stated: the CLI's own model list has
+           * none. Learned before the turn is read, because a result that ends
+           * nothing still says what the model that answered can hold.
+           */
+          learnLimits(message);
           /*
            * The end of an attempt on a login that failed before the turn
            * showed anything, which ends nothing when another login is ready:
@@ -1108,11 +1264,31 @@ export function createQuery(ctx: SessionContext): Query {
             // and the result's own main-loop count is then the best there is.
             const used = ctx.sum() ?? ctx.usageOf(message.usage, ctx.ran);
             const cost = ctx.costOf(message);
-            if (used !== undefined || cost !== undefined) {
-              // The cost rides the tokens' own `_meta`, the same place cache
-              // writes go, rather than beside them as a field of its own.
+            /*
+             * Asked once the turn has ended, because the CLI answers it from
+             * the state the turn left.
+             */
+            const figure = await askContext();
+            // The session's own `_meta` keeps the last one, for before the next turn.
+            if (figure !== undefined) ctx.contextFigure = figure;
+            /*
+             * The plan limits the login has reported so far, which are the
+             * last event's windows and the last usage answer's.
+             */
+            const plans = limitsOf(ctx);
+            if (used !== undefined || cost !== undefined || figure !== undefined) {
+              // The cost and the context ride the tokens' own `_meta`, the
+              // same place cache writes go, rather than beside them as fields
+              // of their own.
               const total: Bag = used ?? {};
-              if (cost !== undefined) total._meta = { ...bag(total._meta), 'ahpd.cost': cost };
+              const meta: Bag = { ...bag(total._meta) };
+              if (cost !== undefined) meta['ahpd.cost'] = cost;
+              if (figure !== undefined) {
+                meta.contextAttribution = figure.attribution;
+                meta['ahpd.context'] = figure.context;
+              }
+              if (plans !== undefined) meta.quotaSnapshots = plans;
+              if (Object.keys(meta).length > 0) total._meta = meta;
               turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
@@ -1163,6 +1339,14 @@ export function createQuery(ctx: SessionContext): Query {
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
           if (wrong !== undefined) ctx.failed = wrong;
+          /*
+           * The account's own answer for every window, asked once the turn has
+           * ended and at most once a minute for each login. It is not awaited:
+           * a turn has already said what it knew, and the next one says more.
+           * The session's `_meta` says the turn's breakdown and the answer once
+           * it is in.
+           */
+          void refreshLimits(ctx).catch(() => {}).then(() => { if (!ctx.closed) sayMeta(); });
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed
@@ -1231,5 +1415,5 @@ export function createQuery(ctx: SessionContext): Query {
     return undefined;
   };
 
-  return { waiting, startQuery, ends, take, switchAgent, consume, failTurn, refreshPreset, stopped, keepStopped, giveHostInstructions };
+  return { waiting, startQuery, ends, take, switchAgent, consume, failTurn, refreshPreset, stopped, keepStopped, giveHostInstructions, usageMeta, sayMeta };
 }

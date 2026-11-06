@@ -158,6 +158,31 @@ const senderOn = (turn: Bag | undefined): unknown =>
   ((turn?.message as Bag | undefined)?._meta as Bag | undefined)?.['ahpd.sender'];
 
 /**
+ * Echo under a backend that says its own part of the session's `_meta`.
+ *
+ * `say` sets that part and sends `session/metaChanged` with it alone, as a
+ * backend that knows only its own keys does.
+ */
+const metering = (agent: Agent, handle: { say?: (meta: Bag) => void }): Agent => ({
+  ...agent,
+  create: (start) => {
+    const session = startedNow(agent.create(start));
+    let own: Bag = {};
+    handle.say = (meta) => {
+      own = meta;
+      start.emit('session', { type: 'session/metaChanged', _meta: own });
+    };
+    return {
+      ...session,
+      sessionState: () => {
+        const state = session.sessionState() as Bag;
+        return { ...state, _meta: { ...(state._meta as Bag | undefined), ...own } };
+      },
+    };
+  },
+});
+
+/**
  * Echo under a backend that writes down what each turn was handed.
  *
  * The words of a message reach a backend as `sendMessage`'s `text` and what was
@@ -1007,6 +1032,23 @@ it('keeps the owner beside a session a later daemon resumes', async () => {
   // A second host on the same file is a daemon that came back, and the session
   // it was asked about still says who it belongs to.
   expect(fileSessions({ dir }).owner('one')).toBe('user:ana');
+});
+
+it('keeps the host\'s keys of `_meta` when a backend says its own part moved', async () => {
+  const handle: { say?: (meta: Bag) => void } = {};
+  const { client, peer: p } = await running(memorySessions(), { principal: ana }, metering(echo({ path: root, pace: 0 }), handle));
+  handle.say?.({ 'x.usage': { used: 10 } });
+  await new Promise((tick) => { setTimeout(tick, 20); });
+
+  // The action a client folds replaces the map whole, so it carries both parts.
+  const said = p.notes.filter((note) => note.method === 'action'
+    && (note.params as { channel: string; action: Bag }).channel === SESSION
+    && (note.params as { action: Bag }).action.type === 'session/metaChanged').at(-1);
+  expect((said?.params as { action: { _meta?: Bag } }).action._meta).toMatchObject({ 'ahpd.owner': 'user:ana', 'x.usage': { used: 10 } });
+  const state = (await client.handle({ method: 'subscribe', params: { channel: SESSION } }) as {
+    snapshot: { state: { _meta?: Bag } };
+  }).snapshot.state;
+  expect(state._meta).toMatchObject({ 'ahpd.owner': 'user:ana', 'x.usage': { used: 10 } });
 });
 
 /*

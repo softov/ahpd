@@ -50,9 +50,13 @@
  * answer, row, error or log carries the code, the verifier, the handle or the
  * key.
  *
- * `x-ahpd/connectors/note` takes `{ id, ok, status?, error? }`, one call an open
- * connector made, and keeps it in the connector's health as a host part's
- * outcome is kept. Only the plugin that registered the connector's adapter
+ * `x-ahpd/connectors/note` takes `{ id, ok?, status?, error?, quotaSnapshots?, account? }`,
+ * one call an open connector made, and keeps it in the connector's health as a
+ * host part's outcome is kept. `quotaSnapshots` replaces the plan limits the
+ * health holds, in VS Code's own shape, so a login's account is drawn as its
+ * provider reports it. `account` replaces the plan the health holds, and only
+ * its `subscriptionType` and `apiProvider` are kept. A note with
+ * `quotaSnapshots` or `account` and no `ok` records no call. Only the plugin that registered the connector's adapter
  * notes, since it makes the connector's calls outside `run`. It needs no grant
  * and no owner's rule for a connector of its own adapter. It answers the row.
  *
@@ -100,7 +104,7 @@ import {
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { bag, isRecord, reason } from '../utils/values.js';
-import type { ActionCall, CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
+import type { ActionCall, CallOutcome, CheckResult, Connector, ConnectorAccount, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, QuotaSnapshots, ServedAdapter } from '../types/connectors.js';
 import type { PluginMethod } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -284,11 +288,13 @@ export interface ConnectorsChannel {
    * Record the outcome of one call for one connector, as `run` and a host part
    * do.
    *
-   * It sets `lastCall`, and `lastFailure` too when the call failed. An error
-   * is cut to 500 characters. The rows that carry it go out at most once a
-   * second.
+   * With `ok` it sets `lastCall`, and `lastFailure` too when the call failed.
+   * An error is cut to 500 characters. `quotaSnapshots`, when given, replaces
+   * what the health holds of the account's plan limits, and `account` the
+   * plan it is on. A note with only those records no call. The rows that carry
+   * it go out at most once a second.
    */
-  note(id: string, outcome: { ok: boolean; status?: number; error?: string }): void;
+  note(id: string, outcome: { ok?: boolean; status?: number; error?: string; quotaSnapshots?: QuotaSnapshots; account?: ConnectorAccount }): void;
   /**
    * Every open connector whose adapter serves models, and how to call it.
    *
@@ -558,24 +564,82 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   };
 
   /**
+   * Why a value is not a map of plan-limit snapshots, or nothing.
+   *
+   * The fields are the ones VS Code's `UsageInfoMeta.quotaSnapshots` declares,
+   * so a client reads what it already reads. Anything else is refused rather
+   * than kept and drawn as an empty window.
+   */
+  const quotaProblem = (value: unknown): string | undefined => {
+    if (!isRecord(value)) return 'quotaSnapshots is not an object, by quota type';
+    for (const [key, one] of Object.entries(value)) {
+      if (!isRecord(one)) return `quotaSnapshots.${key} is not an object`;
+      const numbers = ['entitlementRequests', 'usedRequests', 'remainingPercentage', 'overage', 'overageEntitlement'];
+      const booleans = ['isUnlimitedEntitlement', 'overageAllowedWithExhaustedQuota', 'tokenBasedBilling'];
+      for (const field of numbers) {
+        const held = one[field];
+        if (held !== undefined && (typeof held !== 'number' || !Number.isFinite(held))) {
+          return `quotaSnapshots.${key}.${field} is not a number`;
+        }
+      }
+      for (const field of booleans) {
+        const held = one[field];
+        if (held !== undefined && typeof held !== 'boolean') return `quotaSnapshots.${key}.${field} is not a boolean`;
+      }
+      if (one.resetDate !== undefined && typeof one.resetDate !== 'string') {
+        return `quotaSnapshots.${key}.resetDate is not an ISO time`;
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * Why a value is not an account's plan, or nothing.
+   *
+   * Both fields are strings when given. Any other field is not refused, and is
+   * not kept either: `accountOf` copies the two.
+   */
+  const accountProblem = (value: unknown): string | undefined => {
+    if (!isRecord(value)) return 'account is not an object';
+    for (const field of ['subscriptionType', 'apiProvider']) {
+      const held = value[field];
+      if (held !== undefined && typeof held !== 'string') return `account.${field} is not a string`;
+    }
+    return undefined;
+  };
+
+  /** The two fields of an account's plan the health keeps, and nothing else of it. */
+  const accountOf = (value: ConnectorAccount): ConnectorAccount => ({
+    ...(value.subscriptionType === undefined ? {} : { subscriptionType: value.subscriptionType }),
+    ...(value.apiProvider === undefined ? {} : { apiProvider: value.apiProvider }),
+  });
+
+  /**
    * Keep one call's outcome, and queue the rows that carry it.
    *
    * `run` records each action with it, and a host part records each call it
    * makes for a connector. The last call is kept, and the last one that failed
    * is kept beside it. The time is the host's, and an error is cut to 500
-   * characters so a row stays small.
+   * characters so a row stays small. `quotaSnapshots`, when given, replaces
+   * what the health holds: an empty map is a real answer, which says the
+   * account has no plan limits. `account`, when given, replaces the plan.
    */
-  const note = (id: string, outcome: { ok: boolean; status?: number; error?: string }): void => {
+  const note = (id: string, outcome: { ok?: boolean; status?: number; error?: string; quotaSnapshots?: QuotaSnapshots; account?: ConnectorAccount }): void => {
     const health = healths.get(id) ?? {};
-    const error = outcome.error === undefined ? undefined : outcome.error.slice(0, HEALTH_MESSAGE_LIMIT);
-    const call: CallOutcome = {
-      at: new Date().toISOString(),
-      ok: outcome.ok,
-      ...(outcome.status === undefined ? {} : { status: outcome.status }),
-      ...(error === undefined ? {} : { error }),
-    };
-    health.lastCall = call;
-    if (!outcome.ok) health.lastFailure = call;
+    // A note of the plan limits alone is no call, and leaves the calls as they were.
+    if (outcome.ok !== undefined) {
+      const error = outcome.error === undefined ? undefined : outcome.error.slice(0, HEALTH_MESSAGE_LIMIT);
+      const call: CallOutcome = {
+        at: new Date().toISOString(),
+        ok: outcome.ok,
+        ...(outcome.status === undefined ? {} : { status: outcome.status }),
+        ...(error === undefined ? {} : { error }),
+      };
+      health.lastCall = call;
+      if (!outcome.ok) health.lastFailure = call;
+    }
+    if (outcome.quotaSnapshots !== undefined) health.quotaSnapshots = outcome.quotaSnapshots;
+    if (outcome.account !== undefined) health.account = accountOf(outcome.account);
     healths.set(id, health);
     scheduleNoteRefresh();
   };
@@ -1352,13 +1416,24 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     },
     handle: async (params, reader) => {
       const id = idParam(NOTE, params);
-      const { ok, status, error } = params;
-      if (typeof ok !== 'boolean') throw new RpcError(INVALID_PARAMS, `${NOTE} needs ok, whether the call worked`);
+      const { ok, status, error, quotaSnapshots, account } = params;
+      if (ok === undefined && quotaSnapshots === undefined && account === undefined) {
+        throw new RpcError(INVALID_PARAMS, `${NOTE} needs ok, whether the call worked, quotaSnapshots or account`);
+      }
+      if (ok !== undefined && typeof ok !== 'boolean') throw new RpcError(INVALID_PARAMS, `${NOTE} takes ok as whether the call worked, true or false`);
       if (status !== undefined && !Number.isInteger(status)) {
         throw new RpcError(INVALID_PARAMS, `${NOTE} takes status as the status the service answered, a whole number`);
       }
       if (error !== undefined && typeof error !== 'string') {
         throw new RpcError(INVALID_PARAMS, `${NOTE} takes error as what went wrong, a string`);
+      }
+      if (quotaSnapshots !== undefined) {
+        const problem = quotaProblem(quotaSnapshots);
+        if (problem !== undefined) throw new RpcError(INVALID_PARAMS, `${NOTE} takes ${problem}`);
+      }
+      if (account !== undefined) {
+        const problem = accountProblem(account);
+        if (problem !== undefined) throw new RpcError(INVALID_PARAMS, `${NOTE} takes ${problem}`);
       }
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
@@ -1371,9 +1446,11 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
         throw new RpcError(DENIED, `${id}'s calls are noted by the plugin of ${entry.connector.adapter}, not ${reader.id}`);
       }
       note(id, {
-        ok,
+        ...(ok === undefined ? {} : { ok: ok as boolean }),
         ...(status === undefined ? {} : { status: status as number }),
         ...(error === undefined ? {} : { error: error as string }),
+        ...(quotaSnapshots === undefined ? {} : { quotaSnapshots: quotaSnapshots as QuotaSnapshots }),
+        ...(account === undefined ? {} : { account: account as ConnectorAccount }),
       });
       return connectorRow(before);
     },

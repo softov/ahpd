@@ -74,7 +74,7 @@ export { checkReferences, memoryAutomations, pluginTriggerTypes, RUN_HISTORY_LIM
 export { COMPLETIONS_COMMAND, COMPLETIONS_MARK, CONNECTOR_MARK, completionsCommand, connectorRefusal, markedAdapter, sameOwnerOrHost, withConnectorChoices } from './connectors/fields.js';
 export type { CompletionsOptions, ConnectorRefusal } from './connectors/fields.js';
 export type { AutomationsOptions } from './automations/automations.js';
-export type { CallOutcome, CheckResult, CodeSignIn, ConnectorHealth, ConnectorModel, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, DeviceSignInStart, ModelDialect, ModelPricing, ModelProvider, ProviderConnector, ProviderModel, SignIn } from './types/connectors.js';
+export type { CallOutcome, CheckResult, CodeSignIn, ConnectorAccount, ConnectorHealth, ConnectorModel, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, DeviceSignInStart, ModelDialect, ModelPricing, ModelProvider, ProviderConnector, ProviderModel, QuotaSnapshot, QuotaSnapshots, SignIn } from './types/connectors.js';
 export { MODEL_DIALECTS } from './types/connectors.js';
 export { AGENT_RECORD_VARIABLE } from './types/computers.js';
 export { disableConditionsOf } from './automations/automations.js';

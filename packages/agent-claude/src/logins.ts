@@ -13,11 +13,19 @@
  * thing kept between turns.
  */
 
-import type { Bag, CallOutcome, Connector, ConnectorOwner } from '@ahpd/sdk';
+import type { Bag, CallOutcome, Connector, ConnectorAccount, ConnectorOwner, QuotaSnapshots } from '@ahpd/sdk';
 import { sameOwnerOrHost } from '@ahpd/sdk';
 
 /** One call of a login as its connector's health keeps it; the host stamps the time. */
 export type CallNote = Omit<CallOutcome, 'at'>;
+
+/** What a login's account said of its plan, as its connector's health keeps it. */
+export interface PlanNote {
+  /** The windows of its plan limits, or an empty map for an account with none. */
+  quotaSnapshots?: QuotaSnapshots;
+  /** The plan type and the provider, and nothing else of the account. */
+  account?: ConnectorAccount;
+}
 
 /** The adapter whose connectors are Claude logins. */
 export const LOGIN_ADAPTER = 'claude-login';
@@ -149,6 +157,9 @@ export class OpenLogins {
   /** What a call of a login calls, with its id and how the call went. */
   onCall: ((id: string, outcome: CallNote) => void) | undefined;
 
+  /** What a login's plan limits call, with its id and what its account reported. */
+  onLimits: ((id: string, said: PlanNote) => void) | undefined;
+
   constructor(now: () => number = Date.now) {
     this.rests = new Rests(now);
   }
@@ -208,6 +219,17 @@ export class OpenLogins {
    */
   called(id: string, token: string, outcome: CallNote): void {
     if (this.open.get(id)?.token === token) this.onCall?.(id, outcome);
+  }
+
+  /**
+   * Say the plan limits and the plan an open login's account reported, which
+   * the plugin has the host keep in the connector's health beside the last call.
+   *
+   * A note of a token the login no longer holds says nothing, as a call of it
+   * does: the limits belong to the account that token signs in to.
+   */
+  noted(id: string, token: string, said: PlanNote): void {
+    if (this.open.get(id)?.token === token) this.onLimits?.(id, said);
   }
 }
 

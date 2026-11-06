@@ -5,6 +5,7 @@ import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
 import type { Config } from './config.js';
+import type { ContextFigure } from './contextusage.js';
 import type { Logins } from './logins.js';
 import type { Parts } from './parts.js';
 import type { Query } from './query.js';
@@ -309,6 +310,13 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   agentId: string | undefined;
   /** The CLI's `init` frame, once it has answered with one. */
   handshake: Bag | undefined;
+  /**
+   * The last context breakdown the CLI gave, at its handshake or at a turn's
+   * end, which the session's `_meta` carries before and between turns.
+   */
+  contextFigure: ContextFigure | undefined;
+  /** The usage keys of `_meta` the session's clients were last told, as text. */
+  usageSaid: string | undefined;
   /**
    * Why the CLI this session holds went, while it is held for the next send
    * to start again: a turn preparing while it went fails with this. Cleared
