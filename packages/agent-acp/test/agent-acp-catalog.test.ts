@@ -749,10 +749,33 @@ it('lists the sessions the server lists, mapping the fields the contract wants',
     workingDirectories: [uriOf('/tmp/one')],
   });
   // A row with no title is listed untitled, for a client to draw as one, and
-  // one with no timestamp falls back to now.
+  // one with no timestamp is dated at the epoch, as VS Code's Codex dates a
+  // thread with none, so it sorts as the oldest.
   expect(rows?.[1]?.title).toBe('');
   expect(rows?.[1]?.workingDirectories).toEqual([uriOf('/tmp/two'), uriOf('/tmp/two-b')]);
-  expect(Number.isNaN(Date.parse(String(rows?.[1]?.createdAt)))).toBe(false);
+  expect(rows?.[1]).toMatchObject({ createdAt: new Date(0).toISOString(), modifiedAt: new Date(0).toISOString() });
+});
+
+/*
+ * A watch moves no time of the record, as VS Code's Codex keeps a resume from
+ * moving its thread's time; a conversation the host held is dated by its
+ * turns, as the reducer dates a chat.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8202-L8204
+ */
+it('dates a watched session by its turns, and moves no time when it is opened again', async () => {
+  const seed = [
+    { id: 't1', startedAt: '2026-01-02T00:00:00.000Z', duration: 1000, state: 'complete', message: { text: 'a' }, responseParts: [] },
+    { id: 't2', startedAt: '2026-01-03T00:00:00.000Z', duration: 2000, state: 'complete', message: { text: 'b' }, responseParts: [] },
+  ];
+  watchSession({ provider: 'acp-dated', id: 'held', cwd: '/tmp', additional: [], title: '', seed });
+  const dated = watchedRows('acp-dated').find((one) => one.id === 'held');
+  expect(dated).toMatchObject({ createdAt: '2026-01-02T00:00:00.000Z', modifiedAt: '2026-01-03T00:00:02.000Z' });
+
+  watchSession({ provider: 'acp-dated', id: 'fresh', cwd: '/tmp', additional: [], title: '' });
+  const before = watchedRows('acp-dated').find((one) => one.id === 'fresh');
+  await new Promise((done) => { setTimeout(done, 5); });
+  watchSession({ provider: 'acp-dated', id: 'fresh', cwd: '/tmp', additional: [], title: '' });
+  expect(watchedRows('acp-dated').find((one) => one.id === 'fresh')?.modifiedAt).toBe(before?.modifiedAt);
 });
 
 it('holds a session read back by a load untitled, as an untitled row is listed', async () => {

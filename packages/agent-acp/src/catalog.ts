@@ -120,13 +120,16 @@ const listedOf = (session: WatchedSession): Listed => ({
  *
  * ACP carries one timestamp, `updatedAt`, where the contract wants a creation
  * and a modification; the same instant answers both rather than a creation
- * invented out of nothing. A session the server never titled is listed with an
- * empty title, which a client draws as an untitled session, as VS Code lists a
- * provider's session that has no summary.
+ * invented out of nothing. A session the server gave no time is dated at the
+ * epoch, as VS Code's Codex dates a thread with none, so it sorts as the
+ * oldest. A session the server never titled is listed with an empty title,
+ * which a client draws as an untitled session, as VS Code lists a provider's
+ * session that has no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8202-L8204
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6141-L6146
  */
-const listedFrom = (info: SessionInfo, now: string): Listed => {
-  const at = info.updatedAt ?? now;
+const listedFrom = (info: SessionInfo): Listed => {
+  const at = info.updatedAt ?? new Date(0).toISOString();
   return {
     id: info.sessionId,
     title: info.title ?? '',
@@ -200,23 +203,37 @@ export function watchSession(fields: {
 }): WatchedSession {
   const at = new Date().toISOString();
   const known = watched.get(keyOf(fields.provider, fields.id));
+  /*
+   * A watch moves no time of the record: a session opened, resumed or read is
+   * not a session changed, as VS Code's Codex keeps a resume from moving its
+   * thread's time. A turn moves `modifiedAt` as the reducer moves the chat's.
+   */
   if (known !== undefined) {
     known.cwd = fields.cwd;
     known.additional = fields.additional;
     if (fields.title !== '') known.title = fields.title;
-    known.modifiedAt = at;
     prepend(known, fields.replay ?? [], at);
     hold(known, fields.seed ?? []);
     return known;
   }
+  /*
+   * A conversation the host already held is dated by its turns, the one
+   * account of it that carries times: it began at its first turn's start and
+   * last changed at its last turn's end, as the reducer dates a chat. ACP
+   * lists one time, `updatedAt`, and a replay's updates carry none, so a
+   * session with no held turns is dated by the moment it was made here.
+   */
+  const first = fields.seed?.[0];
+  const last = fields.seed?.at(-1);
+  const ended = typeof last?.startedAt === 'string' ? Date.parse(last.startedAt) + (typeof last.duration === 'number' ? last.duration : 0) : Number.NaN;
   const created: WatchedSession = {
     provider: fields.provider,
     id: fields.id,
     cwd: fields.cwd,
     additional: fields.additional,
     title: fields.title,
-    createdAt: at,
-    modifiedAt: at,
+    createdAt: typeof first?.startedAt === 'string' ? first.startedAt : at,
+    modifiedAt: Number.isFinite(ended) ? new Date(ended).toISOString() : at,
     turns: [],
     held: [],
   };
@@ -439,7 +456,6 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
  * down over a subprocess that did not start.
  */
 export async function catalogueOf(options: AcpOptions, provider: string): Promise<Listed[]> {
-  const now = new Date().toISOString();
   const held = listingFor(options);
   try {
     const handshake = await held.connection.initialize();
@@ -469,7 +485,7 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
     for (const info of sessions) {
       placeOf.set(keyOf(provider, info.sessionId), info.cwd);
     }
-    return sessions.map((info) => listedFrom(info, now));
+    return sessions.map(listedFrom);
   }
   catch {
     dropListing(options, held);
