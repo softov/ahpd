@@ -377,6 +377,22 @@ it('tells whoever answers the chat the words and the chat they were said in, and
  * L1854-L1860 at a4e689ae) and types the part `sendFailed` (L2564-L2573 at
  * 6b68d3fe), and a read back keeps it failed.
  */
+it('ends a turn nothing answers in chat/error, as VS Code ends a turn it has no agent for', async () => {
+  const { host, configDir } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  // A chat with nobody behind it.
+  delete turns(HELD).onMessage;
+
+  await said(client, 't1', 'hello');
+
+  const failed = actions(notes, CHAT).find((one) => one['type'] === 'chat/error');
+  expect(failed).toMatchObject({ turnId: 't1', part: { kind: 'error', error: { errorType: 'noAgent', message: 'No agent found for session' } } });
+  expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/turnComplete')).toBe(false);
+  expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: 't1', state: 'error' });
+});
+
 it('ends a turn as failed, in the words of what failed, typed as VS Code types a failed send', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];

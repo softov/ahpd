@@ -912,9 +912,10 @@ export function botChatAgent(
      * Open one turn, and hand it to whoever answers this chat.
      *
      * The turn is open before anybody is told about it, because what is told
-     * is what answers it - and it is over at once when nobody is. That is a
-     * chat with no bot behind it: one a person opened to read, or one this
-     * host has just restarted and not answered again.
+     * is what answers it. A chat nothing answers ends the turn at once in
+     * `chat/error`, as VS Code's host ends a turn it has no agent for, in its
+     * words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L119-L136
      */
     const beginMessage = (
       turnId: string,
@@ -928,7 +929,7 @@ export function botChatAgent(
       if (said !== undefined) open = said;
       const held = said ?? beginTurn(turnId, text, from, model, attachments);
       if (handle.onMessage === undefined) {
-        finish(held, 'complete', []);
+        finish(held, 'error', [{ kind: 'error', error: { errorType: 'noAgent', message: 'No agent found for session' } }]);
         return;
       }
       handle.onMessage({ session: start.uri, chat: start.chatUri, turnId, text });
