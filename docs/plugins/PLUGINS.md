@@ -2038,7 +2038,7 @@ per record with that record's values over these defaults.
 | `model` | The model id a record that names none runs on |
 | `baseUrl` | The OpenAI-compatible endpoint a record that names none uses |
 | `instructions` | The system prompt a record that names none is created with |
-| `store` | The folder each record's cofold file store lives under, one folder per record: `$XDG_DATA_HOME/ahpd/cofold`, or `~/.local/share/ahpd/cofold` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/cofold/config.json` |
+| `store` | The folder cofold's file store lives in, shared by every record: cofold's home, `$COFOLD_HOME`, or `~/.cofold` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/cofold/config.json` |
 | `memory` | `true` to hold each record's store in memory, for a test |
 | `tools` | Which of the four cofold capabilities a session runs, and where `web_search` gets its providers. All four are on when it is absent |
 | `apiKey` | The daemon's own key, for a record that names none: `{ "$secret": "host:<name>" }` is read from the vault, or a function asked once per request so an expired one is not cached |
@@ -2092,7 +2092,7 @@ A turn with no model in the session settings, the record, the plugin options or 
 The named providers are tried in the order the configuration lists them, and a failing one is skipped.
 Name none of them and the session has `web_fetch` alone, with no `web_search` to offer.
 
-Memory is files under `<store>/memory/<workspace slug>/`, where `<store>` is the folder of the record the session runs on - the plugin's `store` under the record's id, or the record's own `store` when it names one - and `$XDG_DATA_HOME/ahpd/cofold/<id>` when the plugin named no store either, so a session's memory sits beside its sessions and can be read and edited by hand.
+Memory is files under `<store>/memory/<workspace slug>/`, where `<store>` is the store the session runs on - the record's own `store` when it names one, else the plugin's, else cofold's home, `$COFOLD_HOME` or `~/.cofold` - so a session's memory sits beside its sessions and can be read and edited by hand.
 Memory is per workspace and shared by the sessions in it, so what one session writes there reaches the next.
 A session whose store is held in memory (`memory: true`) has no directory for memory files, so it gets the other three.
 

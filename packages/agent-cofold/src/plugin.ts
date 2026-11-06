@@ -24,10 +24,9 @@
 
 import { check } from '@cofold/commands';
 import { TOOLS_SCHEMA } from '@cofold/tools';
-import { join } from 'node:path';
 import type { Engine, AgentView, PluginHost } from '@ahpd/sdk';
 import manifest from '../package.json' with { type: 'json' };
-import { cofoldAgent, defaultStoreRoot } from './agent.js';
+import { cofoldAgent } from './agent.js';
 import type { CofoldOptions } from './agent.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
@@ -168,12 +167,12 @@ const text = (value: unknown): string | undefined =>
 /**
  * One record's options: what the record names, over the plugin's defaults.
  *
- * Every record gets a store of its own under the plugin's folder, named by its
- * id. Two records sharing one store would list each other's sessions - a
- * backend answers `list()` from its store, not from its own sessions - so a
- * person's cofold agent would read another's transcripts. A record's model is
- * the channel's `model`, and it wins over the plugin's default the same way
- * every other field does.
+ * Every record opens the same store, cofold's own home unless the plugin or the
+ * record names another, as ahpd's Claude agents on one host share the CLI's
+ * store and each lists every session in it. Agents that must not see each
+ * other's sessions run in machines of their own, where cofold's home is the
+ * machine's. A record's model is the channel's `model`, and it wins over the
+ * plugin's default the same way every other field does.
  *
  * A record that cannot be built is refused with a sentence naming the field,
  * never with the value: `check` says `tools is not a field`, and the rest of
@@ -191,7 +190,7 @@ const optionsOfRecord = (defaults: CofoldOptions, record: AgentView): CofoldOpti
     displayName: record.name,
     ...(record.description === undefined ? {} : { description: record.description }),
     ...(record.model === undefined ? {} : { model: record.model }),
-    store: text(config.store) ?? join(defaults.store ?? defaultStoreRoot(), record.id),
+    store: text(config.store) ?? defaults.store,
   } as CofoldOptions;
   if (merged.tools !== undefined) check(merged.tools, TOOLS_SCHEMA, 'tools');
   return merged;

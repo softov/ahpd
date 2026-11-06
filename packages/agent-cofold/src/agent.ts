@@ -11,13 +11,11 @@
  * runs a turn is `session.ts`, and the plugin entry is `plugin.ts`.
  */
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
 import type { ProviderConfig } from '@cofold/model-openai-compat';
-import { createFileStore } from '@cofold/store-file';
+import { createFileStore, resolveHome } from '@cofold/store-file';
 import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
@@ -61,7 +59,7 @@ export interface CofoldOptions {
    * `false` says nothing at all and leaves the image's own.
    */
   computerConfigDir?: string | false;
-  /** Where the file store lives; absent means the tool's own data directory. */
+  /** Where the file store lives; absent means cofold's own home. */
   store?: string;
   /** Hold everything in memory instead of on disk; for a test. */
   memory?: boolean;
@@ -106,13 +104,13 @@ export interface CofoldOptions {
 }
 
 /**
- * Where a cofold store lives when nothing named one.
- *
- * Data rather than configuration: sessions and runs are written by the daemon,
- * not edited by a person, and `XDG_DATA_HOME` is the variable for exactly that.
+ * Where a cofold store lives when nothing named one: cofold's own home,
+ * `$COFOLD_HOME` or `~/.cofold`, where cofold's file store keeps its sessions,
+ * so the sessions this backend lists are the ones cofold keeps, as ahpd's
+ * Claude lists the CLI's own store.
+ * https://www.npmjs.com/package/@cofold/store-file
  */
-export const defaultStoreRoot = (): string =>
-  join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'ahpd', 'cofold');
+export const defaultStoreRoot = (): string => resolveHome({ name: 'cofold' });
 
 /** A short string, or nothing for a blank or missing one. */
 const text = (value: unknown): string | undefined =>

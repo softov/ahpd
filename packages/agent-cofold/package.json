@@ -96,7 +96,7 @@
           "anyOf": [{ "type": "string" }, { "const": false }],
           "description": "The configuration directory the harness reads inside a machine. /ahpd/cofold by default; false leaves the image's own."
         },
-        "store": { "type": "string", "description": "The folder each record's cofold file store lives under, one folder per record. The tool's own data directory by default." },
+        "store": { "type": "string", "description": "The folder cofold's file store lives in, shared by every record. Cofold's home by default, $COFOLD_HOME or ~/.cofold." },
         "memory": { "type": "boolean", "description": "true to hold each record's store in memory, for a test." },
         "tools": {
           "type": "object",

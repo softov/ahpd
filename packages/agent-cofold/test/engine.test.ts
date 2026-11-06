@@ -1,5 +1,5 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -180,6 +180,36 @@ it('opens one backend per record, with the record\'s own id, name and instructio
   expect(model.requests).toHaveLength(2);
   expect(model.requests[0]?.instructions).toContain('You answer as One.');
   expect(model.requests[1]?.instructions).toContain('You answer as Two.');
+});
+
+/*
+ * Every record opens cofold's own store, at cofold's home, so each agent lists
+ * the sessions cofold keeps, as ahpd's Claude agents share the CLI's store.
+ * https://www.npmjs.com/package/@cofold/store-file
+ */
+it('opens every record\'s store at cofold\'s home, so each lists the sessions cofold keeps', async () => {
+  const home = folderOf('home');
+  const was = { home: process.env.COFOLD_HOME, data: process.env.XDG_DATA_HOME };
+  process.env.COFOLD_HOME = home;
+  // Where a store elsewhere would be written, kept out of this machine's own.
+  process.env.XDG_DATA_HOME = folderOf('data');
+  try {
+    const model = createFakeModel({ script: [{ text: 'answered' }], stream: true });
+    const engine = await engineOf({ adapter: model, memory: false });
+    const first = opened(engine, 'cofold-one', () => ({}), folderOf('one'));
+    first.session.sendMessage('t1', 'hello');
+    await until(() => endings(first.actions).length === 1);
+    const second = engine.open(viewOf('cofold-two', () => ({})));
+
+    expect((await second.list?.())?.map((row) => row.id)).toEqual([first.session.agentId?.()]);
+    expect(existsSync(join(home, 'workspaces'))).toBe(true);
+  }
+  finally {
+    for (const [key, value] of [['COFOLD_HOME', was.home], ['XDG_DATA_HOME', was.data]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 it('applies an edit at the next turn, not to the one already running', async () => {

@@ -56,7 +56,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `baseUrl` | the cofold file's | The OpenAI-compatible endpoint a record that names none uses |
 | `instructions` | the cofold file's, else `You are a helpful assistant.` | The system prompt a record that names none is created with |
 | `computerConfigDir` | `/ahpd/cofold` | The configuration directory the harness reads *inside a machine*: a state volume seeded with its `config.json`, or that file mounted read-only in a profile with `state: "host"`. `false` leaves the image's own |
-| `store` | `$XDG_DATA_HOME/ahpd/cofold` | The folder each record's cofold file store lives under, one folder per record, so two agents do not list each other's sessions |
+| `store` | cofold's home, `$COFOLD_HOME` or `~/.cofold` | The folder cofold's file store lives in, shared by every record, as ahpd's Claude agents on one host share the CLI's store and each lists every session in it. Agents that must not see each other's sessions run in machines of their own, where cofold's home is the machine's |
 | `memory` | `false` | `true` to hold each record's store in memory, for a test |
 | `tools` | all four on | Which capabilities a session runs, and where `web_search` gets its providers |
 | `strictTools` | `true` | `false` holds `tools` to the loose check, so a key cofold does not know is dropped rather than refused |

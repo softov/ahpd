@@ -8,7 +8,7 @@ decisions:
   - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
 refs:
   - "[code://packages/agent-cofold/src/config.ts#L57-L59](../../packages/agent-cofold/src/config.ts#L57-L59) - `harnessConfigPath`, where the harness file is found"
-  - "[code://packages/agent-cofold/src/agent.ts#L104-L105](../../packages/agent-cofold/src/agent.ts#L104-L105) - `defaultStoreRoot`, the store under the data folder"
+  - "[code://packages/agent-cofold/src/agent.ts#L113](../../packages/agent-cofold/src/agent.ts#L113) - `defaultStoreRoot`, the store at cofold's home"
   - "[code://packages/agent-cofold/src/agent.ts#L218-L222](../../packages/agent-cofold/src/agent.ts#L218-L222) - `modelReferenceOf`, the order a model reference is taken in"
   - "[code://packages/agent-cofold/src/agent.ts#L233-L268](../../packages/agent-cofold/src/agent.ts#L233-L268) - `connectionOf`, the endpoint, key and the two errors a turn can give"
   - "[code://packages/agent-cofold/src/agent.ts#L335-L346](../../packages/agent-cofold/src/agent.ts#L335-L346) - `modelOf`, where a chosen effort becomes a request param"
@@ -31,7 +31,7 @@ refs:
 
 The cofold backend `@ahpd/agent-cofold` runs the cofold harness inside the daemon, as the agent `cofold` with the title "Cofold".
 It reads the harness file at `$COFOLD_CONFIG`, else `$XDG_CONFIG_HOME/cofold/config.json`, else `~/.config/cofold/config.json`.
-It keeps sessions in a cofold file store at `$XDG_DATA_HOME/ahpd/cofold`, unless the plugin options name another store.
+It keeps sessions in cofold's own file store at cofold's home, `$COFOLD_HOME` or `~/.cofold`, unless the plugin options or a record name another store.
 The harness tools from `@cofold/tools` run in the cofold loop in the daemon process, as the Claude tools run in the Claude CLI.
 ahpd reports each call, asks for permission through the cofold policy, and reports edits through `onFileEdit`.
 The permission modes and the effort levels come from `@cofold/agents`, so the cofold library and ahpd agree on what each mode does.
