@@ -1161,8 +1161,8 @@ export function createSpawn(ctx: HostContext): Spawn {
        * The background tasks this backend reports.
        *
        * Always offered, because a task is a record and needs no store: the
-       * host builds the row from what the backend says, and a backend's own
-       * `chat/backgroundWorkSet` is said as the backend sent it, by `emit`.
+       * host builds the row from what the backend says, and a backend that
+       * emits `chat/backgroundWorkSet` itself has it dropped, by `emit`.
        */
       backgroundTasks: ctx.background.heldTasks(),
       /*
@@ -1236,6 +1236,21 @@ export function createSpawn(ctx: HostContext): Spawn {
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
          */
         if (channel === 'session' && (action.type === 'session/inputNeededSet' || action.type === 'session/inputNeededRemoved')) return;
+        /*
+         * Background work is the host's to draw.
+         *
+         * A row is the protocol's shape with a `_meta` flag and a snapshot
+         * beside it, all of which the host builds from `backgroundTasks`, so an
+         * action a backend emitted itself would be a second builder, and the one
+         * a late subscriber never sees: one shape for every backend's rows, a
+         * third party's among them, as upstream decided (plan host/115). Dropped
+         * rather than refused, because a backend mid-migration should not fail
+         * a turn over it, and logged because silence is how it goes unnoticed.
+         */
+        if (action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') {
+          log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
+          return;
+        }
         /*
          * A chat's read and archived bits are the ones this host keeps, laid
          * over the status a backend says on the chat's row, as they are on the
