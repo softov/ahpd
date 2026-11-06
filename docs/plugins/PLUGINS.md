@@ -2102,8 +2102,6 @@ turn runs:
 
 | Session setting | |
 | --- | --- |
-| `model` | The model id this session runs on. Session-mutable |
-| `baseUrl` | The endpoint this session runs against |
 | `instructions` | The system prompt for this session |
 | `permissionMode` | How tool approvals are handled. Session-mutable, and offered only when the plugin configured no `policy` |
 | `effortLevel` | How hard the model is asked to think. Chat-scoped, and offered only when this backend builds the request |

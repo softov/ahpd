@@ -405,6 +405,27 @@ it('never asks the network for a caller that passed an adapter', async () => {
   expect(offered?.models).toEqual([{ id: 'open_router/m', name: 'open_router/m' }]);
 });
 
+/*
+ * The endpoint is the agent's configuration, as VS Code keeps a provider's
+ * settings in the host's root configuration, so a session asks the agent's
+ * endpoint whatever endpoint a value it carries names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1338
+ */
+it('asks the agent\'s own endpoint for a session\'s catalogue, whatever endpoint its values carry', async () => {
+  const { seen } = answeringEach({ 'api.deepseek.com': { data: LISTED } });
+  const agent = cofoldAgent({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' });
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/endpoint',
+    chatUri: 'ahp-chat:/endpoint',
+    settings: { baseUrl: 'https://elsewhere.example/v1' },
+    schema: () => agent.schema(),
+    emit: () => {},
+  } as unknown as Start));
+  session.models();
+  await untilAsync(async () => seen.length >= 1);
+  expect([...new Set(seen.map((one) => new URL(one.url).host))]).toEqual(['api.deepseek.com']);
+});
+
 it('answers a session with the same catalogue, and its own model until then', async () => {
   put(CONFIG);
   answering({ data: LISTED });

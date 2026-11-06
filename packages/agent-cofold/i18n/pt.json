@@ -39,10 +39,6 @@
     }
   },
   "session": {
-    "baseUrl": {
-      "title": "Endpoint",
-      "description": "Uma URL base compatível com a OpenAI, como https://api.deepseek.com/v1."
-    },
     "instructions": {
       "title": "Instruções",
       "description": "O prompt de sistema com que este agente roda."

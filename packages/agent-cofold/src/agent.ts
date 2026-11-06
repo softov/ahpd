@@ -286,7 +286,6 @@ const connectionOf = (
   const reference = modelReferenceOf(options, settings, harness);
   const named = reference === undefined ? undefined : splitModel(reference);
   const provider = endpointOf(options, harness, reference);
-  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
   if (strict) {
     if (reference === undefined) {
       throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
@@ -296,7 +295,7 @@ const connectionOf = (
      * the endpoint given outright, and any other reference has to match a file
      * provider.
      */
-    if (named !== undefined && provider === undefined && explicitBase === undefined) {
+    if (named !== undefined && provider === undefined && options.baseUrl === undefined) {
       const known = harness.providers.map((one) => one.id);
       if (known.length > 0 || named.provider !== own) {
         throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
@@ -304,7 +303,7 @@ const connectionOf = (
     }
   }
   const model = reference === undefined ? undefined : (named === undefined ? reference : named.modelId);
-  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl;
+  const baseUrl = options.baseUrl ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl;
   /*
    * A turn with no endpoint is refused as a turn with no model is: nothing
    * named one, and cofold's model adapter takes its target server from
@@ -340,8 +339,7 @@ const connectionsOf = (
   credentials: Record<string, string>,
   harness: HarnessConfig,
 ): Connection[] => {
-  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
-  if (explicitBase !== undefined) {
+  if (options.baseUrl !== undefined) {
     return [connectionOf(options, settings, credentials, harness, false)];
   }
   return harness.providers.map((provider) => {
@@ -516,12 +514,13 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   /**
    * What a session may be told.
    *
-   * `baseUrl` is configuration, which the protocol lets a client change on a
-   * running session through `session/configChanged`. The model is not here: it
-   * belongs to the turn, and the list reaches a client through `Session.models`
-   * and the agent's `models`. The key is not here either: a bearer token is a
-   * credential, and the protocol's path for one is `authenticate` against a
-   * protected resource advertised below.
+   * The endpoint is the agent's configuration, as VS Code keeps a provider's
+   * settings in the host's root configuration.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1338
+   * The model belongs to the turn, and the list reaches a client through
+   * `Session.models` and the agent's `models`. The key is a credential, and the
+   * protocol's path for one is `authenticate` against a protected resource
+   * advertised below.
    *
    * The mode and the effort are the two controls a client draws beyond the
    * text fields, and each is offered only where this backend can honour it:
@@ -533,11 +532,6 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   const schema = (): Bag => ({
     type: 'object',
     properties: {
-      baseUrl: {
-        type: 'string',
-        title: 'Endpoint',
-        description: 'An OpenAI-compatible base URL, e.g. https://api.deepseek.com/v1.',
-      },
       instructions: {
         type: 'string',
         title: 'Instructions',
@@ -592,16 +586,13 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   });
 
   /**
-   * What a session starts at: an endpoint that was configured.
+   * What a session starts at: each key at its schema's own default.
    *
-   * The model is not a session setting: a turn names it, and a turn that names
-   * none falls back to the plugin option or the harness file through
-   * `modelReferenceOf`. A default invented for a model nobody can reach is a
-   * session that fails at the first call, so only what was configured is here.
+   * The endpoint and the key are the agent's configuration, and the model is
+   * the turn's: a turn that names none falls back to the plugin option or the
+   * harness file through `modelReferenceOf`.
    */
-  const defaults = (): Record<string, unknown> => ({
-    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
-  });
+  const defaults = (): Record<string, unknown> => ({});
 
   /**
    * What each endpoint answered, by the endpoint and the key it was asked with.

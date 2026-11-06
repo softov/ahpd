@@ -108,7 +108,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
 
 it('advertises an approvals mode and a thinking level, in the window own names', () => {
   const props = properties(cofoldAgent({}));
-  expect(Object.keys(props)).toEqual(['baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
+  expect(Object.keys(props)).toEqual(['instructions', 'permissionMode', 'effortLevel']);
   // Each chat keeps its own mode, as VS Code's Claude marks its mode.
   expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, chatMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
