@@ -984,15 +984,17 @@ it('hands a turn sent while another is open on once the open turn is answered, s
 });
 
 /*
- * A call its turn left unfinished reads as the reducer leaves it.
+ * A back session's call ends with the back session's turn.
  *
- * The back session never answered a turn that ended with a notice, so its
- * call is not a call that worked: the turn's end forces it to cancelled,
- * `skipped`, which the reference host's chat draws as skipped
- * (stateToProgressAdapter.ts L548 at a4e689ae).
+ * A turn that completes completes the call, as VS Code completes a subagent's
+ * call when the subagent's work completes, answer or no answer: a back turn
+ * that finished without a post completes it as much as one that posted. A
+ * turn that is stopped or fails leaves it to its end, which forces it to
+ * cancelled, `skipped`, as the reference host's chat draws a call its turn
+ * left behind (stateToProgressAdapter.ts L548 at a4e689ae).
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
  */
-it('leaves the back session\'s call unfinished when its turn ends with a notice', async () => {
+it('completes the back session\'s call when its turn ends with a notice, as VS Code completes a subagent\'s call with its work', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -1002,7 +1004,25 @@ it('leaves the back session\'s call unfinished when its turn ends with a notice'
   chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
 
   await said(client, 't1', 'hello');
-  chat.notice('The back session would not take it');
+  chat.notice('Backer finished without a reply');
+
+  expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/toolCallComplete')).toBe(true);
+  const state = await stateOf(client);
+  const call = ((state['turns'] as Bag[])[0]?.['responseParts'] as Bag[])[0];
+  expect(call).toMatchObject({ kind: 'toolCall', toolCall: { status: 'completed' } });
+});
+
+it('leaves the back session\'s call to be cancelled when its turn fails', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
+  chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
+
+  await said(client, 't1', 'hello');
+  chat.fail?.('Backer was not woken: the host refused it');
 
   expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/toolCallComplete')).toBe(false);
   const state = await stateOf(client);
@@ -1013,8 +1033,8 @@ it('leaves the back session\'s call unfinished when its turn ends with a notice'
 /*
  * A back session may post more than once while its own turn runs.
  *
- * Each answer `say` gives is a part of the open turn, which stays open, and
- * `end` after them completes the turn as answered: the call that shows the
+ * Each answer `responsePart` gives is a part of the open turn, which stays
+ * open, and `complete` after them completes the turn: the call that shows the
  * back session completes, as a subagent call does when its turn ends.
  */
 it('adds each answer to the open turn, and completes the call when the turn ends', async () => {

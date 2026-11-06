@@ -739,19 +739,21 @@ export function botChatAgent(
      * line it began with did: a turn a client watched end is a turn a restart
      * can read back.
      *
-     * `answered` says the back session answered, which is the one ending its
-     * calls finish by. Any other ending leaves them unfinished, and the turn's
-     * end forces each to cancelled, `skipped`, in every reducer, this chat's
-     * own record included, as the reference host's chat draws a call its turn
-     * left behind.
+     * A turn that completes completes its subagent calls with it, as VS Code
+     * completes a subagent's call when the subagent's work completes, whether
+     * or not the back session posted an answer. A turn that is stopped or
+     * fails leaves them unfinished, and the turn's end forces each to
+     * cancelled, `skipped`, in every reducer, this chat's own record included,
+     * as the reference host's chat draws a call its turn left behind.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1051
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
      */
-    const finish = (held: OpenTurn, state: Ending, parts: Bag[], answered = false): void => {
+    const finish = (held: OpenTurn, state: Ending, parts: Bag[]): void => {
       open = undefined;
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
         const toolCall = call.part.toolCall as Bag;
-        if (!answered) {
+        if (state !== 'complete') {
           // What the reducer keeps of a call it forces to cancelled.
           const kept = ['toolCallId', 'toolName', 'displayName', 'intention', 'contributor', '_meta', 'invocationMessage', 'toolInput']
             .filter((key) => toolCall[key] !== undefined);
@@ -824,17 +826,12 @@ export function botChatAgent(
       complete: (text) => {
         const held = open;
         if (held === undefined) return;
-        // A turn with an answer `responsePart` gave it was answered, and its calls complete.
-        if (text === undefined) {
-          finish(held, 'complete', [], held.answers > 0);
-          return;
-        }
         /*
-         * One part, whole. Nothing streams into a chat that runs no model, so
-         * there are no `chat/delta`s after it - and the id is the turn's, which
-         * is what a delta would have appended to.
+         * With an answer, one part, whole. Nothing streams into a chat that runs
+         * no model, so there are no `chat/delta`s after it - and the id is the
+         * turn's, which is what a delta would have appended to.
          */
-        finish(held, 'complete', [answerPart(held, text)], true);
+        finish(held, 'complete', text === undefined ? [] : [answerPart(held, text)]);
       },
       responsePart: (text) => {
         const held = open;
@@ -1110,9 +1107,9 @@ export function botChatAgent(
        */
       abort: () => {
         const held = open;
-        for (const one of handed.splice(0)) finish(one.turn, 'cancelled', [], false);
+        for (const one of handed.splice(0)) finish(one.turn, 'cancelled', []);
         if (held === undefined) return;
-        finish(held, 'cancelled', [], false);
+        finish(held, 'cancelled', []);
         handle.onCancel?.(start.uri, held.id);
       },
 
