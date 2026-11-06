@@ -29,7 +29,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
-import { checkIcons, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef } from '@ahpd/sdk';
+import { checkIcons, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef, viewDataAt, withViewData } from '@ahpd/sdk';
 import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
 import { fetchIcons, resolveIcons } from './icons.js';
 import { readCatalogs } from './i18n.js';
@@ -960,6 +960,8 @@ export interface LoadOneOptions {
   showView?: (surface: ViewSurface, view: PluginView) => void;
   /** Where `clearView` takes one of those views away, by surface. */
   clearView?: (surface: ViewSurface) => void;
+  /** Where `setViewData` sets one value of one of those views' data, by surface. */
+  setViewData?: (surface: ViewSurface, path: string, value: unknown) => void;
   /**
    * What reaches the network for an `https:` icon, when the host loads one.
    *
@@ -1509,6 +1511,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
     ...(options.clearAlert === undefined ? {} : { clearAlert: options.clearAlert }),
     ...(options.showView === undefined ? {} : { showView: options.showView }),
     ...(options.clearView === undefined ? {} : { clearView: options.clearView }),
+    ...(options.setViewData === undefined ? {} : { setViewData: options.setViewData }),
     ...(grants.length === 0 ? {} : { grants }),
     ...(declared?.contracts === undefined ? {} : { contracts: declared.contracts }),
     ...(manifest?.i18n === undefined ? {} : { i18n: manifest.i18n }),
@@ -1695,6 +1698,13 @@ export interface LoadOptions {
    * answer.
    */
   viewsChanged?(): void;
+  /**
+   * One value of a plugin's view data changed after a load answered.
+   *
+   * The row is not sent again: a client reading the plugin rows is sent this
+   * one value, and the channel keeps the change in the row it last sent.
+   */
+  viewData?(id: string, surface: ViewSurface, path: string, value: unknown): void;
   /** What reaches the network for an `https:` icon; the global `fetch` otherwise. */
   fetcher?: typeof fetch;
   /** How npm is run for a package a plugin installs; the daemon's own runner otherwise. */
@@ -1924,6 +1934,25 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     viewed.set(id, { ...(viewed.get(id) ?? {}), [surface]: view });
     if (answered.has(id)) options.viewsChanged?.();
   };
+  /**
+   * Set one value of one surface's view data, and say so when the load has
+   * answered. A surface with no view, or a value the view cannot take, throws
+   * to the plugin that called, as a bad `showView` does.
+   */
+  const setViewValue = (id: string, surface: ViewSurface, path: string, value: unknown): void => {
+    const held = viewed.get(id);
+    const view = held?.[surface];
+    if (view === undefined) throw new Error(`plugin ${id}: setViewData needs a view on ${surface}, and it shows none`);
+    let next: PluginView;
+    try {
+      next = withViewData(view, path, value);
+    }
+    catch (error) {
+      throw new Error(`plugin ${id}: setViewData needs ${reason(error)}`);
+    }
+    viewed.set(id, { ...held, [surface]: next });
+    if (answered.has(id)) options.viewData?.(id, surface, path, viewDataAt(next, path));
+  };
   /** Remove one surface's view, and say so when the load has answered. */
   const dropView = (id: string, surface: ViewSurface): void => {
     const held = viewed.get(id);
@@ -2082,6 +2111,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
       // outlives its plugin is not the one on the row, and loses its say.
       showView: (surface, view) => { if (current.get(id) === self) setView(id, surface, view); },
       clearView: (surface) => { if (current.get(id) === self) dropView(id, surface); },
+      setViewData: (surface, path, value) => { if (current.get(id) === self) setViewValue(id, surface, path, value); },
       ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
       ...(options.run === undefined ? {} : { run: options.run }),
     }, (counts.get(id) ?? 0) > 0 ? undefined : named);

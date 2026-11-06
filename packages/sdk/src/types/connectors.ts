@@ -14,7 +14,7 @@
  */
 
 import type { Icon, ToolResultContent } from '@microsoft/agent-host-protocol';
-import type { UiHandle, UiSchema } from './plugin.js';
+import type { ServedMethod, ViewHandle } from './plugin.js';
 import type { OnWire } from './wire.js';
 
 /**
@@ -22,17 +22,22 @@ import type { OnWire } from './wire.js';
  *
  * `receive` is a connector that answers calls, `command` is a `/` command it
  * adds, `action` is something a client offers to run, `models` is a connector
- * the model proxy may call, and `ui` is the component tree a record draws from
- * the data it sends. A type this version does not know is kept and shown by its
- * title rather than refused.
+ * the model proxy may call, and `view` is a surface a record shows a view on.
+ * A type this version does not know is kept and shown by its title rather than
+ * refused.
  */
-export type CapabilityType = 'receive' | 'command' | 'action' | 'models' | 'ui' | (string & {});
+export type CapabilityType = 'receive' | 'command' | 'action' | 'models' | 'view' | (string & {});
 
-/** One thing a connector of an adapter does. */
+/** One thing a connector of an adapter, or an agent of an engine, does. */
 export interface Capability {
   /** What kind of capability this is. */
   type: CapabilityType;
-  /** The name a client and the plugin refer to it by. */
+  /**
+   * The name a client and the plugin refer to it by.
+   *
+   * On a `view` capability it is the surface a record shows a view on, and it
+   * is one the host knows: `main` now.
+   */
   name: string;
   /** What a client prints for it. */
   title: string;
@@ -53,14 +58,6 @@ export interface Capability {
    * before it to build a connector's URL.
    */
   path?: string;
-  /**
-   * The component tree a `ui` capability draws, on a `ui` only.
-   *
-   * The tree is bound to the data a connector sends, so a client draws what the
-   * connector's own answer carries. Only a `ui` capability carries one; a tree
-   * on any other type is refused.
-   */
-  ui?: UiSchema;
 }
 
 /**
@@ -488,11 +485,11 @@ export interface Adapter {
    *
    * Called when a connector is made and when the daemon starts with one
    * stored. The answer is the function that stops it, or nothing when there is
-   * nothing to stop. `ui`, when the adapter declares a `ui` capability, sends
-   * and clears the data that capability's schema draws; the host makes one
-   * handle for this connector, and it is the connector's alone.
+   * nothing to stop. `view` shows the connector's views on the surfaces the
+   * adapter's `view` capabilities name; the host makes one handle for each
+   * opening, and it is this connector's alone.
    */
-  open(connector: Connector, ui?: UiHandle): void | (() => void | Promise<void>);
+  open(connector: Connector, view?: ViewHandle): void | (() => void | Promise<void>);
   /**
    * Say whether one connector works, with a call that needs its credentials.
    *
@@ -535,4 +532,6 @@ export interface ActionCall {
 export interface ServedAdapter extends Adapter {
   /** The plugin that registered it. */
   by: string;
+  /** The methods that plugin registered, which a Button in a connector's view must name. */
+  methods?: Record<string, ServedMethod>;
 }

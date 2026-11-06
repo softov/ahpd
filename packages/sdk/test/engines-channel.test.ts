@@ -47,14 +47,10 @@ const CLAUDE: ServedEngine = {
   keyVariables: ['ANTHROPIC_API_KEY'],
   capabilities: [
     {
-      type: 'ui',
-      name: 'usage',
+      type: 'view',
+      name: 'main',
       title: 'Plan usage',
       description: 'What the account\'s plan has left.',
-      ui: {
-        root: 'usage',
-        components: { usage: { id: 'usage', component: 'Text', text: { path: '/usage/summary' } } },
-      },
     },
   ],
   open: unopened,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createCanvases } from '../src/host/canvases.js';
 import { pluginHost } from '../src/plugins/plugins.js';
-import { checkUi, checkView, literalOf, MAX_COMPONENTS } from '../src/plugins/view.js';
+import { checkView, MAX_COMPONENTS } from '../src/plugins/view.js';
 import { sdkVersion } from '../src/version.js';
 import { isWebUrl } from '../src/weburl.js';
 import type { HostRecordingOptions } from '../src/plugins/plugins.js';
-import type { LoaderContext, PluginView, UiSchema } from '../src/types/plugin.js';
+import type { LoaderContext, PluginView, ServedMethod } from '../src/types/plugin.js';
 
 /*
  * A view a plugin gives, and the check that keeps a client able to draw it.
@@ -69,6 +69,15 @@ describe('a view a client can draw', () => {
     expect(cleared).toEqual(['main']);
   });
 
+  it('sends a setViewData to the loader\'s sink, with main when the call names no surface', () => {
+    const set: [string, string, unknown][] = [];
+    const host = made({ setViewData: (surface, path, value) => { set.push([surface, path, value]); } });
+    host.setViewData('/plan', 'max');
+    expect(set).toEqual([['main', '/plan', 'max']]);
+    expect(refused(() => { host.setViewData('/plan', 'max', 'side' as never); }))
+      .toBe('plugin board: setViewData needs the surface to be one a client draws: main');
+  });
+
   it('keeps a copy, so a change to the plugin\'s object later is not on the row', () => {
     const shown: PluginView[] = [];
     const view = structuredClone(GOOD);
@@ -93,7 +102,7 @@ describe('a view a client can draw', () => {
   });
 
   it('refuses a surface no client draws', () => {
-    expect(denied(GOOD, 'side')).toBe('plugin board: showView needs the surface to be main, the one surface a client draws');
+    expect(denied(GOOD, 'side')).toBe('plugin board: showView needs the surface to be one a client draws: main');
   });
 });
 
@@ -156,16 +165,19 @@ describe('a view a client cannot draw', () => {
       .toBe('plugin board: showView needs the view to be at most 65536 bytes of JSON');
   });
 
-  it('refuses a binding, and says that bindings come later', () => {
-    const view = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: '/x' } } } };
-    expect(denied(view, 'main')).toBe('a view prop may not be a { path } binding: bindings come in a later plan');
-    expect(() => { literalOf({ text: 'x' }); }).not.toThrow();
-    expect(() => { literalOf({ path: '/x' }); }).toThrow('a view prop may not be a { path } binding: bindings come in a later plan');
+  it('counts the data model in the JSON a page holds', () => {
+    const view = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: '/x' } } }, dataModel: { x: 'x'.repeat(64 * 1024) } };
+    expect(denied(view, 'main')).toBe('plugin board: showView needs the view to be at most 65536 bytes of JSON');
+  });
+
+  it('refuses a data model that is not a JSON object', () => {
+    const view = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: '/x' } } }, dataModel: ['x'] };
+    expect(denied(view, 'main')).toBe('plugin board: showView needs the dataModel to be a JSON object');
   });
 
   it('refuses a Link whose href is not an absolute http(s) URL', () => {
     const view = { root: 'a', components: { a: { id: 'a', component: 'Link', label: 'x', href: 'board/1' } } };
-    expect(denied(view, 'main')).toBe('plugin board: showView needs the Link a to have href as an absolute http(s) URL with a host');
+    expect(denied(view, 'main')).toBe('plugin board: showView needs the Link a to have href as an absolute http(s) URL with a host, or a { path } binding');
   });
 
   it('refuses an action that is not an event call', () => {
@@ -192,77 +204,83 @@ describe('the check as a function', () => {
 });
 
 /*
- * A ui capability's schema, which is a view whose props bind to the data the
- * record sends. The rules are the view's, so these cases are the ones where a
- * schema differs: a prop may be `{ path }`, and a list may repeat a component.
+ * A view whose props bind to its data model: the same check, for a plugin's
+ * page and for a record's view alike. A prop may be `{ path }`, and a list may
+ * repeat one component over the items at a path.
  */
-const WHERE = 'the ui schema of adapter probe capability plan';
+const GO: Record<string, ServedMethod> = { 'x-view/go': { by: 'board', name: 'x-view/go', method: { grant: 'demo:read', handle: () => ({}) } } };
 
-/** The message a schema refused with, or a failure saying it was not refused. */
-const refusedUi = (schema: unknown): string => refused(() => { checkUi(schema, 'board', WHERE); });
+/** The message a bound view was refused with, or a failure saying it was not refused. */
+const refusedBound = (view: unknown): string => refused(() => { checkView(view, 'main', 'board', GO); });
 
-describe('a ui schema a client can draw', () => {
+describe('a view bound to its data model', () => {
   it('passes with a prop bound to a path of the data', () => {
-    const schema: UiSchema = {
+    const view: PluginView = {
       root: 'plan',
       components: {
-        plan: { id: 'plan', component: 'Text', text: { path: '/plan/summary' } },
-        open: { id: 'open', component: 'Link', label: 'Plan', href: 'https://example.test/plan' },
+        plan: { id: 'plan', component: 'Column', children: ['summary', 'open'] },
+        summary: { id: 'summary', component: 'Text', text: { path: '/plan/summary' } },
+        open: { id: 'open', component: 'Link', label: 'Plan', href: { path: '/plan/url' } },
       },
+      dataModel: { plan: { summary: 'max', url: 'https://example.test/plan' } },
     };
-    expect(() => { checkUi(schema, 'board', WHERE); }).not.toThrow();
+    expect(() => { checkView(view, 'main', 'board', GO); }).not.toThrow();
   });
 
   it('passes a list that repeats a known component over a path', () => {
-    const schema: UiSchema = {
+    const view: PluginView = {
       root: 'logins',
       components: {
         logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'login' } },
-        login: { id: 'login', component: 'Text', text: { path: '/name' } },
+        login: { id: 'login', component: 'Text', text: { path: 'name' } },
+      },
+      dataModel: { logins: [{ name: 'work' }] },
+    };
+    expect(() => { checkView(view, 'main', 'board', GO); }).not.toThrow();
+  });
+
+  it('passes a Button that names a registered method, beside bound props', () => {
+    const view: PluginView = {
+      root: 'col',
+      components: {
+        col: { id: 'col', component: 'Column', children: ['n', 'go'] },
+        n: { id: 'n', component: 'Text', text: { path: '/n' } },
+        go: { id: 'go', component: 'Button', label: 'Go', action: { event: { name: 'x-view/go' } } },
       },
     };
-    expect(() => { checkUi(schema, 'board', WHERE); }).not.toThrow();
+    expect(() => { checkView(view, 'main', 'board', GO); }).not.toThrow();
   });
 
   it('refuses an unknown componentId', () => {
-    const schema = {
+    const view = {
       root: 'logins',
       components: { logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'nope' } } },
     };
-    expect(refusedUi(schema))
-      .toBe(`plugin board: ${WHERE} needs the children binding of the component logins to name a component, and nope is not one`);
+    expect(refusedBound(view))
+      .toBe('plugin board: showView needs the children binding of the component logins to name a component, and nope is not one');
   });
 
   it('refuses a path binding with another member, or no path at all', () => {
     const extra = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: '/x', fallback: 'y' } } } };
-    expect(refusedUi(extra)).toBe(`plugin board: ${WHERE} needs a prop to be a literal or { path }, one path of the data`);
+    expect(refusedBound(extra)).toBe('plugin board: showView needs a prop to be a literal or { path }, one path of the data');
     const noPath = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: 5 } } } };
-    expect(refusedUi(noPath)).toBe(`plugin board: ${WHERE} needs a prop to be a literal or { path }, one path of the data`);
-  });
-
-  it('refuses an action, because a Button that runs one comes later', () => {
-    const schema = {
-      root: 'a',
-      components: { a: { id: 'a', component: 'Button', label: 'x', action: { event: { name: 'x-view/go' } } } },
-    };
-    expect(refusedUi(schema))
-      .toBe(`plugin board: ${WHERE} needs the component a to carry no action, and a Button that runs one comes in a later plan`);
+    expect(refusedBound(noPath)).toBe('plugin board: showView needs a prop to be a literal or { path }, one path of the data');
   });
 
   it('refuses a component kind a client is not promised', () => {
-    const schema = { root: 'a', components: { a: { id: 'a', component: 'Image', src: 'x' } } };
-    expect(refusedUi(schema)).toContain('to be one of Text, Link, Button, Card, Row, Column, List, Divider, Icon');
+    const view = { root: 'a', components: { a: { id: 'a', component: 'Image', src: 'x' } } };
+    expect(refusedBound(view)).toContain('to be one of Text, Link, Button, Card, Row, Column, List, Divider, Icon');
   });
 
   it('refuses a cycle, over the component a list repeats too', () => {
-    const schema = {
+    const view = {
       root: 'a',
       components: {
         a: { id: 'a', component: 'List', children: { path: '/items', componentId: 'b' } },
         b: { id: 'b', component: 'Text', text: 'x', child: 'a' },
       },
     };
-    expect(refusedUi(schema)).toBe(`plugin board: ${WHERE} needs the components below root to be a tree without a cycle`);
+    expect(refusedBound(view)).toBe('plugin board: showView needs the components below root to be a tree without a cycle');
   });
 });
 

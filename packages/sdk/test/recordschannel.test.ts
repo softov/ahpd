@@ -138,6 +138,34 @@ it('sends added, changed and removed after a refresh, each to the client it conc
   expect(of('web')).toEqual(['added web', 'removed web']);
 });
 
+it('notifies each reader who holds a record, and the refresh after it sends no changed', async () => {
+  const teams = store({ backend: { id: 'backend', title: 'Back' }, web: { id: 'web' } });
+  const list = recordsChannel(SCHEME, teams, { grant: 'team:read', mayRead: (id, reader) => id === reader.id });
+  const ana = person('ana', ['team:read']);
+  const web = person('web', []);
+  const { handle, heard, of } = fakeHandle([{ client: 'ana', reader: ana }, { client: 'web', reader: web }]);
+  list.bind(handle);
+  await list.channel.snapshot(URI, ana, 'ana');
+  await list.channel.snapshot(URI, web, 'web');
+
+  // The store takes the change, and the channel sends it alone.
+  teams.rows.backend = { id: 'backend', title: 'Front' };
+  await list.notify('backend', { type: `${SCHEME}/retitled`, title: 'Front' }, (record) => ({ ...record, title: 'Front' }));
+  // `web` cannot read backend, so it is not told.
+  expect(of('ana')).toEqual(['retitled backend']);
+  expect(of('web')).toEqual([]);
+  expect(heard.at(-1)?.action).toEqual({ type: `${SCHEME}/retitled`, title: 'Front', id: 'backend' });
+
+  await list.refresh();
+  expect(of('ana')).toEqual(['retitled backend']);
+
+  // A record nobody was sent is not notified, and its change is not applied.
+  let called = false;
+  await list.notify('nobody', { type: `${SCHEME}/retitled` }, (record) => { called = true; return record; });
+  expect(called).toBe(false);
+  expect(of('ana')).toEqual(['retitled backend']);
+});
+
 it('carries the record with added and changed, and the id alone with removed', async () => {
   const teams = store({});
   const list = recordsChannel(SCHEME, teams, { grant: 'team:read' });

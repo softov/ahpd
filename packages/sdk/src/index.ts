@@ -133,8 +133,8 @@ export type { AdaptersChannel, AdaptersChannelOptions } from './connectors/adapt
 export { enginesChannel } from './agents/engines.js';
 export type { EnginesChannel, EnginesChannelOptions } from './agents/engines.js';
 export { checkIcons, checkTunnelKind } from './plugins/validate.js';
+export { viewDataAt, withViewData } from './plugins/views.js';
 export type { CheckedSchema } from './plugins/validate.js';
-export { checkUi } from './plugins/view.js';
 export { schemaGaps, gapLine } from './plugins/schemagaps.js';
 export { isSecret, secretPaths } from './channels/owners.js';
 export type { SchemaGap } from './plugins/schemagaps.js';
@@ -159,4 +159,4 @@ export type {
 } from './access/commandautoapprover.js';
 
 export type * from './types/index.js';
-export type { PluginView, UiHandle, UiSchema, ViewComponent, ViewSurface } from './types/plugin.js';
+export type { PluginView, ViewComponent, ViewHandle, ViewSurface } from './types/plugin.js';

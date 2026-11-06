@@ -1,19 +1,22 @@
 /**
  * The checks a component tree passes before the host keeps it.
  *
- * A tree is a plugin's own object, and the daemon cannot know it is one a
+ * A view is a plugin's own object, and the daemon cannot know it is one a
  * client can draw. So this is the boundary: the surface must be one a client
  * has, every component must be one of the kinds a client is promised, every
  * reference must name a component, and the tree must be one. The refusal names
  * the rule, so an author reads what to change.
  *
- * A view's props are literals, and `literalOf` is the one place that changes
- * when they bind. A `ui` capability's schema is drawn from the data its record
- * sends, so `checkUi` takes the same tree with a prop bound to `{ path }`.
+ * A prop is a literal or `{ path }`, read from the view's `dataModel`, and a
+ * list may repeat one component over the items at a path. The same check runs
+ * for a plugin's page and for a connector's or an agent's view.
  */
 
-import type { ServedMethod, ViewComponent } from '../types/plugin.js';
+import type { ServedMethod, ViewComponent, ViewSurface } from '../types/plugin.js';
 import { isWebUrl } from '../weburl.js';
+
+/** The surfaces a view may be shown on, for a plugin's page and for a record alike. */
+export const VIEW_SURFACES: readonly ViewSurface[] = ['main'];
 
 /** The component kinds a view may hold: a small set each client can draw. */
 export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon'];
@@ -35,24 +38,10 @@ const asObject = (value: unknown): Record<string, unknown> | undefined =>
 type Fail = (rule: string) => never;
 
 /**
- * Refuse a prop that is a binding, for now.
- *
- * A view carries literal values only: a plugin sends the whole view again on
- * each change, and `{ path }` is the A2UI way to read a prop from a data model
- * this host does not send yet. Bindings come in a later plan, and this is the
- * one function that changes when they do.
- */
-export const literalOf = (value: unknown): void => {
-  if (asObject(value) !== undefined && Object.hasOwn(value as object, 'path')) {
-    throw new Error('a view prop may not be a { path } binding: bindings come in a later plan');
-  }
-};
-
-/**
  * A prop bound to the data model, as `{ path }`, or `undefined` for a literal.
  *
  * Only the presence of the member is read here. Whether the binding is one a
- * renderer can follow is `checkUiProp`'s to say.
+ * renderer can follow is `checkProp`'s to say.
  */
 const bindingOf = (value: unknown): Record<string, unknown> | undefined => {
   const held = asObject(value);
@@ -169,8 +158,8 @@ export const checkView = (
   const fail: Fail = (rule) => {
     throw new Error(`plugin ${by}: showView needs ${rule}`);
   };
-  if (surface !== 'main') {
-    fail('the surface to be main, the one surface a client draws');
+  if (!(VIEW_SURFACES as readonly string[]).includes(surface)) {
+    fail(`the surface to be one a client draws: ${VIEW_SURFACES.join(', ')}`);
   }
   const { components, entries } = treeOf(view, 'the view', fail);
   /*
@@ -183,69 +172,28 @@ export const checkView = (
     const child = component.child;
     if (child !== undefined) named(child, components, key, 'child', fail);
     const children = component.children;
-    if (children !== undefined) {
-      if (!Array.isArray(children)) fail(`the children of the component ${key} to be a list of component ids`);
-      for (const one of children as unknown[]) named(one, components, key, 'children', fail);
-    }
+    if (children !== undefined) checkChildren(children, key, components, fail);
     for (const [prop, propValue] of Object.entries(component)) {
       if (STRUCTURE.has(prop)) continue;
-      literalOf(propValue);
+      checkProp(propValue, fail);
     }
-    if (component.component === 'Link' && !isWebUrl(component.href)) {
-      fail(`the Link ${key} to have href as an absolute http(s) URL with a host`);
+    if (component.component === 'Link' && bindingOf(component.href) === undefined && !isWebUrl(component.href)) {
+      fail(`the Link ${key} to have href as an absolute http(s) URL with a host, or a { path } binding`);
     }
     if (component.action !== undefined) checkAction(component.action, key, methods, fail);
   }
+  const dataModel = (view as Record<string, unknown>).dataModel;
+  if (dataModel !== undefined && asObject(dataModel) === undefined) fail('the dataModel to be a JSON object');
   walkTree((view as Record<string, unknown>).root as string, (id) => belowOf(components[id] as Record<string, unknown>), fail);
 };
 
 /**
- * Check one `ui` capability's schema against the rules a client draws by.
+ * Refuse a prop that is neither a literal nor `{ path }`.
  *
- * `by` is the plugin that registered it and `where` names the capability, as
- * `the ui schema of adapter devtunnel capability account`, so a refusal says
- * which registration to change. The rules are a view's: the same kinds, the
- * same limits, the same references and the same tree.
- *
- * Two things differ. A prop may be `{ path }`, which is read from the data the
- * record sends, and `children` may be `{ path, componentId }`, which draws one
- * component once for each item of the list at `path`. No component carries an
- * action: a Button that runs one waits for a later plan.
+ * `{ path }` is one path of the view's data model, and nothing else: an object
+ * carrying a second member, or no path at all, is a binding no renderer reads.
  */
-export const checkUi = (schema: unknown, by: string, where: string): void => {
-  const fail: Fail = (rule) => {
-    throw new Error(`plugin ${by}: ${where} needs ${rule}`);
-  };
-  const { components, entries } = treeOf(schema, 'the ui schema', fail);
-  for (const [key, value] of entries) {
-    const component = value as Record<string, unknown>;
-    const child = component['child'];
-    if (child !== undefined) named(child, components, key, 'child', fail);
-    const children = component['children'];
-    if (children !== undefined) checkUiChildren(children, key, components, fail);
-    for (const [prop, propValue] of Object.entries(component)) {
-      if (STRUCTURE.has(prop)) continue;
-      checkUiProp(propValue, fail);
-    }
-    const href = component['href'];
-    if (component['component'] === 'Link' && bindingOf(href) === undefined && !isWebUrl(href)) {
-      fail(`the Link ${key} to have href as an absolute http(s) URL with a host, or a { path } binding`);
-    }
-    if (component['action'] !== undefined) {
-      fail(`the component ${key} to carry no action, and a Button that runs one comes in a later plan`);
-    }
-  }
-  walkTree((schema as Record<string, unknown>).root as string, (id) => belowOf(components[id] as Record<string, unknown>), fail);
-};
-
-/**
- * Refuse a prop of a ui schema that is neither a literal nor `{ path }`.
- *
- * `{ path }` is one path of the data the record sends, and nothing else: an
- * object carrying a second member, or no path at all, is a binding no renderer
- * reads.
- */
-const checkUiProp = (value: unknown, fail: Fail): void => {
+const checkProp = (value: unknown, fail: Fail): void => {
   const held = bindingOf(value);
   if (held === undefined) return;
   if (Object.keys(held).length !== 1 || typeof held['path'] !== 'string' || held['path'] === '') {
@@ -254,13 +202,13 @@ const checkUiProp = (value: unknown, fail: Fail): void => {
 };
 
 /**
- * Check a ui schema's `children`: a list of ids, or one repeated over a list.
+ * Check a component's `children`: a list of ids, or one repeated over a list.
  *
  * `{ path, componentId }` draws `componentId` once for each item at `path`, and
  * the component it names is walked as a child, so the tree rule holds over the
  * component a list repeats.
  */
-const checkUiChildren = (
+const checkChildren = (
   children: unknown,
   key: string,
   components: Record<string, unknown>,

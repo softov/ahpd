@@ -10,7 +10,7 @@ import { memoryRecords } from '../src/resources/records.js';
 import { servedRecords } from '../src/resources/recordschannel.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { CheckResult, Connector, ServedAdapter } from '../src/types/connectors.js';
-import type { UiHandle } from '../src/types/plugin.js';
+import type { PluginView, ViewHandle } from '../src/types/plugin.js';
 import type { RecordCollection } from '../src/types/records.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Vault } from '../src/types/vault.js';
@@ -136,8 +136,8 @@ async function served(register = true) {
   const closed: string[] = [];
   const ran: Ran[] = [];
   const problems: string[] = [];
-  /** The ui handle each opening was handed, by connector id. */
-  const handles = new Map<string, UiHandle>();
+  /** The view handle each opening was handed, by connector id. */
+  const handles = new Map<string, ViewHandle>();
   const vault = made();
   /** What the adapter's check answers, and the connectors it was asked about. */
   const probe = {
@@ -161,10 +161,11 @@ async function served(register = true) {
               description: 'Sends a message to the target.',
               input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
             },
+            { type: 'view', name: 'main', title: 'Status', description: 'What the target last answered.' },
           ],
-          open: (connector: Connector, ui?: UiHandle) => {
+          open: (connector: Connector, view?: ViewHandle) => {
             opened.push({ id: connector.id, adapter: connector.adapter, owner: connector.owner, config: connector.config });
-            if (ui !== undefined) handles.set(connector.id, ui);
+            if (view !== undefined) handles.set(connector.id, view);
             return () => { closed.push(connector.id); };
           },
           check: async (connector: Connector) => {
@@ -1348,94 +1349,161 @@ it('skips a provider that throws, and says the problem once', async () => {
   expect(problems).toEqual(['x-ahpd-connectors: work serves no model: the endpoint is missing']);
 });
 
-it('puts a ui on the connector row, and sends the change to a subscriber', async () => {
+/** A view with one bound Text, and the data it starts from. */
+const viewOf = (dataModel: Record<string, unknown>): PluginView => ({
+  root: 'plan',
+  components: { plan: { id: 'plan', component: 'Text', text: { path: '/plan' } } },
+  dataModel,
+});
+
+/** Every view data event one client was sent, in the order it arrived. */
+const viewDataOf = (seen: { method: string; params: Bag }[]): Bag[] => seen
+  .filter((one) => one.method === 'action' && (one.params as Bag)['action']?.type === 'x-ahpd-connectors/viewData')
+  .map((one) => (one.params as Bag)['action'] as Bag);
+
+it('puts a view on the connector row, and sends the change to a subscriber', async () => {
   const { host, users, handles, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
   const iv = await as(host, users, 'iv');
   await iv.rows();
 
-  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
-  handles.get('ci')!.show({ plan: 'max', left: 3 });
+  expect((await cy.rows())['ci']).not.toHaveProperty('views');
+  handles.get('ci')!.showView(viewOf({ plan: 'max' }));
   await tick();
 
-  expect((await cy.rows())['ci']?.['ui']).toEqual({ plan: 'max', left: 3 });
+  expect((await cy.rows())['ci']?.['views']).toEqual({ main: viewOf({ plan: 'max' }) });
   // A subscriber is sent the changed row, not only the next snapshot.
-  expect(changesOf(iv.seen).at(-1)).toMatchObject({ id: 'ci', record: { ui: { plan: 'max', left: 3 } } });
+  expect(changesOf(iv.seen).at(-1)).toMatchObject({ id: 'ci', record: { views: { main: viewOf({ plan: 'max' }) } } });
   await close();
 });
 
-it('replaces the ui on a second show, and clear takes it away', async () => {
+it('replaces the view on a second show, and clear takes it away', async () => {
   const { host, users, handles, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
   const handle = handles.get('ci')!;
 
-  handle.show({ left: 3 });
-  handle.show({ left: 2 });
+  handle.showView(viewOf({ plan: 'max' }));
+  handle.showView(viewOf({ plan: 'pro' }));
   await tick();
-  expect((await cy.rows())['ci']?.['ui']).toEqual({ left: 2 });
+  expect((await cy.rows())['ci']?.['views']).toEqual({ main: viewOf({ plan: 'pro' }) });
 
-  handle.clear();
+  handle.clearView();
   await tick();
-  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  expect((await cy.rows())['ci']).not.toHaveProperty('views');
   await close();
 });
 
-it('takes the ui away when the connector closes, and ignores the old handle', async () => {
+it('takes the view away when the connector closes, and ignores the old handle', async () => {
   const { host, users, handles, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
   const first = handles.get('ci')!;
-  first.show({ left: 3 });
+  first.showView(viewOf({ plan: 'max' }));
   await tick();
-  expect((await cy.rows())['ci']?.['ui']).toEqual({ left: 3 });
+  expect((await cy.rows())['ci']).toHaveProperty('views');
 
-  // A put closes the connector it replaces, so the data goes and a new handle is made.
+  // A put closes the connector it replaces, so the view goes and a new handle is made.
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'b' } });
   expect(handles.get('ci')).not.toBe(first);
-  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  expect((await cy.rows())['ci']).not.toHaveProperty('views');
 
-  first.show({ left: 1 });
+  first.showView(viewOf({ plan: 'pro' }));
+  first.setViewData('/plan', 'pro');
   await tick();
-  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  expect((await cy.rows())['ci']).not.toHaveProperty('views');
   await close();
 });
 
-it('takes the ui away when the connector is removed, and ignores the old handle', async () => {
+it('takes the view away when the connector is removed, and ignores the old handle', async () => {
   const { host, users, handles, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
   const handle = handles.get('ci')!;
-  handle.show({ left: 3 });
+  handle.showView(viewOf({ plan: 'max' }));
   await tick();
 
   expect(await cy.call('x-ahpd/connectors/remove', { id: 'ci' })).toEqual({ result: {} });
   expect(await cy.rows()).not.toHaveProperty('ci');
-  handle.show({ left: 1 });
+  handle.showView(viewOf({ plan: 'pro' }));
   await tick();
   expect(await cy.rows()).not.toHaveProperty('ci');
   await close();
 });
 
-it('refuses ui data over the limit or not an object, and the row keeps what it held', async () => {
+it('refuses a bad view, or one on a surface no capability names, and the row keeps what it held', async () => {
   const { host, users, handles, problems, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
   const handle = handles.get('ci')!;
-  handle.show({ kept: true });
+  handle.showView(viewOf({ plan: 'max' }));
   await tick();
 
-  handle.show({ over: 'x'.repeat(64 * 1024) });
-  handle.show([] as unknown as Record<string, unknown>);
-  handle.show(null as unknown as Record<string, unknown>);
+  handle.showView(viewOf({ over: 'x'.repeat(64 * 1024) }));
+  handle.showView({ root: 'nope', components: {} });
+  handle.showView(viewOf({ plan: 'pro' }), 'side' as never);
   await tick();
 
-  expect((await cy.rows())['ci']?.['ui']).toEqual({ kept: true });
+  expect((await cy.rows())['ci']?.['views']).toEqual({ main: viewOf({ plan: 'max' }) });
   expect(problems).toEqual([
-    'x-ahpd-connectors: ci\'s ui was not kept: data of more than 65536 bytes of JSON',
-    'x-ahpd-connectors: ci\'s ui was not kept: data that is not a JSON object',
-    'x-ahpd-connectors: ci\'s ui was not kept: data that is not a JSON object',
+    'x-ahpd-connectors: ci\'s view was not kept: plugin webhook: showView needs the view to be at most 65536 bytes of JSON',
+    'x-ahpd-connectors: ci\'s view was not kept: plugin webhook: showView needs root to name a component, and nope is not one',
+    'x-ahpd-connectors: ci: showView on side, a surface no view capability of webhook names',
+  ]);
+  await close();
+});
+
+it('sends one value of the view data to each reader alone, and the row is not sent again', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const iv = await as(host, users, 'iv');
+  await iv.rows();
+  const handle = handles.get('ci')!;
+  handle.showView(viewOf({ plan: 'max', windows: [{ left: 3 }] }));
+  await tick();
+  const changes = changesOf(iv.seen).length;
+
+  handle.setViewData('/plan', 'pro');
+  handle.setViewData('/windows/0/left', 2);
+  await tick();
+  await tick();
+
+  expect(viewDataOf(iv.seen)).toEqual([
+    { type: 'x-ahpd-connectors/viewData', id: 'ci', surface: 'main', path: '/plan', value: 'pro' },
+    { type: 'x-ahpd-connectors/viewData', id: 'ci', surface: 'main', path: '/windows/0/left', value: 2 },
+  ]);
+  // The refresh after the event finds the row as the reader holds it, so it sends nothing.
+  await cy.call('x-ahpd/connectors/put', { id: 'other', adapter: 'webhook', owner: 'user:cy', config: { target: 'b' } });
+  await tick();
+  expect(changesOf(iv.seen).filter((one) => one['id'] === 'ci')).toHaveLength(changes);
+  // A new subscriber reads the value in the row.
+  expect((await cy.rows())['ci']?.['views']).toEqual({ main: viewOf({ plan: 'pro', windows: [{ left: 2 }] }) });
+  await close();
+});
+
+it('replaces the whole data model at /, and refuses a bad path, a surface with no view, and too much data', async () => {
+  const { host, users, handles, problems, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const handle = handles.get('ci')!;
+
+  handle.setViewData('/plan', 'max');
+  handle.showView(viewOf({ plan: 'max', left: 3 }));
+  handle.setViewData('/', { plan: 'team' });
+  handle.setViewData('plan', 'pro');
+  handle.setViewData('/', 'not an object');
+  handle.setViewData('/plan', 'x'.repeat(64 * 1024));
+  await tick();
+  await tick();
+
+  expect((await cy.rows())['ci']?.['views']).toEqual({ main: viewOf({ plan: 'team' }) });
+  expect(problems).toEqual([
+    'x-ahpd-connectors: ci: setViewData on main, which shows no view',
+    'x-ahpd-connectors: ci\'s view data was not set: setViewData needs the path to be / or /a/b, and plan is not one',
+    'x-ahpd-connectors: ci\'s view data was not set: setViewData needs the value at / to be a JSON object, the whole data model',
+    'x-ahpd-connectors: ci\'s view data was not set: setViewData needs the view with its data to be at most 65536 bytes of JSON',
   ]);
   await close();
 });

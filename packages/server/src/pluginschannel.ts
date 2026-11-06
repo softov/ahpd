@@ -206,6 +206,11 @@ export interface PluginsChannel {
   methods: Record<string, PluginMethod>;
   /** Refresh the channel. */
   refresh(): Promise<void>;
+  /**
+   * Send one value of a plugin's view data to the readers of its row, as
+   * `x-ahpd-plugins/viewData` `{ id, surface, path, value }`, without the row.
+   */
+  viewData(name: string, surface: string, path: string, value: unknown): Promise<void>;
 }
 
 /**
@@ -878,5 +883,11 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
       [`${DOMAIN}/update`]: updateMethod,
     },
     refresh: channel.refresh,
+    // The row's id is the name with no userinfo, and its views are read by the name the daemon loaded.
+    viewData: (name, surface, path, value) => channel.notify(
+      withoutUserinfoIn(name),
+      { type: `${SCHEME}/viewData`, surface, path, value },
+      (record) => ({ ...record, views: options.views()[name] ?? {} }),
+    ),
   };
 };

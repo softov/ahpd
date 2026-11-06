@@ -93,6 +93,14 @@ export interface RecordsChannel {
   bind(handle: ChannelHandle): void;
   /** Read the store, and send each client what it gained, changed and lost. */
   refresh(): Promise<void>;
+  /**
+   * Send one action about one record to each reader who holds it.
+   *
+   * `change` applies the same change to the last record sent, so the next
+   * refresh finds the record as its readers have it and sends no `changed`
+   * for it. A record nobody holds is not sent, and `change` is not called.
+   */
+  notify(id: string, action: { type: string } & Record<string, unknown>, change: (record: Record<string, unknown>) => Record<string, unknown>): Promise<void>;
 }
 
 export function recordsChannel(scheme: string, source: RecordsSource, options: RecordsChannelOptions): RecordsChannel {
@@ -202,17 +210,20 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
    * `to` names the client, and `visible` names the reader and the filter: two
    * people on one client id each hold their own state, and an action is seen
    * only by a connection that is that person now, may still read the record,
-   * and asked for a channel that record belongs on.
+   * and asked for a channel that record belongs on. `about` is the record an
+   * action that carries none is about, which the filter reads.
    */
   const send = (
     asked: string,
     client: string,
     reader: Principal | undefined,
     action: { type: string; id: string } & Record<string, unknown>,
+    about?: Record<string, unknown>,
   ): void => {
     const key = readerKey(client, reader);
     const removal = action.type === `${scheme}/removed`;
-    const record = action.record as Record<string, unknown> | undefined;
+    const carried = action.record as Record<string, unknown> | undefined;
+    const record = carried ?? about;
     const audience: PublishOptions = {
       to: client,
       visible: (principal, seen) => {
@@ -227,7 +238,7 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
     };
     // In the reader's locale on the way out; `visible` above reads the record as stored.
     const locale = handle?.localeOf?.(client);
-    handle?.publish(asked, record === undefined || locale === undefined ? action : { ...action, record: inLocale(record, locale) }, audience);
+    handle?.publish(asked, carried === undefined || locale === undefined ? action : { ...action, record: inLocale(carried, locale) }, audience);
   };
 
   /** Update `last` from `now`, and send each waiting subscription but `skip` what it gained, changed and lost. */
@@ -337,6 +348,20 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
       pending = queued;
       return queued;
     },
+    /*
+     * In the queue a refresh runs in, so the record changed here is the one the
+     * refresh after it compares with.
+     */
+    notify: (id, action, change) => exclusive(async () => {
+      const was = last.get(id);
+      if (was === undefined) return;
+      const record = change(JSON.parse(was) as Record<string, unknown>);
+      last.set(id, JSON.stringify(record));
+      for (const { asked, client, reader } of watching()) {
+        if (sent.get(stateKey(asked, client, reader))?.has(id) !== true) continue;
+        send(asked, client, reader, { ...action, id }, record);
+      }
+    }).catch(problem),
   };
 }
 

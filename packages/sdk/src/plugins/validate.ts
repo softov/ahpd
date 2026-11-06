@@ -24,7 +24,7 @@ import { SUBJECTS, grantProblem, isGrant, isOperationWord } from '../access/user
 import { isSecret, secretFields } from '../channels/owners.js';
 import { RECORD_SLUG, isRecordSlug } from '../resources/records.js';
 import { schemaGaps, type SchemaGap } from './schemagaps.js';
-import { checkUi } from './view.js';
+import { VIEW_SURFACES } from './view.js';
 
 /**
  * The one message shape every check reports through.
@@ -795,9 +795,8 @@ const checkSignInAccount = (value: unknown, schema: Record<string, unknown>, by:
  * adapter may leave out when it has none. Each capability's `input` is a form
  * of its own, so it is walked under a name that says which capability it is.
  *
- * A `ui` capability carries the component tree it draws, in its `ui`, and no
- * other type may: a tree on an `action` is a screen a client draws for nothing
- * the capability promises. The tree is checked as a view is, with bindings.
+ * A `view` capability's name is the surface a record shows a view on, so it is
+ * one the host knows: a view on a name no client draws would be lost.
  *
  * `place` names the adapter or engine, as `adapter webhook`, and `owner` names
  * what the capabilities are of, as `a connector of this adapter`.
@@ -835,13 +834,8 @@ const checkCapabilities = (
         throw new Error(miss(by, method, 'path', 'a path that starts with /, such as /plugins/webhook/{id}'));
       }
     }
-    // A ui schema belongs to the capability that draws it, and no other type
-    // has a screen of its own to draw one for.
-    if (capability.type !== 'ui' && capability.ui !== undefined) {
-      throw new Error(miss(by, method, 'ui', `a ui schema only on a ui capability, and ${String(capability.name)} is a ${String(capability.type)}`));
-    }
-    if (capability.type === 'ui' && capability.ui !== undefined) {
-      checkUi(capability.ui, by, `the ui schema of ${place} capability ${capability.name as string}`);
+    if (capability.type === 'view' && !(VIEW_SURFACES as readonly string[]).includes(capability.name as string)) {
+      throw new Error(miss(by, method, 'name', `a view capability named for a surface, one of ${VIEW_SURFACES.join(', ')}, and ${String(capability.name)} is not one`));
     }
   }
 };
@@ -907,8 +901,8 @@ export const checkEngine = (value: unknown, by: string): { name: string; checked
   const checked: CheckedSchema[] = [{ where: `engine ${name}`, gaps: schemaProblems(object.schema) }];
   /*
    * The capabilities are optional, because most engines have none of their own
-   * yet. A list that is there is checked as an adapter's is, and only its `ui`
-   * is read today.
+   * yet. A list that is there is checked as an adapter's is, and only its
+   * `view` is read today.
    */
   if (object.capabilities !== undefined) {
     checkCapabilities(object.capabilities, by, 'registerEngine', 'an agent of this engine', `engine ${name}`, checked);

@@ -64,8 +64,8 @@ export interface EnginesChannel {
  * The templates are sent whole, so the name, the description, the icon, the
  * model and the config a record starts from each reach a client. A list an engine
  * does not have carries no key rather than an empty one a client would have to
- * test. The capabilities are sent whole, as an adapter's are, so a `ui`
- * capability's component tree reaches a client beside its name. An engine with
+ * test. The capabilities are sent whole, as an adapter's are, so a `view`
+ * capability's surface reaches a client before any agent shows a view. An engine with
  * no icons is drawn with its plugin's. A field that names a connector carries
  * its choices when the host's connectors are known.
  */
