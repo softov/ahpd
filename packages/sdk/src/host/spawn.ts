@@ -1535,15 +1535,6 @@ export function createSpawn(ctx: HostContext): Spawn {
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
           || action.type === 'chat/turnCancelled' || action.type === 'chat/error') operationsMoved(uri);
         /*
-         * And whether this chat may be moved, which a turn is the whole of.
-         *
-         * `chat/error` is here with the two endings the protocol names: it is
-         * how a turn that failed ends, and a chat left unmovable by one would
-         * be a chat nobody could ever move again.
-         */
-        if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
-          || action.type === 'chat/turnCancelled' || action.type === 'chat/error') movableMoved(chatUri);
-        /*
          * And a move the agent asked for is made now, once its turn completed:
          * the one moment the backend can be started again without losing
          * anything. A turn that was cancelled or failed drops the move it

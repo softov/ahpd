@@ -240,7 +240,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const running = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
-    if (lead !== undefined && (lead.status() & Status.InProgress) !== 0) return true;
+    // The chat's own turn from its start as every client holds it, and the
+    // backend's while it works.
+    const active = ctx.stateOf(uri)?.activeTurn;
+    if (lead !== undefined && (active !== undefined && active !== null || (lead.status() & Status.InProgress) !== 0)) return true;
     const seen = new Set([uri]);
     const queue = [uri];
     while (queue.length > 0) {

@@ -1025,6 +1025,11 @@ export function createHost(options: HostOptions): Host {
     if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       ctx.syncSessionInputNeeded(channel);
       ctx.chatMoved(channel);
+      // And whether the chat may be moved, which a turn is the whole of: said
+      // at its start and at each of the endings a turn has, `chat/error`
+      // among them, whoever said it.
+      if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
+        || action.type === 'chat/turnCancelled' || action.type === 'chat/error') ctx.movableMoved(channel);
     }
     /*
      * A session's entry raised or taken down, told to the plugins as it is
