@@ -180,7 +180,8 @@ it('carries an approvals control on the session, with no enum before a server is
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
-  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
+  // Each chat keeps its own mode, as VS Code's Claude marks its mode.
+  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true, chatMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
   // is still the default a client is offered.
@@ -1102,11 +1103,12 @@ it('draws every option of its own as a control, and sets each through the server
     sessionMutable: true,
     default: false,
   });
-  // The keys `SessionConfigPropertySchema` declares, and no others: the
-  // session's state is what a host seeds every client with.
+  // The keys `SessionConfigPropertySchema` declares and VS Code's `chatMutable`,
+  // each chat keeping its own: the session's state is what a host seeds every
+  // client with.
   expect(Object.keys(properties['acp.thinking'] as Bag).sort())
-    .toEqual(['default', 'enum', 'enumLabels', 'sessionMutable', 'title', 'type']);
-  expect(Object.keys(properties['acp.telemetry'] as Bag).sort()).toEqual(['default', 'sessionMutable', 'title', 'type']);
+    .toEqual(['chatMutable', 'default', 'enum', 'enumLabels', 'sessionMutable', 'title', 'type']);
+  expect(Object.keys(properties['acp.telemetry'] as Bag).sort()).toEqual(['chatMutable', 'default', 'sessionMutable', 'title', 'type']);
 
   expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
   expect(await session.setConfig?.('acp.telemetry', true)).toBe(true);

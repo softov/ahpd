@@ -77,6 +77,10 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
    * session's own, reported as its read-only `availableApprovalModes`, as VS
    * Code's Copilot agent reports the approval modes its session may take.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L162
+   *
+   * Each chat keeps its own mode, as VS Code's Claude agent marks its mode
+   * `chatMutable`: every chat of an ACP session is an ACP session of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
    */
   const schema = (): Bag => ({
     type: 'object',
@@ -87,6 +91,7 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
         title: 'Approvals',
         description: 'How the agent handles tool approvals.',
         sessionMutable: true,
+        chatMutable: true,
         ...(presetModes.length === 0 ? {} : {
           enum: presetModes.map((one) => one.id),
           enumLabels: presetModes.map((one) => one.name),

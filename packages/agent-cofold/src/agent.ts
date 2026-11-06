@@ -549,7 +549,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
        * The approvals mode. The names and labels are the ones the window
        * already draws for Claude, so one session reads the same whichever
        * backend it is; the default is `auto`, which is cofold's own policy,
-       * asking only about a tool that says it is destructive.
+       * asking only about a tool that says it is destructive. Each chat keeps
+       * its own, as VS Code's Claude agent marks its mode `chatMutable`: every
+       * chat of a cofold session is a cofold session of its own.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
        */
       ...(options.policy === undefined
         ? {
@@ -563,6 +566,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
               enumDescriptions: [...PERMISSION_DESCRIPTIONS],
               default: 'auto',
               sessionMutable: true,
+              chatMutable: true,
             },
           }
         : {}),

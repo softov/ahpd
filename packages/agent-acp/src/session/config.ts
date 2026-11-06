@@ -215,13 +215,17 @@ export function createConfig(ctx: SessionContext): Config {
    *
    * A select carries the values the server serves as its picker, which is the
    * only place they can come from, and the value in force as the default, so a
-   * client that never asked still draws it where the agent left it.
+   * client that never asked still draws it where the agent left it. Each chat
+   * keeps its own, `chatMutable` as VS Code's agents mark a property a chat may
+   * set for itself: every chat is an ACP session of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L309
    */
   const optionControl = (option: SessionConfigOption): Bag => ({
     type: option.type === 'boolean' ? 'boolean' : 'string',
     title: option.name,
     ...(option.description === null || option.description === undefined ? {} : { description: option.description }),
     sessionMutable: true,
+    chatMutable: true,
     ...(option.type === 'select' ? pickerOf(choicesOf(option)) : {}),
     default: option.currentValue,
   });
