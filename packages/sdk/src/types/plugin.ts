@@ -1581,8 +1581,8 @@ export interface PluginManifest {
    * What a client draws beside the plugin's name.
    *
    * An `src` that is a path is relative to the plugin's package, and the host
-   * reads the file and sends it as a `data:` URI, at most 32 KB. An `https:`
-   * URL or a `data:` URI is sent as it is.
+   * reads the file and sends it as a `data:` URI, at most 256 KB of image. An
+   * `https:` URL or a `data:` URI is sent as it is.
    */
   icons?: Icon[];
   /**
