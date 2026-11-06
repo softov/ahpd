@@ -887,9 +887,15 @@ export function chatAction(
        * has now. This is the first moment a chat is between turns, and the
        * only one where starting it again is safe: a send that arrives during
        * a turn waits its turn, and the sets are compared again at the next.
+       * Between turns is nothing of the session running but the turn this
+       * send starts, whose start is said above.
        */
       let live = session;
-      if (owner !== undefined && (statusOf(session.uri) & Status.InProgress) === 0 && pluginsMoved(session.uri, session.chatUri)) {
+      const between = owner !== undefined && [...owner.chats.keys()].every((chat) => {
+        const active = ctx.stateOf(chat)?.activeTurn as Bag | null | undefined;
+        return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
+      });
+      if (owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)) {
         restartChat(session.uri, session.chatUri, conn.tokensFor(chatAgent(owner, session.chatUri).provider), connection);
         // The chat that was running is closed and this is the one that took its
         // place, so the turn below goes to the agent listening now.
