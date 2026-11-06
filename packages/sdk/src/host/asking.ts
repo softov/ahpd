@@ -26,8 +26,8 @@ export const HOST_ASK = 'host-ask:';
 interface Held {
   /** The chat the question was asked on. */
   chat: string;
-  /** The turn it was asked in, when the chat had one running. */
-  turn: string | undefined;
+  /** The turn it was asked in. */
+  turn: string;
   /** The questions, in the order the caller asked them. */
   questions: AskedQuestion[];
   /** End the wait with the person's answer. */
@@ -36,7 +36,7 @@ interface Held {
 
 /** What a host's held questions are, and what ends them. */
 export interface Asking {
-  /** Put a request on `chat` and wait for its answer. */
+  /** Put a request on `chat` and wait for its answer, Cancel at once with no `turn` running. */
   ask(chat: string, turn: string | undefined, questions: AskedQuestion[]): Promise<AskedAnswers>;
   /**
    * Settle the request `id` with the person's response and answers.
@@ -135,14 +135,23 @@ const answersOf = (
 export function createAsking(options: AskingOptions): Asking {
   const held = new Map<string, Held>();
 
-  const ask = (chat: string, turn: string | undefined, questions: AskedQuestion[]): Promise<AskedAnswers> =>
-    new Promise<AskedAnswers>((resolve, reject) => {
+  /*
+   * A question put on the chat whose turn asks it, the request carrying its
+   * questions and no message of its own, as VS Code's ask_user puts one; with
+   * no turn running in the chat it is answered Cancel at once and put nowhere,
+   * as VS Code's host answers a request no turn is there to wait on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8715-L8734
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1346-L1359
+   */
+  const ask = (chat: string, turn: string | undefined, questions: AskedQuestion[]): Promise<AskedAnswers> => {
+    if (turn === undefined) return Promise.resolve({ response: 'cancel', answers: {} });
+    return new Promise<AskedAnswers>((resolve, reject) => {
       const id = `${HOST_ASK}${crypto.randomUUID()}`;
       held.set(id, { chat, turn, questions, settle: resolve });
       try {
         options.dispatch(chat, {
           type: 'chat/inputRequested',
-          request: { id, message: 'The agent has a question', questions: questions.map(questionOf) },
+          request: { id, questions: questions.map(questionOf) },
         });
       }
       catch (error) {
@@ -150,6 +159,7 @@ export function createAsking(options: AskingOptions): Asking {
         reject(error);
       }
     });
+  };
 
   const settle = (
     id: string,
@@ -165,10 +175,7 @@ export function createAsking(options: AskingOptions): Asking {
 
   const cancelTurn = (chat: string, turn: string): void => {
     for (const [id, one] of held) {
-      if (one.chat !== chat) continue;
-      // A request asked with no turn running belongs to no turn, so the end
-      // of any turn in its chat ends it.
-      if (one.turn !== undefined && one.turn !== turn) continue;
+      if (one.chat !== chat || one.turn !== turn) continue;
       held.delete(id);
       one.settle({ response: 'cancel', answers: {} });
     }
