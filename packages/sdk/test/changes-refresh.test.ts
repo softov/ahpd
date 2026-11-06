@@ -262,6 +262,27 @@ it('says recomputing before a re-read that finds the same files, and ready after
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
 
+/*
+ * The session's list of changesets is said only where it differs from the one
+ * its state holds, as VS Code's state manager skips an equal catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2587-L2609
+ */
+it('says no changeset list to the session for a re-read that finds the same files', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { calls, source } = reReads();
+  const { client, peer: p } = await open(dir, source);
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/s' } });
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = channelActions(p, 'ahp-session:/s').length;
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET)).includes('status:ready') && calls.finished === calls.refresh);
+
+  expect(channelActions(p, 'ahp-session:/s').slice(before).filter((one) => one.type === 'session/changesetsChanged')).toEqual([]);
+});
+
 it('says recomputing before a re-read that finds a file, and the old files stay until ready', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');

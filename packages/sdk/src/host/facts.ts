@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
 import { idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
@@ -466,7 +467,11 @@ export function createFacts(ctx: HostContext): Facts {
         if (moved) {
           try {
             for (const uri of toldIn(dir)) {
-              if (!ctx.relaysChangesets(uri)) dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+              // Only a list that differs from the one the session's state
+              // holds, as `readFacts` says one.
+              const changesets = catalogueOf(uri, dir);
+              if (!ctx.relaysChangesets(uri) && !isDeepStrictEqual(ctx.stateOf(uri)?.changesets ?? [], changesets))
+                dispatch(uri, { type: 'session/changesetsChanged', changesets });
               ctx.summaryMoved(uri);
               await contentMoved(uri);
             }
@@ -634,9 +639,16 @@ export function createFacts(ctx: HostContext): Facts {
     const files = (options.changes?.refresh?.(dir) ?? Promise.resolve(false)).then(async (moved) => {
       if (!moved) return false;
       for (const uri of inThere(dir)) {
-        // Asked per session, because two of the scopes are the session's own;
-        // a session whose backend serves its changesets has them said there.
-        if (!ctx.relaysChangesets(uri)) dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+        /*
+         * Asked per session, because two of the scopes are the session's own;
+         * a session whose backend serves its changesets has them said there.
+         * Said only where it differs from the list the session's state holds,
+         * as VS Code's state manager skips a catalogue equal to the one it has.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2587-L2609
+         */
+        const changesets = catalogueOf(uri, dir);
+        if (!ctx.relaysChangesets(uri) && !isDeepStrictEqual(ctx.stateOf(uri)?.changesets ?? [], changesets))
+          dispatch(uri, { type: 'session/changesetsChanged', changesets });
         ctx.summaryMoved(uri);
       }
       /*
