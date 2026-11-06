@@ -1,6 +1,6 @@
 ---
 title: The host does not fold a notice
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

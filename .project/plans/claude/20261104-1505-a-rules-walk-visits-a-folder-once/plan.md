@@ -1,7 +1,7 @@
 ---
 title: A rules walk visits a folder once
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -50,7 +50,7 @@ session opens -> rulesIn -> markdownUnder -> statSync and readdir per folder
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a folder is walked once](task-01-a-folder-is-walked-once.md) | implemented | - |
+| [01 - a folder is walked once](task-01-a-folder-is-walked-once.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -59,7 +59,7 @@ session opens -> rulesIn -> markdownUnder -> statSync and readdir per folder
 ## Resume state
 
 - **Done so far:** task 01 is implemented on 2026-11-04. Without the change, the loop case fails in 0.3 s.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** nothing open.
 

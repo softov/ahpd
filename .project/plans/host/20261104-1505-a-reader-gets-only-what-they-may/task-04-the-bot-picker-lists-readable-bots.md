@@ -1,6 +1,6 @@
 ---
 title: The bot picker lists readable bots
-status: implemented
+status: done
 depends: []
 layer: bot
 refs:

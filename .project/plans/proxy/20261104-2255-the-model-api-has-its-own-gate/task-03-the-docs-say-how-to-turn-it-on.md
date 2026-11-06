@@ -1,6 +1,6 @@
 ---
 title: The docs say how to turn it on
-status: implemented
+status: done
 depends: [task-02-the-model-api-is-served-on-its-gate.md, task-04-ahpd-config-set-writes-a-key.md]
 layer: docs
 refs:

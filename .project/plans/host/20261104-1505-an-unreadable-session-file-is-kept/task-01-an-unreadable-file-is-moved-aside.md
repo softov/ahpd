@@ -1,6 +1,6 @@
 ---
 title: An unreadable file is moved aside
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A removed team takes its keys
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

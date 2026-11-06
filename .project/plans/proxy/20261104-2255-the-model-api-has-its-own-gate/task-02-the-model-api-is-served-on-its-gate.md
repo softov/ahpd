@@ -1,6 +1,6 @@
 ---
 title: The model API is served on its gate
-status: implemented
+status: done
 depends: [task-01-the-modelapi-key.md]
 layer: server
 refs:

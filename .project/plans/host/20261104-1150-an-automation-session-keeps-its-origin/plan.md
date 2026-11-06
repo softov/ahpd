@@ -1,7 +1,7 @@
 ---
 title: An automation session keeps its origin after a restart
 domain: host
-status: implemented
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -74,8 +74,8 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the store keeps the automation origin](task-01-the-store-keeps-the-origin.md) | implemented | - |
-| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | implemented | - |
+| [01 - the store keeps the automation origin](task-01-the-store-keeps-the-origin.md) | done | - |
+| [02 - a restored turn keeps its message origin](task-02-a-turn-keeps-its-origin.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -87,7 +87,7 @@ restart -> transcriptOf -> asBegun -> the turn's message gets its recorded origi
 - **Done so far:** both tasks are implemented.
 A session's automation origin is in the store and read back after a restart.
 Each turn's record holds the message origin it began with, put back on the transcript's turn before the fold.
-- **Next action:** none; `implemented.md` records what was verified. Softov checked it by hand on 2026-11-04.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Watch out for:** `onTurnRecorded` records a turn again under a new id; carry the origin to that record.
 
 ## Final verification checklist

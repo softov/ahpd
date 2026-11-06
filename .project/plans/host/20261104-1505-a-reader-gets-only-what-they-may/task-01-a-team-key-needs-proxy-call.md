@@ -1,6 +1,6 @@
 ---
 title: A team key needs proxy call
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

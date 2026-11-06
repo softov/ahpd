@@ -1,7 +1,7 @@
 ---
 title: A failed open says why
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-11-05
 revalidated: 2026-11-05
@@ -43,12 +43,12 @@ start -> openAll -> open fails -> log line; row state invalid, no reason
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a failed open goes on the row](task-01-a-failed-open-goes-on-the-row.md) | implemented | - |
+| [01 - a failed open goes on the row](task-01-a-failed-open-goes-on-the-row.md) | done | - |
 
 ## Resume state
 
 - **Done so far:** task 01 is implemented on 2026-11-05.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** nothing open.
 

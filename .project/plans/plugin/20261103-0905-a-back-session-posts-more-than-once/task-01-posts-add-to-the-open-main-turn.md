@@ -1,6 +1,6 @@
 ---
 title: Posts add to the open main turn
-status: implemented
+status: done
 depends: []
 layer: bot
 refs:

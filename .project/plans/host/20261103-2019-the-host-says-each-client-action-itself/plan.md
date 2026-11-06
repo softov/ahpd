@@ -1,7 +1,7 @@
 ---
 title: The host says each client action itself, and hands its backends what VS Code's host hands its agents
 domain: host
-status: draft
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -205,7 +205,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 ## Resume state
 
 - **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`, and tasks 01 to 13.
-- **Next action:** the full suites, run once every named case has passed.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Answered:**
   1. The afternoon's turn branches this plan replaces are dropped, not merged.
   2. What of them the plan does not touch is rebuilt on top of it.

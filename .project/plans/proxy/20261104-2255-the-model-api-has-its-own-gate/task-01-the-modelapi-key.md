@@ -1,6 +1,6 @@
 ---
 title: The modelApi key
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A failed open goes on the row
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

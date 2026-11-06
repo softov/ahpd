@@ -1,6 +1,6 @@
 ---
 title: ahpd config set writes a key
-status: implemented
+status: done
 depends: [task-01-the-modelapi-key.md]
 layer: server
 refs:

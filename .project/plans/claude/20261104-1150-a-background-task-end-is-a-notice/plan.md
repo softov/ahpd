@@ -1,7 +1,7 @@
 ---
 title: A background task's end is a notice turn
 domain: claude
-status: implemented
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -69,9 +69,9 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | implemented | - |
-| [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | implemented | - |
-| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | implemented | - |
+| [01 - the live turn is a notice](task-01-the-live-turn-is-a-notice.md) | done | - |
+| [02 - the restored turn is a notice](task-02-the-restored-turn-is-a-notice.md) | done | - |
+| [03 - the host does not fold a notice](task-03-the-host-does-not-fold-it.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -81,7 +81,7 @@ host:    asBegun -> a systemNotification turn stays a turn of its own
 ## Resume state
 
 - **Done so far:** all three tasks are implemented. Live, the turn a background task's end wakes opens with the task's summary and origin `systemNotification`; after a restart the same frame restores the same way, and the host keeps that turn its own.
-- **Next action:** none; `implemented.md` records what was verified. Softov checked it by hand on 2026-11-04.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Watch out for:** a `task_notification` also arrives for a task inside a running turn; that one starts no turn and leaves no pending summary.
 
 ## Final verification checklist

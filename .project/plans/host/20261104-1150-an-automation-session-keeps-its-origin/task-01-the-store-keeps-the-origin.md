@@ -1,6 +1,6 @@
 ---
 title: The store keeps the automation origin
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

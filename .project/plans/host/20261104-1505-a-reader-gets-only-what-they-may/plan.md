@@ -1,7 +1,7 @@
 ---
 title: A reader gets only what they may
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -81,10 +81,10 @@ session create -> Start -> bot create
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a team key needs proxy call](task-01-a-team-key-needs-proxy-call.md) | implemented | - |
-| [02 - a removed team takes its keys](task-02-a-removed-team-takes-its-keys.md) | implemented | - |
-| [03 - a write-only value is masked](task-03-a-write-only-value-is-masked.md) | implemented | - |
-| [04 - the bot picker lists readable bots](task-04-the-bot-picker-lists-readable-bots.md) | implemented | - |
+| [01 - a team key needs proxy call](task-01-a-team-key-needs-proxy-call.md) | done | - |
+| [02 - a removed team takes its keys](task-02-a-removed-team-takes-its-keys.md) | done | - |
+| [03 - a write-only value is masked](task-03-a-write-only-value-is-masked.md) | done | - |
+| [04 - the bot picker lists readable bots](task-04-the-bot-picker-lists-readable-bots.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -94,7 +94,7 @@ session create -> Start -> bot create
 ## Resume state
 
 - **Done so far:** tasks 01 to 04 are implemented on 2026-11-04. The six new cases fail without the change.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** nothing open.
 

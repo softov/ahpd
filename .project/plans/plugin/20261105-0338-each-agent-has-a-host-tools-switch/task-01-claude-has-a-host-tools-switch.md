@@ -27,8 +27,8 @@ A Claude plugin option and a Claude record field `hostTools` turn the host's too
 2. Add the es and pt text for it.
 3. Add `hostTools` to the engine's record schema, as acp declares it.
 4. Read the record's value first, then the plugin's, then `true`.
-5. With the value false, take no host tools in `buildClientMcpServers` when the session starts.
-6. Take no host tools in `rebindForClientTools` when the host sends a new tool list.
+5. With the value false, declare no `host` server in `declaring`, and keep the `client` server.
+6. Check that `buildClientMcpServers` and `rebindForClientTools` both go through `declaring`.
 7. Add the three cases.
 
 ## Validation

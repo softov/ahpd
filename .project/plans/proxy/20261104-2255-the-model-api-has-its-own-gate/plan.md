@@ -1,7 +1,7 @@
 ---
 title: The model API has its own gate
 domain: proxy
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -74,10 +74,10 @@ request -> daemon port or httpApi.port -> /mcp -> proxy (/v1, /models, root mode
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the modelApi key](task-01-the-modelapi-key.md) | implemented | - |
-| [02 - the model API is served on its gate](task-02-the-model-api-is-served-on-its-gate.md) | implemented | 01 |
-| [03 - the docs say how to turn it on](task-03-the-docs-say-how-to-turn-it-on.md) | implemented | 02, 04 |
-| [04 - ahpd config set writes a key](task-04-ahpd-config-set-writes-a-key.md) | implemented | 01 |
+| [01 - the modelApi key](task-01-the-modelapi-key.md) | done | - |
+| [02 - the model API is served on its gate](task-02-the-model-api-is-served-on-its-gate.md) | done | 01 |
+| [03 - the docs say how to turn it on](task-03-the-docs-say-how-to-turn-it-on.md) | done | 02, 04 |
+| [04 - ahpd config set writes a key](task-04-ahpd-config-set-writes-a-key.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -86,7 +86,7 @@ request -> daemon port or httpApi.port -> /mcp -> proxy (/v1, /models, root mode
 ## Resume state
 
 - **Done so far:** tasks 01 to 04 are implemented on 2026-11-04.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `/github/ahpd` is shared; branch from a fetched main.
 

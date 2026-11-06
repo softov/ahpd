@@ -34,6 +34,8 @@ host -> start.tools -> session wires them in; acp: hostTools ?? plugin hostTools
 ### Gaps
 
 - Claude, cofold and pi take `start.tools` whatever their configuration says.
+- Claude offers the host's tools on its `host` server, and a client's tools on its `client` server.
+- cofold and pi hold both kinds in one list, and a client's tool names its owner.
 
 ## Answers
 
@@ -44,6 +46,8 @@ host -> start.tools -> session wires them in; acp: hostTools ?? plugin hostTools
 | `hostTools` is a plugin option and a record field, and the record's value wins | (defaulted: acp's shape) | 01, 02, 03 |
 | On by default | (defaulted: the host's tools reach every session today) | 01, 02, 03 |
 | Off, a session gets no host tools at its start and none on a later change | (defaulted: a later change would give back what the switch took) | 01, 02, 03 |
+| Off drops only the host's own tools, and a client's tools still reach the agent | Softov, 2026-11-05, chose "Only the host's tools" | 01 |
+| cofold and pi drop the tools with no owner, and keep each client's | (defaulted: the same split as Claude's, read from each tool's owner) | 02, 03 |
 | The option text is "Offer the host's tools to each session. On by default. Each agent can override it.", with es and pt | (defaulted: the style of the copy PR) | 01, 02, 03 |
 
 ## Tasks

@@ -27,8 +27,8 @@ A pi plugin option and a pi record field `hostTools` turn the host's tools off, 
 2. Add the es and pt text for it.
 3. Add `hostTools` to the engine's record schema, as acp declares it.
 4. Read the record's value first, then the plugin's, then `true`.
-5. With the value false, keep `offering` empty when the session starts.
-6. Keep `offering` empty when the host sends a new tool list.
+5. With the value false, keep only the tools with an owner in `offering` when the session starts.
+6. Keep only the tools with an owner when the host sends a new tool list.
 7. Add the three cases.
 
 ## Validation

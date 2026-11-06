@@ -1,7 +1,7 @@
 ---
 title: A minute limit counts each person
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -54,7 +54,7 @@ call allowed -> countCall(keys) -> MinuteMeter.add -> limit check -> meterKey ->
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - each person's key is counted](task-01-each-persons-key-is-counted.md) | implemented | - |
+| [01 - each person's key is counted](task-01-each-persons-key-is-counted.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -63,7 +63,7 @@ call allowed -> countCall(keys) -> MinuteMeter.add -> limit check -> meterKey ->
 ## Resume state
 
 - **Done so far:** task 01 is implemented on 2026-11-04.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `memberPrefixOf` builds the same `/user:` shape; keep it in step with `measureOf`.
 

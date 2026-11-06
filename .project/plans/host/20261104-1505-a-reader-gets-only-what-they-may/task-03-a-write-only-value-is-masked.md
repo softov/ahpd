@@ -1,6 +1,6 @@
 ---
 title: A write-only value is masked
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

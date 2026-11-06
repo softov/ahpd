@@ -1,7 +1,7 @@
 ---
 title: A back session posts more than once
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -77,7 +77,7 @@ back turn_end -> ended -> wake.finished -> answering has no entry -> nothing
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - posts add to the open main turn](task-01-posts-add-to-the-open-main-turn.md) | implemented | - |
+| [01 - posts add to the open main turn](task-01-posts-add-to-the-open-main-turn.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -87,7 +87,7 @@ back turn_end -> ended -> wake.finished -> answering has no entry -> nothing
 ## Resume state
 
 - **Done so far:** [task-01-posts-add-to-the-open-main-turn.md](task-01-posts-add-to-the-open-main-turn.md) is implemented, with its cases in the bot package tests.
-- **Next action:** review and merge of the PR.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** never use ports 5180 or 37537.
 

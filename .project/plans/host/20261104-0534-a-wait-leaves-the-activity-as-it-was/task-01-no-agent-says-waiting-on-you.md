@@ -1,6 +1,6 @@
 ---
 title: No agent says waiting on you
-status: implemented
+status: done
 depends: []
 layer: "agent-claude, agent-pi, agent-acp, agent-cofold, examples"
 refs:

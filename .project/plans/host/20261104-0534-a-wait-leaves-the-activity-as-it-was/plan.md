@@ -1,7 +1,7 @@
 ---
 title: A wait leaves the activity as it was
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -77,7 +77,7 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - no agent says waiting on you](task-01-no-agent-says-waiting-on-you.md) | implemented | - |
+| [01 - no agent says waiting on you](task-01-no-agent-says-waiting-on-you.md) | done | - |
 | [02 - cofold names its running tool](task-02-cofold-names-its-running-tool.md) | dropped | 01 |
 
 ## Risks and tradeoffs
@@ -87,7 +87,7 @@ cofold tool.started -> mapping says the line -> apply -> activity "<displayName>
 ## Resume state
 
 - **Done so far:** task 01 is implemented on 2026-11-04. Task 02 is dropped on 2026-11-05 by the merge of `host/20261104-1647-the-backends-follow-the-audit`.
-- **Next action:** review, then the PR.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Watch out for:** the activity is only a wait before a turn can run, as the decision in *Answers* says.
 
 ## Final verification checklist

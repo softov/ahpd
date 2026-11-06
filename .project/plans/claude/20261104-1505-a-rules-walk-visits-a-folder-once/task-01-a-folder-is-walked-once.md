@@ -1,6 +1,6 @@
 ---
 title: A folder is walked once
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:

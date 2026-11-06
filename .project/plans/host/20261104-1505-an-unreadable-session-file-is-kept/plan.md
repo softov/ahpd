@@ -1,7 +1,7 @@
 ---
 title: An unreadable session file is kept
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -56,7 +56,7 @@ daemon start -> load -> readJson per file -> skipped file stays -> next write fo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an unreadable file is moved aside](task-01-an-unreadable-file-is-moved-aside.md) | implemented | - |
+| [01 - an unreadable file is moved aside](task-01-an-unreadable-file-is-moved-aside.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -65,7 +65,7 @@ daemon start -> load -> readJson per file -> skipped file stays -> next write fo
 ## Resume state
 
 - **Done so far:** task 01 is implemented on 2026-11-04.
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** nothing open.
 
