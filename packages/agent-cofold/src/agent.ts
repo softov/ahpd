@@ -648,8 +648,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * provider reference.
    *
    * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
-   * is an empty list: an endpoint that cannot be asked offers the configured
-   * model alone, rather than a picker with no rows.
+   * is an empty list, which `catalogueOf` answers with the last good one: an
+   * endpoint never listed offers the configured model alone.
    */
   const listModels = async (connection: Connection): Promise<ModelInfo[]> => {
     try {
@@ -667,13 +667,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
     }
   };
 
+  /**
+   * One endpoint's catalogue, listed again.
+   *
+   * Every call asks the endpoint, so a probe the host makes is a refresh, as
+   * VS Code's agents list their models again whenever their host refreshes a
+   * catalogue; a listing that fails or comes back empty answers the last good
+   * list, as VS Code's Claude agent keeps its last known-good catalogue so a
+   * failed refresh never wipes the picker.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentModelRefreshScheduler.ts#L106-L125
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L918-L924
+   */
   const catalogueOf = async (connection: Connection): Promise<ModelInfo[]> => {
     const key = cacheKey(connection);
-    const held = catalogues.get(key);
-    if (held !== undefined) return held;
     const listed = await listModels(connection);
     if (listed.length > 0) catalogues.set(key, listed);
-    return listed;
+    return catalogues.get(key) ?? [];
   };
 
   /**

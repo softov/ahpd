@@ -292,6 +292,38 @@ it('offers the limits the endpoint published, and neither its price nor its feat
   ]);
 });
 
+/*
+ * A probe lists the endpoint again, as VS Code's agents list their models again
+ * when their host refreshes a catalogue, and one whose listing fails answers
+ * the last good list, as VS Code's Claude agent keeps its last known-good
+ * catalogue so a failed refresh never wipes the picker.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentModelRefreshScheduler.ts#L106-L125
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L918-L924
+ */
+it('lists the endpoint again at each probe, and keeps the last good list when a listing fails', async () => {
+  put(CONFIG);
+  /*
+   * One endpoint whose answer moves: cofold's provider keeps the `fetch` it
+   * was built with, so the endpoint changes behind one function.
+   */
+  let answer: unknown = { data: LISTED.slice(0, 1) };
+  globalThis.fetch = (async () => {
+    if (answer === undefined) throw new Error('connection refused');
+    return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const agent = cofoldAgent({});
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(['open_router/deepseek/deepseek-chat']);
+
+  // A model the endpoint added since is offered at the next probe.
+  answer = { data: LISTED };
+  const every = LISTED.map((one) => `open_router/${one.id}`);
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
+
+  // A probe whose listing fails answers what the last one read.
+  answer = undefined;
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
+});
+
 it('offers the configured model alone when the endpoint never answers', async () => {
   put(CONFIG);
   const hung = hanging();
