@@ -19,9 +19,6 @@
     "computerConfigDir": {
       "description": "La carpeta de configuración que lee la CLI dentro de una máquina. Por defecto, /ahpd/<id>, y /ahpd/claude para el integrado; false deja la de la propia imagen."
     },
-    "workerStop": {
-      "description": "Qué detiene un stop dado en el chat de un subagente. Por defecto, worker."
-    },
     "handshakeTimeoutMs": {
       "description": "Cuánto tiempo tiene la CLI para responder al handshake antes de que su sesión la trate como una CLI que murió. Por defecto 120000; una máquina más lenta lo sube."
     }
@@ -37,17 +34,6 @@
         "auto": "Modo automático",
         "bypassPermissions": "Omitir permisos",
         "dontAsk": "No preguntar"
-      }
-    },
-    "effortLevel": {
-      "title": "Esfuerzo",
-      "description": "Cuánto piensa antes de responder.",
-      "enum": {
-        "low": "Bajo",
-        "medium": "Medio",
-        "high": "Alto",
-        "xhigh": "Muy alto",
-        "max": "Máximo"
       }
     },
     "shellInitScripts": {
