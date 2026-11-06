@@ -712,9 +712,10 @@ describe('a turn asked for while one is running', () => {
       params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
     });
     await settle();
-    expect(sdk.interrupted).toBe(1);
-    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, user_message_uuids: [sdk.uuids[0]] });
-    await settle();
+    // The CLI doing the work is closed, as the reference pipeline ends its
+    // query at a stop.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+    expect(sessionQueries().at(-1)?.closed).toBe(true);
     expect(sdk.said).toEqual(['first']);
     expect(await activeTurn(client, chatUri)).toBeUndefined();
     expect((await finished(client, chatUri)).map((turn) => [turn.id, turn.state])).toEqual([['t2', 'cancelled']]);

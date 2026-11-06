@@ -7,7 +7,7 @@ import { checker } from '../../../tools/wire.mjs';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { Status } from '../src/sessions/catalog.js';
 import {
-  resetSdk, actions, emit, sdk, settle, running, peer, hello,
+  resetSdk, actions, emit, sdk, sessionQueries, settle, running, peer, hello,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
 
@@ -416,16 +416,13 @@ describe('driving a turn', () => {
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
     });
-    // A cancel that only interrupts leaves the subprocess waiting on a
-    // promise nobody will ever settle.
+    // A stop that left the question standing would leave the subprocess
+    // waiting on a promise nobody will ever settle.
     expect(await decision).toMatchObject({ behavior: 'deny' });
-    // The CLI reports the call's result once it has recorded the answer, and
-    // the interrupt follows it.
-    await emit({
-      type: 'user', parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sleep', is_error: true, content: 'The turn was stopped' }] },
-    });
-    expect(sdk.interrupted).toBe(1);
+    // And the CLI the turn ran in is closed, as the reference pipeline ends
+    // its query at a stop.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+    expect(sessionQueries().at(-1)?.closed).toBe(true);
   });
 });
 
