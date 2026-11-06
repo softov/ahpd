@@ -394,7 +394,7 @@ it('asks an automation\'s owner for computer:write, and refuses a run it cannot 
       title: 'nightly', enabled: true, message: { text: 'review' },
       session: { ...session, config: { ...session.config } }, triggers: [],
     }, owner);
-    await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource });
+    await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource, requestId: resource });
     // `!`: the run was just made, so the entry already shows it.
     return store.get(resource)!.runs[0] as { lifecycle: { status: string; error?: { message: string } } };
   };

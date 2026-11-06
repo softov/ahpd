@@ -358,7 +358,10 @@ describe('a session, with the switch on', () => {
       session: { provider: 'claude', config: { computer: 'disposable:s' }, workingDirectories: [`file://${root}`] },
       triggers: [],
     }, 'user:bob');
-    await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/nightly' } });
+    await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/nightly', requestId: 'req-1' } });
+    // The run is recorded as the press is answered, and its start is tried
+    // after, which is where the policy refuses it.
+    await settle();
     // `!`: the run was made a line above, so the entry already shows it.
     const run = automations.get('ahp-automation:/nightly')!.runs[0] as { lifecycle: { status: string; error?: { message: string } } };
     expect(run.lifecycle.status).toBe('failed');

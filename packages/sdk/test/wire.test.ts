@@ -533,8 +533,10 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * announcements reach nobody - what the capture keeps is the entry holding
    * them.
    */
+  // Each ended, as a press during a run that is going is answered with that run.
   for (let i = 0; i < 19; i++) {
-    await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    const seeded = await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    if (seeded !== undefined) automations.settle?.(seeded.resource, { status: 'completed' });
   }
   await settle();
 

@@ -1470,7 +1470,10 @@ const held = async (
   client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
 ): Promise<Held> => (await entries(client))[0] as Held;
 
-/** Run one automation `times` over, waiting for the store to have them all. */
+/**
+ * Run one automation `times` over, each run ended before the next press: a
+ * press while a run goes is answered with that run, as VS Code's host answers.
+ */
 const runTimes = async (
   client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
   times: number,
@@ -1479,6 +1482,11 @@ const runTimes = async (
     await client.handle({
       method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
     });
+    for (let tries = 0; tries < 400; tries++) {
+      const runs = (await held(client)).runs;
+      if (runs.every((one) => ['completed', 'failed', 'cancelled'].includes(one.lifecycle.status))) break;
+      await settle();
+    }
   }
 };
 
@@ -1553,19 +1561,41 @@ it('moves the page for every subscriber, not only the one that asked', async () 
   expect(entry.runsNextCursor).toBeUndefined();
 });
 
-it('refuses a runs cursor it did not issue, rather than answering from the start', async () => {
+it('refuses a runs cursor that is not the entry\'s, and an automation it does not keep, in VS Code\'s words', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
-  await runTimes(client, 3);
+  await runTimes(client, 21);
+  expect((await held(client)).runsNextCursor).toBe('20');
 
   // A cursor out of another store's history, one that is not a number, or one
   // past the end. Growing the page for any of them is a client that pages for
   // ever without noticing it is being asked about runs it has already read.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L719-L738
   for (const cursor of ['x', '-1', '999']) {
     await expect(client.handle({
       method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor },
-    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('Unrecognised cursor') });
+    })).rejects.toMatchObject({ code: -32603, message: `Automation run-history cursor is no longer available: ${cursor}` });
   }
+  await expect(client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: 'ahp-automation:/nobody' },
+  })).rejects.toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nobody' });
+});
+
+it('keys a manual run by its requestId, and answers a press during a run with that run, as VS Code\'s host', async () => {
+  const { client } = await connected(true, 200);
+  await write(client, DEFINITION);
+  const press = (requestId: string, automation = ONE) => client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation, requestId },
+  }) as Promise<{ resource: string }>;
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
+  const first = await press('one');
+  expect((await press('one')).resource).toBe(first.resource);
+  expect((await press('two')).resource).toBe(first.resource);
+  await expect(press('')).rejects.toMatchObject({ code: -32603, message: 'Automation run requestId must not be empty.' });
+  await expect(press('one', 'ahp-automation:/other')).rejects
+    .toMatchObject({ code: -32603, message: 'Automation run requestId is already used for another automation: one' });
+  await expect(press('three', 'ahp-automation:/nobody')).rejects
+    .toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nobody' });
 });
 
 it('forgets one when the client asks and the catalogue still says it may', async () => {
@@ -1587,6 +1617,12 @@ it('forgets one when the client asks and the catalogue still says it may', async
     .toMatchObject([{ resource: ONE }]);
   // And its runs went with it: the channel one was watchable on is gone.
   await expect(client.handle({ method: 'subscribe', params: { channel: run.resource } })).rejects.toThrow();
+  // So did the request that made the run, as VS Code's host drops it with the
+  // history: asked again, it is a press on an automation nobody keeps.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L637-L638
+  await expect(client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
+  })).rejects.toMatchObject({ code: -32603, message: `Automation not found: ${ONE}` });
 });
 
 it('offers remove for one that is switched off, and removes only what it holds', async () => {

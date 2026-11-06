@@ -449,9 +449,11 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
     const channel = vscode('ahp-automations://');
     const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { resource: string } };
     expect(opened.snapshot.resource).toBe(channel);
+    // Answered by the method under that spelling: an automation the store does
+    // not keep is refused in VS Code's words, not for the channel.
     await expect(client.handle({
       method: 'fetchAutomationRuns', params: { channel, automation: 'ahp-automation:/nightly' },
-    })).resolves.toBeTruthy();
+    })).rejects.toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nightly' });
   });
 
   it('prints every other URI the host mints as it was minted', () => {

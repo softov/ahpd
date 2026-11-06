@@ -1,6 +1,6 @@
 import { computerSource } from '../machines/computers.js';
 import { Status, idOf, uriFor } from '../sessions/catalog.js';
-import { INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { EVENT_TRIGGERS, pluginTriggerTypes, wrongIn } from '../automations/automations.js';
 import { sameOwnerOrHost, withConnectorChoices } from '../connectors/fields.js';
 import { presetById } from '../automations/triggerpresets.js';
@@ -178,6 +178,8 @@ export const runState = ({ owner, notes, ...rest }: AutomationRun): AutomationRu
 export interface Automations {
   /** The sessions each run was last announced as having, by run URI. */
   linked: Map<string, string[]>;
+  /** The run each manual request made, by its `requestId`, with the automation it named. */
+  manualRunRequests: Map<string, { automation: string; run: string }>;
   /** Move the run a session belongs to, when that session stops working. */
   settleRun(uri: string, ending: RunEnding): void;
   /** Stop the run a client named: nothing where it stopped, or why it did not. */
@@ -239,6 +241,9 @@ export function createAutomations(ctx: HostContext): Automations {
 
   /** The sessions each run was last announced as having, by run URI. */
   const linked = new Map<string, string[]>();
+
+  /** The run each manual request made, by its `requestId`, for the daemon's run. */
+  const manualRunRequests = new Map<string, { automation: string; run: string }>();
 
   /**
    * The one wake each automation is holding behind a run that is still going.
@@ -365,6 +370,10 @@ export function createAutomations(ctx: HostContext): Automations {
   const changed = (event: { automation?: string; run?: string; removed?: string }): void => {
     if (event.removed !== undefined) {
       watchFor(event.removed);
+      // The manual requests go with the automation, as VS Code's host drops them
+      // with its history.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L637-L638
+      for (const [requestId, asked] of manualRunRequests) if (asked.automation === event.removed) manualRunRequests.delete(requestId);
       dispatch(AUTOMATIONS, { type: 'automation/removed', resource: event.removed });
       return;
     }
@@ -1504,7 +1513,7 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   return {
-    linked, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
+    linked, manualRunRequests, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
     wireTriggerTypes, wirePluginStarts,
   };
 }
@@ -1552,18 +1561,28 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
       ],
     }),
     /**
-     * Start one now.
+     * Start one now, or answer with the run of it that is going.
      *
-     * The answer is the run as the store recorded it, and its session is made
-     * after: a client watching the run reads the session arrive on it, as VS
-     * Code's host answers with the run it recorded and starts it after.
+     * A manual run is made as VS Code's host makes one. Its `requestId` is
+     * the request's identity: the same request asked again is answered with
+     * the run it made, and one used for another automation is refused. The
+     * requests are kept for the daemon's run and go with their automation.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1027-L1077
+     *
+     * A press is never held. While a run of the automation has not ended, the
+     * newest such run is the answer, whatever the automation says about
+     * overlapping runs: that setting is about an event arriving on its own.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
+     *
+     * Otherwise the answer is the run as the store recorded it, and its
+     * session is made after: a client watching the run reads the session
+     * arrive on it, as VS Code's host answers with the run it recorded and
+     * starts it after. The run goes where the automation's wake says, a
+     * session of its own or a turn in its pinned chat.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
      *
-     * The session is created here rather than in the store, because only
-     * this file knows what a session is - the store is handed a function
-     * and gets a URI back. `requestId` is echoed nowhere: the protocol has
-     * it so a client can match its own request to the run it gets, and the
-     * run URI in the result is that match.
+     * The session is created here, because only this file knows what a
+     * session is: the store is handed a function and gets a URI back.
      *
      * The origin is `{ kind: 'manual' }` and nothing else, because that is
      * the whole of `AutomationManualRunOrigin` - it carries no room for
@@ -1574,25 +1593,33 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
      * not the presser's: the owner rides on the automation and travels
      * with the run, and this origin says only that a person pressed it.
      *
-     * A press is never held behind a run that is going, whatever the
-     * automation says about overlapping ones: what this answers with is the
-     * run it started, and a press that started nothing has nothing to
-     * answer with. What an automation says about running twice is about an
-     * event arriving on its own, and a person asking for one now is not
-     * that - they get a session or a turn in the pinned chat, which is the
-     * half of those settings a press is held to.
-     *
-     * `enabled` and a disable condition are not this method's business
-     * either, and the protocol says so: they govern runs an automation
-     * schedules for itself, and a person pressing Run gets a run of one
-     * that is switched off. `-32001` here means there is no automation at
-     * that resource, and nothing else.
+     * `enabled` and a disable condition do not gate a press, and the protocol
+     * says so: they govern runs an automation schedules for itself, and a
+     * person pressing Run gets a run of one that is switched off. Each
+     * refusal is VS Code's plain error, in its words.
      */
     runAutomation: async (params) => {
       const store = need(options.automations, 'runAutomation');
       const automation = String(params.automation ?? '');
+      const requestId = typeof params.requestId === 'string' ? params.requestId : '';
+      if (requestId.trim() === '') throw new RpcError(INTERNAL_ERROR, 'Automation run requestId must not be empty.');
+      const asked = ctx.manualRunRequests.get(requestId);
+      if (asked !== undefined) {
+        if (asked.automation !== automation) {
+          throw new RpcError(INTERNAL_ERROR, `Automation run requestId is already used for another automation: ${requestId}`);
+        }
+        if (store.runOf(asked.run) === undefined) throw new RpcError(INTERNAL_ERROR, `Automation run requestId refers to a missing run: ${requestId}`);
+        return { resource: asked.run };
+      }
+      const entry = store.get(automation);
+      if (entry === undefined) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      if (!entry.operations.includes('run')) throw new RpcError(INTERNAL_ERROR, `Automation operation 'run' is not available: ${automation}`);
+      const going = entry.runs.map((one) => store.runOf(String(bag(one).resource)))
+        .find((one) => one !== undefined && !OVER.has(String(one.lifecycle.status)));
+      if (going !== undefined) return { resource: going.resource };
       const run = await store.run(automation, { kind: 'manual' }, startForAutomation);
-      if (!run) throw new RpcError(-32001, `No automation at ${automation}`);
+      if (!run) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      ctx.manualRunRequests.set(requestId, { automation, run: run.resource });
       return { resource: run.resource };
     },
     /**
@@ -1603,15 +1630,22 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
      * so about, and every subscriber of the catalogue has it on the same
      * `automation/set` - which the store dispatches before this answers.
      *
-     * The cursor is the entry's `runsNextCursor`, and the store says whether
-     * it was one it issued. The protocol asks for an unrecognised cursor to be
-     * refused rather than guessed at, which is the refusal `fetchTurns` makes
-     * on an older page too.
+     * The cursor is the entry's `runsNextCursor`. An automation nobody keeps,
+     * and a cursor that is not the entry's, are refused in VS Code's words, and
+     * an entry with no more runs is answered at once, as VS Code's host answers.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L719-L738
      */
     fetchAutomationRuns: async (params) => {
+      const store = need(options.automations, 'fetchAutomationRuns');
+      const automation = String(params.automation ?? '');
       const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
-      const known = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
-      if (!known) throw new RpcError(INVALID_PARAMS, `Unrecognised cursor ${String(cursor)}`);
+      const entry = store.get(automation);
+      if (entry === undefined) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      if (entry.runsNextCursor === undefined) return {};
+      if (cursor !== undefined && cursor !== entry.runsNextCursor) {
+        throw new RpcError(INTERNAL_ERROR, `Automation run-history cursor is no longer available: ${cursor}`);
+      }
+      store.runs(automation, cursor);
       return {};
     },
   };

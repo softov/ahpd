@@ -112,15 +112,15 @@ A preset also takes the same `filter` the rule does, so one can be narrowed to a
 
 A run is started by a schedule, by an event, or by a person pressing Run, and all three go through the same door, because what an automation says about running twice is about the automation rather than about what asked. Starting a run and a person pressing Run both begin the first turn in `beginAutomation`.
 
-The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop, not when it starts. `runAutomation` is answered with the run once it is recorded, and its session is made after, so a press is answered whatever making the session takes, as VS Code's host answers it. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
+The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop, not when it starts. `runAutomation` is answered with the run once it is recorded, and its session is made after, so a press is answered whatever making the session takes, as VS Code's host answers it. A press's `requestId` is its identity, as it is to VS Code's host: the same request asked again is answered with the run it made, and one already used for another automation is refused. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
 
-An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
+An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. A cursor that is not the entry's own is refused, and an entry with no more runs is answered at once, as VS Code's host answers. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
 
 ## One chat, or a session each run
 
 By default every run makes a session of its own. The automation's `_meta.ahpd.session` set to `pinned` changes that: it keeps one session and adds each run as the next turn in the chat that session holds, so a run sees the ones before it. The host writes that session's URI to `_meta.ahpd.pinnedSession` - it is the host's own note, and a client writing one has it dropped - and a run whose session is gone makes a new one and keeps it there. The session's folder, worktree and machine stay between runs, and its context grows until the backend compacts it. A pinned session that is asleep is woken in place for the run, and no new session is made - [SESSIONS.md](SESSIONS.md#sleep-and-wake).
 
-A pinned automation also types into a chat somebody else may be using, so a turn running there is a turn already going, whoever started it: an event arriving then is answered by `overlap` like any other, and a run pressed by hand is refused while that turn runs. A pinned run into a chat that belongs to somebody else is refused as well - it is the one road into a session that does not go through `createSession`, and it must not be a way to type in another person's session as though the work were theirs.
+A pinned automation also types into a chat somebody else may be using, so a turn running there is a turn already going, whoever started it: an event arriving then is answered by `overlap` like any other, and a run pressed by hand while somebody's own turn runs there fails, with that reason. A pinned run into a chat that belongs to somebody else is refused as well - it is the one road into a session that does not go through `createSession`, and it must not be a way to type in another person's session as though the work were theirs.
 
 ```json
 { "_meta": { "ahpd": { "session": "pinned", "pinnedSession": "ahp-session://claude/local/..." } } }
@@ -138,7 +138,7 @@ An event can arrive while the automation's own last run is still going, and `_me
 | `parallel` | A run starts for every event |
 | `skip` | The event is dropped, and counted on the run it arrived during |
 
-A pinned automation refuses `parallel` when it is saved, because it has one chat and two turns in it at once is not a thing. A scheduled automation answers to this setting exactly as an event does. A run somebody presses by hand is not held behind one that is going - what the press is answered with is the run it started - with one exception: a press on a pinned automation is refused while its chat has a turn running, because that chat takes one turn at a time. Decision: An automation says what an event does while it runs.
+A pinned automation refuses `parallel` when it is saved, because it has one chat and two turns in it at once is not a thing. A scheduled automation answers to this setting exactly as an event does. A press is never held: while a run of the automation is going, the press is answered with the newest such run, as VS Code's host answers it, and otherwise a run starts now. A press on a pinned automation whose chat is running somebody's own turn starts a run that fails with the reason, because that chat takes one turn at a time. Decision: An automation says what an event does while it runs.
 
 An event dropped by `skip` is dropped before anything is counted, so it is not one of the twenty an hour either; the one counted on the run is noted as `ahpd.dropped` in the run's `_meta`, which is how the agent working in that turn, and anybody watching the run, learns what happened while it worked.
 
@@ -239,8 +239,8 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | Command | What it does |
 | --- | --- |
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
-| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
-| `fetchAutomationRuns` | Bring one more page of an automation's runs into view. An unrecognised cursor is refused rather than guessed at |
+| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. A press while a run of it is going is answered with that run, and a `requestId` asked again with the run it made. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
+| `fetchAutomationRuns` | Bring one more page of an automation's runs into view. A cursor that is not the entry's own is refused |
 | `automation/createRequested` | Write one into the catalogue |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |
 | `automation/removed` | Take one out |

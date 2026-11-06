@@ -691,7 +691,7 @@ it('refuses a press into a chat the automation owner may not read', async () => 
   expect(sdk.said).toHaveLength(said);
 });
 
-it('refuses a press while the chat the automation runs in is busy', async () => {
+it('answers a press while the run\'s own turn is going with that run, as VS Code\'s host', async () => {
   const store = memoryAutomations();
   const { client, chatUri, cli } = await live({ automations: store });
   store.create(AUTOMATION, waking({ session: 'pinned' }));
@@ -699,25 +699,23 @@ it('refuses a press while the chat the automation runs in is busy', async () => 
   await fails(client, chatUri, 't1', cli);
   await until(() => runCount(store) === 1, 'the first run');
   const pin = String(newest(store)['primarySession']);
+  const first = String(newest(store)['resource']);
 
-  // A person presses Run while the run's own turn is still going. One chat has
-  // one turn at a time, and what the press gets is the reason rather than a
-  // second turn on top of the first.
+  // A person presses Run while the run's own turn is still going: the answer
+  // is the run that is going, and no second turn lands on the chat.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
   const said = sdk.said.length;
-  await client.handle({
+  const answer = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: AUTOMATION, requestId: 'r' },
-  });
-  await until(() => runCount(store) === 2, 'the refused press');
-  expect(refusalOf(store)).toBe('The chat this automation runs in is already running a turn');
-  expect(newest(store)['primarySession']).toBeUndefined();
+  }) as { resource: string };
+  expect(answer.resource).toBe(first);
+  expect(runCount(store)).toBe(1);
   expect(sdk.said).toHaveLength(said);
 
-  // And the turn that is going is still the first run's: it settles when it
-  // ends, which is what a press moving the chat onto its own failed run would
-  // have taken away.
+  // And the turn that is going settles the run when it ends.
   await ends(cli + 1);
-  await until(() => String(bag(runsOf(store)[1]?.['lifecycle'])['status']) === 'completed', 'the first run to settle');
-  expect(runsOf(store)[1]?.['primarySession']).toBe(pin);
+  await until(() => String(bag(runsOf(store)[0]?.['lifecycle'])['status']) === 'completed', 'the first run to settle');
+  expect(runsOf(store)[0]?.['primarySession']).toBe(pin);
 });
 
 it('waits behind a turn a person is running in the chat it is pinned to', async () => {

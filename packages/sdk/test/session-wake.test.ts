@@ -350,23 +350,22 @@ it('does not sleep a session while it is waking', async () => {
   expect(await awake()).toBe(1);
 });
 
-it('refuses a second Run of a pinned automation while the first wakes the session', async () => {
+it('answers a second Run of a pinned automation pressed while the first wakes the session with the first run, as VS Code\'s host', async () => {
   const counts: Counts = { starts: [], closes: 0, pace: 30 };
   const store = memoryAutomations();
   const { client, open, sleep, textsOf, dir } = await serving(counts, store);
   const one = await open('one');
   await sleep(one);
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
-  const run = (id: string): Promise<unknown> =>
-    client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: id } });
+  const run = (id: string): Promise<{ resource: string }> =>
+    client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: id } }) as Promise<{ resource: string }>;
 
-  // Both pressed in one tick: the second fails as it does on a live session.
-  await Promise.all([run('r1'), run('r2')]);
+  // Both pressed in one tick: the second is answered with the run going.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
+  const [first, second] = await Promise.all([run('r1'), run('r2')]);
+  expect(second.resource).toBe(first.resource);
   const runs = (): Bag[] => (store.get('ahp-automation:/check')?.runs ?? []) as unknown as Bag[];
-  await until(() => runs().length === 2 && runs().every((one) => (one.lifecycle as Bag).status !== 'running'), 'both runs settling');
-  const ends = runs().map((one) => [(one.lifecycle as Bag).status, ((one.lifecycle as Bag).error as Bag | undefined)?.message]);
-  expect(ends).toContainEqual(['completed', undefined]);
-  expect(ends).toContainEqual(['failed', 'The chat this automation runs in is already running a turn']);
+  await until(() => runs().length === 1 && (runs()[0]?.lifecycle as Bag).status === 'completed', 'the run settling');
   expect((await textsOf(one.chat)).filter((text) => text === 'check in')).toHaveLength(1);
   expect(counts.starts).toEqual([undefined, 'one']);
 });
