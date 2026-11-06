@@ -23,7 +23,7 @@
 
 import { probe, PROBE_TIMEOUT_MS, reason } from '@ahpd/sdk';
 import type {
-  Adapter, CheckResult, Connector, ConnectorOwner, DeviceSignInPoll, DeviceSignInStart, UiSchema,
+  Adapter, CheckResult, Connector, ConnectorOwner, DeviceSignInPoll, DeviceSignInStart, PluginView,
 } from '@ahpd/sdk';
 
 /**
@@ -58,19 +58,19 @@ export const ACCOUNT_URL = 'https://api.github.com/user';
 export const TUNNELS_URL = 'https://global.rel.tunnels.api.visualstudio.com/api/v1/tunnels';
 
 /**
- * What a `devtunnel` connector draws: the account it signed in as, and the
- * time of the last refresh of its token.
+ * What a `devtunnel` connector shows on its `main` view, with no data: the
+ * account it signed in as, and the time of the last refresh of its token.
  *
- * Both are what the connector already holds, so the adapter sends them with no
+ * Both are what the connector already holds, so the adapter shows them with no
  * call to the service. A connector that has not refreshed since it opened
- * sends no time, and a path the data does not hold draws nothing.
+ * shows no time, and a path the data does not hold draws nothing.
  */
-export const TUNNEL_UI: UiSchema = {
+export const TUNNEL_VIEW: PluginView = {
   root: 'account',
   components: {
     account: { id: 'account', component: 'Column', children: ['accountName', 'refreshed'] },
-    accountName: { id: 'accountName', component: 'Text', text: { path: 'account' } },
-    refreshed: { id: 'refreshed', component: 'Text', text: { path: 'refreshed' } },
+    accountName: { id: 'accountName', component: 'Text', text: { path: '/account' } },
+    refreshed: { id: 'refreshed', component: 'Text', text: { path: '/refreshed' } },
   },
 };
 
@@ -388,11 +388,10 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       required: ['token', 'refresh'],
     },
     capabilities: [{
-      type: 'ui',
-      name: 'account',
+      type: 'view',
+      name: 'main',
       title: 'Account',
       description: 'The GitHub account this connector signed in as, and when its token last refreshed.',
-      ui: TUNNEL_UI,
     }],
     /*
      * A token with no tunnel listing behind it is a token the service does not
@@ -420,7 +419,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       start,
       poll,
     },
-    open: (connector, ui) => {
+    open: (connector, view) => {
       const id = connector.id;
       const token = tokenOf(connector);
       const refresh = textOf(connector.config['refresh']);
@@ -431,18 +430,8 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       let running: Promise<void> | undefined;
       /** The next refresh, once one is set. */
       let timer: ReturnType<typeof setTimeout> | undefined;
-      /** When this open last stored a refreshed pair, which the ui draws. */
-      let refreshedAt: string | undefined;
-
-      /** Send what this connector draws now: its account, and the last refresh's time. */
-      const show = (): void => {
-        const data: Record<string, unknown> = {};
-        if (account !== undefined) data['account'] = account;
-        if (refreshedAt !== undefined) data['refreshed'] = refreshedAt;
-        ui?.show(data);
-      };
-
-      show();
+      // The account the record holds; the time of a refresh is set when one stores a pair.
+      view?.showView({ ...TUNNEL_VIEW, dataModel: account === undefined ? {} : { account } });
 
       /** Ask the host to check this connector, as a failed refresh does. */
       const checkNow = (): void => {
@@ -500,8 +489,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
           const still = tunnels.held(id);
           if (still === undefined) return;
           tunnels.hold(id, { ...still, token: next.token, refresh: next.refresh });
-          refreshedAt = new Date().toISOString();
-          show();
+          view?.setViewData('/refreshed', new Date().toISOString());
           again(next.expires === undefined ? DEFAULT_REFRESH_MS : next.expires * 1000 * 2 / 3);
         }
         catch (error) {
