@@ -492,8 +492,13 @@ export function createSleep(ctx: HostContext): Sleep {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1816
      */
     if ((sessions.get(named)?.chats.size ?? 0) > 1 || (ctx.subHistory.get(id)?.length ?? 0) > 0) ctx.snapshotDefaultChatTitle(named);
+    /*
+     * Ready already, which is how its state is handed out, so nothing says it
+     * again, as VS Code's host restores a session without a `session/ready`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1538-L1548
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1596-L1602
+     */
     log(`resumed ${named}`);
-    dispatch(named, { type: 'session/ready' });
     summaryMoved(named);
     return { uri: named, chat: picked(named, chat) ?? session };
   };

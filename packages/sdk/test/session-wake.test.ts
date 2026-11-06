@@ -495,6 +495,23 @@ it('wakes a sleeping session for a chat forked from it, and forks at the turn', 
   expect(chats).toContain('ahp-chat:/copy');
 });
 
+it('says no ready for a session it wakes, which is ready as its state is handed out, as VS Code\'s host restores one', async () => {
+  const counts: Counts = { starts: [], closes: 0 };
+  const { client, peer: p, open, sleep, read, awake } = await serving(counts);
+  const one = await open('one');
+  await sleep(one);
+  await read(one.channel);
+  const from = p.notes.length;
+
+  await client.handle({ method: 'createChat', params: { channel: one.channel, chat: 'ahp-chat:/second' } });
+  expect(await awake()).toBe(1);
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1596-L1602
+  const said = p.notes.slice(from).filter((note) => note.method === 'action' && note.channel === one.channel)
+    .map((note) => (note.action as Bag).type);
+  expect(said).not.toContain('session/ready');
+  expect(said).toContain('session/chatAdded');
+});
+
 it('wakes a sleeping session for a new chat in it', async () => {
   const counts: Counts = { starts: [], closes: 0 };
   const { client, open, sleep, read, awake } = await serving(counts);
