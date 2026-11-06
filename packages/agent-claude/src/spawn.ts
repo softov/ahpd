@@ -141,6 +141,7 @@ export const spawnInside = (
   asked: Asked,
   how: (asked: Asked) => Promise<{ command: string; args?: string[]; env?: Record<string, string> } | undefined>,
   where: string,
+  failures: 'spawn' | 'message' = 'spawn',
 ): SpawnedProcess => {
   const held = new Deferred();
   void how(asked).then(
@@ -172,11 +173,13 @@ export const spawnInside = (
        * `code` is left alone, because that sentence keeps the errno.
        *
        * A machine that is not there is not named: its sentence is ours, holds
-       * no path, and is the one thing a person needs to know.
+       * no path, and is the one thing a person needs to know. A record whose
+       * `portFailures` is `message` passes the failure on as it is, so the turn
+       * fails in its own message, as VS Code's host shows a failed send's.
        */
       const failed = error instanceof Error ? error : new Error(String(error));
       const named = failed as { syscall?: string };
-      if (named.syscall?.startsWith('spawn') !== true) named.syscall = 'spawn';
+      if (failures === 'spawn' && named.syscall?.startsWith('spawn') !== true) named.syscall = 'spawn';
       held.settle(failed);
     },
   );

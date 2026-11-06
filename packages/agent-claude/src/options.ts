@@ -196,6 +196,25 @@ export const stopEnds: Declaration = {
 };
 
 /**
+ * How a machine's port that could not start the CLI is said.
+ *
+ * `spawn`, the default, files the port's failure as a failure to start, so the
+ * turn fails in the SDK's one sentence for that, which names no path on the
+ * host (plan claude/22: "a spawn failure names its cause without a path");
+ * `message` passes the failure on as it is, its own message the turn's error,
+ * as VS Code's host shows a failed send's own message.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2573
+ */
+export const portFailures: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['spawn', 'message'],
+    description: "How a machine's port that could not start the CLI is said: spawn files it as a failure to start, said in the SDK's sentence with no host path; message passes on its own message, as VS Code does. spawn by default.",
+  },
+  default: 'spawn',
+};
+
+/**
  * How the agent knows the CLI wrote a conversation under the id a session is
  * asked to resume, which decides whether the session resumes it or starts a
  * conversation under that id.
@@ -331,7 +350,7 @@ export const extraArgs: Declaration = {
 
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
-  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, writtenBy,
+  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, writtenBy, portFailures,
   taskOutputFirstWaitMs, taskOutputLongestWaitMs, outputStyle, env, logins, extraArgs,
 };
 

@@ -442,7 +442,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // This host's path; the port reads it through the machine's mounts and
       // falls back to the machine's own working directory.
       ...(start.workingDirectory === undefined ? {} : { cwd: start.workingDirectory }),
-    }), said);
+    }), said, (options.presetOf?.() ?? options.preset ?? {})['portFailures'] === 'message' ? 'message' : 'spawn');
   };
 
   return {
