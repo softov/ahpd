@@ -1243,12 +1243,12 @@ describe('a tool a person calls with no session', () => {
   });
 
   /*
-   * VS Code's create-session takes no settings from the call: a new session's
-   * settings are its agent's own, and what it inherits from the chat that
-   * made it.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L370-L378
+   * A call with no calling chat, as through the `/mcp` door, has no chat to
+   * take VS Code's creation defaults from, so the person names the agent and
+   * its settings, as upstream decided (plan host/20261102-1347, "Add optional
+   * agent input"): checked as `createChat` checks a chat's.
    */
-  it('takes no settings from the call for a new session', async () => {
+  it('gives a new session its settings, and refuses what its agent does not take', async () => {
     const starts: Start[] = [];
     const { host, users } = hosting([], undefined, pair(starts));
     await settle(8);
@@ -1258,7 +1258,15 @@ describe('a tool a person calls with no session', () => {
       workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'plan' },
     });
     expect(starts).toHaveLength(1);
-    expect(starts[0]?.settings).not.toMatchObject({ permissionMode: 'plan' });
+    expect(starts[0]?.settings).toMatchObject({ permissionMode: 'plan' });
+    await expect(run(host, member, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Refused',
+      workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'nonsense' },
+    })).rejects.toThrow('permissionMode "nonsense" is not a value other takes');
+    await expect(run(host, member, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Refused',
+      workspace: uriOf(root), worktree: false, config: 'loud',
+    })).rejects.toThrow('Invalid create_session input: config must be an object.');
   });
 
   it('opens a chat of the agent it names in the session it is called from', async () => {

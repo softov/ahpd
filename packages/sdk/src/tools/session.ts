@@ -50,6 +50,21 @@ export const sessionMeant = (asked: string, rows: Summary[]): { session: Summary
   return row === undefined ? undefined : { session: row };
 };
 
+/**
+ * A session's settings, as the object a backend's schema is checked against.
+ *
+ * A tool's input arrives as JSON, so anything that is not an object - a
+ * string, a number, a list - is refused here rather than handed to a
+ * backend as settings it cannot read. An absent value and a null both mean
+ * none were asked for.
+ */
+const settingsOf = (value: unknown, tool: string): Record<string, unknown> | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Invalid ${tool} input: config must be an object.`);
+  return value as Record<string, unknown>;
+};
+
 /** A title fit to keep: non-blank, two hundred characters at most, one space between words. */
 const titled = (value: unknown, tool: string): string => {
   const title = required(value, 'title', tool).trim().replace(/\s+/g, ' ');
@@ -491,6 +506,7 @@ export const sessionTools = (): HostTool[] => [
           title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
           model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
           agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
+          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
         },
         required: ['relationship', 'prompt', 'title'],
       },
@@ -512,6 +528,7 @@ export const sessionTools = (): HostTool[] => [
         if (!offers.includes(agent))
           throw new Error(`Invalid ${tool} input: agent "${agent}" is not one this host offers${offers.length > 0 ? `; it offers ${offers.join(', ')}` : ''}.`);
       }
+      const config = settingsOf(input.config, tool);
       const rows = await at.sessions();
       const calling = at.session;
       const mine = calling === undefined ? undefined : rows.find((row) => row.resource === calling);
@@ -525,6 +542,7 @@ export const sessionTools = (): HostTool[] => [
           title,
           prompt,
           ...(agent !== undefined ? { provider: agent } : {}),
+          ...(config !== undefined ? { config } : {}),
           ...(model ? { model: model.id } : {}),
           from: delegated(at),
         });
@@ -543,6 +561,7 @@ export const sessionTools = (): HostTool[] => [
       const made = await at.create({
         workingDirectory: workspace,
         ...(agent !== undefined ? { provider: agent } : {}),
+        ...(config !== undefined ? { config } : {}),
         ...(model ? { provider: model.provider, model: model.id } : {}),
         isolation,
         title,
