@@ -1576,7 +1576,8 @@ agents made from the engines they register.
 
 One row per configured plugin, described without running it: `spec`, `name`,
 `state`, and `module`, `url`, `path`, `title` and `problem` where the daemon has
-them. A row carries the manifest the daemon loaded, and `undeclared: true` when
+them, `problem` cleared as an alert's text is. A row carries the manifest the
+daemon loaded, and `undeclared: true` when
 the plugin declares no contracts. Five fields say what the running daemon did
 with it:
 
@@ -1584,7 +1585,7 @@ with it:
 | --- | --- |
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
-| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has the userinfo of any URL and each `writeOnly` option value an error quoted answered `<set>`. Empty when the plugin has none |
+| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
 | `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components } }`. A Text's `text` and a Link's `label` come in a reader's locale when the plugin's catalog has them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 
