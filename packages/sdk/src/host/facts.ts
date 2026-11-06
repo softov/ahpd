@@ -249,7 +249,10 @@ export function createFacts(ctx: HostContext): Facts {
    */
   const setArtifacts = (uri: string, list: Bag[]): void => {
     kept.setArtifacts(idOf(uri), list);
-    const meta = metaOf(uri);
+    // The whole map, running or not: the action replaces it, and a session's
+    // state holds its origin and owner beside its artifacts, as VS Code's host
+    // merges every producer's keys into the one it publishes.
+    const meta = describes(uri)._meta as Bag | undefined;
     dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
     ctx.summaryMoved(uri);
   };
@@ -360,7 +363,7 @@ export function createFacts(ctx: HostContext): Facts {
   /** `_meta` moved: every session in the directory says so, and its row. */
   const metaMoved = (dir: string): void => {
     for (const uri of inThere(dir)) {
-      const meta = metaOf(uri);
+      const meta = describes(uri)._meta as Bag | undefined;
       dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
       ctx.summaryMoved(uri);
       // And the verbs, since a branch that gained a pull request offers
@@ -665,7 +668,7 @@ export function createFacts(ctx: HostContext): Facts {
    * directory's facts move.
    */
   const sessionMetaChanged = (uri: string): void => {
-    const meta = metaOf(uri);
+    const meta = describes(uri)._meta as Bag | undefined;
     dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
     ctx.summaryMoved(uri);
   };

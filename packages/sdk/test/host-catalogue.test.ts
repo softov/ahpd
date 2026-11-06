@@ -576,6 +576,39 @@ describe('a session row\'s status', () => {
   });
 });
 
+/*
+ * A session's `_meta` said as the whole map whatever runs it: the action
+ * replaces the map, so a session nothing runs keeps its backend's keys beside
+ * its artifacts, as VS Code's host merges every producer's keys into the one
+ * it publishes.
+ */
+describe('a session\'s _meta', () => {
+  it('says the whole map when an artifact of a session nothing runs goes', async () => {
+    const stamp = new Date(0).toISOString();
+    const store = memorySessions();
+    store.setArtifacts?.('kept', [{ id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' }]);
+    const host = createHost({
+      path: '/tmp',
+      agents: [{
+        ...echo({ path: '/tmp', pace: 0 }),
+        list: async () => [{ id: 'kept', title: 'Kept', createdAt: stamp, modifiedAt: stamp, workingDirectories: ['file:///tmp'], _meta: { 'probe.key': 'kept' } }],
+        transcript: async () => [],
+      }],
+      sessions: store,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: { resource: string }[] };
+    const uri = listed.items[0]?.resource ?? '';
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'a1' } });
+    await settle();
+    const said = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged');
+    expect(said.map((one) => (one.action._meta as Record<string, unknown> | undefined)?.['probe.key'])).toEqual(['kept']);
+  });
+});
+
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
