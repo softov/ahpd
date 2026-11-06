@@ -184,6 +184,33 @@ describe('the poll', () => {
 
     expect(terminal.calls).toEqual([['append', 'one']]);
   });
+
+  /*
+   * As VS Code's output monitor polls a running command: 500 ms to the first
+   * read after the one made at once, each wait twice the last up to 10 s, and
+   * 500 ms again once output comes after two reads in a row found none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/outputMonitor.ts#L478-L500
+   */
+  it('waits 500 ms, then twice as long each read up to 10 s, and 500 ms again when output follows a quiet spell', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    // Five bytes at the first read, nothing more for the next four, then four more.
+    const sizes = [5, 5, 5, 5, 5, 9];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      read: async () => {
+        const size = sizes[Math.min(at.length, sizes.length - 1)] ?? 0;
+        at.push(Date.now() - start);
+        return { output: 'x'.repeat(size), total_bytes: size, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(17_000);
+    poll.cancel();
+
+    expect(at).toEqual([0, 500, 1500, 3500, 7500, 15_500, 16_000, 17_000]);
+  });
 });
 
 it('cuts a tail on a character boundary, never inside one', () => {
