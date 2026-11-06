@@ -1451,11 +1451,11 @@ A field is written at the top level of a standalone manifest and under `ahpd`
 in a package.json, so `{ "description": "..." }` in a `plugin.json` and
 `"ahpd": { "description": "..." }` in a package.json say the same thing.
 
-Compatibility supports `*`, an exact version, `^`, `~`, `>=`, `<=`, `>`, `<`,
-`=`, and a space-separated conjunction such as `>=0.8 <0.9`. Anything it cannot
-read is refused by name rather than passed, so a misspelled range fails loudly
-instead of loading unchecked. A package with no `peerDependencies` loads, because
-absent is not incompatible.
+The range is npm's, read by [node-semver](https://github.com/npm/node-semver#ranges)
+as npm reads it: `^`, `~`, the comparators, `||` unions, hyphen ranges and
+x-ranges. A range node-semver cannot read is refused by name rather than passed,
+so a misspelled range fails loudly instead of loading unchecked. A package with
+no `peerDependencies` loads, because absent is not incompatible.
 
 The module is still the contract: `entry` says what to import, `apply` says what
 it is. The manifest is kept on the contribution, so the plugin channel lists it
