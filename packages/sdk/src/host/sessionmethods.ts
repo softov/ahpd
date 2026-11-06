@@ -3,7 +3,7 @@ import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { computerId } from '../machines/computers.js';
 import { older } from '../sessions/paging.js';
 import { namesOf } from '../usage/scopes.js';
-import { localPath, uriOf } from '../resources/fileuri.js';
+import { localPath } from '../resources/fileuri.js';
 import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
 import { CLOSING, noProvider } from './common.js';
@@ -12,6 +12,7 @@ import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
 import { needsWriting } from './attachments.js';
+import { fileCompletions } from './filecompletions.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
@@ -627,29 +628,25 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const chat_ = here?.chat ?? (held_ === undefined ? undefined : leadOf(held_));
         /*
          * The files the word names, which is what an at-sign and a hash both
-         * ask for - relative to the session's own directory, which is what a
-         * person means by a path while talking to an agent working there.
+         * ask for: the files under every working directory of the session,
+         * ranked as VS Code's provider ranks them. Each is a reference, not
+         * the bytes: the file is fetched with `resourceRead` if anything needs
+         * it, and a completion that carried a megabyte would carry it per
+         * keystroke.
          *
-         * Nothing rather than an error when there is no filesystem: this same
+         * Nothing rather than an error where there is no listing: this same
          * command serves `/`, and a host with none still has commands to offer.
          */
-        const files = async () => {
-          if (!options.resources) return [];
-          const base = localPath(chat_?.workingDirectories()[0] ?? dir);
-          const paths = await options.resources.complete(typed_, base);
-          return paths.map((path) => ({
-            insertText: `${trigger}${path}`,
-            rangeStart: from,
-            rangeEnd: offset,
-            attachment: {
-              // A reference, not the bytes: the file is fetched with
-              // `resourceRead` if anything needs it, and a completion that
-              // carried a megabyte would carry it per keystroke.
-              type: 'resource',
-              uri: uriOf(`${base}/${path}`.replace(/\/{2,}/g, '/')),
-              label: path,
-            },
-          }));
+        const files = async (): Promise<Bag[]> => {
+          if (!options.workspaceFiles) return [];
+          const stated = ctx.stateOf(here?.uri ?? asking)?.workingDirectories;
+          const roots = chat_?.workingDirectories() ?? (Array.isArray(stated) ? stated.filter((one): one is string => typeof one === 'string') : []);
+          return fileCompletions(
+            roots.map((one) => localPath(one)),
+            { token: typed_, triggerChar: trigger, rangeStart: from, rangeEnd: offset },
+            options.workspaceFiles,
+            log,
+          );
         };
         /*
          * A hash reaching for a chat rather than a file.

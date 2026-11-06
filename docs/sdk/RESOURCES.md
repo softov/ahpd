@@ -36,7 +36,7 @@ One method per act, and the grants below are per operation because of it.
 | `resourceCopy` | Copy, refused across two schemes |
 | `resourceRequest` | May I read or write this. Answered yes for any URI without withholding anything, as VS Code's host answers it; one under the client scheme is asked of the client it names |
 | `createResourceWatch` | A channel that reports what changes under a path |
-| `completions` | `@` completes a path, against the session's own directory |
+| `completions` | `@` completes a file under the session's working directories, listed by the host's `workspaceFiles` port and ranked as VS Code's Quick Open ranks it |
 
 A refusal says what it is by code: `-32008` for a path that is not there, and for a scheme nothing serves or an operation its provider left out, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95) answers those; `-32009` for one this client may not see; `-32010` for a `createOnly` write onto something already there; `-32011` for a write whose `ifMatch` no longer matches; `-32602` for a request that is not one this host can act on. A move or a copy is the source's store's to carry out.
 

@@ -9,6 +9,7 @@ import { uriOf } from '../src/resources/resources.js';
 import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
+import type { WorkspaceFiles } from '../src/types/host.js';
 import {
   resetSdk, actions, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, serving, sessionQueries, settle, running, wrote,
@@ -270,56 +271,83 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
   });
 });
 
+/** A listing of each directory's files, as ripgrep lists them, for a host to complete against. */
+const listing = (byDir: Record<string, string[]>): WorkspaceFiles => ({
+  getFiles: async (dir) => ({ files: (byDir[dir] ?? []).map((one) => join(dir, one)), isTruncated: false }),
+});
+
+type FileItem = { insertText: string; rangeStart: number; rangeEnd: number; attachment: Record<string, unknown> };
+
+/** A session working in `dir` on a host listing `files` there, and what one completion of `text` answers. */
+const filesFor = async (dir: string, files: string[], text: string, trigger = '@'): Promise<FileItem[]> => {
+  const host = createHost({ path: dir, agents: [claude({ paths: [dir] })], ...machine(), workspaceFiles: listing({ [dir]: files }) });
+  const client = host.accept(peer());
+  await client.handle(hello(['0.9.0']));
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude', workingDirectories: [uriOf(dir)] } });
+  const typed = text.replace('@', trigger);
+  return (await client.handle({
+    method: 'completions',
+    params: { channel: 'ahp-session:/live', kind: 'userMessage', text: typed, offset: typed.length },
+  }) as { items: FileItem[] }).items;
+};
+
+/*
+ * VS Code's file completion provider: the files under the session's working
+ * directories ranked by the Quick Open scorer, the trigger inserted with the
+ * file's name, and a name two files share labelled with the folder each is in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileCompletionProvider.ts#L119-L218
+ */
 describe('completing an at-sign', () => {
-  it('offers paths under the session\'s own directory', async () => {
+  it('offers the files under the session\'s working directory as VS Code\'s Quick Open ranks them, inserting the name', async () => {
+    const found = await filesFor(REPO, ['README.md', 'packages/sdk/src/hosting.md', 'packages/sdk/src/host.ts'], 'look at @host');
+    // A prefix of the name ranks first, the shorter name above the longer, and
+    // a file the word does not match is not offered.
+    expect(found.map((i) => i.insertText)).toEqual(['@host.ts', '@hosting.md']);
+    // The whole `@…` is replaced, so completing does not leave two at-signs;
+    // a reference rather than the bytes, since a completion that carried the
+    // file would carry it per keystroke.
+    expect(found[0]).toEqual({
+      insertText: '@host.ts',
+      rangeStart: 8,
+      rangeEnd: 13,
+      attachment: { type: 'resource', uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')), label: 'host.ts', displayKind: 'document' },
+    });
+  });
+
+  it('labels a name two files share with the folder each is in', async () => {
+    const found = await filesFor(REPO, ['a/index.ts', 'b/index.ts'], '@index');
+    const owner = parse(REPO).base;
+    expect(found.map((i) => i.attachment.label)).toEqual([`${owner} • a/index.ts`, `${owner} • b/index.ts`]);
+  });
+
+  it('offers the files in the order they were listed while nothing is typed, fifty at most', async () => {
+    const many = Array.from({ length: 60 }, (_, at) => `f${String(at).padStart(2, '0')}.txt`);
+    const found = await filesFor(REPO, many, '@');
+    expect(found.map((i) => i.insertText)).toEqual(many.slice(0, 50).map((one) => `@${one}`));
+  });
+
+  it('answers an encoded attachment URI, so a reader can get the path back', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd files '));
+    try {
+      const found = await filesFor(dir, ['notes.txt'], 'look at @not');
+      // A folder with a space in its name completes to a URI that has to name
+      // it back: unencoded, the attachment reads as a file called `ahpd%20files`.
+      expect(found.find((i) => i.insertText === '@notes.txt')?.attachment.uri).toBe(uriOf(join(dir, 'notes.txt')));
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it('offers no file on a host given no listing', async () => {
     const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     const found = await client.handle({
       method: 'completions',
-      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @packages/sdk/src/ho', offset: 30 },
-    }) as { items: { insertText: string; rangeStart: number; attachment: { type: string; uri: string } }[] };
-
-    expect(found.items.map((i) => i.insertText)).toContain('@packages/sdk/src/host.ts');
-    // The whole `@…` is replaced, so completing does not leave two at-signs.
-    expect(found.items[0]?.rangeStart).toBe(8);
-    // A reference rather than the bytes: a completion that carried the file
-    // would carry it per keystroke.
-    const file = found.items.find((i) => i.insertText === '@packages/sdk/src/host.ts');
-    expect(file?.attachment).toMatchObject({ type: 'resource', uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')) });
-  });
-
-  it('answers an encoded attachment URI, so a reader can get the path back', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ahpd files '));
-    try {
-      writeFileSync(join(dir, 'notes.txt'), 'x');
-      const host = createHost({ path: dir, agents: [claude({ paths: [dir] })], ...machine() });
-      const client = host.accept(peer());
-      await client.handle(hello(['0.9.0']));
-      const found = await client.handle({
-        method: 'completions',
-        params: { channel: 'ahp-root://', kind: 'userMessage', text: 'look at @not', offset: 12 },
-      }) as { items: { insertText: string; attachment: { uri: string } }[] };
-
-      const file = found.items.find((i) => i.insertText === '@notes.txt');
-      // A folder with a space in its name completes to a URI that has to name
-      // it back: unencoded, the attachment reads as a file called `ahpd%20files`.
-      expect(file?.attachment.uri).toBe(uriOf(join(dir, 'notes.txt')));
-    } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
-  });
-
-  it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
-    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
-    const found = await client.handle({
-      method: 'completions',
-      params: { channel: 'ahp-root://', kind: 'userMessage', text: '@pack', offset: 5 },
-    }) as { items: { insertText: string }[] };
-    expect(found.items.map((i) => i.insertText)).toContain('@packages/');
+      params: { channel: 'ahp-session:/live', kind: 'userMessage', text: '@host', offset: 5 },
+    }) as { items: unknown[] };
+    expect(found.items).toEqual([]);
   });
 
   it('leaves a slash command alone, because the two cannot both match', async () => {
@@ -346,32 +374,17 @@ describe('completing a hash sign', () => {
    * the path - which is what decides whether the client keeps the token.
    */
   it('offers the files an at-sign offers, with the hash kept', async () => {
-    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    const asked = { channel: 'ahp-chat:/live', kind: 'userMessage' };
-    const typed = 'look at #packages/sdk/src/ho';
-    const hashes = await client.handle({
-      method: 'completions',
-      params: { ...asked, text: typed, offset: typed.length },
-    }) as { items: { insertText: string; rangeStart: number; rangeEnd: number; attachment: Record<string, unknown> }[] };
-    const ats = await client.handle({
-      method: 'completions',
-      params: { ...asked, text: typed.replace('#', '@'), offset: typed.length },
-    }) as typeof hashes;
+    const files = ['README.md', 'packages/sdk/src/hosting.md', 'packages/sdk/src/host.ts'];
+    const hashes = await filesFor(REPO, files, 'look at @packages/sdk/src/ho', '#');
+    const ats = await filesFor(REPO, files, 'look at @packages/sdk/src/ho');
 
     // The same files, in the same order, with nothing else about them moved.
-    expect(hashes.items.map((i) => i.insertText)).toEqual(ats.items.map((i) => i.insertText.replace(/^@/, '#')));
+    expect(hashes.map((i) => i.insertText)).toEqual(ats.map((i) => i.insertText.replace(/^@/, '#')));
+    expect(hashes.map((i) => i.attachment)).toEqual(ats.map((i) => i.attachment));
     // The whole `#…` is replaced, so completing does not leave two hashes.
-    expect(hashes.items[0]?.rangeStart).toBe(8);
-    expect(hashes.items[0]?.rangeEnd).toBe(typed.length);
-    const file = hashes.items.find((i) => i.insertText === '#packages/sdk/src/host.ts');
-    expect(file?.attachment).toMatchObject({
-      type: 'resource',
-      uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')),
-      label: 'packages/sdk/src/host.ts',
-    });
+    expect(hashes[0]?.rangeStart).toBe(8);
+    expect(hashes[0]?.rangeEnd).toBe('look at #packages/sdk/src/ho'.length);
+    expect(hashes.map((i) => i.insertText)).toEqual(['#host.ts', '#hosting.md']);
   });
 
   /*
@@ -424,6 +437,7 @@ describe('completing a hash sign', () => {
       path: REPO,
       agents: [{ ...backend, create: (start: Start) => { starts.push(start); return backend.create(start); } }],
       ...machine(),
+      workspaceFiles: listing({ [REPO]: ['README.md', 'packages/sdk/src/host.ts'] }),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));

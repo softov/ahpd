@@ -87,6 +87,30 @@ export interface DirectoryFacts {
   refresh?(dir: string): Promise<boolean>;
 }
 
+/** The files under a working directory, as a listing answers them. */
+export interface WorkspaceFilesResult {
+  /** Every file listed, as an absolute path. */
+  files: string[];
+  /** Whether the listing stopped short of every file there is. */
+  isTruncated: boolean;
+}
+
+/**
+ * The files under a session's working directories, which `@` and a `#` on its
+ * way to a file complete against.
+ *
+ * Injected rather than built in, for the reason `DirectoryFacts` is: VS Code's
+ * agent host lists them with ripgrep, a binary that may not be installed. A
+ * host given none offers no file in its completions.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorkspaceFiles.ts
+ */
+export interface WorkspaceFiles {
+  /** The files under `dir`; concurrent calls for one directory share one listing. */
+  getFiles(dir: string): Promise<WorkspaceFilesResult>;
+  /** Stop every listing still running, as the host closes. */
+  close?(): void;
+}
+
 /*
  * `ResourceStore` and `TerminalStore` are declared in the concept files that
  * describe what they are - `resources.ts` and `terminals.ts` - rather than
@@ -401,6 +425,13 @@ export interface HostOptions {
    * the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
+  /**
+   * The files a session's working directories hold, which `@` completes.
+   *
+   * Left out, no completion offers a file. `ripgrepFiles()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  workspaceFiles?: WorkspaceFiles;
   /**
    * Whether a session can be given a working tree of its own.
    *

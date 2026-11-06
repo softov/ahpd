@@ -2050,6 +2050,9 @@ export function createHost(options: HostOptions): Host {
         await step('the automation rules', () => ctx.stop());
         await step('the automation store', () => options.automations?.close?.());
         await step('the session store', () => kept.close?.());
+        // The file listings still running, as VS Code's host kills its ripgrep
+        // children when it is disposed.
+        await step('the workspace files', () => options.workspaceFiles?.close?.());
       })();
       return closing;
     },

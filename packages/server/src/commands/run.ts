@@ -30,6 +30,7 @@ import {
   createMinuteMeter,
   doorOf,
   fileResources,
+  ripgrepFiles,
   fileSessions,
   fileUsage,
   filePolicies,
@@ -1221,6 +1222,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       screen,
     }),
     directories: gitBranches(),
+    // The files `@` completes, listed by `rg` on the path as `git` is run.
+    workspaceFiles: ripgrepFiles(),
     changes: gitChanges(),
     worktrees: gitWorktrees(),
     /*

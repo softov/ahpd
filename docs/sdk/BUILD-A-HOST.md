@@ -45,7 +45,7 @@ runs without a network.
 ## A complete host
 
 ```ts
-import { createHost, listen, fileResources, shellTerminals, gitChanges, gitBranches, memoryAutomations } from '@ahpd/sdk';
+import { createHost, listen, fileResources, ripgrepFiles, shellTerminals, gitChanges, gitBranches, memoryAutomations } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const path = process.cwd();
@@ -54,6 +54,7 @@ const host = createHost({
   path,
   agents: [claude({ paths: [path] })],
   resources: fileResources(),
+  workspaceFiles: ripgrepFiles(),
   terminals: shellTerminals(),
   changes: gitChanges(),
   directories: gitBranches(),
@@ -72,7 +73,8 @@ would fail part-way through instead.
 
 | port | what it is | left out | the one that ships |
 | --- | --- | --- | --- |
-| `resources` | files a client may read, what `@` completes into, and the write half | no `resource*` command is served | `fileResources()` |
+| `resources` | files a client may read, and the write half | no `resource*` command is served | `fileResources()` |
+| `workspaceFiles` | the files under a working directory, which `@` completes into, listed as VS Code's host lists them | no completion offers a file | `ripgrepFiles()`, which runs `rg` from the path |
 | `terminals` | how a shell is opened | no terminal can be created | `shellTerminals()` |
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
 | `directories` | facts about a served directory - the repository it is in and the branch it is on | sessions carry no project and no `_meta.git` | `gitBranches()` |
@@ -288,6 +290,7 @@ import {
   createPeer, receive, RpcError,          // JSON-RPC, holding no socket
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
   fileResources, shellTerminals,          // the resources and terminals ports
+  ripgrepFiles,                           // the files `@` completes, by ripgrep
   gitChanges, gitBranches, gitWorktrees,  // the git-backed ports
   githubPullRequests,                     // the pull request beside a branch
   memoryAutomations,                      // automations, without a clock

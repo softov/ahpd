@@ -45,6 +45,7 @@ export { gitBranches } from './repo/git.js';
 export { gitArgv } from './repo/hardened.js';
 export { gitChanges } from './sessions/changes.js';
 export { fileResources } from './resources/resources.js';
+export { ripgrepFiles } from './resources/workspacefiles.js';
 export { localPath, uriOf } from './resources/fileuri.js';
 export { clientPluginsIn } from './plugins/clientplugins.js';
 export { shellTerminals } from './machines/terminals.js';
