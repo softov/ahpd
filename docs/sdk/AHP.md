@@ -994,25 +994,33 @@ is what the window reads to offer the two.
 ### Worktrees the window manages
 
 A session made with `isolation: worktree` gets a tree of its own at its first
-send, and the reference window has five requests of its own for such trees,
-made when
-`initialize` says `_meta['vscode.detachedWorktrees']`. They are served here
-over the same trees, so the window's "new session in a worktree" flow runs
-against this host unchanged. `vscode/createAgentHostDetachedWorktree` answers a
-`handle` and the `resource` of the session's tree, and refuses `-32602` for a
-session that has none; `vscode/claimAgentHostDetachedWorktree` marks the handle
-as the session's, and refuses one this host never handed out.
-`vscode/setAgentHostDetachedWorktreeArchived` takes a clean tree off the disk
-once its session is gone, keeping the branch, and puts it back on that branch
-when unarchived; a tree with somebody's work in it, or a session still running
-in it, stays. `vscode/deleteAgentHostDetachedWorktree` removes tree and branch,
-and refuses `-32004` while the session runs.
-`vscode/reconcileAgentHostDetachedWorktrees` takes the `scope` and the
-`activeHandles` the window still holds, marks those as seen, and lets go of a
-clean tree nobody named for a day - the window forgetting a handle is not the
-same as a person being done with the branch. The handles live for the daemon's
-run: a restart forgets them, and the trees stand until a session or the window
-takes them down. A tree is made at `<repo>.worktrees/<name>`, beside its
+send. The reference window has five requests of its own for trees it makes for
+itself, which it uses when `initialize` says
+`_meta['vscode.detachedWorktrees']`, and they are served here as
+[VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3997-L4084)
+serves them. `vscode/createAgentHostDetachedWorktree` cuts a tree for a
+creating session whose tree is pending, from that session's folder and config,
+on a branch named after the `handle` it answers with the tree's `resource`; the
+session's own tree is still its first send's to make. Any other session is
+refused `-32603` in VS Code's words ("Cannot create detached worktree for
+non-creating session", "Session is not configured for worktree isolation").
+`vscode/claimAgentHostDetachedWorktree` marks the handle as in use, and refuses
+`-32603` "Unknown detached worktree handle" for one this host never handed out
+or one the window asked to delete. `vscode/setAgentHostDetachedWorktreeArchived`
+takes the tree off the disk once no session works in it and no dev container
+of its folder is in use, keeping its branch, and puts it back on that branch
+when unarchived; a tree with work nobody committed stays, unless
+`archiveDirtyWorktree` is `commit`, which commits the work on the branch first.
+`vscode/deleteAgentHostDetachedWorktree` takes the tree away, its branch kept,
+once nothing uses it and nobody's work is in it, and keeps the handle until
+then. `vscode/reconcileAgentHostDetachedWorktrees` takes the `scope`, a tree's
+folder, and the `activeHandles` the window still holds: it marks those as
+seen, lets go of a clean tree under that scope that nobody named for a day
+(from its claim's last sighting, or from its making while unclaimed), and tries
+again each removal the window asked for that is still owed. A handle or a
+`scope` VS Code would refuse is refused `-32602` in its words. The handles live
+for the daemon's run: a restart forgets them, and the trees stand until the
+window takes them down. A tree is made at `<repo>.worktrees/<name>`, beside its
 repository, which is where the reference host puts one - or as
 `<dir>/<repo>/<name>` under `--worktrees-root <dir>` when the daemon was
 started with one, which is how a machine with many repositories keeps their
@@ -1101,10 +1109,10 @@ refused `-32601`.
 | `getNetworkDiagnosticsInfo` | The window's diagnostics screen, where the host reports itself. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `getManagedSettingsDiagnostics` | The same screen, where the policy layer being reported on is Copilot's. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `diagnosticsFetch` | The same screen, which looks one endpoint up and fetches it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
-| `vscode/createAgentHostDetachedWorktree` | The window's own handle on a tree, so its new-session-in-a-worktree flow runs unchanged. [Worktrees the window manages](#worktrees-the-window-manages) |
-| `vscode/claimAgentHostDetachedWorktree` | The same flow, which marks a handle as a session's. [Worktrees the window manages](#worktrees-the-window-manages) |
-| `vscode/setAgentHostDetachedWorktreeArchived` | The same flow, which archives a clean tree and puts it back. [Worktrees the window manages](#worktrees-the-window-manages) |
-| `vscode/deleteAgentHostDetachedWorktree` | The same flow, which removes a tree and its branch. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/createAgentHostDetachedWorktree` | The window's own tree, cut for a creating session and held by a handle, so its dev container flow runs unchanged. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/claimAgentHostDetachedWorktree` | The same flow, which marks a handle as in use. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/setAgentHostDetachedWorktreeArchived` | The same flow, which archives a tree nothing uses and puts it back. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/deleteAgentHostDetachedWorktree` | The same flow, which takes a tree away once nothing uses it, its branch kept. [Worktrees the window manages](#worktrees-the-window-manages) |
 | `vscode/reconcileAgentHostDetachedWorktrees` | The same flow, which lets go of the trees the window has forgotten. [Worktrees the window manages](#worktrees-the-window-manages) |
 | `vscode/removeSessionArtifact` | The window takes an artifact pill off with its own request. [Sessions and the catalogue](#sessions-and-the-catalogue) |
 | `vscode/stopBackgroundWork` | The Stop button on a background task's row, which the host answers by calling the backend that reported it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |

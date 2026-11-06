@@ -1223,16 +1223,21 @@ describe('an archived session\'s tree', () => {
     expect(lines.some((line) => line.includes(`removed ${one.where}`))).toBe(false);
   });
 
-  it('leaves a tree the window holds a handle on to the window', async () => {
+  it('gives an archived session\'s own tree back, and leaves the tree the window made for it to the window', async () => {
     const root = repository();
-    const { client, lines, logged, open, archive } = await archiving(root);
-    const one = await open('handled');
-    await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: one.channel, prompt: 'x' } });
-    await archive(one.channel, true);
-    await logged('slept');
-    await new Promise((r) => { setTimeout(r, 200); });
-    expect(existsSync(join(one.where, 'tracked.txt'))).toBe(true);
-    expect(lines.some((line) => line.includes(`removed ${one.where}`))).toBe(false);
+    const { client, logged, archive } = await archiving(root);
+    const channel = 'ahp-session:/handled';
+    await client.handle({
+      method: 'createSession',
+      params: { channel, provider: 'echo', workingDirectories: [uriOf(project(root))], config: { isolation: 'worktree', branch: 'main' } },
+    });
+    const { resource } = await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: channel, prompt: 'x' } }) as { resource: string };
+    const own = await spoken(client, channel);
+    expect(own.where).not.toBe(localPath(resource));
+    await archive(channel, true);
+    await logged(`removed ${own.where}`);
+    expect(existsSync(own.where)).toBe(false);
+    expect(existsSync(join(localPath(resource), 'tracked.txt'))).toBe(true);
   });
 
   it('keeps a tree with no branch of its own, and says why', async () => {
@@ -1487,92 +1492,138 @@ describe('an archived session\'s tree', () => {
   });
 });
 
-describe('a worktree the window holds a handle on', () => {
+describe('a worktree the window makes for itself', () => {
   /*
-   * The reference window's dev container flow, mapped onto trees this host
-   * already makes: a handle names the session's tree, the window claims it,
-   * takes it down and puts it back with the archived bit, deletes it, and
-   * reconciles the handles it still holds.
+   * The reference window's dev container flow: a tree of its own, cut for a
+   * creating session whose tree is pending and held by a handle, which the
+   * window claims, takes down and puts back with the archived bit, deletes,
+   * and reconciles against the handles it still holds.
    */
-  const isolated = async (root: string, uri: string, worktrees?: Worktrees) => {
-    const { client } = await joined(root, worktrees);
+  const DAY = 24 * 60 * 60_000;
+  const UNKNOWN = '00000000-0000-4000-8000-000000000000';
+
+  /** A host on a clock a case moves, with a creating worktree session in the served repository. */
+  const drafting = async (root: string, uri: string) => {
+    let ahead = 0;
+    const host = createHost({
+      path: root,
+      agents: [echo({ path: project(root), pace: 0 })],
+      worktrees: gitWorktrees(),
+      now: () => new Date(Date.now() + ahead),
+    });
+    const client = host.accept(peer());
+    const said = await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } }) as { _meta?: Record<string, unknown> };
     await client.handle({
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))], config: { isolation: 'worktree', branch: 'main' } },
     });
-    await firstSent(client, uri);
-    const where = localPath((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { workingDirectories: string[] } };
-    }).snapshot.state.workingDirectories[0] ?? '');
-    return { client, where };
+    const { handle, resource } = await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: uri, prompt: 'port it' } }) as { handle: string; resource: string };
+    return { client, said, handle, resource, where: localPath(resource), days: (count: number) => { ahead += count * DAY; } };
   };
-  it('says so on initialize, and answers the session\'s tree by handle', async () => {
+
+  /** A session that has spoken in a folder, which is what makes the folder one a session uses. */
+  const working = async (client: Awaited<ReturnType<typeof drafting>>['client'], uri: string, where: string) => {
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(where)] } });
+    await firstSent(client, uri);
+  };
+
+  const branches = (root: string): string => execFileSync('git', ['-C', project(root), 'branch', '--list']).toString();
+
+  it('says so on initialize, and cuts a tree of its own for a creating session whose tree is pending, refusing the rest in VS Code\'s words', async () => {
     const root = repository();
-    const held = serving(root);
-    const client = held.accept(peer());
-    const said = await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } }) as { _meta?: Record<string, unknown> };
+    const { client, said, handle, where } = await drafting(root, 'ahp-session:/draft');
     expect(said._meta?.['vscode.detachedWorktrees']).toBe(true);
+    expect(handle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    expect(branchOf(where)).toBe(`agents/${handle.slice(0, 8)}`);
+    // The session's own tree is still its first send's to make, and it is another one.
+    await firstSent(client, 'ahp-session:/draft');
+    const own = localPath((await until(client, 'ahp-session:/draft', (state) => (state.workingDirectories?.[0] ?? '') !== uriOf(project(root)))).workingDirectories?.[0] ?? '');
+    expect(own).not.toBe(where);
+    expect(existsSync(join(own, 'tracked.txt'))).toBe(true);
+    // A session past creation, one nobody made, and one with no tree pending.
+    await expect(client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/draft', prompt: 'x' } }))
+      .rejects.toMatchObject({ code: -32603, message: 'Cannot create detached worktree for non-creating session: ahp-session:/draft' });
     await expect(client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/nobody', prompt: 'x' } }))
-      .rejects.toMatchObject({ code: -32602, message: 'Session not found: ahp-session:/nobody' });
+      .rejects.toMatchObject({ code: -32603, message: 'Cannot create detached worktree for non-creating session: ahp-session:/nobody' });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/plain', provider: 'echo', workingDirectories: [uriOf(project(root))] } });
     await expect(client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/plain', prompt: 'x' } }))
-      .rejects.toMatchObject({ message: 'Session is not configured for worktree isolation: ahp-session:/plain' });
+      .rejects.toMatchObject({ code: -32603, message: 'Session is not configured for worktree isolation: ahp-session:/plain' });
+    await expect(client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/plain' } }))
+      .rejects.toMatchObject({ code: -32602, message: 'prompt must be a string' });
   });
 
-  it('takes the tree down for an archived handle, keeps the branch, and puts it back', async () => {
+  it('claims a handle, takes its tree down when archived and nothing uses it, keeping the branch, and puts it back', async () => {
     const root = repository();
-    const { client, where } = await isolated(root, 'ahp-session:/held');
-    const { handle, resource } = await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/held', prompt: 'port it' } }) as { handle: string; resource: string };
-    expect(resource).toBe(uriOf(where));
+    const { client, handle, where } = await drafting(root, 'ahp-session:/held');
     const branch = branchOf(where);
-    await client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle } });
+    await expect(client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle } })).resolves.toEqual({});
     await expect(client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle: 'nobody' } }))
-      .rejects.toMatchObject({ message: 'Unknown detached worktree handle: nobody' });
-    // Not while the session is in it.
+      .rejects.toMatchObject({ code: -32602, message: 'handle must be a valid worktree handle' });
+    await expect(client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle: UNKNOWN } }))
+      .rejects.toMatchObject({ code: -32603, message: `Unknown detached worktree handle: ${UNKNOWN}` });
+    await expect(client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: 'yes' } }))
+      .rejects.toMatchObject({ code: -32602, message: 'archived must be a boolean' });
+    // Not while a session works in it.
+    await working(client, 'ahp-session:/inside', where);
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: true } });
-    expect(existsSync(where)).toBe(true);
-    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/held' } });
-    // Both halves of the disposal, since recreating the branch below needs
-    // the deletion finished, not only the directory gone.
-    await cleared(project(root), branch);
-    // The disposal took the clean tree; the branch went with it, since it carried nothing.
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/inside' } });
+    await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: true } });
     expect(existsSync(where)).toBe(false);
-    // Unarchived: put back on its branch, when the branch is still there.
-    execFileSync('git', ['-C', project(root), 'branch', branch, 'main'], { stdio: 'pipe' });
+    expect(branches(root)).toContain(branch);
+    // Unarchived: put back on its branch.
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: false } });
     expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
     expect(branchOf(where)).toBe(branch);
-    // Archived again, with the session gone: down it goes, branch kept.
-    await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: true } });
-    expect(existsSync(where)).toBe(false);
-    expect(execFileSync('git', ['-C', project(root), 'branch', '--list', branch]).toString()).toContain(branch);
     // A handle nobody holds is nothing to do.
-    await expect(client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle: 'nobody', archived: true } })).resolves.toEqual({});
+    await expect(client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle: UNKNOWN, archived: true } })).resolves.toEqual({});
   });
 
-  it('deletes on request once the session is gone, and lets go of what the window no longer names', async () => {
+  it('deletes a tree once nothing uses it and nobody\'s work is in it, keeping its branch and its handle until then', async () => {
     const root = repository();
-    const watched = observed();
-    const { client, where } = await isolated(root, 'ahp-session:/gone', watched.port);
-    const { handle } = await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/gone', prompt: 'x' } }) as { handle: string };
-    await expect(client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } })).rejects.toMatchObject({ code: -32004 });
+    const { client, handle, resource, where } = await drafting(root, 'ahp-session:/gone');
+    const branch = branchOf(where);
+    const reconcile = () => client.handle({ method: 'vscode/reconcileAgentHostDetachedWorktrees', params: { scope: resource, activeHandles: [] } });
+    await working(client, 'ahp-session:/inside', where);
+    await client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } });
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    // A handle the window asked to delete is no longer one it can claim.
+    await expect(client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle } }))
+      .rejects.toMatchObject({ code: -32603, message: `Unknown detached worktree handle: ${handle}` });
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/inside' } });
     writeFileSync(join(where, 'work.txt'), 'kept\n');
-    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/gone' } });
-    await watched.settled();
-    expect(watched.removed).toEqual([]);
-    // Dirty, so the disposal kept it; the window's delete still takes it, saying so if git refuses.
-    expect(existsSync(where)).toBe(true);
-    const outcome = await client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } }).then(() => 'removed', (error: { message: string }) => error.message);
-    expect(outcome === 'removed' || outcome.includes('Could not remove')).toBe(true);
+    await reconcile();
+    expect(existsSync(join(where, 'work.txt'))).toBe(true);
+    execFileSync('git', ['-C', where, 'clean', '-fq'], { stdio: 'pipe' });
+    await reconcile();
+    expect(existsSync(where)).toBe(false);
+    expect(branches(root)).toContain(branch);
     await expect(client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } })).resolves.toEqual({});
+    await expect(client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle: 'nobody' } }))
+      .rejects.toMatchObject({ code: -32602, message: 'handle must be a valid worktree handle' });
+  });
 
-    // Reconcile: a handle the window still names is seen; one it does not
-    // is let go, but not before its grace is up.
-    const { client: other, where: elsewhere } = await isolated(root, 'ahp-session:/seen');
-    const { handle: kept } = await other.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/seen', prompt: 'x' } }) as { handle: string };
-    await other.handle({ method: 'vscode/reconcileAgentHostDetachedWorktrees', params: { scope: project(root), activeHandles: [] } });
-    expect(existsSync(elsewhere)).toBe(true);
-    await expect(other.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle: kept } })).resolves.toEqual({});
+  it('lets go of a handle the window no longer names once its grace is up, keeping its branch', async () => {
+    const root = repository();
+    const { client, handle, resource, where, days } = await drafting(root, 'ahp-session:/seen');
+    const branch = branchOf(where);
+    const reconcile = (activeHandles: unknown[], scope: unknown = resource) =>
+      client.handle({ method: 'vscode/reconcileAgentHostDetachedWorktrees', params: { scope, activeHandles } });
+    await expect(reconcile([], '')).rejects.toMatchObject({ code: -32602, message: 'scope must be a non-empty string' });
+    await expect(reconcile(['nobody'])).rejects.toMatchObject({ code: -32602, message: 'activeHandles must contain valid worktree handles' });
+    await reconcile([]);
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    days(2);
+    // Named, so seen; a handle under another scope is left alone.
+    await reconcile([handle]);
+    await reconcile([], project(root));
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    await reconcile([]);
+    expect(existsSync(where)).toBe(false);
+    expect(branches(root)).toContain(branch);
+    await expect(client.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle } }))
+      .rejects.toMatchObject({ code: -32603, message: `Unknown detached worktree handle: ${handle}` });
   });
 });
 

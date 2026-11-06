@@ -1,5 +1,5 @@
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
-import { INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerId } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
 import { uriOf } from '../resources/fileuri.js';
@@ -142,6 +142,11 @@ export interface Lifecycle {
   /** A session's tree put back at its path on its branch, where `shelve` took it. */
   restore(uri: string): Promise<void>;
   /**
+   * A tree of the window's own, cut for a creating session whose tree is
+   * pending and named after the handle the window holds it by.
+   */
+  createDetachedWorktree(uri: string, handle: string): Promise<StoredWorktree>;
+  /**
    * Whether deleting an archived session keeps its work: each of its trees
    * gone, or on its own branch and synced with its remote.
    */
@@ -217,12 +222,12 @@ export const symlinkFolders = (config: Record<string, unknown>): string[] => {
 };
 
 /** The message of the commit that saves a dirty tree before archive removes it. */
-const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving session';
+export const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving session';
 
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
-    madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside, detached,
+    madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
@@ -1232,46 +1237,40 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
-   * Where a session actually runs, once isolation has been answered.
-   *
-   * Answered here rather than in the backend because the tree is the host's:
-   * a backend is handed a directory and told to work in it, and which
-   * directory that is - the folder, or a worktree made for this session - is
-   * exactly the decision the client made with `isolation`.
+   * A tree cut from the repository `where` is in, as `config` asks, its new
+   * branch named after `name`.
    */
-  const isolated = async (
-    uri: string,
+  const cutTree = async (
+    port: Worktrees,
+    name: string,
     config: Record<string, unknown>,
-    where: string | undefined,
+    where: string,
     before?: BeforeWorktree,
-  ): Promise<string | undefined> => {
-    const port = options.worktrees;
-    if (!port || config.isolation !== 'worktree' || where === undefined) return where;
+  ): Promise<StoredWorktree> => {
     const repository = await port.repository(where);
     if (repository === undefined) {
       throw new RpcError(INVALID_PARAMS, `${where} is not a git repository, so it has no worktrees`);
     }
     const said = (key: string): string => (typeof config[key] === 'string' ? config[key] : '');
     /*
-     * The branch this session runs on, and whether there is a new one at all.
+     * The branch the tree is on, and whether there is a new one at all.
      *
      * `agents/` is the built-in prefix the reference uses too, and a client's
      * own goes in front of it: somebody whose `git.branchPrefix` is `softov/`
      * gets `softov/agents/1a2b3c4d`, which is what their other tools already
      * sort and filter by. `worktreeCreateNewBranch: 'false'` means there is no
-     * new branch - the session continues the one that was chosen.
+     * new branch: the tree continues the one that was chosen.
      */
     const making = said('worktreeCreateNewBranch') !== 'false';
     const branch = making
-      ? `${said('worktreeBranchPrefix')}agents/${idOf(uri).slice(0, 8)}`
+      ? `${said('worktreeBranchPrefix')}agents/${name.slice(0, 8)}`
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository, options.worktreesRoot), worktreeFor(branch ?? base));
     // Read as either spelling: the array the schema declares, or a
     // comma-separated string. A config value is `unknown` on the wire - the
     // protocol declares the bag `Record<string, unknown>` and `permissions` is
-    // an object - so a key this host declared is narrowed where it is used
-    // rather than assumed everywhere.
+    // an object - so a key this host declared is narrowed where it is used.
     const patterns = config.worktreeIncludeFiles;
     const include = (Array.isArray(patterns)
       ? patterns.filter((one): one is string => typeof one === 'string')
@@ -1282,7 +1281,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // Asked after the path is known and before anything exists at it, which is
     // where VS Code asks too: the window is shown the worktree it is about to
     // be given, and a folder that does not exist yet is vouched for by the
-    // repository it is cut from rather than by itself.
+    // repository it is cut from.
     await before?.(repository, path);
     await port.create({
       repository,
@@ -1293,21 +1292,68 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ...(include.length > 0 ? { include } : {}),
       ...(symlink.length > 0 ? { symlink } : {}),
     });
-    // The branch is remembered rather than derived from the directory later:
-    // a prefix a client asked for changes the name, and guessing it wrong at
-    // removal time either deletes nothing or names somebody else's. The commit
-    // it was cut from is remembered for the same reason: the tree moves on, and
-    // what it started from is only knowable while it is still that.
+    // The branch is remembered with the tree: a prefix a client asked for
+    // changes the name, and guessing it wrong at removal time either deletes
+    // nothing or names somebody else's. The commit it was cut from is
+    // remembered for the same reason: the tree moves on, and what it started
+    // from is only knowable while it is still that.
     const commit = await port.commitOf?.(path);
-    const made = {
+    return {
       repository, path, base,
       ...(branch !== undefined ? { branch } : {}),
       ...(commit !== undefined ? { commit } : {}),
     };
+  };
+
+  /**
+   * Where a session actually runs, once isolation has been answered.
+   *
+   * Answered by the host because the tree is the host's: a backend is handed
+   * a directory and told to work in it, and which directory that is, the
+   * folder or a worktree made for this session, is exactly the decision the
+   * client made with `isolation`.
+   */
+  const isolated = async (
+    uri: string,
+    config: Record<string, unknown>,
+    where: string | undefined,
+    before?: BeforeWorktree,
+  ): Promise<string | undefined> => {
+    const port = options.worktrees;
+    if (!port || config.isolation !== 'worktree' || where === undefined) return where;
+    const made = await cutTree(port, idOf(uri), config, where, before);
     worktrees.set(uri, made);
     kept.setWorktree?.(idOf(uri), made);
-    log(`made ${path} on ${branch ?? base} for ${uri}`);
-    return path;
+    log(`made ${made.path} on ${made.branch ?? made.base} for ${uri}`);
+    return made.path;
+  };
+
+  /*
+   * A tree of its own for the window, cut as a creating session's pending
+   * tree would be, from the folder and the config that session holds, and
+   * named after the window's handle; the session's own tree stays owed to
+   * its first send. Refused, in VS Code's words, for a session that is not
+   * creating, one with no tree pending, and one with no folder.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6515-L6545
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L671-L724
+   */
+  const createDetachedWorktree = async (uri: string, handle: string): Promise<StoredWorktree> => {
+    // Creating is provisional: a session is said ready at its first message.
+    if (!provisional(uri)) {
+      throw new RpcError(INTERNAL_ERROR, `Cannot create detached worktree for non-creating session: ${uri}`);
+    }
+    const port = options.worktrees;
+    const config = decided.get(uri) ?? {};
+    if (port === undefined || config.isolation !== 'worktree' || worktreeOf(uri) !== undefined) {
+      throw new RpcError(INTERNAL_ERROR, `Session is not configured for worktree isolation: ${uri}`);
+    }
+    const where = dirOf(uri);
+    if (where === undefined) {
+      throw new RpcError(INTERNAL_ERROR, `Cannot create detached worktree without a working directory: ${uri}`);
+    }
+    const made = await cutTree(port, handle, config, where);
+    log(`made ${made.path} on ${made.branch ?? made.base} for the window's ${handle}`);
+    return made;
   };
 
   /**
@@ -1334,9 +1380,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   /** Whether something is at a path. */
   const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
-
-  /** Whether the window holds a handle on the session's tree, which leaves the tree to it. */
-  const handled = (uri: string): boolean => [...detached.values()].some((one) => one.session === uri);
 
   /** A session's trees: the one it runs in, then each one a move left it. */
   const treesOf = (uri: string): StoredWorktree[] => {
@@ -1407,7 +1450,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     await after?.catch(() => undefined);
     const port = options.worktrees;
     const trees = treesOf(uri);
-    if (port === undefined || trees.length === 0 || !archivedNow(uri) || sessions.has(uri) || handled(uri)) return;
+    if (port === undefined || trees.length === 0 || !archivedNow(uri) || sessions.has(uri)) return;
     const linked = linkedOf(uri);
     for (const tree of trees) {
       if (!await present(tree.path)) continue;
@@ -1442,7 +1485,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
           continue;
         }
-        if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
+        if (sessions.has(uri) || !archivedNow(uri)) return;
         const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
           error instanceof Error ? error.message : String(error));
         if (failed !== undefined) {
@@ -1457,7 +1500,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
       // Asked again after the check, which waited: a session started in the
       // tree meanwhile, or an unarchive, keeps it.
-      if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
+      if (sessions.has(uri) || !archivedNow(uri)) return;
       await port.remove(tree.repository, tree.path, undefined, linked)
         .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
         .catch((error: unknown) => {
@@ -1473,13 +1516,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * to have linked linked again. The include files are not copied again: they
    * were copies, and the branch has what the session made of them.
    *
-   * Nothing to do for a session with no record or a tree that is there, and
-   * nothing for a session whose tree the window holds a handle on, which its
-   * own method puts back.
+   * Nothing to do for a session with no record or a tree that is there.
    */
   const restore = (uri: string): Promise<void> => inTurn(uri, async () => {
     const port = options.worktrees;
-    if (port === undefined || handled(uri)) return;
+    if (port === undefined) return;
     const symlink = linkedOf(uri);
     for (const tree of treesOf(uri)) {
       if (await present(tree.path)) continue;
@@ -2303,7 +2344,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
     chatAgent, chatConfig, isolated, oweTree,
-    shelve, restore, canAutomaticallyDeleteArchivedSession,
+    shelve, restore, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
     beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
   };
 }

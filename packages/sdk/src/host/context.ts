@@ -44,6 +44,26 @@ import type { Canvases } from './canvases.js';
 import type { Asking } from './asking.js';
 
 /**
+ * A tree the window made for itself, cut for a creating session and held by
+ * the window under a handle, as VS Code's detached worktree record.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L671-L724
+ */
+export interface DetachedWorktree {
+  repository: string;
+  path: string;
+  base: string;
+  branch?: string;
+  /** The folders linked into it, whose links are not work in it. */
+  linked: string[];
+  claimed: boolean;
+  archived: boolean;
+  /** Whether the window asked for the tree to go, which it does once nothing uses it. */
+  deleting: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+/**
  * Everything an area of the host reaches for, in one object.
  *
  * Built once in `createHost` and handed to every area's factory, the way a
@@ -471,17 +491,11 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   log: (message: string) => void;
   /** What the window's "collect logs" gets, and reads back. */
   logs: DebugLogs;
-  /** The worktree handles the window holds, by the handle it asked under. */
-  detached: Map<string, {
-    session: string;
-    repository: string;
-    path: string;
-    branch?: string;
-    claimed: boolean;
-    archived: boolean;
-    createdAt: number;
-    lastSeenAt: number;
-  }>;
+  /**
+   * The trees the window made for itself, by the handle it holds each one
+   * under, each kept until its tree is gone.
+   */
+  detached: Map<string, DetachedWorktree>;
 }
 
 /** What one connection's gate is built from. */

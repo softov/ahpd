@@ -111,7 +111,7 @@ Every session's turns are written down as commits of their own, under `refs/agen
 
 A session that moves to another folder keeps the tree it worked in. The tree stays on disk as the session's, beside the folder it moves to, and is archived, put back and removed with the session by the same rules as the tree it runs in, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1504-L1551) retains a moved session's worktree among its additional worktrees.
 
-The window has five requests of its own for trees it manages, made when `initialize` says `_meta['vscode.detachedWorktrees']`: create, claim, archive, unarchive and reconcile. They are served over the same trees, so the window's "new session in a worktree" flow runs against this host unchanged. Archiving takes a clean tree off the disk once its session is gone and keeps the branch; a tree with somebody's work in it, or a session still running in it, stays.
+The window has five requests of its own for trees it makes for itself, made when `initialize` says `_meta['vscode.detachedWorktrees']`: create, claim, archive and unarchive, delete, and reconcile. A tree the window asks for is cut for a creating session whose tree is pending, from that session's folder and config, and is the window's alone: the session's own tree is still its first send's to make. Archiving or deleting one takes it off the disk once nothing uses it and keeps its branch; a tree with work nobody committed stays, as a session's own does. [AHP.md](AHP.md#worktrees-the-window-manages) has each request.
 
 A worktree the host made is trusted when the repository it came from is.
 

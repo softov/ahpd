@@ -9,11 +9,11 @@ import { hostLogPath } from '../sessions/debuglogs.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { ROOT, spaceOf } from './channels.js';
 import { need, reason } from './common.js';
-import { symlinkFolders } from './lifecycle.js';
+import { ARCHIVE_COMMIT_MESSAGE, symlinkFolders } from './lifecycle.js';
 import { requireTrust } from './trust.js';
 import type { LogFile } from '../sessions/debuglogs.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from '../types/containers.js';
-import type { ConnectionContext, HostContext } from './context.js';
+import type { ConnectionContext, DetachedWorktree, HostContext } from './context.js';
 
 /**
  * The proxy variables the network diagnostics report, when set: the reference
@@ -42,6 +42,13 @@ const resolved = async (host: string, family: 4 | 6): Promise<{ address?: string
 
 /** How long an unclaimed handle, or a claimed one nobody has seen, is kept before a reconcile may reap it. */
 const DETACHED_GRACE = 24 * 60 * 60 * 1000;
+
+/**
+ * The shape of a handle this host hands out for a tree the window made: a
+ * UUID, as VS Code checks one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentDevContainerWorktreeMeta.ts#L17-L19
+ */
+const WORKTREE_HANDLE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** How much of the launcher's output is kept to explain an ending. */
 const CONTAINER_TAIL = 24;
@@ -100,7 +107,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
   const { connection } = conn;
   const {
     agents, byChat, detached, dirOf, kept, leadOf, log, logs, options, ownerFor, owners,
-    sessionFor, sessions, setArtifacts, worktreeOf, worktrees,
+    sessionFor, sessions, setArtifacts,
   } = ctx;
 
   /** The folders linked into a session's tree, whose links are not work in it. */
@@ -250,6 +257,67 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     return false;
   };
 
+  /** The time on the host's clock, which a test moves. */
+  const clock = (): number => (options.now?.() ?? new Date()).getTime();
+
+  /** The handle a detached worktree request names, refused in VS Code's words when it is no handle this host hands out. */
+  const handleOf = (params: Record<string, unknown>): string => {
+    const { handle } = params;
+    if (typeof handle !== 'string' || !WORKTREE_HANDLE.test(handle)) {
+      throw new RpcError(INVALID_PARAMS, 'handle must be a valid worktree handle');
+    }
+    return handle;
+  };
+
+  /*
+   * Whether anything uses a tree the window made: a session of this host
+   * working in it, a relay into a container of that folder, or a session
+   * placed on one, as VS Code keeps a folder another session uses.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorktreeCleanupService.ts#L413-L416
+   */
+  const treeInUse = async (path: string): Promise<boolean> => {
+    const here = atPath(path);
+    if ((await ctx.allRows()).some((row) => row.workingDirectories.some((one) => atPath(localPath(one)) === here))) return true;
+    for (const held of ctx.relays.values()) {
+      for (const one of held.values()) if (atPath(one.folder) === here) return true;
+    }
+    return placedOn(path);
+  };
+
+  /*
+   * A tree the window made, taken away once nothing uses it, its branch kept
+   * so an unarchive can put it back, as VS Code's host removes one. Work
+   * nobody committed keeps it, as it keeps a session's own tree: an archive
+   * under `archiveDirtyWorktree: commit` commits the work on the branch
+   * first. Answers whether the tree is gone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1786-L1846
+   */
+  const takeDown = async (handle: string, held: DetachedWorktree, archiving: boolean): Promise<boolean> => {
+    const port = options.worktrees;
+    if (port === undefined) return false;
+    if (!await stat(held.path).then(() => true, () => false)) return true;
+    if (await treeInUse(held.path)) {
+      log(`kept ${held.path}: it is in use`);
+      return false;
+    }
+    const clean = async (): Promise<boolean> => await port.dirty(held.path, held.linked).catch(() => true) === false;
+    if (!await clean()) {
+      if (!archiving || ctx.archiveDirtyWorktree !== 'commit' || port.commit === undefined) {
+        log(`kept ${held.path}: it has changes nobody committed`);
+        return false;
+      }
+      const failed = await port.commit(held.path, ARCHIVE_COMMIT_MESSAGE, held.linked).then(() => undefined, reason);
+      if (failed !== undefined || !await clean()) {
+        log(`kept ${held.path}: ${failed === undefined ? 'it still has changes after the commit' : `could not commit its changes: ${failed}`}`);
+        return false;
+      }
+    }
+    return port.remove(held.repository, held.path, undefined, held.linked).then(
+      () => { log(`removed ${held.path} for ${handle}, keeping ${held.branch ?? held.base}`); return true; },
+      (error: unknown) => { log(`kept ${held.path}: ${reason(error)}`); return false; },
+    );
+  };
+
   /**
    * Stop or remove the computer a folder is, unless somebody else is using it.
    *
@@ -280,135 +348,119 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
   };
 
   return {
-    /**
-     * A handle on a session's worktree, for the window that manages it.
-     *
-     * The reference host makes the tree here, ahead of the session, from the
-     * prompt; this host made it when the session was created, so the answer
-     * is that tree and `prompt` has nothing left to name. A session with no
-     * tree is not one the window can hold a handle on, and says so in the
-     * reference host's words.
+    /*
+     * A tree of the window's own for a creating session whose tree is
+     * pending, answered by the handle the window holds it under and its
+     * folder, as VS Code's host makes one; the lifecycle refuses any other
+     * session in VS Code's words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3997-L4025
      */
     'vscode/createAgentHostDetachedWorktree': async (params) => {
       const session = stringParam(params, 'session', 'a URI string');
       stringParam(params, 'prompt');
+      if (!URL.canParse(session)) throw new RpcError(INVALID_PARAMS, 'session must be a valid URI string');
       const uri = sessionFor(session);
-      const tree = worktreeOf(uri);
-      if (tree === undefined) {
-        throw new RpcError(INVALID_PARAMS, sessions.has(uri)
-          ? `Session is not configured for worktree isolation: ${session}`
-          : `Session not found: ${session}`);
-      }
       const handle = crypto.randomUUID();
-      const now = Date.now();
+      const tree = await ctx.createDetachedWorktree(uri, handle);
+      const now = clock();
       detached.set(handle, {
-        session: uri,
         repository: tree.repository,
         path: tree.path,
+        base: tree.base,
         ...(tree.branch !== undefined ? { branch: tree.branch } : {}),
+        linked: linkedOf(uri),
         claimed: false,
         archived: false,
+        deleting: false,
         createdAt: now,
         lastSeenAt: now,
       });
       log(`${connection.clientId || 'a client'} holds ${handle} on ${tree.path}`);
       return { handle, resource: uriOf(tree.path) };
     },
-    /** The session started in the tree: the handle is in use, and stays until the window lets go. */
+    /*
+     * A session started in the tree: the handle is in use and seen now. One
+     * this host never handed out, or one the window asked to delete, is
+     * refused in VS Code's words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorktreeCleanupService.ts#L402-L407
+     */
     'vscode/claimAgentHostDetachedWorktree': async (params) => {
-      const handle = String(params.handle ?? '');
+      const handle = handleOf(params);
       const held = detached.get(handle);
-      if (held === undefined) throw new RpcError(INVALID_PARAMS, `Unknown detached worktree handle: ${handle}`);
+      if (held === undefined || held.deleting) throw new RpcError(INTERNAL_ERROR, `Unknown detached worktree handle: ${handle}`);
       held.claimed = true;
-      held.lastSeenAt = Date.now();
+      held.lastSeenAt = clock();
       return {};
     },
-    /**
-     * Archived is the tree taken down, and the branch kept so it can
-     * come back; unarchived is the tree put back on that branch.
-     *
-     * Not while a session is running in it, and not with work nobody
-     * committed in it - the same two judgements a disposal makes. A
-     * handle nobody holds is nothing to do, the way the reference host
-     * answers it.
+    /*
+     * Archived is the tree taken down once nothing uses it, its branch kept
+     * so it can come back; unarchived is the tree put back on that branch.
+     * A handle nobody holds is nothing to do, as VS Code's host answers it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorktreeCleanupService.ts#L371-L400
      */
     'vscode/setAgentHostDetachedWorktreeArchived': async (params) => {
-      const handle = String(params.handle ?? '');
-      const archived = params.archived === true;
+      const handle = handleOf(params);
+      if (typeof params.archived !== 'boolean') throw new RpcError(INVALID_PARAMS, 'archived must be a boolean');
       const held = detached.get(handle);
-      if (held === undefined) return {};
-      held.archived = archived;
-      const port = options.worktrees;
-      if (port === undefined) return {};
-      const present = await stat(held.path).then(() => true, () => false);
-      if (archived) {
-        if (!present) return {};
-        if (sessions.has(held.session)) {
-          log(`kept ${held.path}: ${held.session} is running in it`);
-          return {};
-        }
-        if (await port.dirty(held.path, linkedOf(held.session)).catch(() => true)) {
-          log(`kept ${held.path}: it has changes nobody committed`);
-          return {};
-        }
-        await port.remove(held.repository, held.path, undefined, linkedOf(held.session))
-          .then(() => { log(`removed ${held.path} for the archived ${handle}`); })
-          .catch((error: unknown) => { log(`kept ${held.path}: ${error instanceof Error ? error.message : String(error)}`); });
+      if (held === undefined || held.deleting) return {};
+      held.archived = params.archived;
+      if (held.archived) {
+        await takeDown(handle, held, true);
         return {};
       }
-      if (held.branch === undefined || present) return {};
-      await port.create({ repository: held.repository, base: held.branch, path: held.path })
+      const port = options.worktrees;
+      if (port === undefined || held.branch === undefined || await stat(held.path).then(() => true, () => false)) return {};
+      await port.create({
+        repository: held.repository,
+        base: held.branch,
+        path: held.path,
+        ...(held.linked.length > 0 ? { symlink: held.linked } : {}),
+      })
         .then(() => { log(`put ${held.path} back on ${held.branch ?? ''} for ${handle}`); })
-        .catch((error: unknown) => { log(`could not put ${held.path} back: ${error instanceof Error ? error.message : String(error)}`); });
+        .catch((error: unknown) => { log(`could not put ${held.path} back: ${reason(error)}`); });
       return {};
     },
-    /** The window is done with the tree: gone, branch and all, unless a session is still in it. */
+    /*
+     * The window is done with the tree: it goes once nothing uses it, its
+     * branch kept, and the handle with it, as VS Code's host queues the
+     * removal. A tree in use, or one with work nobody committed, keeps its
+     * handle, and each reconcile tries it again.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorktreeCleanupService.ts#L418-L432
+     */
     'vscode/deleteAgentHostDetachedWorktree': async (params) => {
-      const handle = String(params.handle ?? '');
+      const handle = handleOf(params);
       const held = detached.get(handle);
       if (held === undefined) return {};
-      if (sessions.has(held.session)) throw new RpcError(-32004, `${held.session} is running in ${held.path}; dispose the session first`);
-      detached.delete(handle);
-      worktrees.delete(held.session);
-      kept.setWorktree?.(idOf(held.session), undefined);
-      // Already gone with its session, which is the ordinary order of things.
-      if (!await stat(held.path).then(() => true, () => false)) return {};
-      await options.worktrees?.remove(held.repository, held.path, held.branch, linkedOf(held.session))
-        .then(() => { log(`removed ${held.path} for ${handle}`); })
-        .catch((error: unknown) => {
-          throw new RpcError(INTERNAL_ERROR, `Could not remove ${held.path}: ${error instanceof Error ? error.message : String(error)}`);
-        });
+      held.deleting = true;
+      if (await takeDown(handle, held, false)) detached.delete(handle);
       return {};
     },
-    /**
-     * The set the window still knows about, under one scope.
-     *
-     * A handle it names is seen again; one it does not name, in that
-     * scope, is let go once the grace has passed - the tree removed when
-     * it is clean and nobody is in it, and kept when either is not so. A
-     * scope is the repository the trees were made from, or the tree's
-     * own path, since the reference client's spelling of it is its own.
+    /*
+     * The handles the window still holds, under the scope of one tree's
+     * folder, as VS Code's host reconciles them: a handle it names is seen
+     * again, and one it does not name is let go once the grace has passed,
+     * its tree taken away when nothing uses it and nobody's work is in it,
+     * and its handle kept until then. Each removal the window asked for that
+     * is still owed is tried again, whatever the scope.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4069-L4084
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L805-L908
      */
     'vscode/reconcileAgentHostDetachedWorktrees': async (params) => {
-      const scope = localPath(String(params.scope ?? '')).replace(/\/$/, '');
-      const active = new Set(Array.isArray(params.activeHandles) ? params.activeHandles.map(String) : []);
-      const now = Date.now();
-      for (const [handle, held] of detached) {
-        if (held.repository !== scope && held.path !== scope) continue;
-        if (active.has(handle)) {
-          held.lastSeenAt = now;
-          continue;
-        }
-        if (now - (held.claimed ? held.lastSeenAt : held.createdAt) < DETACHED_GRACE) continue;
-        detached.delete(handle);
-        if (sessions.has(held.session)) continue;
-        const port = options.worktrees;
-        if (port === undefined || await port.dirty(held.path, linkedOf(held.session)).catch(() => true)) continue;
-        worktrees.delete(held.session);
-        kept.setWorktree?.(idOf(held.session), undefined);
-        await port.remove(held.repository, held.path, held.branch, linkedOf(held.session))
-          .then(() => { log(`removed ${held.path}: the window let ${handle} go`); })
-          .catch((error: unknown) => { log(`kept ${held.path}: ${error instanceof Error ? error.message : String(error)}`); });
+      const { scope, activeHandles } = params;
+      if (typeof scope !== 'string' || scope === '') throw new RpcError(INVALID_PARAMS, 'scope must be a non-empty string');
+      if (!Array.isArray(activeHandles) || !activeHandles.every((one) => typeof one === 'string' && WORKTREE_HANDLE.test(one))) {
+        throw new RpcError(INVALID_PARAMS, 'activeHandles must contain valid worktree handles');
+      }
+      const here = atPath(localPath(scope));
+      const active = new Set<unknown>(activeHandles);
+      const now = clock();
+      for (const [handle, held] of [...detached]) {
+        const inScope = atPath(held.path) === here;
+        const named = !held.deleting && inScope && active.has(handle);
+        if (named) held.lastSeenAt = now;
+        const owed = held.deleting || held.archived;
+        if (!owed && (named || !inScope || now - (held.claimed ? held.lastSeenAt : held.createdAt) < DETACHED_GRACE)) continue;
+        if (await takeDown(handle, held, held.archived && !held.deleting) && !held.archived) detached.delete(handle);
       }
       return {};
     },

@@ -99,7 +99,7 @@ import { createAutomationMethods } from './host/automations.js';
 import { createVscodeMethods } from './host/vscodemethods.js';
 import { createActions } from './host/actions.js';
 import { reservedName } from './plugins/validate.js';
-import type { ConnectionContext, HostContext } from './host/context.js';
+import type { ConnectionContext, DetachedWorktree, HostContext } from './host/context.js';
 import { HOST_CATALOGS } from './i18n.js';
 import type { Catalogs } from './i18n.js';
 export { GATE, refusalReason } from './host/gate.js';
@@ -522,27 +522,15 @@ export function createHost(options: HostOptions): Host {
    */
   const worktreeOf = (uri: string): StoredWorktree | undefined => worktrees.get(uri) ?? kept.worktree?.(idOf(uri));
   /**
-   * The worktrees the reference window holds a handle on.
+   * The worktrees the reference window made for itself and holds a handle on.
    *
    * Its dev container flow (`vscode/createAgentHostDetachedWorktree` and the
-   * four beside it): a tree it asked for by handle before the session spoke,
-   * claimed once the session started in it, taken down and put back with the
-   * session's archived bit, deleted with it, and reconciled against the set
-   * the window still knows about. Here a session's tree is made when the
-   * session is, so a handle names a tree that already exists; what the
-   * handle adds is the window's bookkeeping - claimed, archived, seen - and
-   * its say over when the tree goes.
+   * four beside it): a tree cut for a creating session before it spoke,
+   * claimed once a session started in it, taken down and put back with the
+   * window's archived bit, deleted when the window is done with it, and
+   * reconciled against the set the window still knows about.
    */
-  const detached = new Map<string, {
-    session: string;
-    repository: string;
-    path: string;
-    branch?: string;
-    claimed: boolean;
-    archived: boolean;
-    createdAt: number;
-    lastSeenAt: number;
-  }>();
+  const detached = new Map<string, DetachedWorktree>();
   /**
    * The config keys this host answered for a session, by session URI.
    *
