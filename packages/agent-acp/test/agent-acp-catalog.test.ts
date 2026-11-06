@@ -770,6 +770,35 @@ it('lists every page of a catalogue the server did not fit into one answer', asy
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
 });
 
+/*
+ * Every session the server holds, asked for with no folder named, as VS Code's
+ * Codex agent lists every thread: a server asked about one folder answers that
+ * folder's sessions alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L34-L40
+ */
+it('lists every session the server holds, whatever folder the server runs in', async () => {
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], cwd: scratch(), provider: 'acp-every' });
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+});
+
+/*
+ * A server whose cursors never run out, stopped where VS Code's Codex agent
+ * stops its own listing: at a cursor handed back before, and after fifty pages.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
+ */
+it('stops listing at a cursor the server handed back before, with what it read', async () => {
+  const { agent, log } = backend(['--cursors=cycle']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  // The first page, and then each of the two cursors once.
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(3);
+});
+
+it('stops listing after fifty pages of a server that hands back a new cursor every time', async () => {
+  const { agent, log } = backend(['--cursors=endless']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(50);
+});
+
 it('lists a second time on the connection the first one left open', async () => {
   const { agent, log } = backend();
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);

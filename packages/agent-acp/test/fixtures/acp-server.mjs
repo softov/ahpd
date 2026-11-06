@@ -161,9 +161,13 @@
  * `sessionCapabilities.additionalDirectories`. A server started without them
  * advertises neither, which is what a prompt and a session have to survive.
  *
- * `--pages` makes `session/list` answer in two pages, the first with a
- * `nextCursor`, which is what a server whose catalogue does not fit in one
- * answer looks like.
+ * `session/list` answers the sessions of the folder it is asked about, as ACP's
+ * `cwd` filter does, and every session it holds when asked about none.
+ * `--pages` makes it answer in two pages, the first with a `nextCursor`, which
+ * is what a server whose catalogue does not fit in one answer looks like.
+ * `--cursors=cycle` hands back two cursors in turn for ever and
+ * `--cursors=endless` a new one on every page, which are two servers that would
+ * page a client for ever.
  *
  * `--no-http-mcp` stops the handshake advertising that it takes an MCP server
  * over HTTP, which is what makes a client leave those out of the list it hands
@@ -348,17 +352,35 @@ const LISTED = [
 ];
 
 /**
- * The same two sessions as two pages, for a server whose catalogue does not fit
- * in one answer.
+ * The sessions asked about as two pages, for a server whose catalogue does not
+ * fit in one answer.
  *
  * The first answer carries a cursor and the second does not, which is what tells
  * a client that asked for the first one to come back for the rest. A bridge
  * that reads one page reports a catalogue of one session rather than a failure,
  * so this is the only way a test can see the difference.
  */
-const paged = (cursor) => (cursor === undefined || cursor === null
-  ? { sessions: LISTED.slice(0, 1), nextCursor: 'page-2' }
-  : { sessions: LISTED.slice(1) });
+const paged = (held, cursor) => (cursor === undefined || cursor === null
+  ? { sessions: held.slice(0, 1), nextCursor: 'page-2' }
+  : { sessions: held.slice(1) });
+
+/** How a `--cursors=<kind>` server hands back its cursors, when it was started with one. */
+const cursors = process.argv.find((one) => one.startsWith('--cursors='))?.slice('--cursors='.length);
+
+/** How many cursors this server has handed back. */
+let handed = 0;
+
+/**
+ * One page of a `--cursors` server: its sessions on the first page, and after
+ * every page a cursor that never runs out, two in turn or a new one each time.
+ */
+const unending = (cursor) => {
+  handed += 1;
+  return {
+    sessions: cursor === undefined || cursor === null ? LISTED : [],
+    nextCursor: cursors === 'cycle' ? (handed % 2 === 1 ? 'cycle-a' : 'cycle-b') : `page-${handed}`,
+  };
+};
 
 /** The host's own MCP server, as `session/new` named it, once there is one. */
 let hostTools;
@@ -1771,11 +1793,14 @@ const onLine = (line) => {
       return;
     }
 
-    case 'session/list':
-      respond(message.id, process.argv.includes('--pages')
-        ? paged(message.params?.cursor)
-        : { sessions: LISTED });
+    case 'session/list': {
+      const asked = message.params?.cwd;
+      const held = typeof asked === 'string' ? LISTED.filter((one) => one.cwd === asked) : LISTED;
+      respond(message.id, cursors !== undefined ? unending(message.params?.cursor)
+        : process.argv.includes('--pages') ? paged(held, message.params?.cursor)
+          : { sessions: held });
       return;
+    }
 
     case 'session/set_mode':
       if (process.argv.includes('--refuse-mode')) {

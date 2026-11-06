@@ -14,7 +14,7 @@
  * catalogue row still needs its transcript, so only the live connection goes.
  */
 
-import type { AgentCapabilities, ContentBlock, ListSessionsRequest, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
+import type { AgentCapabilities, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Bag, Listed } from '@ahpd/sdk';
 import { connectAcp } from './connection.js';
@@ -395,6 +395,14 @@ const dropListing = (options: AcpOptions, held: Listing): void => {
   void held.connection.close();
 };
 
+/**
+ * How many pages of `session/list` one listing reads at most, so a server that
+ * never stops handing back cursors cannot hold a listing for ever: VS Code's
+ * Codex agent's stop for its own paged listing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L15-L16
+ */
+const SESSION_LIST_MAX_PAGES = 50;
+
 /** Arm the close of a connection nobody has read from in a minute. */
 const idleClose = (options: AcpOptions, held: Listing): void => {
   if (listings.get(options) !== held) return;
@@ -413,12 +421,22 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
  * It goes a minute after the last read, so a provider nobody is watching costs
  * nothing, and it is dropped at once when the server behind it dies.
  *
+ * Every session the server holds is asked for, with no folder named, as VS
+ * Code's Codex agent lists every thread it holds: a conversation this host ran
+ * in another folder is one of this agent's sessions all the same.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L34-L40
+ *
  * The pages are followed to the end, because `session/list` is paged and a
  * server holding more than one page of conversations is otherwise a bridge that
- * reports a list of only the ones it happened to be shown. A server that cannot
- * be reached, or one whose listing fails, falls back to the record - a
- * catalogue read must answer, and must never take the daemon down over a
- * subprocess that did not start.
+ * reports a list of only the ones it happened to be shown. The cursors handed
+ * back are kept, and a cursor handed back a second time, or a page past
+ * `SESSION_LIST_MAX_PAGES`, ends the listing with what it read and a line in
+ * the log, as VS Code's Codex agent stops its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
+ *
+ * A server that cannot be reached, or one whose listing fails, falls back to
+ * the record - a catalogue read must answer, and must never take the daemon
+ * down over a subprocess that did not start.
  */
 export async function catalogueOf(options: AcpOptions, provider: string): Promise<Listed[]> {
   const now = new Date().toISOString();
@@ -434,17 +452,19 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
     heardCapabilities(options, handshake.agentCapabilities);
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const sessions: SessionInfo[] = [];
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    for (;;) {
-      const request: ListSessionsRequest = {
-        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        ...(cursor === undefined ? {} : { cursor }),
-      };
-      const page = await held.connection.listSessions(request);
+    for (let pages = 1; ; pages += 1) {
+      const page = await held.connection.listSessions(cursor === undefined ? {} : { cursor });
       sessions.push(...page.sessions);
-      // A cursor handed back twice is a server that would page forever.
-      if (page.nextCursor === undefined || page.nextCursor === null || page.nextCursor === cursor) break;
-      cursor = page.nextCursor;
+      const nextCursor = page.nextCursor ?? undefined;
+      if (nextCursor === undefined) break;
+      if (seenCursors.has(nextCursor) || pages === SESSION_LIST_MAX_PAGES) {
+        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${SESSION_LIST_MAX_PAGES} pages); some sessions may be missing`);
+        break;
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
     }
     for (const info of sessions) {
       placeOf.set(keyOf(provider, info.sessionId), info.cwd);
