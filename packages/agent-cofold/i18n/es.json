@@ -10,6 +10,9 @@
     "baseUrl": {
       "description": "El endpoint compatible con OpenAI que usa un registro que no indica ninguno."
     },
+    "models": {
+      "description": "Lo que el operador dice de los modelos de baseUrl, cada uno por su id en ese endpoint: supportsReasoningEffort, los niveles de razonamiento que acepta, como los declaran los modelos de Custom Endpoint de VS Code."
+    },
     "instructions": {
       "description": "El prompt de sistema con el que se crea un registro que no indica ninguno."
     },
@@ -53,16 +56,6 @@
         "auto": "Modo automático",
         "bypassPermissions": "Omitir permisos",
         "dontAsk": "No preguntar"
-      }
-    },
-    "effortLevel": {
-      "title": "Esfuerzo",
-      "description": "Cuánto piensa antes de responder.",
-      "enum": {
-        "off": "Desactivado",
-        "low": "Bajo",
-        "medium": "Medio",
-        "high": "Alto"
       }
     }
   }

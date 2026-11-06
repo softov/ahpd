@@ -23,9 +23,10 @@ it('answers provider cofold with the settings a session may carry', () => {
   // from the agent's `models` rather than from a schema field with no values.
   // No endpoint: it is the agent's configuration, as VS Code keeps a
   // provider's settings in the host's root configuration.
-  // The mode and the effort are the two controls a window draws, and the cases
-  // for what each one means are `agent-cofold-modes.test.ts`.
-  expect(Object.keys(properties(agent))).toEqual(['instructions', 'permissionMode', 'effortLevel']);
+  // No thinking level either: it is each model's own form. The mode is the
+  // control a window draws, and the cases for what it means are
+  // `agent-cofold-modes.test.ts`.
+  expect(Object.keys(properties(agent))).toEqual(['instructions', 'permissionMode']);
   expect(properties(agent)).not.toHaveProperty('model');
 });
 

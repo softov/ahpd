@@ -150,6 +150,7 @@ const kindSchema = (): Record<string, unknown> => ({
 /** The fields of a record that become an option a turn runs on. */
 const RECORD_FIELDS = [
   'baseUrl',
+  'models',
   'instructions',
   'computerConfigDir',
   'store',

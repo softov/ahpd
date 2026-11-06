@@ -241,6 +241,53 @@ it('runs a turn on the model the turn names, with no model in the session config
   }
 });
 
+/*
+ * The thinking level a turn's model selection carries, the answer to that
+ * model's own `configSchema`, reaches the request as cofold sends a level.
+ */
+it('sends the thinking level the turn\'s model selection carries', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-turn-level-'));
+  const was = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = home;
+  mkdirSync(join(home, 'cofold'), { recursive: true });
+  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+    providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k-open' }],
+  }));
+  const real = globalThis.fetch;
+  const sent: Record<string, unknown>[] = [];
+  const json = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
+    if (String(input).endsWith('/models')) return json({ data: [{ id: 'deepseek/deepseek-r1', supported_parameters: ['reasoning'] }] });
+    sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return json({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: {} });
+  }) as typeof fetch;
+  try {
+    const host = createHost({ path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-turn-level-host-')), agents: [cofoldAgent({ memory: true })] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/level', provider: 'cofold' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/level') } });
+    const model = { id: 'open_router/deepseek/deepseek-r1', config: { thinkingLevel: 'high' } };
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUriFor('ahp-session:/level'),
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model } },
+      },
+    });
+    await until(() => ended(p, chatUriFor('ahp-session:/level')));
+    expect(sent.at(-1)?.reasoning_effort).toBe('high');
+  }
+  finally {
+    globalThis.fetch = real;
+    if (was === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = was;
+  }
+});
+
 it('keeps a delta a plain action and starts no second turn from it', async () => {
   const model = createFakeModel({ script: [{ text: 'one two' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model);

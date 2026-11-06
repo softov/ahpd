@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { ModelAdapter } from '@cofold/agents';
 import type { Bag, Start } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
-import { cofoldAgent, modelOf } from '../src/index.js';
+import { EFFORT_LEVELS, cofoldAgent, modelOf } from '../src/index.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -275,21 +275,60 @@ it('answers the configured model alone for a status or a shape that is not a cat
   }
 });
 
-it('offers the limits the endpoint published, and neither its price nor its features', async () => {
+/*
+ * A model that can be told how hard to think carries that as its own
+ * `configSchema`, cofold's four levels under `thinkingLevel`, where the catalogue
+ * lists `reasoning` among its parameters; one the catalogue says nothing of
+ * takes none, cofold's own default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L858
+ */
+it('offers the limits the endpoint published and a thinking level where it lists reasoning, and neither its price nor its features', async () => {
   put(CONFIG);
   answering(PUBLISHED);
   const offered = await cofoldAgent({}).probe?.();
 
   /*
    * `toEqual` is exact, so a row carrying a `pricing` or a `features` key would
-   * not match. Only the two limits travel beside the id and the name: a row is
-   * what a picker draws, and the price is what a turn is built from.
+   * not match. Only the two limits and the model's own form travel beside the
+   * id and the name: a row is what a picker draws, and the price is what a
+   * turn is built from.
    */
   expect(offered?.models).toEqual([
-    { id: 'open_router/deepseek/deepseek-chat', name: 'DeepSeek V3', maxContextWindow: 65536, maxOutputTokens: 8192 },
-    // A row the endpoint published neither limit for carries neither.
+    {
+      id: 'open_router/deepseek/deepseek-chat',
+      name: 'DeepSeek V3',
+      maxContextWindow: 65536,
+      maxOutputTokens: 8192,
+      configSchema: {
+        type: 'object',
+        properties: { thinkingLevel: expect.objectContaining({ type: 'string', enum: [...EFFORT_LEVELS], default: 'off' }) as unknown },
+      },
+    },
+    // A row the endpoint published neither limit nor parameters for carries none.
     { id: 'open_router/qwen/qwen3-8b', name: 'Qwen3 8B' },
   ]);
+});
+
+/*
+ * The levels the operator declares for a model of the agent's own endpoint, as
+ * VS Code's Custom Endpoint models declare `supportsReasoningEffort`, whatever
+ * the catalogue says of it; a model neither names takes none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/package.json#L2043-L2049
+ */
+it('offers the levels the agent declares for a model of its endpoint, and none where nothing says', async () => {
+  answering({ data: [{ id: 'deepseek-reasoner' }, { id: 'deepseek-chat' }] });
+  const agent = cofoldAgent({
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    models: [{ id: 'deepseek-reasoner', supportsReasoningEffort: ['high', 'low'] }],
+  });
+  const offered = await agent.probe?.();
+
+  const reasoner = offered?.models.find((one) => one.id === 'cofold/deepseek-reasoner');
+  // In cofold's own order, and with no `off` the operator did not name.
+  expect(reasoner?.configSchema).toMatchObject({ properties: { thinkingLevel: { enum: ['low', 'high'] } } });
+  expect((reasoner?.configSchema?.properties as Record<string, Record<string, unknown>>).thinkingLevel).not.toHaveProperty('default');
+  expect(offered?.models.find((one) => one.id === 'cofold/deepseek-chat')).not.toHaveProperty('configSchema');
 });
 
 /*

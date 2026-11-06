@@ -2037,6 +2037,7 @@ per record with that record's values over these defaults.
 | --- | --- |
 | `model` | The model id a record that names none runs on |
 | `baseUrl` | The OpenAI-compatible endpoint a record that names none uses |
+| `models` | What the operator says of `baseUrl`'s models, each by its id on that endpoint: `supportsReasoningEffort`, the thinking levels it accepts, as VS Code's Custom Endpoint models declare it |
 | `instructions` | The system prompt a record that names none is created with |
 | `store` | The folder cofold's file store lives in, shared by every record: cofold's home, `$COFOLD_HOME`, or `~/.cofold` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/cofold/config.json` |
 | `memory` | `true` to hold each record's store in memory, for a test |
@@ -2104,7 +2105,6 @@ turn runs:
 | --- | --- |
 | `instructions` | The system prompt for this session |
 | `permissionMode` | How tool approvals are handled. Session-mutable, and offered only when the plugin configured no `policy` |
-| `effortLevel` | How hard the model is asked to think. Chat-scoped, and offered only when this backend builds the request |
 
 The approvals mode is one of six, with the meanings the harness gives them:
 `default` asks before a tool that writes, goes online or destroys anything;
@@ -2116,10 +2116,12 @@ or destroys, so the model can read and propose without changing a file;
 needed approval. A `policy` passed in the plugin's options is the run-level
 authority, so the mode control is not offered beside it.
 
-The thinking level is `off`, `low`, `medium` or `high`, and it reaches the
-request as `reasoning_effort`; `off` sends no reasoning field at all. Per-model
-thinking levels are not offered, because an OpenAI-compatible catalogue
-publishes no such thing per model.
+How hard a model thinks is the model's own: its row carries a `configSchema`
+with a `thinkingLevel`, which a client answers with the model it picks for a
+turn. A model has the levels the agent's `models` declares for it, else all
+four (`off`, `low`, `medium` and `high`) where the endpoint's catalogue lists
+`reasoning` among the model's parameters, else none. The level reaches the
+request as `reasoning_effort`; `off` sends no reasoning field at all.
 
 **A key is a credential, and it is not a config key.** The backend advertises a
 protected resource, and a client lends a token for it the way the protocol

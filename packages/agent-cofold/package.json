@@ -91,6 +91,19 @@
       "properties": {
         "model": { "type": "string", "description": "The model id a record that names none runs on." },
         "baseUrl": { "type": "string", "description": "The OpenAI-compatible endpoint a record that names none uses." },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "supportsReasoningEffort": { "type": "array", "items": { "type": "string", "enum": ["off", "low", "medium", "high"] } }
+            },
+            "required": ["id"]
+          },
+          "description": "What the operator says of baseUrl's models, each by its id on that endpoint: supportsReasoningEffort, the thinking levels it accepts, as VS Code's Custom Endpoint models declare it."
+        },
         "instructions": { "type": "string", "description": "The system prompt a record that names none is created with." },
         "computerConfigDir": {
           "anyOf": [{ "type": "string" }, { "const": false }],

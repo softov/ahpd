@@ -89,11 +89,15 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * The values a turn runs on, and the model reference they resolve to.
    *
    * A model named on the turn wins over the session's, and is what the usage
-   * report names. The reference is the one `connectionOf` resolves: the values
-   * in force, then the plugin option, then the harness file.
+   * report names, with the thinking level its own `configSchema` was answered
+   * with. The reference is the one `connectionOf` resolves: the values in
+   * force, then the plugin option, then the harness file.
    */
   const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {
-    const values: Record<string, unknown> = model === undefined ? ctx.values : { ...ctx.values, model: model.id };
+    const level = model?.config?.thinkingLevel;
+    const values: Record<string, unknown> = model === undefined
+      ? ctx.values
+      : { ...ctx.values, model: model.id, ...(level === undefined ? {} : { thinkingLevel: level }) };
     return { values, reference: modelReferenceOf(options, values, harness) };
   };
 

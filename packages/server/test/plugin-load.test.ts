@@ -323,7 +323,7 @@ describe('a first-party plugin', () => {
       'handshakeTimeoutMs',
     ]],
     ['agent-cofold', [
-      'model', 'baseUrl', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
+      'model', 'baseUrl', 'models', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
       'resource', 'autoCompactTokens',
     ]],
     ['agent-pi', ['model', 'projectTrust', 'sessionDir']],

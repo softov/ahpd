@@ -54,6 +54,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | --- | --- | --- |
 | `model` | the cofold file's | The model id a record that names none runs on |
 | `baseUrl` | the cofold file's | The OpenAI-compatible endpoint a record that names none uses |
+| `models` | none | What the operator says of `baseUrl`'s models, each by its id on that endpoint: `supportsReasoningEffort`, the thinking levels it accepts (`off`, `low`, `medium`, `high`), as VS Code's Custom Endpoint models declare it. A model is offered a thinking level, its own `thinkingLevel`, where this names its levels, else where the endpoint's catalogue lists `reasoning` among the model's parameters |
 | `instructions` | the cofold file's, else `You are a helpful assistant.` | The system prompt a record that names none is created with |
 | `computerConfigDir` | `/ahpd/cofold` | The configuration directory the harness reads *inside a machine*: a state volume seeded with its `config.json`, or that file mounted read-only in a profile with `state: "host"`. `false` leaves the image's own |
 | `store` | cofold's home, `$COFOLD_HOME` or `~/.cofold` | The folder cofold's file store lives in, shared by every record, as ahpd's Claude agents on one host share the CLI's store and each lists every session in it. Agents that must not see each other's sessions run in machines of their own, where cofold's home is the machine's |

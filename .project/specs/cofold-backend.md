@@ -12,7 +12,8 @@ refs:
   - "[code://packages/agent-cofold/src/agent.ts#L218-L222](../../packages/agent-cofold/src/agent.ts#L218-L222) - `modelReferenceOf`, the order a model reference is taken in"
   - "[code://packages/agent-cofold/src/agent.ts#L233-L268](../../packages/agent-cofold/src/agent.ts#L233-L268) - `connectionOf`, the endpoint, key and the two errors a turn can give"
   - "[code://packages/agent-cofold/src/agent.ts#L335-L346](../../packages/agent-cofold/src/agent.ts#L335-L346) - `modelOf`, where a chosen effort becomes a request param"
-  - "[code://packages/agent-cofold/src/agent.ts#L440-L480](../../packages/agent-cofold/src/agent.ts#L440-L480) - the `permissionMode` and `effortLevel` properties"
+  - "[code://packages/agent-cofold/src/agent.ts#L589-L623](../../packages/agent-cofold/src/agent.ts#L589-L623) - the session schema and its `permissionMode` property"
+  - "[code://packages/agent-cofold/src/agent.ts#L400-L433](../../packages/agent-cofold/src/agent.ts#L400-L433) - `rowOf`, a model's own `thinkingLevel`"
   - "[code://packages/agent-cofold/src/agent.ts#L725-L740](../../packages/agent-cofold/src/agent.ts#L725-L740) - `probe`, the endpoint's models with the configured one first"
   - "[code://packages/agent-cofold/src/turnagent.ts#L31-L47](../../packages/agent-cofold/src/turnagent.ts#L31-L47) - `insideDirectory` and `memoryDirOf`"
   - "[code://packages/agent-cofold/src/turnagent.ts#L101-L108](../../packages/agent-cofold/src/turnagent.ts#L101-L108) - `modeOf`, with `auto` as the default mode"
@@ -115,11 +116,20 @@ THEN a call that would ask is refused.
 WHEN the plugin options give a policy
 THEN the session schema has no `permissionMode` property.
 WHEN the plugin options give a model adapter
-THEN the session schema has no `effortLevel` property.
+THEN no offered model has a `configSchema`.
+
+### Effort is a model's own
+
+WHEN the agent's `models` declares the levels a model accepts
+THEN that model's row has a `configSchema` with a `thinkingLevel` of those levels.
+WHEN nothing declares them and the catalogue lists `reasoning` among the model's parameters
+THEN the `thinkingLevel` has `off`, `low`, `medium` and `high`.
+WHEN neither says
+THEN the model's row has no `configSchema`.
 
 ### Effort is a request param
 
-WHEN a chat sets `effortLevel` to `low`, `medium` or `high`
+WHEN a turn's model selection sets `thinkingLevel` to `low`, `medium` or `high`
 THEN the backend sends it as `params.reasoning.effort` on the request
 AND it does not set the reasoning feature, so a model that cannot think stays that way.
 

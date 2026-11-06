@@ -139,7 +139,7 @@ it('registers the cofold engine, its form, its template and its host-only fields
   // agents channel owns and without the two only an embedder can set.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'apiKey', 'autoCompactTokens', 'baseUrl', 'computerConfigDir', 'instructions', 'memory', 'resource', 'store', 'tools',
+    'apiKey', 'autoCompactTokens', 'baseUrl', 'computerConfigDir', 'instructions', 'memory', 'models', 'resource', 'store', 'tools',
   ]);
   for (const owned of ['provider', 'displayName', 'name', 'description', 'icon', 'model', 'adapter', 'policy', 'strictTools']) {
     expect(fields).not.toContain(owned);

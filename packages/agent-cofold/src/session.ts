@@ -52,7 +52,7 @@ export const sessionIdOf = (uri: string): string => idOf(uri);
  * under a running session would lose the conversation it is writing, and a
  * policy is what the session's controls were drawn from. These are the rest.
  */
-const LIVE_KEYS = ['model', 'baseUrl', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'tools'] as const;
+const LIVE_KEYS = ['model', 'baseUrl', 'models', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'tools'] as const;
 
 /**
  * One conversation over a cofold agent.
@@ -270,10 +270,10 @@ export function cofoldSession(
      * answer a turn, and an empty list is the form of that.
      */
     models: () => {
-      const listed = catalogue(values, start.credentials ?? {}).map(rowOf);
+      const listed = catalogue(values, start.credentials ?? {}).map((info) => rowOf(options, info));
       if (listed.length > 0) return listed;
       const id = str(values.model) ?? options.model ?? options.adapter?.modelId;
-      return id === undefined ? [] : [{ id, name: id }];
+      return id === undefined ? [] : [rowOf(options, { id, name: id })];
     },
     agentId: () => sessionId,
     /*
