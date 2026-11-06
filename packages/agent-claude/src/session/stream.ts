@@ -5,7 +5,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
 import { lineOf, pastLineOf, titleOf, toolInputOf, writeOf } from '../input.js';
-import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
 /**
@@ -675,7 +675,7 @@ export function createStream(ctx: SessionContext): Stream {
       const fileEdit = editOf();
       const shown = [
         ...(workerContent !== undefined ? [workerContent] : []),
-        ...(text !== undefined ? [{ type: 'text', text }] : []),
+        ...resultContent(block.content),
         ...(fileEdit !== undefined ? [fileEdit] : []),
         ...(retained !== undefined ? [retained] : []),
       ] as OnWire<ToolResultContent>[];

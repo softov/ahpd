@@ -136,3 +136,17 @@ export const CLAUDE_QUESTION_CANCELLED_MESSAGE = 'The user cancelled the questio
  */
 export const claudeToolDenialCode = (message: string): 'denied' | 'cancelled' | undefined =>
   (message === CLAUDE_USER_DECLINED_MESSAGE ? 'denied' : message === CLAUDE_QUESTION_CANCELLED_MESSAGE ? 'cancelled' : undefined);
+
+/**
+ * A tool result's text as the call's content: a bare string one item, and
+ * each text block of a list its own, as VS Code's Claude projects a result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L449-L463
+ */
+export const resultContent = (content: unknown): { type: 'text'; text: string }[] => {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: unknown) => {
+    const one = typeof block === 'object' && block !== null ? block as { type?: unknown; text?: unknown } : {};
+    return one.type === 'text' && typeof one.text === 'string' ? [{ type: 'text' as const, text: one.text }] : [];
+  });
+};

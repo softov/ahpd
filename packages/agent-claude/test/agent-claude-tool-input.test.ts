@@ -70,7 +70,20 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
 const { createSession } = await import('../src/session.js');
 const { turnsOf } = await import('../src/transcript.js');
 const { questionRequest } = await import('../src/input.js');
-const { toolKindOf } = await import('../src/kinds.js');
+const { toolKindOf, resultContent } = await import('../src/kinds.js');
+
+/*
+ * A result's text as the call's content, live and read back: a bare string
+ * one item, and each text block of a list its own, as VS Code's Claude
+ * projects a tool result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L449-L463
+ */
+it('maps each text block of a result to its own content item', () => {
+  expect(resultContent([{ type: 'text', text: 'one' }, { type: 'image', data: 'x' }, { type: 'text', text: 'two' }]))
+    .toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
+  expect(resultContent('plain')).toEqual([{ type: 'text', text: 'plain' }]);
+  expect(resultContent(undefined)).toEqual([]);
+});
 
 /*
  * The kinds VS Code's Claude table stamps: the shell's three tools terminals,

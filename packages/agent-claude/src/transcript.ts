@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
-import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
 /**
@@ -366,8 +366,8 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
         // `Bag` and so outside the literal the call was built as.
-        if (text !== undefined)
-          call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
+        const content = resultContent(block.content) satisfies OnWire<ToolResultContent>[];
+        if (content.length > 0) call.content = content;
         if (denial !== undefined && text !== undefined) call.error = { message: text, code: denial };
         /*
          * What an answered question ran with, for a result that says so.
