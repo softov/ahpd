@@ -1919,6 +1919,43 @@ it('answers a resource the agent linked or embedded as a content reference part'
 });
 
 /*
+ * A call's terminal is titled by the call, as VS Code's agents title one, and
+ * says how its command ended once the terminal has exited, the spec's result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L9906-L9912
+ */
+it('titles a call\'s terminal by the call, with how its command ended once it has exited', () => {
+  const turn: AcpTurn = {
+    turnId: 't1',
+    parts: [],
+    calls: new Map(),
+    opening: [],
+    reach: {
+      within: () => false,
+      changed: () => {},
+      completed: () => undefined,
+      isPty: () => false,
+      exited: (uri) => (uri === 'ahp-terminal:/done' ? { output: 'painted\n', exitCode: 0 } : undefined),
+    },
+  };
+  const update = (status: string, terminalId: string): Bag[] => mapUpdate(turn, {
+    sessionUpdate: 'tool_call_update', toolCallId: 'call-paint', title: 'Paint and preview', status, content: [{ type: 'terminal', terminalId }],
+  } as unknown as SessionUpdate);
+  const running = update('in_progress', 'ahp-terminal:/running');
+  const done = update('completed', 'ahp-terminal:/done');
+
+  const changed = running.find((one) => one.type === 'chat/toolCallContentChanged');
+  expect((changed?.content as Bag[])[0]).toEqual({ type: 'terminal', resource: 'ahp-terminal:/running', title: 'Paint and preview', isPty: false });
+  const completed = done.find((one) => one.type === 'chat/toolCallComplete');
+  expect(((completed?.result as Bag).content as Bag[])[0]).toEqual({
+    type: 'terminal',
+    resource: 'ahp-terminal:/done',
+    title: 'Paint and preview',
+    isPty: false,
+    result: { exitCode: 0, preview: 'painted\n' },
+  });
+});
+
+/*
  * A chunk whose `messageId` changes starts a new message, so it opens a part
  * of its own rather than running on into the last one.
  * https://agentclientprotocol.com/protocol/schema#contentchunk

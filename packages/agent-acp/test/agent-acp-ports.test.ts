@@ -413,11 +413,12 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   };
   const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
 
-  // A call whose content names a terminal the server opened through the host.
+  // A call whose content names a terminal the server opened through the host,
+  // titled by the call it belongs to.
   begin('t1', 'paint it');
   await endedTurn(p, chatUri, 1);
   const painted = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 'call-paint');
-  expect(((painted?.action.result as Bag).content as Bag[])[0]).toEqual(named);
+  expect(((painted?.action.result as Bag).content as Bag[])[0]).toMatchObject({ ...named, title: 'Paint and preview' });
 
   // A person's command names its terminal as soon as it opens.
   begin('t2', '!make preview');

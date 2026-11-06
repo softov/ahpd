@@ -423,19 +423,35 @@ const fileEdit = (turn: AcpTurn, toolCallId: string, diff: Diff): Bag => {
  *
  * A terminal id is already a host terminal URI, because the bridge opened the
  * shell through the host, so the block is the one a `!` command's call carries.
- * It says `isPty` as the session's handle does, and nothing on a turn the
- * transcript replays, which holds no handle.
+ * It is titled by the call's display name, as VS Code's agents title a call's
+ * terminal, and carries how the command ended once its terminal has exited,
+ * the spec's `result`. It says `isPty` as the session's handle does, and none
+ * of these on a turn the transcript replays, which holds no handle.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L9906-L9912
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1701-L1735
  */
-const contentBlocks = (turn: AcpTurn, toolCallId: string, content: ToolCallUpdate['content']): Bag[] => {
+const contentBlocks = (turn: AcpTurn, call: AcpCall, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
   for (const entry of content ?? []) {
     if (entry.type === 'content' && entry.content.type === 'text') {
       blocks.push({ type: 'text', text: entry.content.text });
     } else if (entry.type === 'terminal') {
       const isPty = turn.reach?.isPty(entry.terminalId);
-      blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', ...(isPty === undefined ? {} : { isPty }) });
+      const ended = turn.reach?.exited(entry.terminalId);
+      blocks.push({
+        type: 'terminal',
+        resource: entry.terminalId,
+        title: call.displayName,
+        ...(isPty === undefined ? {} : { isPty }),
+        ...(ended === undefined ? {} : {
+          result: {
+            ...(ended.exitCode === undefined ? {} : { exitCode: ended.exitCode }),
+            ...(ended.output === '' ? {} : { preview: ended.output }),
+          },
+        }),
+      });
     } else if (entry.type === 'diff') {
-      blocks.push(fileEdit(turn, toolCallId, entry));
+      blocks.push(fileEdit(turn, call.toolCallId, entry));
     }
   }
   return blocks;
@@ -508,7 +524,7 @@ export function mapUpdate(
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call, update.content), actions, at);
     }
 
     /*
@@ -528,7 +544,7 @@ export function mapUpdate(
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
       if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call, update.content), actions, at);
     }
 
     /*

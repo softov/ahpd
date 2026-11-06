@@ -444,6 +444,12 @@ export interface AcpReach {
    * handle says nothing.
    */
   isPty(uri: string): boolean | undefined;
+  /**
+   * What a terminal this session opened printed, with its exit code, once its
+   * process has exited. Nothing while it runs, for one this session did not
+   * open, or for one the server has released.
+   */
+  exited(uri: string): { output: string; exitCode?: number } | undefined;
 }
 
 /**

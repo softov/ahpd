@@ -391,6 +391,10 @@ export function createTurn(ctx: SessionContext): Turn {
           // A server's terminal id is the host's name for it, which the
           // session holds its handle under.
           isPty: (uri) => ctx.terminals.get(uri)?.handle.isPty,
+          exited: (uri) => {
+            const held = ctx.terminals.get(uri);
+            return held?.exited === true ? held.handle.output() : undefined;
+          },
         },
         // The clients' tools, read off what the host last said this session may
         // offer: a call the agent reports for one is held for the client that

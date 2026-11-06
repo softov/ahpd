@@ -649,8 +649,9 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
 
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   const content = (done?.action.result as { content: Bag[] }).content;
-  // The shell is the host's own, so the block is the one a `!command` builds.
-  expect(content[0]).toMatchObject({ type: 'terminal', title: 'Terminal', isPty: false });
+  // The shell is the host's own, so the block is the one a `!command` builds,
+  // titled by the call it belongs to.
+  expect(content[0]).toMatchObject({ type: 'terminal', title: 'Paint and preview', isPty: false });
   expect(String((content[0] as Bag).resource)).toContain('terminal');
   // The file, as the edit a client draws, from a source that holds no sides
   // of a call's own: the block names the file as it is.
