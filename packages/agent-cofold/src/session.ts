@@ -20,7 +20,7 @@
 
 import type { ModelInfo, Store } from '@cofold/agents';
 import { bag, ensureWorkspacelessScratchDir, idOf, reason, str, uriOf } from '@ahpd/sdk';
-import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
 import { harnessConfig } from './config.js';
@@ -196,6 +196,17 @@ export function cofoldSession(
    */
   const setModifiedAt = (at: string): void => { ctx.modified = at; };
 
+  /**
+   * The tools this session holds, out of the ones the host offers.
+   *
+   * With `hostTools` off, the host's own tools go - each with no owner - and
+   * every client's stays, because the client is still there to run it. Read
+   * when the session starts and whenever the host sends a new list; a turn
+   * already running keeps what it started with.
+   */
+  const taken = (tools: BoundTool[]): BoundTool[] =>
+    options.hostTools === false ? tools.filter((one) => one.owner !== undefined) : [...tools];
+
   const ctx = {
     options,
     start,
@@ -212,7 +223,7 @@ export function cofoldSession(
     values,
     setModifiedAt,
     refreshOptions,
-    offered: start.tools ?? [],
+    offered: taken(start.tools ?? []),
     active: undefined,
     pendingTurns: [] as SessionContext['pendingTurns'],
     replaced: new Set<string>(),
@@ -473,7 +484,7 @@ export function cofoldSession(
      * the new one.
      */
     setTools: async (tools) => {
-      ctx.offered = [...tools];
+      ctx.offered = taken(tools);
       return true;
     },
 
