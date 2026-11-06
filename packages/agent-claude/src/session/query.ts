@@ -251,21 +251,23 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * The environment that turns Claude's own task tools on, where Claude keeps them.
+   * The environment that turns Claude's own task tools off, where Claude keeps them.
    *
-   * `CLAUDE_CODE_ENABLE_TASKS` is the CLI's switch. It is set only when the
-   * host has not taken the tools' place and `enableTasks` is on, and a value a
-   * preset's own `env` gives is kept rather than written over. A machine gets
-   * the variable on the one command that starts its CLI, like every other
-   * variable a variant names.
+   * `CLAUDE_CODE_ENABLE_TASKS` is the CLI's switch: the Task tools are its
+   * default, and `0` selects the legacy `TodoWrite` instead. So it is set, to
+   * `0`, only when the host has not taken the tools' place and `enableTasks`
+   * is off, and a value a preset's own `env` gives is kept rather than
+   * written over. A machine gets the variable on the one command that starts
+   * its CLI, like every other variable a variant names.
+   * https://code.claude.com/docs/en/env-vars
    */
   const taskToolsEnv = (): Bag => {
-    if (ctx.values['enableTasks'] === false || hostHoldsTasks(ctx.values, ctx.offering)) return {};
+    if (ctx.values['enableTasks'] !== false || hostHoldsTasks(ctx.values, ctx.offering)) return {};
     const env = ctx.options.spawn === undefined
       ? signedIn(fromPreset().env as Bag | undefined ?? process.env)
       : inMachine();
     if (env.CLAUDE_CODE_ENABLE_TASKS !== undefined) return {};
-    return { env: { ...env, CLAUDE_CODE_ENABLE_TASKS: '1' } };
+    return { env: { ...env, CLAUDE_CODE_ENABLE_TASKS: '0' } };
   };
 
   /**

@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { BoundTool } from '@ahpd/sdk';
+import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /*
  * Claude's own task tools, and the host tools that take their place.
@@ -119,14 +119,19 @@ it('takes the task tools from the model, and leaves a person\'s denials to the p
   expect(options.disallowedTools).toEqual(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
 });
 
-it('turns Claude\'s own task tools on when it keeps them', async () => {
+/*
+ * The Task tools are the CLI's default, and `CLAUDE_CODE_ENABLE_TASKS=0`
+ * selects the legacy `TodoWrite`: the switch is set only to turn them off.
+ * https://code.claude.com/docs/en/env-vars
+ */
+it('leaves Claude\'s own task tools at the CLI\'s default when it keeps them', async () => {
   const options = await queried({ preset: { hostTasks: false }, tools: [taskAdd()] });
-  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '1' });
+  expect((options.env as Bag | undefined)?.CLAUDE_CODE_ENABLE_TASKS).toBeUndefined();
 });
 
-it('turns them on in a machine too', async () => {
-  const options = await queried({ preset: { hostTasks: false }, tools: [taskAdd()], machine: true });
-  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '1', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+it('turns them off in a machine too', async () => {
+  const options = await queried({ preset: { hostTasks: false, enableTasks: false }, tools: [taskAdd()], machine: true });
+  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '0', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('sets no variable when the host holds the list', async () => {
@@ -134,9 +139,9 @@ it('sets no variable when the host holds the list', async () => {
   expect(options.env).toBeUndefined();
 });
 
-it('sets no variable when enableTasks is off', async () => {
+it('selects TodoWrite when enableTasks is off', async () => {
   const options = await queried({ preset: { hostTasks: false, enableTasks: false }, tools: [taskAdd()] });
-  expect(options.env).toBeUndefined();
+  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '0' });
 });
 
 it('keeps a value a preset gives for the variable', async () => {

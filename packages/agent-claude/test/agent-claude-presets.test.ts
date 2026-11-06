@@ -264,23 +264,23 @@ it('offers the models the harness names once a session has started', async () =>
 it("hands a record's own env to the CLI in a machine, and nothing of the daemon's", async () => {
   const env = await withDaemon({ T: 'sk-or', ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () =>
     (await queriedInside({ env: { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: { fromEnv: 'T' } } })).env as Record<string, string>);
-  // `CLAUDE_CODE_ENABLE_TASKS` is there because the host offers no `task_add`
-  // here, so the session keeps Claude's own task tools and turns them on.
-  expect(env).toEqual({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+  // No `CLAUDE_CODE_ENABLE_TASKS`: the session keeps Claude's own task tools,
+  // which are the CLI's default.
+  expect(env).toEqual({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('hands a record no daemon key in a machine unless its env names one', async () => {
   await withDaemon({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () => {
-    expect((await queriedInside({})).env).toEqual({ CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+    expect((await queriedInside({})).env).toEqual({ CLAUDE_CONFIG_DIR: '/ahpd/claude' });
     expect((await queriedInside({ env: { ANTHROPIC_API_KEY: { fromEnv: 'ANTHROPIC_API_KEY' } } })).env)
-      .toEqual({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+      .toEqual({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
   });
 });
 
 it('lays a pushed credential over the record env in a machine, and leaves out an unset key', async () => {
   const env = await withDaemon({ ANTHROPIC_BASE_URL: 'https://daemon' }, async () =>
     (await queriedInside({ env: { ANTHROPIC_API_KEY: 'from-record', ANTHROPIC_BASE_URL: null } }, 'signed-in')).env);
-  expect(env).toEqual({ ANTHROPIC_API_KEY: 'signed-in', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+  expect(env).toEqual({ ANTHROPIC_API_KEY: 'signed-in', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('keeps the daemon environment under a record env off a machine', async () => {
@@ -317,7 +317,7 @@ it('gives two records on one machine only their own keys on their docker exec', 
     }
   });
   expect(asked).toEqual([
-    { ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' },
-    { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/openrouter', CLAUDE_CODE_ENABLE_TASKS: '1' },
+    { ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' },
+    { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/openrouter' },
   ]);
 });

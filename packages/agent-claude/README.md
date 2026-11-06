@@ -66,7 +66,7 @@ An agent is a record on `x-ahpd-agents`: `{ id, engine, owner, name, description
 | `logins` | none | The Claude logins the agent runs on, by the id of a `claude-login` connector, in the order a turn tries them. See [Several logins](#several-logins) |
 | `extraArgs` | none | Arguments the CLI is started with beyond the ones this backend builds. **Host records only** |
 | `hostTasks` | `true` | Whether Claude leaves its own task tools to the host's `task_add`. Off keeps them, and their calls write the session's plan |
-| `enableTasks` | `true` | Start the CLI with `CLAUDE_CODE_ENABLE_TASKS=1` whenever Claude keeps its own task tools |
+| `enableTasks` | `true` | Whether Claude's own Task tools are on when Claude keeps its task tools; off starts the CLI with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it `TodoWrite` instead |
 
 `extraArgs` is host-only: a team's or a person's record that sets one is refused, because an argument is where a command would come from. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in `env` are the engine's key variables, so any owner may set them; every other `env` variable is the host's alone, because a free environment can run a program.
 
@@ -84,7 +84,7 @@ A record is checked against the engine's schema when it is put, and opened again
 
 A Claude session uses the host's task tools by default. When the tasks plugin is loaded and offers `task_add`, the session's own `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` are denied. The model adds its tasks with the host's tool, so every session works one list. A host that offers no `task_add` has nothing to put in their place, and the session keeps its own tools there.
 
-`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. In either case the CLI is started with `CLAUDE_CODE_ENABLE_TASKS=1`, which `enableTasks` does and which is on by default. A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
+`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. The CLI's own Task tools are its default; `enableTasks: false` starts it with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it the legacy `TodoWrite` instead ([environment variables](https://code.claude.com/docs/en/env-vars)). A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
 
 ## In your own host
 

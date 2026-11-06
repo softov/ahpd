@@ -124,16 +124,18 @@ export const hostHoldsTasks = (values: Bag, offering: BoundTool[]): boolean =>
   values['hostTasks'] !== false && offering.some((one) => one.definition.name === 'task_add');
 
 /**
- * Whether Claude's own task tools are turned on when Claude keeps them.
+ * Whether Claude's own task tools are on when Claude keeps them.
  *
- * On by default, and read where the CLI's environment is built: a session that
- * keeps its own tools is started with `CLAUDE_CODE_ENABLE_TASKS=1`, unless a
- * record's own `env` gives the variable a value.
+ * On by default, as the CLI's Task tools are, and read where the CLI's
+ * environment is built: a session that keeps its own tools with this off is
+ * started with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it the legacy
+ * `TodoWrite` instead, unless a record's own `env` gives the variable a value.
+ * https://code.claude.com/docs/en/env-vars
  */
 export const enableTasks: Declaration = {
   schema: {
     type: 'boolean',
-    description: "Turn Claude's own task tools on when Claude keeps them. On by default.",
+    description: "Whether Claude's own Task tools are on when Claude keeps them; off gives it TodoWrite instead. On by default.",
   },
   default: true,
 };
