@@ -80,13 +80,12 @@ export function claimOf(value: unknown): Claim | undefined {
 }
 
 /**
- * The scrollback cap an output terminal shares with a process one.
- *
- * The same number `machines/terminals.ts` keeps, and for the same reason: a
- * backend polling a shell that ran for a day must not hold a day of text for a
- * client that may never come back.
+ * How much of an output terminal's text is kept: once it passes the cap, the
+ * last part of it, as VS Code keeps a terminal's content.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/terminalConstants.ts#L10-L16
  */
-const KEEP = 200_000;
+const MAX_CONTENT_LENGTH = 100_000;
+const TRIMMED_CONTENT_LENGTH = 80_000;
 
 /**
  * Whether a pseudoterminal runs a terminal, as its state says, for a call that
@@ -480,10 +479,8 @@ export function createTerminals(ctx: HostContext): Terminals {
     create: (asked) => {
       if (ctx.closed) throw new Error(CLOSING);
       const uri = `ahp-terminal:/${crypto.randomUUID()}`;
-      let title = asked.title;
+      const title = asked.title;
       let claim: Claim = { kind: 'session', session: sessionUri, chat: asked.chat };
-      let cols = 80;
-      let rows = 24;
       let content = '';
       let exitCode: number | undefined;
       let done = false;
@@ -506,30 +503,32 @@ export function createTerminals(ctx: HostContext): Terminals {
         lifecycle: () => (done
           ? { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) }
           : { status: 'running' }),
+        /*
+         * The five fields VS Code's terminal manager answers an output
+         * terminal with: no size and no command detection, there being no
+         * process, and one part, there being no command boundaries to divide
+         * an output somebody else already ended.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+         */
         state: () => ({
           title,
-          cols,
-          rows,
-          // One part: there are no command boundaries to divide an output
-          // somebody else already ended.
           content: content === '' ? [] : [{ type: 'unclassified', value: content }],
-          claim,
-          supportsCommandDetection: false,
-          isPty: asked.isPty === true,
           lifecycle: done
             ? { status: 'exited' as const, ...(exitCode === undefined ? {} : { exitCode }) }
             : { status: 'running' as const },
-          ...(exitCode === undefined ? {} : { exitCode }),
+          claim,
+          isPty: false,
         }),
-        // Input has no process to reach, and goes nowhere. A size is kept,
-        // since the state reports one and a client draws to it.
+        /*
+         * Input has no process to reach, and a client's size, clear and title
+         * are its echo's alone: only the claim is applied, as VS Code's
+         * terminal manager applies a client's action to an output terminal.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L620-L633
+         */
         write: () => {},
-        resize: (nextCols, nextRows) => {
-          cols = nextCols;
-          rows = nextRows;
-        },
-        clear: () => { content = ''; },
-        setTitle: (next) => { title = next; },
+        resize: () => {},
+        clear: () => {},
+        setTitle: () => {},
         setClaim: (next) => { claim = next; },
         close: () => {
           finish();
@@ -547,24 +546,27 @@ export function createTerminals(ctx: HostContext): Terminals {
       terminals.set(uri, terminal);
       log(`opened the output terminal ${uri} for ${sessionUri}`);
 
+      /*
+       * The owner's text, said as VS Code's terminal manager says an output
+       * terminal's whatever its lifecycle: an append that is not empty, kept
+       * to the last of it past the content cap; a reset; and a replace said
+       * whole, cleared then written.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L876-L921
+       */
       return {
         uri,
         append: (text) => {
-          if (done) return;
-          content = (content + text).slice(-KEEP);
+          if (text === '') return;
+          content += text;
+          if (content.length > MAX_CONTENT_LENGTH) content = content.slice(-TRIMMED_CONTENT_LENGTH);
           dispatch(uri, { type: 'terminal/data', data: text });
         },
         reset: () => {
-          if (done) return;
           content = '';
           dispatch(uri, { type: 'terminal/cleared' });
         },
         replace: (text) => {
-          if (done) return;
-          // Cleared then written, in that order, so a client's reducer ends
-          // with exactly what this keeps - and the same text a late subscriber
-          // reads, rather than the uncapped one a live client saw arrive.
-          content = text.slice(-KEEP);
+          content = text;
           dispatch(uri, { type: 'terminal/cleared' });
           if (content !== '') dispatch(uri, { type: 'terminal/data', data: content });
         },

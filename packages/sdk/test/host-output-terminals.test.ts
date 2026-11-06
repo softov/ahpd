@@ -176,9 +176,14 @@ describe('an output terminal', () => {
     expect(answer?.rejectionReason).toBeUndefined();
   });
 
-  it('takes a new size, and reads it back', async () => {
+  /*
+   * A new size is the client's echo alone, and the state is VS Code's five
+   * fields for an output terminal: no size, no command detection, never a PTY.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+   */
+  it('echoes a new size, and answers with VS Code\'s five fields of an output terminal', async () => {
     const { client, p, chatUri, out } = await opened();
-    const terminal = out().create({ title: 'a build', chat: chatUri });
+    const terminal = out().create({ title: 'a build', chat: chatUri, isPty: true });
     await client.handle({ method: 'subscribe', params: { channel: terminal.uri } });
     await client.handle({
       method: 'dispatchAction',
@@ -189,8 +194,32 @@ describe('an output terminal', () => {
     const answer = actions(p, terminal.uri).find((one) => one.action.type === 'terminal/resized');
     expect([answer?.origin?.clientSeq, answer?.rejectionReason]).toEqual([3, undefined]);
     const found = await client.handle({ method: 'subscribe', params: { channel: terminal.uri } }) as {
-      snapshot: { state: { cols?: number; rows?: number } };
+      snapshot: { state: Record<string, unknown> };
     };
-    expect([found.snapshot.state.cols, found.snapshot.state.rows]).toEqual([120, 40]);
+    expect(Object.keys(found.snapshot.state).sort()).toEqual(['claim', 'content', 'isPty', 'lifecycle', 'title']);
+    expect(found.snapshot.state.isPty).toBe(false);
+  });
+
+  /*
+   * What the owner says goes out whatever the lifecycle, an empty append
+   * excepted, and a replace whole, as VS Code's terminal manager says them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L876-L921
+   */
+  it('says an append after the exit, no empty one, and a replace whole', async () => {
+    const { client, p, chatUri, out } = await opened();
+    const terminal = out().create({ title: 'a build', chat: chatUri });
+    await client.handle({ method: 'subscribe', params: { channel: terminal.uri } });
+    terminal.finalize(0);
+    terminal.append('');
+    terminal.append('late\n');
+    const whole = 'x'.repeat(250_000);
+    terminal.replace(whole);
+    await settle();
+    const said = actions(p, terminal.uri).map((one) => one.action);
+    expect(said.filter((one) => one.type === 'terminal/data').map((one) => String(one.data).length)).toEqual([5, 250_000]);
+    const found = await client.handle({ method: 'subscribe', params: { channel: terminal.uri } }) as {
+      snapshot: { state: { content: { value: string }[] } };
+    };
+    expect(found.snapshot.state.content[0]?.value.length).toBe(250_000);
   });
 });
