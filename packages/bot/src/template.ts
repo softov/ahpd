@@ -35,7 +35,6 @@ export interface BotTemplates {
  * own folder, so an update to this text does not reach a bot that exists.
  */
 export const DEFAULT_AGENTS_TEMPLATE = `---
-version: 1
 name: {{name}}
 description: {{description}}
 ---

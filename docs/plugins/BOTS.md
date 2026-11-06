@@ -74,7 +74,6 @@ The file has a frontmatter and an `## Instructions` section, and everything else
 
 ```md
 ---
-version: 1
 name: Motion
 description: Reads pull requests and says what would break.
 ---
@@ -92,11 +91,9 @@ If the Instructions section does not say what you are for, ask the person who ta
 
 | Part | Who edits it |
 | --- | --- |
-| `version`, `name` and `description` in the frontmatter | The UI, on a make or an edit |
+| `name` and `description` in the frontmatter, the keys VS Code's agent definitions carry | The UI, on a make or an edit |
 | The text under `## Instructions`, up to the next `##` heading or the end of the file | The UI, on a make or an edit |
 | Everything else: other frontmatter keys, other sections, comments | The bot |
-
-`version` names the layout of the file, so a reader can tell an older one from a newer one. A write that names no version keeps the one the file names, and writes 1 where it names none.
 
 The UI changes only the parts in that table. A make or an edit replaces those frontmatter keys and the text of that section, and keeps every other byte of the file: a key a person or the bot put there, another section, a comment. The rest of the file is the bot's, and the bot may rewrite any of it. An edit or a make whose instructions hold a line that starts with `## ` is refused `-32602`, and the refusal names the line: the section would end there, and the rest of the instructions would read as another section.
 

@@ -519,7 +519,6 @@ it('answers a read from the bot\'s own file, so its own edit shows on the next r
   // without being a second copy: the file is read at each read of the bot.
   writeFileSync(join(bots, 'motion', 'AGENTS.md'), [
     '---',
-    'version: 1',
     'name: Renamed',
     'description: What it calls itself',
     '---',

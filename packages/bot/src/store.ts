@@ -120,14 +120,12 @@ const same = (one: BotRecord, other: BotRecord): boolean => {
  *
  * The instructions are asked for as a prefix rather than as the whole section:
  * a file with no section gets one above the text the bot already had, and that
- * text then reads as the rest of the section. The version is the parts' own
- * where they name one, and the file's otherwise.
+ * text then reads as the rest of the section.
  */
 const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
   got.name.trim() === wanted.name.trim()
   && got.description.trim() === wanted.description.trim()
-  && got.instructions.trim().startsWith(wanted.instructions.trim())
-  && (wanted.version === undefined || got.version === wanted.version);
+  && got.instructions.trim().startsWith(wanted.instructions.trim());
 
 /**
  * What the store reads a bot's folder with.

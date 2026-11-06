@@ -1,22 +1,21 @@
 import { expect, it } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
-import { AGENTS_VERSION, instructionsProblem, readAgents, writeAgents } from '../src/agents.js';
+import { instructionsProblem, readAgents, writeAgents } from '../src/agents.js';
 import { agentsFilled, DEFAULT_AGENTS_TEMPLATE } from '../src/template.js';
 import type { AgentsParts, Yaml } from '../src/agents.js';
 import type { BotRecord } from '../src/record.js';
 
 /*
  * The parts of an AGENTS.md that belong to the bot's owner: the frontmatter
- * keys `version`, `name` and `description`, and the text under
- * `## Instructions`. The rest of the file is the bot's own and is not read or
- * changed here.
+ * keys `name` and `description`, as VS Code's agent definitions carry them,
+ * and the text under `## Instructions`. The rest of the file is the bot's own
+ * and is not read or changed here.
  */
 
 /** The parser the daemon hands a plugin, and the one the other plugin tests use. */
 const yaml: Yaml = { parseYaml, stringifyYaml };
 
 const parts = (over: Partial<AgentsParts> = {}): AgentsParts => ({
-  version: 1,
   name: 'Motion',
   description: 'A careful reviewer.',
   instructions: 'Be calm.',
@@ -24,7 +23,6 @@ const parts = (over: Partial<AgentsParts> = {}): AgentsParts => ({
 });
 
 const FULL = `---
-version: 1
 name: Motion
 description: A careful reviewer.
 colour: red
@@ -42,7 +40,6 @@ The rest is the bot's.
 
 it('reads the owner parts of a full file', () => {
   expect(readAgents(yaml, FULL)).toEqual({
-    version: 1,
     name: 'Motion',
     description: 'A careful reviewer.',
     instructions: 'Be calm.\nBe kind.',
@@ -51,7 +48,6 @@ it('reads the owner parts of a full file', () => {
 
 it('reads a file with no frontmatter as empty parts and its section', () => {
   expect(readAgents(yaml, '# Motion\n\n## Instructions\n\nBe calm.\n')).toEqual({
-    version: undefined,
     name: '',
     description: '',
     instructions: 'Be calm.',
@@ -59,8 +55,7 @@ it('reads a file with no frontmatter as empty parts and its section', () => {
 });
 
 it('reads a file with no Instructions section as empty instructions', () => {
-  expect(readAgents(yaml, '---\nversion: 1\nname: Motion\n---\n\n# Motion\n')).toEqual({
-    version: 1,
+  expect(readAgents(yaml, '---\nname: Motion\n---\n\n# Motion\n')).toEqual({
     name: 'Motion',
     description: '',
     instructions: '',
@@ -83,7 +78,6 @@ it('reads the default template filled with a bot as that bot words', () => {
     instructions: 'Be calm.',
   };
   expect(readAgents(yaml, agentsFilled(bot, DEFAULT_AGENTS_TEMPLATE))).toEqual({
-    version: 1,
     name: 'Motion',
     description: 'A careful reviewer.',
     instructions: 'Be calm.',
@@ -93,7 +87,6 @@ it('reads the default template filled with a bot as that bot words', () => {
 it('changes only the owner parts and keeps every other byte', () => {
   const edited = writeAgents(yaml, FULL, parts({ name: 'Reviewer', description: 'Reads code.', instructions: 'Be kind.\nBe exact.' }));
   expect(edited).toBe(`---
-version: 1
 name: Reviewer
 description: Reads code.
 colour: red
@@ -117,9 +110,8 @@ it('quotes a description with a colon or a quote so it reads back the same', () 
 });
 
 it('adds the Instructions section after the frontmatter when the file has none', () => {
-  const text = '---\nversion: 1\nname: Motion\ndescription: Empty\n---\n\n## Notes\n\nKeep this.\n';
+  const text = '---\nname: Motion\ndescription: Empty\n---\n\n## Notes\n\nKeep this.\n';
   expect(writeAgents(yaml, text, parts({ description: 'Empty' }))).toBe(`---
-version: 1
 name: Motion
 description: Empty
 ---
@@ -136,7 +128,6 @@ Keep this.
 
 it('adds the frontmatter to a file with none and keeps its text', () => {
   expect(writeAgents(yaml, '## Notes\n\nKeep this.\n', parts())).toBe(`---
-version: 1
 name: Motion
 description: A careful reviewer.
 ---
@@ -155,14 +146,12 @@ it('reads a section emptied by an edit as empty', () => {
   expect(readAgents(yaml, writeAgents(yaml, FULL, parts({ instructions: '' }))).instructions).toBe('');
 });
 
-it('keeps the layout version a file already names when the parts name none', () => {
-  const text = '---\nversion: 2\nname: Motion\n---\n';
-  expect(readAgents(yaml, writeAgents(yaml, text, parts({ version: undefined, instructions: '' }))).version).toBe(2);
-});
-
-it('writes the layout version when neither the parts nor the file name one', () => {
-  const text = writeAgents(yaml, '# Motion\n', parts({ version: undefined, instructions: '' }));
-  expect(readAgents(yaml, text).version).toBe(AGENTS_VERSION);
+it('writes no layout version, as VS Code\'s agent definitions carry none, and keeps a version line a file has as the bot\'s own', () => {
+  expect(writeAgents(yaml, '# Motion\n', parts({ instructions: '' }))).not.toContain('version');
+  // A key the owner does not own is the bot's, and stays as it was written.
+  const kept = writeAgents(yaml, '---\nversion: 2\nname: Motion\n---\n', parts({ instructions: '' }));
+  expect(kept).toContain('version: 2\n');
+  expect(readAgents(yaml, kept)).not.toHaveProperty('version');
 });
 
 it('ends a key at its last value line, so a comment and a blank line after it stay', () => {

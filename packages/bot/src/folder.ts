@@ -148,7 +148,6 @@ export function writeAgentsFile(folder: string, yaml: Yaml, parts: AgentsParts):
 
 /** The parts a bot answers with, as the writer takes them. A missing line is written empty. */
 export const partsOf = (bot: BotRecord): AgentsParts => ({
-  version: undefined,
   name: bot.name,
   description: bot.description ?? '',
   instructions: bot.instructions ?? '',
