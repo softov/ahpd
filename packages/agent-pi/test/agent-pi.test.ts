@@ -81,6 +81,20 @@ it('holds the chat\'s modified time where the reducer moves it, a turn\'s start 
   expect(session.modifiedAt()).toBe(at);
 });
 
+/*
+ * A session nobody named or spoke in is untitled, an empty title a client
+ * draws as one, as VS Code's host holds a session with no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
+ */
+it('holds an empty title until something names the session', async () => {
+  const { session } = opened();
+  expect(session.title()).toBe('');
+  expect(session.sessionState()).toMatchObject({ title: '', chats: [{ title: '' }] });
+  session.sendMessage('t1', 'Fix the build');
+  await settled();
+  expect(session.title()).toBe('Fix the build');
+});
+
 it('holds a title a command suggests until the first message replaces it', async () => {
   const { session, sent } = opened();
   // The host's seed for a `!` command, taken while the session has no title.
