@@ -388,10 +388,10 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `automationRun/lifecycleChanged` | host | ✅ | `pending`, `running`, `completed`, `failed`, `cancelled`, and when each happened. A run that failed says so rather than vanishing. |
-| `automationRun/sessionSet` | host | ✅ | One action per session that joined. Neither this nor its pair carries a whole set, so what goes out is the difference since the last time this looked. |
-| `automationRun/sessionRemoved` | host | ✅ | And one per session that went - a disposed session is unlinked from the run it belonged to, so a client is not left pointing at a channel nobody can open. |
-| `automationRun/primarySessionChanged` | host | ✅ | The one a client opens when it opens the run. Cleared when that session is the one removed. |
+| `automationRun/lifecycleChanged` | host | ✅ | `pending`, `running`, `completed`, `failed`, `cancelled`, and when each happened, said at each transition, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1143-L1184) says each run action only with its change. A failed run carries its error. |
+| `automationRun/sessionSet` | host | ✅ | One action per session that joined: each carries one session, so what goes out is each session the run gained since its channel last said it. |
+| `automationRun/sessionRemoved` | host | ✅ | And one per session that went: a disposed session is unlinked from the run it belonged to, so a client is not left pointing at a channel nobody can open. |
+| `automationRun/primarySessionChanged` | host | ✅ | The one a client opens when it opens the run, said when the run has another. Cleared when that session is the one removed. |
 | `automationRun/cancelRequested` | client | ✅ | Stops the turns the run's sessions are running, and the run settles as their backends end them; a run with no session yet settles `cancelled` at once. Taken, it is answered to the client that sent it alone, since it changes no state of its own, and the run's `automationRun/lifecycleChanged`, said to everyone, is what came of it. Refused in VS Code's words: `Automation run not found: <uri>` for a run the store does not hold, `Automation run is already terminal: <uri>` for one already over, and `Automation run cancellation was not accepted: <uri>` for one none of whose sessions is running a turn. |
 
 Whose work an automation is reaches a client as `_meta['ahpd.owner']`, on the

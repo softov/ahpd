@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { computerSource } from '../machines/computers.js';
 import { Status, idOf, uriFor } from '../sessions/catalog.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
@@ -176,8 +177,6 @@ export const runState = ({ owner, notes, ...rest }: AutomationRun): AutomationRu
  * is told when it moves, and the run a due automation starts.
  */
 export interface Automations {
-  /** The sessions each run was last announced as having, by run URI. */
-  linked: Map<string, string[]>;
   /** The run each manual request made, by its `requestId`, with the automation it named. */
   manualRunRequests: Map<string, { automation: string; run: string }>;
   /** Move the run a session belongs to, when that session stops working. */
@@ -239,8 +238,11 @@ export function createAutomations(ctx: HostContext): Automations {
     turnInstructions,
   } = ctx;
 
-  /** The sessions each run was last announced as having, by run URI. */
-  const linked = new Map<string, string[]>();
+  /**
+   * Each run as its channel last said it, by run URI: its lifecycle, its
+   * sessions and its primary session, which the next move is said against.
+   */
+  const runStates = new Map<string, Pick<AutomationRun, 'automation' | 'lifecycle' | 'sessions' | 'primarySession'>>();
 
   /** The run each manual request made, by its `requestId`, for the daemon's run. */
   const manualRunRequests = new Map<string, { automation: string; run: string }>();
@@ -374,6 +376,7 @@ export function createAutomations(ctx: HostContext): Automations {
       // with its history.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L637-L638
       for (const [requestId, asked] of manualRunRequests) if (asked.automation === event.removed) manualRunRequests.delete(requestId);
+      for (const [run, said] of runStates) if (said.automation === event.removed) runStates.delete(run);
       dispatch(AUTOMATIONS, { type: 'automation/removed', resource: event.removed });
       return;
     }
@@ -384,30 +387,42 @@ export function createAutomations(ctx: HostContext): Automations {
     }
     if (event.run !== undefined) {
       const run = options.automations?.runOf(event.run);
-      if (!run) return;
-      // Two channels, because they answer different questions: the run's own
-      // says what it is doing, and the catalogue's says which session it is
-      // doing it in.
-      dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      if (!run) {
+        runStates.delete(event.run);
+        return;
+      }
       /*
-       * Which sessions it has, as the difference rather than the list.
-       *
-       * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
-       * away - there is no action carrying the whole set - so what is sent is
-       * what moved since the last time this looked. A run that started one
-       * session says so once; one whose session was disposed says that too,
-       * and a client watching the run channel is not left pointing at a
-       * channel nobody can open.
+       * Each action on its own change, as VS Code's host commits a run's change
+       * with the actions of that change: the lifecycle at a transition, a
+       * session as it joins, and the primary session when it is another. A run
+       * this channel has said nothing of yet is said whole, because a client
+       * may hold it from a snapshot older than this move.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1143-L1184
        */
-      const before = linked.get(event.run) ?? [];
-      for (const gone of before.filter((one) => !run.sessions.includes(one)))
+      const before = runStates.get(event.run);
+      if (before === undefined || !isDeepStrictEqual(before.lifecycle, run.lifecycle)) {
+        dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      }
+      /*
+       * Its sessions, one action per session that joined or went:
+       * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
+       * away. A session disposed goes from its run, so a client watching the
+       * run channel is not left pointing at a channel nobody can open.
+       */
+      const was = before?.sessions ?? [];
+      for (const gone of was.filter((one) => !run.sessions.includes(one)))
         dispatch(event.run, { type: 'automationRun/sessionRemoved', session: gone });
-      for (const added of run.sessions.filter((one) => !before.includes(one)))
+      for (const added of run.sessions.filter((one) => !was.includes(one)))
         dispatch(event.run, { type: 'automationRun/sessionSet', session: added });
-      linked.set(event.run, [...run.sessions]);
-      if (run.primarySession !== undefined) {
+      if (run.primarySession !== undefined && run.primarySession !== before?.primarySession) {
         dispatch(event.run, { type: 'automationRun/primarySessionChanged', primarySession: run.primarySession });
       }
+      runStates.set(event.run, {
+        automation: run.automation,
+        lifecycle: structuredClone(run.lifecycle),
+        sessions: [...run.sessions],
+        ...(run.primarySession === undefined ? {} : { primarySession: run.primarySession }),
+      });
     }
   };
 
@@ -1513,7 +1528,7 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   return {
-    linked, manualRunRequests, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
+    manualRunRequests, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
     wireTriggerTypes, wirePluginStarts,
   };
 }

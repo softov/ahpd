@@ -1763,6 +1763,47 @@ it('says which sessions a run has, one action per session', async () => {
     .toEqual(['ahp-session:/one']);
 });
 
+/*
+ * A run's lifecycle and its primary session are each said on their own change,
+ * as VS Code's host commits a run's change with the actions of that change.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1143-L1184
+ */
+it('says a run\'s lifecycle and primary session only as each changes, as VS Code\'s host', async () => {
+  const driven = controllable();
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR, pace: 0 })],
+    automations: driven.store as never,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await client.handle({ method: 'subscribe', params: { channel: driven.run.resource } });
+  const said = (type: string) => actions(p, driven.run.resource).filter((one) => one.type === type);
+
+  driven.run.sessions = ['ahp-session:/one'];
+  driven.run.primarySession = 'ahp-session:/one';
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged')).toHaveLength(1);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
+
+  // A move that changed neither says neither.
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged')).toHaveLength(1);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
+
+  // The run ends in the same session: its lifecycle is said, and its primary
+  // session, which is the one it had, is not.
+  driven.run.lifecycle = { status: 'completed' };
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged').map((one) => (one.lifecycle as { status: string }).status))
+    .toEqual(['running', 'completed']);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
+});
+
 it('lets go of a session a run was holding when the session is disposed', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
