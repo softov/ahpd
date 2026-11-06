@@ -3,7 +3,7 @@
  *
  * What a client opening a row the host does not hold costs: `list` reads every
  * transcript in a project folder for one id, and `find` reads the one file pi's
- * `findById` names. The row it answers has to be the row `list` would have
+ * own lookup names. The row it answers has to be the row `list` would have
  * answered - a difference is a client sent a `root/sessionSummaryChanged` for a
  * row that did not change - so the two are compared here rather than described.
  */
@@ -133,20 +133,23 @@ it('reads an older-format session file without migrating it', async () => {
   expect(readFileSync(file, 'utf8')).toBe(written);
 });
 
-it('answers nothing when the file it was named does not hold that session', async () => {
+it('answers the session\'s own file when the one it was named holds another session', async () => {
   const sessionDir = join(root, 'pi');
   const disk = await sessionOnDisk(sessionDir);
   const { SessionManager } = await loadPi();
 
   // The header is what says whose session a file is, and pi's own lookup
-  // matched it a moment ago. A file that changed under that lookup is a read
-  // that found nothing rather than one that found somebody else's row.
+  // matched it a moment ago. A file that changed under that lookup answers
+  // nothing, never somebody else's row, and the store is asked whole.
   const other = await sessionOnDisk(join(root, 'elsewhere'), 'a title');
   const lookup = vi.spyOn(SessionManager, 'findById').mockReturnValue(other.file);
+  let found;
   try {
-    expect(await piAgent({ sessionDir }, [root]).find?.(disk.id)).toBeUndefined();
+    found = await piAgent({ sessionDir }, [root]).find?.(disk.id);
   }
   finally { lookup.mockRestore(); }
+  expect(found?.id).toBe(disk.id);
+  expect(found?.title).not.toBe('a title');
 });
 
 it('never lists a project folder to answer one id', async () => {
@@ -163,19 +166,23 @@ it('never lists a project folder to answer one id', async () => {
   expect(listing).not.toHaveBeenCalled();
 });
 
-it('finds and reads a session in the folder the host recorded, outside the directories it serves', async () => {
+/*
+ * One session found by id in pi's whole store, as pi's own CLI looks across
+ * every project for an id it does not find where it runs, and as VS Code looks
+ * a session up by id across its runtime's whole store.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2239
+ */
+it('finds and reads a session pi keeps for a folder neither recorded nor served', async () => {
   const sessionDir = join(root, 'pi');
   const disk = await sessionOnDisk(sessionDir);
   const served = join(root, 'served');
   mkdirSync(served);
   const agent = piAgent({ sessionDir }, [served]);
 
-  expect(await agent.find?.(disk.id)).toBeUndefined();
-  expect(await agent.transcript?.(disk.id)).toBeUndefined();
+  expect((await agent.find?.(disk.id))?.id).toBe(disk.id);
+  expect(await agent.transcript?.(disk.id)).toEqual(await piAgent({ sessionDir }, [root]).transcript?.(disk.id));
+  expect(await agent.transcript?.(disk.id)).not.toHaveLength(0);
   expect((await agent.find?.(disk.id, { workingDirectory: root }))?.id).toBe(disk.id);
-  expect(await agent.transcript?.(disk.id, { workingDirectory: root }))
-    .toEqual(await piAgent({ sessionDir }, [root]).transcript?.(disk.id));
-  expect(await agent.transcript?.(disk.id, { workingDirectory: root })).not.toHaveLength(0);
 });
 
 it('asks a recorded folder that is one of the served directories once', async () => {

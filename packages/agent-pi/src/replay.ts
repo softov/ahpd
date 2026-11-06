@@ -14,7 +14,7 @@ import type { AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { bag } from '@ahpd/sdk';
 import type { Bag, SessionAt } from '@ahpd/sdk';
-import { lookupDirectories } from './catalog.js';
+import { sessionFiles } from './catalog.js';
 import { addUsage, callPartOf, mapEvent, readyRow } from './mapping.js';
 import { loadPi } from './pi.js';
 import { INTERRUPTED, MESSAGE_ENTRY } from './types.js';
@@ -268,11 +268,12 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
 /**
  * One session of pi's, rebuilt from its file, or nothing.
  *
- * Looked for in the folder the host recorded for it, then in each directory in
- * turn, since pi keeps a session under the directory it ran in. Nothing for an
- * id no directory has; a file pi cannot open or replay raises its failure to
- * the caller, as VS Code's Copilot agent raises a failure to read a chat whose
- * session it knows, and its host lets the failure reach the client.
+ * The one file pi's own lookup names (`sessionFiles`): the folder the host
+ * recorded for it and each served directory, then every project of pi's store.
+ * Nothing for an id no place in the store has; a file pi cannot open or replay
+ * raises its failure to the caller, as VS Code's Copilot agent raises a
+ * failure to read a chat whose session it knows, and its host lets the failure
+ * reach the client.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10446-L10452
  */
@@ -283,11 +284,7 @@ export async function replayed(
   at?: SessionAt,
 ): Promise<Replayed | undefined> {
   const { SessionManager } = await loadPi();
-  for (const directory of lookupDirectories(directories, at)) {
-    let file: string | undefined;
-    try { file = SessionManager.findById(directory, id, options.sessionDir); }
-    catch { continue; }
-    if (file === undefined) continue;
+  for await (const { file } of sessionFiles(options, id, directories, at)) {
     return replayEntries(SessionManager.open(file).getBranch());
   }
   return undefined;

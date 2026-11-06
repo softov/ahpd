@@ -310,12 +310,49 @@ export function lookupDirectories(directories: readonly string[], at?: SessionAt
 }
 
 /**
+ * Where pi keeps one session, by pi's own lookup of an exact id.
+ *
+ * `findById` in the folder the host recorded for it and in each served path,
+ * then `listAll`'s every project of the store, as pi's own CLI looks for an
+ * exact id where it runs and then across all projects, and as VS Code looks a
+ * session up by id across its runtime's whole store. Each file pi names is
+ * yielded in turn, with the folder it was named for; a lookup pi cannot make
+ * names nothing.
+ * https://www.npmjs.com/package/@earendil-works/pi-coding-agent (dist/main.js, `resolveSessionPath`)
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2239
+ */
+export async function* sessionFiles(
+  options: PiOptions,
+  id: string,
+  directories: readonly string[],
+  at?: SessionAt,
+): AsyncGenerator<{ file: string; directory: string }> {
+  const { SessionManager } = await loadPi();
+  for (const directory of lookupDirectories(directories, at)) {
+    let file: string | undefined;
+    // A directory pi has never been run in has no session store, which is the
+    // same nothing as one that does not have this session. With no
+    // `sessionDir`, pi's lookup makes its default folder for the directory, as
+    // `list` does; the session file itself is never written.
+    try { file = SessionManager.findById(directory, id, options.sessionDir); }
+    catch { continue; }
+    if (file !== undefined) yield { file, directory };
+  }
+  let all: Awaited<ReturnType<typeof SessionManager.listAll>> = [];
+  try { all = await SessionManager.listAll(options.sessionDir); }
+  catch { return; }
+  const found = all.find((one) => one.id === id);
+  if (found !== undefined) yield { file: found.path, directory: found.cwd };
+}
+
+/**
  * One session's own row, read without listing the project folder it is in.
  *
  * What a client opening a row the host does not hold costs without this: a link
  * from another machine, a session written to disk after the last listing -
  * `list` reads every transcript in the directory for one id. The file is the
- * one pi's own `findById` names, and `SessionManager.list` is never called.
+ * one pi's own lookup names (`sessionFiles`): `findById` where the session ran
+ * or is served, and `listAll` across the store where neither holds it.
  *
  * A session this process is watching is answered from its record, which is the
  * row a listing would have answered for it and needs no file read at all.
@@ -333,25 +370,17 @@ export async function findSession(
 ): Promise<Listed | undefined> {
   const watching = watchedSession(provider, id);
   if (watching !== undefined) return watchedRow(watching);
-  const { SessionManager, parseSessionEntries } = await loadPi();
-  for (const directory of lookupDirectories(directories, at)) {
-    let file: string | undefined;
-    // A directory pi has never been run in has no session store, which is the
-    // same nothing as one that does not have this session. With no
-    // `sessionDir`, pi's lookup makes its default folder for the directory, as
-    // `list` does; the session file itself is never written.
-    try { file = SessionManager.findById(directory, id, options.sessionDir); }
-    catch { continue; }
-    if (file === undefined) continue;
+  const { parseSessionEntries } = await loadPi();
+  for await (const { file, directory } of sessionFiles(options, id, directories, at)) {
     let content: string;
     // A file gone since the lookup is a failed read rather than an empty
     // session, as `replayed` answers it - and reading it is only a read, where
     // pi's own open would put a file back for the id it was named. Another
-    // directory's store may still hold it.
+    // place pi names may still hold it.
     try { content = readFileSync(file, 'utf8'); }
     catch { continue; }
-    // A file that holds somebody else's session is not this directory's answer,
-    // so the remaining directories are still worth a look.
+    // A file that holds somebody else's session is not this place's answer,
+    // so the remaining places are still worth a look.
     const row = rowOfFile(parseSessionEntries(content), directory, id);
     if (row !== undefined) return row;
   }
