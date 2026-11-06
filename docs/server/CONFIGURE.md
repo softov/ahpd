@@ -94,6 +94,7 @@ An unknown key is logged and ignored:
 | `connectionTokenFile` | `--connection-token-file` | | See [Remote access](REMOTE.md#the-connection-token) |
 | `sleepAfterMinutes` | `--sleep-after-minutes` | `30` | Unload a quiet session after this |
 | `sessionResidencyLimit` | `--session-residency-limit` | `10` | Most sessions resident at once, running or with their state held |
+| `attachmentFetchLimitBytes` | `--attachment-fetch-limit-bytes` | `33554432` | The largest file a client is asked for when a message attaches one the daemon has no copy of; `0` sets no limit |
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
 | `unofferedModel` | `--unoffered-model` | `fail` | `keep` keeps a chat's model when a turn names one its agent does not offer, as VS Code does |
 | `automations` | `--automations` | `file` | `memory` keeps automations until exit, and fires no schedule |

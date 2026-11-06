@@ -823,6 +823,14 @@ export interface HostOptions {
    * 10; zero is no limit.
    */
   sessionResidencyLimit?: number;
+  /**
+   * The largest file this host asks a client for, in bytes: an attachment
+   * this host has no copy of is read through the client that sent it, and one
+   * whose `sizeHint` is over this is left as it was sent. The answer arrives as
+   * one message, so this stays below what one may carry. Unset is 33554432
+   * (32 MiB); zero fetches any size, as VS Code's host does.
+   */
+  attachmentFetchLimitBytes?: number;
   /** The clock sleep and wakes read. A test supplies its own so a timeout can be reached without waiting for it. */
   now?(): Date;
   /**

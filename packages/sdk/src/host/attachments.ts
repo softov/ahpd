@@ -18,15 +18,20 @@ import type { SessionStore } from '../types/sessions.js';
  * action is applied, and what the message carries from then on is the path to
  * the file.
  *
+ * A resource this host has no copy of, on any scheme, is read through the
+ * client that sent it and written the same way, as VS Code's host snapshots
+ * any attachment it lacks through the sending client.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13703-L13720
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13791-L13866
+ *
  * Four things are left exactly as the client sent them, each for the same
  * reason - this host cannot make a better one:
  *
- * - an attachment that is neither inline bytes nor a `file:` URI, because
- *   there is nothing here to fetch: a scheme this host does not serve is the
- *   client's, and the client is not the thing that called this.
  * - a `file:` URI this host already has a file for outside the session's own
  *   folder, which is the user's own file and is readable where it stands.
  * - a directory, which has no bytes to write.
+ * - a resource whose size hint is over the limit this host fetches to, since
+ *   its answer would arrive as one message past what one may carry.
  * - anything whose write failed, including a client that did not answer. The
  *   message is then no worse than it would have been without this, and the
  *   line about it is in the log rather than in a refusal, because a message
@@ -38,7 +43,8 @@ import type { SessionStore } from '../types/sessions.js';
  */
 
 /**
- * The largest file a client is asked for, in bytes.
+ * The largest file a client is asked for, in bytes, where the host was given
+ * no `attachmentFetchLimitBytes`.
  *
  * The answer arrives as one JSON-RPC message, and this is below what a message
  * may carry: a client-only file larger than this is left where it is rather
@@ -94,7 +100,7 @@ function wouldWrite(value: unknown): boolean {
   const one = (typeof value === 'object' && value !== null ? value : {}) as Bag;
   if (one.type === 'embeddedResource') return true;
   if (one.type !== 'resource') return false;
-  return typeof one.uri === 'string' && one.uri.startsWith('file://') && !heldSnapshot(one);
+  return typeof one.uri === 'string' && one.uri !== '' && one.displayKind !== 'directory' && !heldSnapshot(one);
 }
 
 /**
@@ -128,6 +134,8 @@ export interface SnapshotAsked {
   store: SessionStore;
   /** The connection the message arrived on, and the only reader of a file only it has. */
   connection?: Connection;
+  /** The largest file the client is asked for, in bytes: unset is 32 MiB, and 0 is any size. */
+  limit?: number;
   /** Somewhere to say that one attachment was left as it was sent. */
   onProblem?(line: string): void;
 }
@@ -140,7 +148,8 @@ export async function snapshot(asked: SnapshotAsked): Promise<Record<string, unk
   const arrived = message.attachments as unknown[];
   if (arrived.length === 0) return message;
   const told = asked.onProblem ?? ((): void => {});
-  const settled = await Promise.all(arrived.map((one) => written(one, dir, connection, told)));
+  const limit = asked.limit ?? FETCH_LIMIT;
+  const settled = await Promise.all(arrived.map((one) => written(one, dir, connection, limit, told)));
   // The ones that could not be settled come back as themselves, so the
   // message that arrived unchanged is the message that goes on.
   if (settled.every((one, at) => one === arrived[at])) {
@@ -162,6 +171,7 @@ async function written(
   value: unknown,
   dir: string,
   connection: Connection | undefined,
+  limit: number,
   told: (line: string) => void,
 ): Promise<unknown> {
   const one = (typeof value === 'object' && value !== null ? value : {}) as Bag;
@@ -172,28 +182,28 @@ async function written(
       const path = await put(dir, labelOf(one), contentType, bytes);
       return tagged(one, path, contentType);
     }
-    if (one.type !== 'resource') return value;
+    if (one.type !== 'resource' || one.displayKind === 'directory') return value;
     const uri = typeof one.uri === 'string' ? one.uri : '';
-    // Only a file is a file. Nothing else names something this host could
-    // write, and a scheme it does not serve is the client's own business.
-    if (!uri.startsWith('file://')) return value;
-    const path = localPath(uri);
-    const found = await stat(path).catch(() => undefined);
-    if (found !== undefined) {
-      // A folder this session's own, holding a file this host wrote and a
-      // client sent back: the file is already there, so an attachment
-      // missing the tag is given it and one carrying it is left as it is.
-      // Anything else is somebody's own file, and stays theirs.
-      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13825-L13830
-      if (!found.isFile() || !inside(dir, path) || heldSnapshot(one)) return value;
-      const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
-      return { ...one, _meta: { ...meta, [TAG]: { isSnapshot: true, contentType: typeOf(one.contentType) } } };
+    if (uri === '') return value;
+    if (uri.startsWith('file://')) {
+      const path = localPath(uri);
+      const found = await stat(path).catch(() => undefined);
+      if (found !== undefined) {
+        // A folder this session's own, holding a file this host wrote and a
+        // client sent back: the file is already there, so an attachment
+        // missing the tag is given it and one carrying it is left as it is.
+        // Anything else is somebody's own file, and stays theirs.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13825-L13830
+        if (!found.isFile() || !inside(dir, path) || heldSnapshot(one)) return value;
+        const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
+        return { ...one, _meta: { ...meta, [TAG]: { isSnapshot: true, contentType: typeOf(one.contentType) } } };
+      }
     }
-    // A file this host has no copy of: the client that sent it is the only
-    // thing that can read it, and only where it is small enough to answer
-    // with.
+    // A resource this host has no copy of, on any scheme: the client that
+    // sent it is the only thing that can read it, and only where it is small
+    // enough to answer with.
     const hinted = typeof one.sizeHint === 'number' ? one.sizeHint : 0;
-    if (connection === undefined || hinted > FETCH_LIMIT) return value;
+    if (connection === undefined || (limit > 0 && hinted > limit)) return value;
     const contentType = typeOf(one.contentType);
     const bytes = await fromClient(connection, uri);
     const held = await put(dir, labelOf(one), contentType, bytes);

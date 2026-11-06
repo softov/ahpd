@@ -125,6 +125,8 @@ export interface Options {
   sleepAfterMinutes?: number;
   /** How many sessions are resident at most, absent when the deployment said nothing. */
   sessionResidencyLimit?: number;
+  /** The largest file a client is asked for, in bytes, absent when the deployment said nothing. */
+  attachmentFetchLimitBytes?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
   /** What an automation that names no owner wakes on. */
@@ -679,6 +681,12 @@ export const serverFields = {
     minimum: 0,
     description: 'How many sessions are resident at most, running or with their state held. Over it, the least recently used one that nothing holds is let go, with its state. Default 10; 0 sets no limit.',
     cli: { value: 'COUNT' },
+  },
+  attachmentFetchLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The largest file a client is asked for when a message attaches one the daemon has no copy of; a larger one is left as it was sent. Default 33554432 (32 MiB); 0 sets no limit.',
+    cli: { value: 'BYTES' },
   },
   automations: {
     type: 'string',
@@ -1237,6 +1245,7 @@ const noCwd = input['noCwd'] === true;
   const deltaWindowMs = given('deltaWindowMs');
   const sleepAfterMinutes = given('sleepAfterMinutes');
   const sessionResidencyLimit = given('sessionResidencyLimit');
+  const attachmentFetchLimitBytes = given('attachmentFetchLimitBytes');
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
   const httpApi = httpOf(file.httpApi, source('httpApi'));
@@ -1279,6 +1288,7 @@ const noCwd = input['noCwd'] === true;
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),
     ...(sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit }),
+    ...(attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes }),
     automations: given('automations') ?? 'file',
     unownedAutomations: given('unownedAutomations') ?? 'every',
     sessions: given('sessions') ?? 'file',

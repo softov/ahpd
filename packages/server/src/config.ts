@@ -375,6 +375,13 @@ export interface Config {
    * with its state. Unset is 10; zero sets no limit.
    */
   sessionResidencyLimit?: number;
+  /**
+   * The largest file the daemon asks a client for, in bytes: an attachment
+   * the daemon has no copy of is read through the client that sent it, and
+   * one whose size hint is over this is left as it was sent. Unset is
+   * 33554432 (32 MiB); zero sets no limit.
+   */
+  attachmentFetchLimitBytes?: number;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

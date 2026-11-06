@@ -1407,6 +1407,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     ...(options.deltaWindowMs === undefined ? {} : { deltaWindowMs: options.deltaWindowMs }),
     ...(options.sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes: options.sleepAfterMinutes }),
     ...(options.sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit: options.sessionResidencyLimit }),
+    ...(options.attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes: options.attachmentFetchLimitBytes }),
     /*
      * The daemon's own settings, as the keys root config carries.
      *

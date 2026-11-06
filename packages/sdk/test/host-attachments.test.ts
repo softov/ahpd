@@ -28,6 +28,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { MessageAttachment, MessageFrom, Session, SteeringMessage } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -153,10 +154,10 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
   };
 };
 
-/** One client, one session, watching both its channels. */
-async function serving(said: Said, dir = temp(), store = true, pace = 0, held = false) {
+/** One client, one session, watching both its channels, on a host given `over` too. */
+async function serving(said: Said, dir = temp(), store = true, pace = 0, held = false, over: Partial<HostOptions> = {}) {
   const sessions = store ? fileSessions({ dir }) : memorySessions();
-  const host = createHost({ path: dir, agents: [scripted(dir, said, pace, held)], sessions });
+  const host = createHost({ path: dir, agents: [scripted(dir, said, pace, held)], sessions, ...over });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -355,6 +356,58 @@ it('tags a copy from the session\'s own folder where it stands, and leaves a tag
     { ...untagged, _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } } },
     tagged,
   ]);
+});
+
+/*
+ * A resource on a scheme this host does not hold is read through the client
+ * that sent it, as VS Code's host snapshots any attachment it lacks; a
+ * directory is left as it was sent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13703-L13720
+ */
+it('reads a resource on another scheme through the client that sent it, and leaves a directory as it came', async () => {
+  const said = saidNothing();
+  const { dir, turn, peer: p } = await serving(said);
+  const remote = { type: 'resource', label: 'remote.png', uri: 'vscode-remote://box/home/a/remote.png', contentType: 'image/png' };
+  const folder = { type: 'resource', label: 'src', uri: 'vscode-remote://box/home/a/src', displayKind: 'directory' };
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'these', attachments: [remote, folder] } });
+  await until(() => said.begun.length > 0);
+
+  expect(p.asked).toEqual([{ method: 'resourceRead', params: { channel: 'ahp-root://', uri: remote.uri } }]);
+  const { folder: kept, names } = written(dir);
+  expect(names).toHaveLength(1);
+  const handed = sent(first(said.begun));
+  expect(handed[0]?.uri).toBe(uriOf(join(kept, first(names))));
+  expect((handed[0]?._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
+  expect(handed[1]).toEqual(folder);
+});
+
+/*
+ * The daemon's `attachmentFetchLimitBytes`: a file hinted over it is left as
+ * it was sent, one under it is fetched, and `0` fetches any size, as VS Code's
+ * host does.
+ */
+it('asks a client for a file up to the size it is set to fetch, and for any size at 0', async () => {
+  const hinted = (label: string, sizeHint: number): Bag => ({
+    type: 'resource', label, uri: `file:///nowhere/${label}`, contentType: 'application/octet-stream', sizeHint,
+  });
+  const capped = saidNothing();
+  const small = await serving(capped, temp(), true, 0, false, { attachmentFetchLimitBytes: 1024 });
+  await small.turn({
+    type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'two', attachments: [hinted('over.bin', 2048), hinted('under.bin', 512)] },
+  });
+  await until(() => capped.begun.length > 0);
+  expect(small.peer.asked.map((one) => one.params.uri)).toEqual(['file:///nowhere/under.bin']);
+  expect(sent(first(capped.begun))[0]).toEqual(hinted('over.bin', 2048));
+
+  const unbounded = saidNothing();
+  const any = await serving(unbounded, temp(), true, 0, false, { attachmentFetchLimitBytes: 0 });
+  await any.turn({
+    type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'huge', attachments: [hinted('huge.bin', 33 * 1024 * 1024)] },
+  });
+  await until(() => unbounded.begun.length > 0);
+  expect(any.peer.asked.map((one) => one.params.uri)).toEqual(['file:///nowhere/huge.bin']);
 });
 
 it('asks no client for a file above the size it will fetch', async () => {

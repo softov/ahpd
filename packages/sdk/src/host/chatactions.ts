@@ -214,6 +214,7 @@ export const settledMessage = async (
     id: idOf(uri),
     store: ctx.kept,
     connection,
+    ...(ctx.options.attachmentFetchLimitBytes === undefined ? {} : { limit: ctx.options.attachmentFetchLimitBytes }),
     onProblem: (line) => ctx.log(`${uri}: ${line}`),
   });
   const dir = ctx.kept.attachmentsDir?.(idOf(uri));
