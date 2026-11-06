@@ -194,6 +194,19 @@ export interface AcpOptions {
    */
   unreportedClientCalls?: 'row' | 'error';
   /**
+   * How long the listing a find made answers the finds after it, in
+   * milliseconds.
+   *
+   * 2000, the default: a find inside the window is answered from that listing,
+   * a failed one included, so a server that did not start is not spawned again
+   * for each id a client asks about (Softov 2026-10-06: "reuse its result for
+   * the same 2 s window ...; after a failed start, do not respawn for that
+   * window either"); 0 joins only the listing in flight, as VS Code's Codex
+   * shares a listing while it runs and serves no settled one to a later caller.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7960-L7963
+   */
+  findFreshMs?: number;
+  /**
    * Where a session says what it left out or had to invent.
    *
    * A server left out of its MCP list, and a `tools/call` the agent reported no

@@ -85,13 +85,14 @@ interface Listing {
  * several conversations - asks for one id after another, and each of those is
  * that listing again unless the rows it read are kept a moment.
  *
- * Two seconds, which is what the host's own listing throttle allowed before
- * this path could answer by id: long enough for the asks of one opening screen
- * and short enough that a session the server has just been told about is not
- * refused for long. A command that fails to start is kept the same way and for
- * the same window, because a server that did not start does not start on the
- * next missing id either, and respawning it once per id is a subprocess per
- * subscribe to a session nobody has.
+ * Two seconds unless the record's `findFreshMs` says otherwise, which is what
+ * the host's own listing throttle allowed before this path could answer by id:
+ * long enough for the asks of one opening screen and short enough that a
+ * session the server has just been told about is not refused for long. A
+ * command that fails to start is kept the same way and for the same window,
+ * because a server that did not start does not start on the next missing id
+ * either, and respawning it once per id is a subprocess per subscribe to a
+ * session nobody has. A window of 0 joins only the listing in flight.
  */
 const FIND_FRESH = 2_000;
 
@@ -534,7 +535,7 @@ const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> =
   const known = finds.get(options);
   if (known !== undefined) {
     if (known.running !== undefined) return known.running;
-    if (Date.now() - known.at < FIND_FRESH) return Promise.resolve(known.rows);
+    if (Date.now() - known.at < (options.findFreshMs ?? FIND_FRESH)) return Promise.resolve(known.rows);
   }
   const held: Finds = { running: undefined, at: 0, rows: [] };
   const running = catalogueOf(options, provider).catch(() => watchedRows(provider)).then((rows) => {

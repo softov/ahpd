@@ -910,6 +910,19 @@ it('answers a find of a missing id from the listing it read a moment ago', async
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(1);
 });
 
+/*
+ * A record whose `findFreshMs` is 0 joins only the listing in flight, as VS
+ * Code's Codex shares its listing while it runs and serves no settled one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7960-L7963
+ */
+it('lists again for each find after the last one settled, where the record\'s findFreshMs is 0', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log }, provider: 'acp', findFreshMs: 0 });
+  expect(await agent.find?.('nobody-1')).toBeUndefined();
+  expect(await agent.find?.('nobody-2')).toBeUndefined();
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
+});
+
 it('answers nothing for a session the server dropped since the listing it read', async () => {
   const { agent } = backend();
   expect((await agent.find?.('listed-1'))?.id).toBe('listed-1');

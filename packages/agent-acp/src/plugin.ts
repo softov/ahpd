@@ -142,6 +142,11 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     enum: ['row', 'error'],
     description: "What a request for a client's tool that no reported call matched gets: row holds it in a row of its own and asks its owner, error answers it with an error result as VS Code's client tool server does. Defaults to row.",
   },
+  findFreshMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the listing a find made answers the finds after it, a failed one included, so a server that did not start is not spawned again for each id; 0 joins only the listing in flight, as VS Code's agents share a listing. Defaults to 2000.",
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -378,6 +383,8 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const modesFrom = config['modes'] === 'refreshed' || config['modes'] === 'preset' ? config['modes'] : undefined;
   const unreported = config['unreportedClientCalls'];
   const unreportedClientCalls = unreported === 'row' || unreported === 'error' ? unreported : undefined;
+  const fresh = config['findFreshMs'];
+  const findFreshMs = typeof fresh === 'number' && Number.isInteger(fresh) && fresh >= 0 ? fresh : undefined;
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -403,6 +410,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(stderrTail === undefined ? {} : { stderrTail }),
     ...(modesFrom === undefined ? {} : { modesFrom }),
     ...(unreportedClientCalls === undefined ? {} : { unreportedClientCalls }),
+    ...(findFreshMs === undefined ? {} : { findFreshMs }),
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

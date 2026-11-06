@@ -2255,6 +2255,7 @@ A record of the engine, as `x-ahpd/agents/put` takes it:
 | `cutTurns` | How a turn the server stopped at `max_tokens`, `max_turn_requests` or by a refusal ends: `error`, the default, ends it in `chat/error` typed by the reason, and `complete` completes it, as VS Code's agents do |
 | `modes` | Where this agent's modes come from: `refreshed`, the default, lists the row's until a session hears its server's, then the modes the last session's server named, and `preset` keeps the row's as declared, as VS Code's agents do |
 | `unreportedClientCalls` | What a request for a client's tool that no reported call matched gets: `row`, the default, holds it in a row of its own and asks its owner, and `error` answers it with an error result, as VS Code's client tool server does |
+| `findFreshMs` | How long, in milliseconds, the listing a find made answers the finds after it, a failed one included: `2000` by default, and `0` joins only the listing in flight, as VS Code's agents share a listing |
 | `stderrTail` | Where the last of a failed server's stderr goes: `sentence`, the default, puts it under the failure in the error a client is shown, and `log` leaves it to the daemon's log, as VS Code's agents do; each line is logged either way |
 | `install` | How to install this agent, by system, as the vendor's own docs give it. **Host records only** |
 | `page` | The vendor's install page, for a system the install lines do not cover |
