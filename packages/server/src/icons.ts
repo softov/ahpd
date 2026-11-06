@@ -11,8 +11,10 @@
  *
  * An icon is decoration, so nothing here refuses: an icon that cannot be read,
  * fetched or is too large is dropped and said in one line, and the plugin that
- * declared it still loads. The limit is 32 KB, for each file and each `data:`
- * URI, because every client receives the whole of what is kept.
+ * declared it still loads. The limit is 256 KB of image, for each file, each
+ * fetched body and each `data:` URI's bytes, VS Code's bound for an icon's
+ * image.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
  */
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -20,8 +22,21 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Icon } from '@ahpd/sdk';
 
-/** The most one icon may be, in bytes, whether it is a file, a `data:` URI or a fetched body. */
-export const ICON_LIMIT = 32 * 1024;
+/** The most one icon may be, in bytes of image, whether it is a file, a `data:` URI or a fetched body. */
+export const ICON_LIMIT = 256 * 1024;
+
+/**
+ * The bytes of image a `data:` URI holds: its payload decoded, base64 or
+ * percent-encoded, so a URI is held to the limit a file of the same image is.
+ */
+const dataBytes = (src: string): number => {
+  const comma = src.indexOf(',');
+  const payload = comma === -1 ? '' : src.slice(comma + 1);
+  const header = comma === -1 ? src : src.slice(0, comma);
+  if (/;base64$/i.test(header)) return Buffer.from(payload, 'base64').length;
+  try { return Buffer.byteLength(decodeURIComponent(payload), 'utf8'); }
+  catch { return Buffer.byteLength(payload, 'utf8'); }
+};
 
 /**
  * Where the brand marks the host ships are kept.
@@ -134,7 +149,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
      * A mark is a brand drawing the host ships beside this module, named as
      * `mark:<name>` rather than carried by the plugin, so one WhatsApp mark
      * serves every plugin that needs it. The name is a file name and never a
-     * path, and the file is kept under 32 KB like any other icon.
+     * path, and the file is held to the limit like any other icon.
      */
     if (src.startsWith('mark:')) {
       const name = src.slice('mark:'.length);
@@ -167,7 +182,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
       continue;
     }
     if (/^data:/i.test(src)) {
-      if (Buffer.byteLength(src, 'utf8') > ICON_LIMIT) {
+      if (dataBytes(src) > ICON_LIMIT) {
         problem(`${by}: an icon is a data: URI larger than ${ICON_LIMIT / 1024} KB`);
         continue;
       }
@@ -236,7 +251,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
 /**
  * Fetch one `https:` icon and turn it into the icon a client draws.
  *
- * The rules are a file's: a body over 32 KB, a type that is not an image and an
+ * The rules are a file's: a body over the limit, a type that is not an image and an
  * answer that fails all cost the icon and one line. A `contentType` the
  * manifest gives wins over the answer's, because the writer said what the body
  * is and the server may not.

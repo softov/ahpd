@@ -460,8 +460,8 @@ export interface Adapter {
    *
    * An `src` that is a path is relative to the package of the plugin that
    * registered the adapter, and the host reads the file and sends it as a
-   * `data:` URI, at most 32 KB. An `https:` URL or a `data:` URI is sent as it
-   * is.
+   * `data:` URI, at most 256 KB of image. An `https:` URL or a `data:` URI is
+   * sent as it is.
    */
   icons?: Icon[];
   /**

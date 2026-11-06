@@ -167,8 +167,8 @@ describe('ahpd.icons', () => {
     expect(problems[0]).toContain('could not be fetched: no route');
   });
 
-  it('drops a fetched icon over 32 KB with one line', async () => {
-    const fetcher: typeof fetch = async () => answer(Buffer.alloc(33 * 1024, 'a'), 'image/svg+xml');
+  it('drops a fetched icon over 256 KB with one line', async () => {
+    const fetcher: typeof fetch = async () => answer(Buffer.alloc(257 * 1024, 'a'), 'image/svg+xml');
     const dir = pkg('icons-url-big', { description: 'A large URL icon.', icons: [{ src: 'https://example.com/icon.svg' }] });
 
     const { loaded, problems } = await load([dir], fetcher);
@@ -176,7 +176,7 @@ describe('ahpd.icons', () => {
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.manifest?.icons).toEqual([]);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('larger than 32 KB');
+    expect(problems[0]).toContain('larger than 256 KB');
   });
 
   it('drops a fetched icon that is not an image with one line', async () => {
@@ -200,8 +200,24 @@ describe('ahpd.icons', () => {
     expect(loaded[0]?.manifest?.icons).toEqual([{ src: 'data:image/png;base64,AAAA', sizes: ['16x16'] }]);
   });
 
-  it('drops a data: URI over 32 KB with one line, and loads the plugin', async () => {
-    const src = `data:image/png;base64,${'A'.repeat(33 * 1024)}`;
+  /*
+   * A piece's logo is often 48 to 77 KB, and up to 256 KB of image is kept, as
+   * VS Code bounds an icon's image. The bound is on the image, so its base64
+   * text may be longer than 256 KB.
+   */
+  it('passes a data: URI of 200 KB of image through, longer than 256 KB as text', async () => {
+    const src = `data:image/png;base64,${Buffer.alloc(200 * 1024, 'a').toString('base64')}`;
+    expect(src.length).toBeGreaterThan(256 * 1024);
+    const dir = pkg('icons-logo', { description: 'A piece logo.', icons: [{ src }] });
+
+    const { loaded, problems } = await load([dir]);
+
+    expect(problems).toEqual([]);
+    expect(loaded[0]?.manifest?.icons).toEqual([{ src }]);
+  });
+
+  it('drops a data: URI over 256 KB of image with one line, and loads the plugin', async () => {
+    const src = `data:image/png;base64,${Buffer.alloc(257 * 1024, 'a').toString('base64')}`;
     const dir = pkg('icons-large-data', { description: 'A large data URI.', icons: [{ src }] });
 
     const { loaded, problems } = await load([dir]);
@@ -209,7 +225,7 @@ describe('ahpd.icons', () => {
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.manifest?.icons).toEqual([]);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('data: URI larger than 32 KB');
+    expect(problems[0]).toContain('data: URI larger than 256 KB');
   });
 
   it('drops a path outside the package with one line, and loads the plugin', async () => {
@@ -248,15 +264,15 @@ describe('ahpd.icons', () => {
     expect(problems[0]).toContain('could not be read');
   });
 
-  it('drops a file over 32 KB with one line, and loads the plugin', async () => {
-    write('icons-big/icon.svg', Buffer.alloc(33 * 1024, 'a'));
+  it('drops a file over 256 KB with one line, and loads the plugin', async () => {
+    write('icons-big/icon.svg', Buffer.alloc(257 * 1024, 'a'));
     const dir = pkg('icons-big', { description: 'A large icon.', icons: [{ src: './icon.svg' }] });
 
     const { loaded, problems } = await load([dir]);
 
     expect(loaded).toHaveLength(1);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('larger than 32 KB');
+    expect(problems[0]).toContain('larger than 256 KB');
   });
 
   it('drops an unknown extension with no content type, with one line', async () => {
