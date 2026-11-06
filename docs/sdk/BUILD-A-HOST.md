@@ -75,7 +75,7 @@ would fail part-way through instead.
 | `resources` | files a client may read, what `@` completes into, and the write half | no `resource*` command is served | `fileResources()` |
 | `terminals` | how a shell is opened | no terminal can be created | `shellTerminals()` |
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
-| `directories` | facts about a served directory - the branch it is on | sessions carry their project and nothing more | `gitBranches()` |
+| `directories` | facts about a served directory - the repository it is in and the branch it is on | sessions carry no project and no `_meta.git` | `gitBranches()` |
 | `github` | what GitHub knows about that branch - its pull request and the state of it | no row carries `_meta.github`, and no backend advertises a GitHub resource | `githubPullRequests()` |
 | `users` | who may sign in, and what a role may do | no sign-in resource is advertised, every gate the host has stays inert, and no `_meta['ahpd.owner']` on a row and no `_meta['ahpd.sender']` on a turn is sent | `fileUsers({ path })` |
 | `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `memoryAutomations()`, without a clock; the clock store is the daemon's |
@@ -150,7 +150,12 @@ the scope keeps no review. `gitChanges()` keeps none for the working tree.
 `meta(dir)` returns whatever this host can say about a directory, and
 `gitBranches()` returns `{ git: { branchName, ... } }` - which becomes
 `_meta.git` on every session row in that directory, under the reference host's
-field names. Cached per directory and re-read when a turn ends, so a host with
+field names. `project(dir)` is the session's `project`: `gitBranches()` answers
+the primary checkout of the repository the directory is in, named by its
+basename, and nothing outside git, as VS Code's agents name a session's project
+([copilotGitProject.ts#L18-L30](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30)).
+Read when a session is made in the directory, so the session is announced with
+its project, cached per directory and re-read when a turn ends, so a host with
 ninety-eight sessions in one repository asks git once.
 
 ### `github`

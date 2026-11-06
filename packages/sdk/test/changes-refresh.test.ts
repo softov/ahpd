@@ -1,10 +1,10 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { gitChanges } from '../src/sessions/changes.js';
@@ -970,6 +970,30 @@ it('announces the session\'s counts on the first subscribe in a directory outsid
     .find((one) => one.resource === 'ahp-session:/s');
   const held = rowsMoved(p, 'ahp-session:/s').reduce((row, changes) => ({ ...row, ...changes }), added ?? {});
   expect((held.changes as { files?: number } | undefined)?.files).toBe(1);
+});
+
+/*
+ * A session's project is read when it is made, as VS Code's host builds a new
+ * session's summary with the project its creation resolved: the primary
+ * checkout of the repository its folder is in, and none outside git.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10662-L10714
+ */
+it('names a session\'s project the repository its folder is in from its first snapshot, and none outside git', async () => {
+  const repo = realpathSync(onGitHub());
+  const inside = join(repo, 'src');
+  mkdirSync(inside);
+  const plain = elsewhere();
+  const home = elsewhere();
+  const host = createHost({ path: home, agents: [echo({ path: home })], directories: gitBranches() });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  const projectOf = async (channel: string, dir: string): Promise<unknown> => {
+    await client.handle({ method: 'createSession', params: { channel, provider: 'echo', workingDirectories: [uriOf(dir)] } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { project?: unknown } } };
+    return opened.snapshot.state.project;
+  };
+  expect(await projectOf(URI, inside)).toEqual({ uri: uriOf(repo), displayName: basename(repo) });
+  expect(await projectOf('ahp-session:/plain', plain)).toBeUndefined();
 });
 
 it('answers a subscribe in a directory that is not a repository, when its facts fail', async () => {

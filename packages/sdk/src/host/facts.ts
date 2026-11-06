@@ -336,21 +336,18 @@ export function createFacts(ctx: HostContext): Facts {
       return Object.keys(meta).length === 0 ? {} : { _meta: meta };
     }
     /*
-     * The project's name is the directory's own, not its path.
-     *
-     * A catalogue of sessions across several repositories is read by which
-     * repository each row is in, and every row spelling out
-     * `/home/somebody/work/…` differs only in the part that scrolls off. Done
-     * here rather than with `basename` because it is a string and this file
-     * is the protocol.
+     * The project, the repository the directory is in, as VS Code's agents
+     * name it: a worktree's session is in the repository it was cut from, and
+     * a folder outside git is in none. Anything past the path is the host's to
+     * be told, not this file's to go and find - `git` is a binary, and a host
+     * may be given none.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30
      */
-    const project = { uri: uriOf(dir), displayName: dir.split('/').filter(Boolean).pop() ?? dir };
-    // Anything past the path is the host's to be told, not this file's to go
-    // and find - `git` is a binary, and a host may be given none.
+    const project = options.directories?.project?.(dir);
     const told = metaOf(uri);
     const meta = { ...byAgent, ...told, ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
     return {
-      project,
+      ...(project === undefined ? {} : { project }),
       ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
       // Not `changes`: `SessionSummary` declares it and `SessionState` does
       // not, so it goes on the row rather than in both - which is the rule

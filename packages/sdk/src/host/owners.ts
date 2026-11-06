@@ -304,6 +304,15 @@ export function createOwners(ctx: HostContext): Owners {
     const mine_ = { ...mine.defaults, ...scoped.defaults, ...ctx.mineOf(config) };
     ctx.decided.set(uri, mine_);
     charge(uri, principal, typeof mine_.scope === 'string' ? mine_.scope : undefined);
+    /*
+     * The folder's project, read before the session is first described: it is
+     * in the summary the session is announced with, as VS Code's host builds a
+     * new session's summary with the project its creation resolved. The rest
+     * of the folder's facts are read when a turn ends.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10662-L10714
+     */
+    const facts = ctx.options.directories;
+    if (where !== undefined && facts?.refreshProject !== undefined && await facts.refreshProject(where).catch(() => false)) ctx.metaMoved(where);
   };
 
   return {

@@ -1,6 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ToolDefinition } from '@microsoft/agent-host-protocol';
+import type { ProjectInfo, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
@@ -39,11 +39,12 @@ import type { Catalogs } from '../i18n.js';
 /**
  * What a host can say about a directory beyond its path.
  *
- * Injected rather than built in. The interesting answers come from outside the
- * protocol - a branch is a `git` subprocess, and `git` is a binary that may
- * not be installed - and a host embedded in something that already knows them
- * should not have them read a second time. A host given none says only what a
- * path alone can tell it, which is the project's name.
+ * Injected rather than built in. The answers come from outside the protocol -
+ * a project and a branch are `git` subprocesses, and `git` is a binary that
+ * may not be installed - and a host embedded in something that already knows
+ * them should not have them read a second time. A host given none says
+ * nothing past the path: no project, as VS Code's agents report none where
+ * git cannot place a folder.
  */
 export interface DirectoryFacts {
   /**
@@ -57,6 +58,25 @@ export interface DirectoryFacts {
    * an implementation's own belongs under a namespace.
    */
   meta(dir: string): Record<string, unknown> | undefined;
+  /**
+   * The project a directory's sessions are in, as a session's `project`: the
+   * repository it is in, named as VS Code's agents name it, or nothing where
+   * there is none.
+   *
+   * Synchronous for the reason `meta` is, and read from what `refresh` or
+   * `refreshProject` found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30
+   */
+  project?(dir: string): ProjectInfo | undefined;
+  /**
+   * Read the project alone of a directory not read yet, answering whether it
+   * moved; one read already keeps its project until `refresh`.
+   *
+   * Asked when a session is made in a directory, so it is announced with its
+   * project, as VS Code's host resolves a new session's project and nothing
+   * else of its folder before announcing it.
+   */
+  refreshProject?(dir: string): Promise<boolean>;
   /**
    * Look again, answering whether anything actually moved.
    *
@@ -377,8 +397,8 @@ export interface HostOptions {
   /**
    * What this host can say about the directories it serves.
    *
-   * Left out, sessions carry their project and nothing more. `gitBranches()`
-   * is the one that ships with this package, and the daemon uses it.
+   * Left out, sessions carry no project and no git facts. `gitBranches()` is
+   * the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
   /**

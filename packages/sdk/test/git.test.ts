@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { gitBranches } from '../src/repo/git.js';
 
@@ -106,5 +107,32 @@ describe('what git can say about a served directory', () => {
     made.push(dir);
     await facts.refresh?.(dir);
     expect(facts.meta(dir)).toBeUndefined();
+    expect(facts.project?.(dir)).toBeUndefined();
+  });
+
+  /*
+   * VS Code's agents name a session's project after the primary checkout of
+   * the repository its folder is in, which a folder inside it and a linked
+   * worktree of it share, and a detached head is still in its repository.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30
+   */
+  it('names the project the repository\'s primary checkout, from a folder inside it and from a worktree of it, as VS Code\'s agents do', async () => {
+    const facts = gitBranches();
+    const dir = realpathSync(repository());
+    const run = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+    const inside = join(dir, 'src');
+    mkdirSync(inside);
+    const tree = `${dir}-feature`;
+    made.push(tree);
+    run('worktree', 'add', '-q', '-b', 'feature', tree);
+    const project = { uri: pathToFileURL(dir).href, displayName: basename(dir) };
+    for (const one of [dir, inside, tree]) {
+      expect(await facts.refresh?.(one)).toBe(true);
+      expect(facts.project?.(one)).toEqual(project);
+    }
+    run('checkout', '-q', '--detach');
+    await facts.refresh?.(dir);
+    expect(facts.meta(dir)).toBeUndefined();
+    expect(facts.project?.(dir)).toEqual(project);
   });
 });

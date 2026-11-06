@@ -104,8 +104,7 @@ describe('what GitHub knows about the branch', () => {
      *
      * `githubData` keyed by the folder, with `workingDirectoryKeys` naming
      * which working directory that folder is. The key is the working
-     * directory's own `file://` URI, which is what the summary's
-     * `project.uri` already spells it, so the key the host publishes and the
+     * directory's own `file://` URI, so the key the host publishes and the
      * string a client looks it up by are one string.
      */
     expect(state._meta?.workingDirectoryKeys).toEqual({ [HOME]: HOME });
