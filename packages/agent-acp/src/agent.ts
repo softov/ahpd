@@ -67,7 +67,9 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
    * has opened, and a session that hears its server's modes hands them here,
    * so the next session a client sets up offers what the server last named.
    * Kept in memory: the preset is the answer after a restart, and the server
-   * repeats its own list on every `session/new`.
+   * repeats its own list on every `session/new`. A record whose `modes` is
+   * `preset` keeps the preset's list, as VS Code's agents keep the modes they
+   * declare.
    */
   let lastModes = (options.modes ?? []).map((one) => ({ ...one }));
 
@@ -224,7 +226,7 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
       if (told.length > 0) {
         options.log?.(`${provider}: ${String(told.length)} instruction(s) for the model open the first prompt, because an ACP server keeps its own system prompt`);
       }
-      return acpSession(options, start, (heard) => { lastModes = heard; });
+      return acpSession(options, start, options.modesFrom === 'preset' ? undefined : (heard) => { lastModes = heard; });
     },
   };
 }

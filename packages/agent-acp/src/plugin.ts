@@ -132,6 +132,11 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     enum: ['sentence', 'log'],
     description: "Where the last of a failed server's stderr goes: sentence puts it under the failure in the error a client is shown, log leaves it to the daemon's log as VS Code's agents do. Each line is logged either way; defaults to sentence.",
   },
+  modes: {
+    type: 'string',
+    enum: ['refreshed', 'preset'],
+    description: "Where this agent's modes come from: refreshed lists the row's until a session hears its server's, then the modes the last session's server named; preset keeps the row's as declared, as VS Code's agents do. Defaults to refreshed.",
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -365,6 +370,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const honoursTrust = typeof config['honoursTrust'] === 'boolean' ? config['honoursTrust'] : row?.honoursTrust;
   const cutTurns = config['cutTurns'] === 'error' || config['cutTurns'] === 'complete' ? config['cutTurns'] : undefined;
   const stderrTail = config['stderrTail'] === 'sentence' || config['stderrTail'] === 'log' ? config['stderrTail'] : undefined;
+  const modesFrom = config['modes'] === 'refreshed' || config['modes'] === 'preset' ? config['modes'] : undefined;
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -388,6 +394,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(toolsChanged === undefined ? {} : { toolsChanged }),
     ...(cutTurns === undefined ? {} : { cutTurns }),
     ...(stderrTail === undefined ? {} : { stderrTail }),
+    ...(modesFrom === undefined ? {} : { modesFrom }),
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

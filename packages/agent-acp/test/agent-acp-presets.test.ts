@@ -434,3 +434,25 @@ it('refreshes a row\'s modes on the agent from the ones a session hears, and kee
   expect(approvalsOf()).toMatchObject({ enum: ['ask', 'code'], enumLabels: ['Ask', 'Code'] });
   expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
 });
+
+/*
+ * A record whose `modes` is `preset` keeps the row's modes on the agent, as
+ * VS Code's agents keep the modes they declare; the session still reports its
+ * server's as its own.
+ */
+it('keeps a row\'s modes on the agent when the record says modes preset', async () => {
+  const { kind } = await load();
+  const log = join(scratch('kept'), 'requests.jsonl');
+  const agent = kind.open(viewOf('codex', () => ({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { ACP_LOG: log },
+    modes: 'preset',
+  })));
+  const approvalsOf = (): Bag => ((agent.schema() as Bag)['properties'] as Bag)['permissionMode'] as Bag;
+  const session = await agent.create(startOf('kept'));
+  started.push(session);
+
+  expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
+  expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
+});

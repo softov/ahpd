@@ -172,6 +172,17 @@ export interface AcpOptions {
    */
   stderrTail?: 'sentence' | 'log';
   /**
+   * Where the agent's modes come from: the record's `modes`.
+   *
+   * `refreshed`, the default, lists the preset's modes until a session hears
+   * its server's, then the modes the last session's server named (Softov
+   * 2026-10-30: "modes in each preset, refresh from the last session modes");
+   * `preset` keeps the modes as the preset declares them, as VS Code's agents
+   * declare theirs. Each session reports its server's modes as its own either
+   * way.
+   */
+  modesFrom?: 'refreshed' | 'preset';
+  /**
    * Where a session says what it left out or had to invent.
    *
    * A server left out of its MCP list, and a `tools/call` the agent reported no
