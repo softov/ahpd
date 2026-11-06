@@ -404,6 +404,9 @@ it('raises one entry for a call a client runs, and removes it when the client an
     // The name the client announced it under, not the `probe__openFile` the
     // model was offered: that is the name a failure of it is reported under.
     toolName: 'openFile',
+    // Drawn as the chat's row draws the call, by the title it was offered under.
+    displayName: 'Open a file',
+    invocationMessage: 'Open a file',
     status: 'running',
     contributor: { kind: 'client', clientId: 'probe' },
   });

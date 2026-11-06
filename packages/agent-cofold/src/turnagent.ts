@@ -246,19 +246,22 @@ export const createTurnAgent = (
    *
    * The tool is named as the client announced it - `openFile`, not the
    * `probe__openFile` the model was offered - because that is the name its
-   * failure is reported under. Its row is titled by that name: a subject is
-   * the run's own tool declaring what it acts on, and a client's tool is
-   * announced to this host without one.
+   * failure is reported under, and the entry is drawn as the chat's row draws
+   * the call: by the title the tool was offered under, else that name. Its
+   * line is that too: a subject is the run's own tool declaring what it acts
+   * on, and a client's tool is announced to this host without one.
    */
   const openedCall = (call: ClientToolCall): void => {
+    const announced = bareName(call.name, call.contributor);
+    const shown = ctx.offered.find((one) => one.definition.name === call.name)?.definition.title ?? announced;
     calls.open({
       turnId: String(ctx.active?.id ?? ''),
       owner: call.contributor,
       toolCall: {
         toolCallId: call.callId,
-        toolName: bareName(call.name, call.contributor),
-        displayName: call.name,
-        invocationMessage: describe(call.name),
+        toolName: announced,
+        displayName: shown,
+        invocationMessage: describe(shown),
         confirmed: 'not-needed',
         toolInput: JSON.stringify(call.input),
       },
