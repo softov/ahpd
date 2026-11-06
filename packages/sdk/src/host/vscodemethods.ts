@@ -50,6 +50,21 @@ const CONTAINER_TAIL = 24;
 const DEV_CONTAINER_SOURCE = 'devcontainer://';
 
 /**
+ * A dev container's folder as a path of the platform the host runs on. On
+ * Windows a host URI's path, `/c:/work`, names the file it is the path of,
+ * and every separator is a backslash, as VS Code's protocol reads one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L26-L34
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/uri.ts#L636-L660
+ */
+export const normalizeDevContainerWorkspaceFolder = (workspaceFolder: string, platform: NodeJS.Platform): string => {
+  if (platform !== 'win32') return workspaceFolder;
+  const letter = workspaceFolder.charCodeAt(1);
+  const drive = workspaceFolder.startsWith('/') && !workspaceFolder.startsWith('//') && workspaceFolder.charAt(2) === ':'
+    && ((letter >= 65 && letter <= 90) || (letter >= 97 && letter <= 122));
+  return (drive ? workspaceFolder.slice(1) : workspaceFolder).replaceAll('/', '\\');
+};
+
+/**
  * The methods the reference window asks of its own host, and the diagnostics
  * it asks the process about.
  *
@@ -146,7 +161,10 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
   };
 
   /**
-   * The other two strings a `connect` carries, checked with the id.
+   * The other two strings a `connect` carries, checked with the id: an
+   * absolute folder on this host and a name, refused in one sentence, as
+   * VS Code's protocol checks a connect.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L88-L95
    *
    * Whether the folder exists and has a container definition is the
    * launcher's to answer, because that is a question about a filesystem.
@@ -155,13 +173,10 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    */
   const containerAsk = (params: Record<string, unknown>): ContainerConnect => {
     const id = connectionIdOf(params);
-    const folder = typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '';
-    if (folder.trim() === '' || folder.includes('\0')) {
-      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be a path on this host');
-    }
+    const folder = normalizeDevContainerWorkspaceFolder(typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '', process.platform);
     const name = typeof params.name === 'string' ? params.name : '';
-    if (name.trim() === '' || name.includes('\0')) {
-      throw new RpcError(INVALID_PARAMS, 'name must be non-empty');
+    if (!isAbsolute(folder) || folder.includes('\0') || name.trim() === '' || name.includes('\0')) {
+      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be an absolute host path and name must be non-empty');
     }
     return { connectionId: id, workspaceFolder: folder, name };
   };
@@ -175,21 +190,20 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
   const namedContainer = (params: Record<string, unknown>): string => connectionIdOf(params);
 
   /**
-   * The folder a `stop` or a `remove` names.
+   * The folder a `stop` or a `remove` names: an absolute folder on this host,
+   * as VS Code's protocol checks one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L139-L149
    *
-   * One string, and it is a path on this host: the reference sends
-   * `{ workspaceFolder }` for both, and the folder is the whole of what a dev
-   * container is - its `devcontainer.json` is the definition and the machine is
-   * that folder's. A relative path is refused rather than resolved against this
-   * process's own working directory, which is not a folder a client chose.
+   * The reference sends `{ workspaceFolder }` for both, and the folder is the
+   * whole of what a dev container is: its `devcontainer.json` is the
+   * definition and the machine is that folder's. A relative path is refused:
+   * the folder it reaches depends on this process's working directory, which
+   * no client chose.
    */
   const devFolder = (params: Record<string, unknown>): string => {
-    const folder = typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '';
-    if (folder.trim() === '' || folder.includes('\0')) {
-      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be a path on this host');
-    }
-    if (!isAbsolute(folder)) {
-      throw new RpcError(INVALID_PARAMS, `workspaceFolder must be an absolute path, and ${folder} is not one`);
+    const folder = normalizeDevContainerWorkspaceFolder(typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '', process.platform);
+    if (!isAbsolute(folder) || folder.includes('\0')) {
+      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be an absolute host path');
     }
     return folder;
   };

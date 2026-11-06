@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { holds } from '../src/access/users.js';
+import { normalizeDevContainerWorkspaceFolder } from '../src/host/vscodemethods.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ContainerPort, ContainerSink } from '../src/types/containers.js';
 import type { HostOptions } from '../src/types/host.js';
@@ -301,18 +302,34 @@ it('stops a connection\'s containers when it goes', async () => {
   expect(fake.stopped).toEqual(['a']);
 });
 
-it('checks the three strings a connect carries', async () => {
+it('checks the three strings a connect carries, in VS Code\'s words', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
   for (const bad of [
     { connectionId: '', workspaceFolder: '/work', name: 'Box' },
     { connectionId: 'a'.repeat(257), workspaceFolder: '/work', name: 'Box' },
+  ]) {
+    expect(await call(client, 'vscode/devContainers/connect', bad))
+      .toMatchObject({ code: -32602, message: 'connectionId must be a non-empty identifier' });
+  }
+  for (const bad of [
     { connectionId: 'a', workspaceFolder: '', name: 'Box' },
+    // A relative folder is no folder a client chose: the one it reaches
+    // depends on this process's working directory.
+    { connectionId: 'a', workspaceFolder: 'work/one', name: 'Box' },
     { connectionId: 'a', workspaceFolder: '/work', name: '  ' },
   ]) {
-    expect(await call(client, 'vscode/devContainers/connect', bad)).toMatchObject({ code: -32602 });
+    expect(await call(client, 'vscode/devContainers/connect', bad))
+      .toMatchObject({ code: -32602, message: 'workspaceFolder must be an absolute host path and name must be non-empty' });
   }
   expect(fake.opened).toBe(0);
+});
+
+it('reads a dev container folder as VS Code does on Windows, a host URI\'s path as the file it names', () => {
+  expect(normalizeDevContainerWorkspaceFolder('/c:/work/one', 'win32')).toBe('c:\\work\\one');
+  expect(normalizeDevContainerWorkspaceFolder('C:/work/one', 'win32')).toBe('C:\\work\\one');
+  expect(normalizeDevContainerWorkspaceFolder('//server/share/one', 'win32')).toBe('\\\\server\\share\\one');
+  expect(normalizeDevContainerWorkspaceFolder('/c:/work/one', 'linux')).toBe('/c:/work/one');
 });
 
 /*
@@ -325,22 +342,23 @@ it('checks the three strings a connect carries', async () => {
  * helpers below exist on the host rather than on one connection.
  */
 
-it('checks the folder a stop or a remove names', async () => {
+it('checks the folder a stop or a remove names, in VS Code\'s words', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
+  const refused = { code: -32602, message: 'workspaceFolder must be an absolute host path' };
   for (const bad of [
     {},
     { workspaceFolder: '' },
     { workspaceFolder: '   ' },
-    // A relative path is not a folder a client chose: resolving it against
-    // this process's own working directory would stop something nobody asked
-    // about.
+    // A relative path is no folder a client chose: the one it reaches
+    // depends on this process's working directory, and stopping it would
+    // stop something nobody asked about.
     { workspaceFolder: 'work/one' },
     { workspaceFolder: 7 },
     { workspaceFolder: '/work\0/one' },
   ]) {
-    expect(await call(client, 'vscode/devContainers/stop', bad)).toMatchObject({ code: -32602 });
-    expect(await call(client, 'vscode/devContainers/remove', bad)).toMatchObject({ code: -32602 });
+    expect(await call(client, 'vscode/devContainers/stop', bad)).toMatchObject(refused);
+    expect(await call(client, 'vscode/devContainers/remove', bad)).toMatchObject(refused);
   }
   expect(fake.halted).toEqual([]);
   expect(fake.gone).toEqual([]);
