@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { shellTerminals } from '../src/machines/terminals.js';
+import { hostTools } from '../src/tools/index.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Owners } from '../src/host/owners.js';
 import type { Agent } from '../src/types/agent.js';
@@ -132,7 +133,7 @@ async function signedIn(over: Partial<HostOptions> = {}, provider = 'echo') {
   const dispatch = (action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chat, action } });
   /** What the two maps hold, by id. */
   const held = () => ({ senders: [...owners.senders.keys()], sentBy: [...owners.sentBy.keys()] });
-  return { client, peer: p, chat, dispatch, held };
+  return { host, client, peer: p, chat, dispatch, held };
 }
 
 const EMPTY = { senders: [], sentBy: [] };
@@ -175,6 +176,53 @@ describe('a turn lets go of its sender', () => {
     expect(records.map((one) => [one.turn, one.owner])).toEqual([['t1', 'user:ana'], [started[1]?.turnId, 'user:ana']]);
     const opened = await client.handle({ method: 'subscribe', params: { channel: chat } });
     expect(JSON.stringify([p.notes, opened])).not.toContain('ahpd.sender');
+  });
+
+  /*
+   * A chat a tool opens with a prompt runs its first turn for whoever sent the
+   * calling turn, as VS Code's host runs a delegated prompt with the calling
+   * chat's credentials.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1373
+   */
+  it('names the calling turn\'s sender on the first turn of a chat a tool opens', async () => {
+    const records: UsageEntry[] = [];
+    const usage = {
+      record: async (entry: UsageEntry) => { records.push(entry); },
+      total: async () => ({}),
+      pools: async () => [],
+      records: async () => [],
+      groups: async () => [],
+    } as Usage;
+    // The calling turn opens the chat through the tool while it runs, as a
+    // model's call is made, and each turn says what it used.
+    const inner = echo({ path: DIR, pace: 30 });
+    const opener: Agent = {
+      ...inner,
+      create: (start) => {
+        const session = inner.create(start);
+        return {
+          ...session,
+          sendMessage: (turnId, text, from, attachments, options) => {
+            start.emit('chat', { type: 'chat/usage', turnId, usage: { inputTokens: 3, outputTokens: 5 } });
+            const going = session.sendMessage(turnId, text, from, attachments, options);
+            if (text === 'open one') {
+              void wait(10).then(() => start.tools?.find((one) => one.definition.name === 'create_chat')?.run?.({ prompt: 'from the tool' }));
+            }
+            return going;
+          },
+        };
+      },
+    };
+    // Ana's session, and Bo sending the turn that calls the tool in it.
+    const { host, chat } = await signedIn({ usage, agents: [opener], tools: hostTools() });
+    const bo = host.accept(peer(), { ...ANA, id: 'bo' });
+    await bo.handle({ method: 'initialize', params: { clientId: 'bo', protocolVersions: ['0.9.0'] } });
+    await bo.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open one' } } },
+    });
+    for (let i = 0; i < 80 && records.length < 2; i++) await wait(25);
+    expect(records.map((one) => one.owner)).toEqual(['user:bo', 'user:bo']);
   });
 
   it('when the turn ends with chat/error', async () => {

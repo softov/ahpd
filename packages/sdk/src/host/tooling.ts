@@ -1752,7 +1752,11 @@ export function createTooling(ctx: HostContext): Tooling {
     summaryMoved(at);
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
-      remember(chatUri, firstTurn);
+      // Written down as the calling turn's, so it runs for whoever sent that
+      // turn, as VS Code's host runs a delegated prompt with the calling
+      // chat's credentials.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1373
+      if (calling !== undefined) remember(calling.chatUri, firstTurn);
       void ctx.startTurn(chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
     }
     if (tree !== undefined) countUp(tree, 'chats');
