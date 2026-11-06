@@ -436,7 +436,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     chosen?: string,
   ) => Promise<{ schema: Bag; defaults: Record<string, unknown>; repository?: string }>;
   /** The host-owned config keys a client sent, as this host reads them. */
-  mineOf: (config: Record<string, unknown>) => Record<string, unknown>;
+  hostOwnedSessionConfig: (config: Record<string, unknown>) => Record<string, unknown>;
   /** A token any connected client authenticated for a resource, unexpired, for the host's own work. */
   getAuthToken: (resource: string) => string | undefined;
   /**

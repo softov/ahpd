@@ -24,7 +24,7 @@ export interface SessionConfig {
   ): Promise<Bag>;
   contributedDefaults(): Record<string, unknown>;
   storedConfig(owner: Agent, id: string): Record<string, unknown>;
-  mineOf(config: Record<string, unknown>): Record<string, unknown>;
+  hostOwnedSessionConfig(config: Record<string, unknown>): Record<string, unknown>;
 }
 
 /**
@@ -584,8 +584,13 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     typeof value === 'object' && value !== null && !Array.isArray(value)
     && Object.values(value).every((one) => typeof one === 'string');
 
-  /** What this host answered, in the shape it answered it, for saying back on the session. */
-  const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
+  /**
+   * The host-owned keys of a client's config, each in the shape this host
+   * accepts it, for saying back on the session: the keys VS Code's host owns
+   * and keeps from the provider's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   */
+  const hostOwnedSessionConfig = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
     Object.entries(config)
       // A string, the strings of a list for the two pattern keys, or the alias
       // map `connectors` holds, and a key this host takes, as it was sent: an
@@ -600,6 +605,6 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
 
   return {
     isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, seeded,
-    contributedDefaults, storedConfig, mineOf,
+    contributedDefaults, storedConfig, hostOwnedSessionConfig,
   };
 }

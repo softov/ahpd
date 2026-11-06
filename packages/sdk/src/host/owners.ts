@@ -303,7 +303,7 @@ export function createOwners(ctx: HostContext): Owners {
       ? mine.schema.properties
       : {}) as Bag;
     ctx.offered.set(uri, { ...mine.schema, properties: { ...properties, ...scoped.properties } });
-    const mine_ = { ...mine.defaults, ...scoped.defaults, ...ctx.mineOf(config) };
+    const mine_ = { ...mine.defaults, ...scoped.defaults, ...ctx.hostOwnedSessionConfig(config) };
     ctx.decided.set(uri, mine_);
     charge(uri, principal, typeof mine_.scope === 'string' ? mine_.scope : undefined);
     /*
