@@ -50,7 +50,7 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
     _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0, currency: 'USD', input: 0, output: 0 } },
   });
   expect(turns?.[1]?.responseParts).toEqual([
-    { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true },
+    { kind: 'error', error: { errorType: 'error', message: '429 rate limited' }, resumable: true },
   ]);
 
   // The same turn run live, as pi raises it, reads the same.

@@ -1170,12 +1170,45 @@ const failedTurn = async () => {
   return one;
 };
 
+/*
+ * Typed by pi's own stop reason, as VS Code's agents type a runtime's failure
+ * by the runtime's own code.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
+ */
 it('marks a failed model call resumable, on chat/error and on the turn', async () => {
   const { session, last } = await failedTurn();
   const part = last('chat/error')?.part as Bag;
-  expect(part).toEqual({ kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true });
+  expect(part).toEqual({ kind: 'error', error: { errorType: 'error', message: '429 rate limited' }, resumable: true });
   const turn = (session.chatState().turns as Bag[])[0]!;
   expect((turn.responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+/*
+ * A send that fails before pi has the prompt is typed by its stage, VS Code's
+ * `sendFailed`, and a record that cannot be used is one: the turn is opened and
+ * ended with the sentence cofold's turn ends with, as VS Code's host ends a
+ * turn it cannot send with `chat/error`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+ */
+it('types a send that fails before pi has the prompt by its stage', async () => {
+  const failing: OpenPi = async () => { throw new Error('pi would not open'); };
+  const { session, last } = opened({}, {}, failing);
+  session.sendMessage('t1', 'hello');
+  await settled();
+  expect(last('chat/error')?.part).toEqual({ kind: 'error', error: { errorType: 'sendFailed', message: 'pi would not open' } });
+});
+
+it('ends a turn whose record cannot be used with the record\'s sentence, typed by its stage', async () => {
+  const { session, last } = opened({}, {
+    provider: 'pi-record',
+    recordOf: () => { throw new Error('a key the vault would not read back'); },
+  });
+  expect(() => { session.sendMessage('t1', 'hello'); }).not.toThrow();
+  await settled();
+  expect(last('chat/error')).toMatchObject({
+    turnId: 't1',
+    part: { kind: 'error', error: { errorType: 'sendFailed', message: 'pi-record: the record cannot be used: a key the vault would not read back' } },
+  });
 });
 
 it('does not mark a turn resumable when pi failed before it had the prompt', async () => {

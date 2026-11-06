@@ -735,8 +735,15 @@ export function piSession(
    * `resumable` marks an error a client may resume: a failed model call, whose
    * reply `resume` can take out of the model's context. A failure before pi had
    * the prompt has no such reply, and is not one.
+   *
+   * `errorType` is what the error is typed by: pi's own stop reason for a run
+   * pi ended in error, as VS Code's agents type a runtime's failure by the
+   * runtime's own code, and `sendFailed`, the stage VS Code's host names, for a
+   * send that failed before pi had the prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
    */
-  const finish = (ending: 'complete' | 'cancelled' | 'error', why?: string, resumable = false): void => {
+  const finish = (ending: 'complete' | 'cancelled' | 'error', why?: string, resumable = false, errorType = 'sendFailed'): void => {
     const ended = active;
     if (ended === undefined) return;
     const turnId = String(ended.id);
@@ -783,7 +790,7 @@ export function piSession(
       if (!gone) error = message;
       const part: Bag = {
         kind: 'error',
-        error: { errorType: 'turnFailed', message },
+        error: { errorType, message },
         ...(resumable ? { resumable: true } : {}),
       };
       // On the turn as well, so a snapshot holds what a client that watched the
@@ -835,7 +842,7 @@ export function piSession(
       emit('chat', { type: 'chat/usage', turnId: String(active.id), usage });
     }
     if (cancelled) finish('cancelled');
-    else if (answered?.stopReason === 'error') finish('error', answered.errorMessage, true);
+    else if (answered?.stopReason === 'error') finish('error', answered.errorMessage, true, answered.stopReason);
     else finish('complete');
   };
 
@@ -1156,9 +1163,21 @@ export function piSession(
     answered = undefined;
     usage = undefined;
     const startedAt = new Date().toISOString();
-    // The record as it is now: what this turn runs on is the record's, and the
-    // turn before's options are not what a person who just edited it asked for.
-    refreshOptions();
+    /*
+     * The record as it is now: what this turn runs on is the record's, and the
+     * turn before's options are not what a person who just edited it asked for.
+     * A record that can no longer be used is the turn's failure, said once the
+     * turn is open, in the sentence cofold's turn ends with, as VS Code's host
+     * ends a turn it cannot send with `chat/error`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+     */
+    let unusable: string | undefined;
+    try {
+      refreshOptions();
+    }
+    catch (why) {
+      unusable = `${provider}: the record cannot be used: ${reason(why)}`;
+    }
     /*
      * Whether the record's model changed since the turn before, which is when
      * pi is moved to it. A record names the model the session runs on when
@@ -1209,6 +1228,10 @@ export function piSession(
     if (record !== undefined) record.modifiedAt = modified;
 
     titled(text);
+    if (unusable !== undefined) {
+      finish('error', unusable);
+      return;
+    }
     activity.say('Thinking');
     // What the host has to say on this turn, asked now that the turn exists.
     const told = (turnOptions?.instructions?.() ?? []).filter((one) => one.trim() !== '');

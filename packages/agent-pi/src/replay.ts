@@ -123,8 +123,8 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         ? 'pi did not answer'
         : answered.errorMessage;
       // The part `chat/error` carries, which a client that watched the turn
-      // end holds on it.
-      turn.parts.push({ kind: 'error', error: { errorType: 'turnFailed', message } });
+      // end holds on it, typed by pi's own stop reason as the live turn is.
+      turn.parts.push({ kind: 'error', error: { errorType: answered?.stopReason ?? 'error', message } });
     }
     turn.state = failed ? 'error' : answered?.stopReason === 'aborted' ? 'cancelled' : 'complete';
     /*
