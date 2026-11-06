@@ -1312,7 +1312,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
             // turn, which the backend never saw, it is the nearest earlier
             // turn's, as the reference forks at a local turn.
             // https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L7183-L7195
-            const concrete = ctx.concreteTurnOf(uri, from.chat.chatUri, all as Bag[], at);
+            const concrete = ctx.resolveConcreteTurnId(uri, from.chat.chatUri, all as Bag[], at);
             const point = concrete === undefined ? undefined : from.chat.forkPoint?.(concrete);
             const started = from.chat.agentId();
             /*
@@ -1412,7 +1412,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * the reference records the forked ones before it creates the chat.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L9828-L9838
        */
-      if (fromChat !== undefined && made?.seed !== undefined) ctx.copyLocalTurns(uri, fromChat, chatUri, made.seed);
+      if (fromChat !== undefined && made?.seed !== undefined) ctx.persistForkedLocalTurns(uri, fromChat, chatUri, made.seed);
       const agent = fromChat === undefined ? held.agent : chatAgent(held, fromChat);
       const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
       // Read until something is said in it, written before its state opens.

@@ -1531,7 +1531,7 @@ export function createSpawn(ctx: HostContext): Spawn {
            * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L229-L247
            */
           if (moved !== undefined && command) {
-            ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
+            ctx.recordLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
           }
           ctx.commandTurns.delete(commandKey);
           if (moved !== undefined && !command) {

@@ -2171,7 +2171,7 @@ export function chatAction(
         const own = session.agentId() ?? ctx.recordedChat(idOf(uri), chatUri)?.backendId;
         dispatch(chatUri, action, origin);
         ctx.forgetTurnOutputs(uri, chatUri, all.slice(kept.length) as Bag[]);
-        ctx.forgetLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
+        ctx.deleteLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
         const work = (async () => {
           await session.close('stopping');
           const failed = own === undefined || own === '' ? undefined : await ctx.deletedChat(own, agent, ctx.dirOf(uri));
@@ -2215,7 +2215,7 @@ export function chatAction(
       const uncut = (dropped: Bag[], why: string): void => {
         dispatch(session.chatUri, action, origin);
         ctx.forgetTurnOutputs(session.uri, session.chatUri, dropped);
-        ctx.forgetLocalTurns(session.uri, session.chatUri, dropped);
+        ctx.deleteLocalTurns(session.uri, session.chatUri, dropped);
         log(`${session.chatUri} keeps the history after ${turnId ?? 'its start'}: ${why}`);
       };
       // Every turn: the action's `turnId` is optional, and its absence means
@@ -2248,7 +2248,7 @@ export function chatAction(
        * turn there; the chat keeps the local turns up to the one named.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentSideEffects.ts#L1960-L1969
        */
-      const concrete = ctx.concreteTurnOf(session.uri, session.chatUri, all as Bag[], at);
+      const concrete = ctx.resolveConcreteTurnId(session.uri, session.chatUri, all as Bag[], at);
       if (concrete === undefined) {
         startOver(all.slice(0, at + 1) as Bag[]);
         break;
@@ -2281,7 +2281,7 @@ export function chatAction(
       // And the local turns among them, as the reference deletes the ones a
       // truncation drops.
       // https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentSideEffects.ts#L1977-L1981
-      ctx.forgetLocalTurns(session.uri, session.chatUri, all.slice(at + 1) as Bag[]);
+      ctx.deleteLocalTurns(session.uri, session.chatUri, all.slice(at + 1) as Bag[]);
       // A stop, not a removal: a session starts again right below on this
       // same id, and the backend it resumes is the one just stopped.
       session.close('stopping');

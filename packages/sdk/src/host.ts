@@ -1049,7 +1049,7 @@ export function createHost(options: HostOptions): Host {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L61
      */
     if (ending && action.type === 'chat/error' && bag(action.part).resumable !== true && !ctx.subagents.has(channel)) {
-      ctx.keepFailedTurn(sessionFor(channel), channel, (states.get(channel)?.state.turns ?? []) as Bag[], String(action.turnId ?? ''));
+      ctx.recordFailedTurn(sessionFor(channel), channel, (states.get(channel)?.state.turns ?? []) as Bag[], String(action.turnId ?? ''));
     }
     // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
     if (ending) ctx.turnEnded(channel, action);

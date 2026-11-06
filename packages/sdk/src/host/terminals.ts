@@ -315,7 +315,7 @@ export function createTerminals(ctx: HostContext): Terminals {
       say({ type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: callTimes(began, ended) });
       say({ type: 'chat/turnComplete', turnId, duration: Math.max(0, ended - began) });
       if (road !== undefined) return;
-      ctx.keepLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
+      ctx.recordLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
       ctx.forgetSender(turnId);
     });
   };

@@ -1169,7 +1169,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     for (const [id, folder] of kept.recordedFolders?.() ?? []) {
       if (claimed.has(id) || offered.has(id) || kept.nested?.(id) !== undefined) continue;
       if (found.some((one) => idFor(one.resource) === id)) continue;
-      const turns = ctx.keptTurnsOf(id);
+      const turns = ctx.loadSessionLocalTurns(id);
       if (turns.length === 0) continue;
       const recorded = kept.provider(id);
       const agent = recorded === undefined ? undefined : agents.get(recorded);
@@ -1225,7 +1225,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const dir_ = named === undefined ? undefined : ctx.dirOf(named);
       if (named === undefined || dir_ === undefined || !read.has(dir_)) return false;
       // A session whose turns this host keeps is one it can open from them.
-      if (ctx.keptTurnsOf(id).length > 0) return false;
+      if (ctx.loadSessionLocalTurns(id).length > 0) return false;
       /*
        * A session about to be forgotten, and the config it is being forgotten
        * with, kept for after the prune.
