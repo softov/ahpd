@@ -89,6 +89,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
     appliedAgent: undefined as string | undefined,
     sdkSessionId: options.resume as string | undefined,
+    unwritten: false,
     init: undefined as Bag | undefined,
     gone: undefined as string | undefined,
     customizations: [] as Bag[],

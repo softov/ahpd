@@ -196,6 +196,27 @@ export const stopEnds: Declaration = {
 };
 
 /**
+ * How the agent knows the CLI wrote a conversation under the id a session is
+ * asked to resume, which decides whether the session resumes it or starts a
+ * conversation under that id.
+ *
+ * `listing`, the default, reads the transcript as the SDK's own listing reads
+ * it, as the session is built, so a transcript a CLI was closed in before it
+ * wrote its prompt's entry is none: the CLI's resume finds no conversation in
+ * it. `getSessionInfo` asks the SDK as the first CLI starts, as VS Code's Claude
+ * asks before it materializes a conversation.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+ */
+export const writtenBy: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['listing', 'getSessionInfo'],
+    description: "How a conversation is known written under the id a session resumes: listing reads the transcript as the SDK's listing reads it; getSessionInfo asks the SDK, as VS Code does. listing by default.",
+  },
+  default: 'listing',
+};
+
+/**
  * The voice the CLI answers in.
  *
  * The one option here the CLI takes live rather than at startup: it is in the
@@ -310,7 +331,7 @@ export const extraArgs: Declaration = {
 
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
-  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk,
+  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, writtenBy,
   taskOutputFirstWaitMs, taskOutputLongestWaitMs, outputStyle, env, logins, extraArgs,
 };
 

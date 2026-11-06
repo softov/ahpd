@@ -210,7 +210,7 @@ export function createLogins(ctx: SessionContext): Logins {
       const at = ctx.ends.get(String(turn.id));
       return at === undefined ? undefined : { at };
     }
-    if (ctx.options.resume !== undefined || ctx.options.spawn !== undefined) return undefined;
+    if ((ctx.options.resume !== undefined && !ctx.unwritten) || ctx.options.spawn !== undefined) return undefined;
     return { over: true };
   };
 

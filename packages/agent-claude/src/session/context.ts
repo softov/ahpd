@@ -355,6 +355,13 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * the row in memory are one session.
    */
   sdkSessionId: string | undefined;
+  /**
+   * Whether the SDK said it holds no conversation under the id this session
+   * was asked to resume, which the first CLI's start asks where the record's
+   * `writtenBy` is `getSessionInfo`: such a session starts a conversation
+   * under that id instead.
+   */
+  unwritten: boolean;
   /** The CLI's `init` frame, the SDK's `system`/`init` message, once it has answered with one. */
   init: Bag | undefined;
   /**

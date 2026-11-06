@@ -71,6 +71,7 @@ An agent is a record on `x-ahpd-agents`: `{ id, engine, owner, name, description
 | `taskOutputFirstWaitMs` | `500` | The first wait between the reads that follow a background shell's output, in milliseconds, as VS Code's output monitor waits |
 | `taskOutputLongestWaitMs` | `10000` | The longest wait between those reads, in milliseconds, each wait twice the last until it |
 | `stopEnds` | `turn` | What a stop ends: `turn` interrupts the turn through the SDK and keeps the CLI, ending only the workers the stopped turn spawned; `query` aborts the query as VS Code's agent does, its workers and tasks with it |
+| `writtenBy` | `listing` | How a conversation is known written under the id a session resumes: `listing` reads the transcript as the SDK's own listing reads it, so one a CLI was closed in before it wrote its prompt's entry starts over under its id; `getSessionInfo` asks the SDK as the first CLI starts, as VS Code's agent does, and resumes what the SDK answers |
 
 `extraArgs` is host-only: a team's or a person's record that sets one is refused, because an argument is where a command would come from. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in `env` are the engine's key variables, so any owner may set them; every other `env` variable is the host's alone, because a free environment can run a program.
 

@@ -677,10 +677,13 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * conversation instead, on a clean transcript (`namedUnder`): the
        * reference resumes only what the SDK holds and starts the rest under
        * their own ids. A session in a machine keeps its files there, so what it
-       * asks for is resumed as it is.
+       * asks for is resumed as it is. A record whose `writtenBy` is
+       * `getSessionInfo` leaves the question to the first CLI's start, which
+       * asks the SDK as VS Code's Claude does before it materializes.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1728-L1744
        */
-      const resumed = start.resume !== undefined && (inside !== undefined || written(start.resume, cwd))
+      const asked = (options.presetOf?.() ?? options.preset ?? {})['writtenBy'] === 'getSessionInfo';
+      const resumed = start.resume !== undefined && (inside !== undefined || asked || written(start.resume, cwd))
         ? start.resume
         : undefined;
       // The new conversation's name: the chat's own, or else the id it was asked to resume.

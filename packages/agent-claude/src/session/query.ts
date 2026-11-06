@@ -1,4 +1,4 @@
-import { startup } from '@anthropic-ai/claude-agent-sdk';
+import { getSessionInfo, startup } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, mergeLogicalTurnUsage, reason } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, Options, query, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
@@ -566,8 +566,8 @@ export function createQuery(ctx: SessionContext): Query {
        * one written by two CLIs, which is what a peer chat is for.
        */
       ...(first
-        ? (ctx.options.resume === undefined
-          ? namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri))
+        ? (ctx.options.resume === undefined || ctx.unwritten
+          ? namedUnder(ctx.options.chatId ?? (ctx.unwritten ? ctx.options.resume : undefined) ?? idOf(ctx.options.uri))
           : {
             // Resumed, not replayed: the agent picks up the context it built -
             // the files it read, the decisions it made - rather than being
@@ -661,6 +661,18 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
     ctx.gone = undefined;
+    /*
+     * Whether the conversation asked for is written, asked of the SDK as the
+     * first CLI starts where the record's `writtenBy` says so, as VS Code's
+     * Claude asks `getSessionInfo` before it materializes one; nothing written
+     * starts a conversation under that id.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+     */
+    if (first && ctx.options.resume !== undefined && ctx.options.spawn === undefined && ctx.values['writtenBy'] === 'getSessionInfo') {
+      ctx.unwritten = (await getSessionInfo(ctx.options.resume)) === undefined;
+      // Nothing is written under any name until the CLI says its own.
+      if (ctx.unwritten) ctx.sdkSessionId = undefined;
+    }
     const options = optionsFor(agent, first, cut);
     /*
      * A CLI named under an id starts on a clean transcript, cleared once the

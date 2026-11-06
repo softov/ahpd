@@ -19,6 +19,11 @@ import { afterAll, expect, it, vi } from 'vitest';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  // The SDK's read of one session, which answers the ids a case says it holds.
+  getSessionInfo: async (id: string) => {
+    sdk.asked.push(id);
+    return sdk.held.includes(id) ? { sessionId: id } : undefined;
+  },
   // The SDK's delete, as it deletes: the transcript of the id, which this
   // case's every project holds at most one of.
   deleteSession: async (id: string, options?: { dir?: string }) => {
@@ -56,6 +61,9 @@ const sdk = vi.hoisted(() => ({
   deleted: [] as [string, string | undefined][],
   /** When a closed CLI has exited. */
   exiting: Promise.resolve() as Promise<void>,
+  /** The ids `getSessionInfo` was asked about, and those it says it holds. */
+  asked: [] as string[],
+  held: [] as string[],
 }));
 
 const { claude } = await import('../src/claude.js');
@@ -117,9 +125,9 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** The `query()` options the first send of a session in `FOLDER` that `create` built from these start fields started its CLI with. */
-const started = async (start: Record<string, unknown>): Promise<Record<string, unknown>> => {
+const started = async (start: Record<string, unknown>, preset?: Record<string, unknown>): Promise<Record<string, unknown>> => {
   sdk.options = [];
-  claude({ paths: [FOLDER] }).create({
+  claude({ paths: [FOLDER], ...(preset === undefined ? {} : { preset }) }).create({
     uri: 'ahp-session:/resume',
     chatUri: 'ahp-chat:/resume',
     workingDirectory: FOLDER,
@@ -145,6 +153,8 @@ const OWN = '0a0a0a0a-1111-4111-8111-000000000006';
 const KEPT = '0a0a0a0a-1111-4111-8111-000000000007';
 const LONG = '0a0a0a0a-1111-4111-8111-000000000008';
 const EXITING = '0a0a0a0a-1111-4111-8111-000000000009';
+const VIA_SDK = '0a0a0a0a-1111-4111-8111-00000000000a';
+const HELD = '0a0a0a0a-1111-4111-8111-00000000000b';
 
 it('starts a conversation the CLI never wrote under the id it was asked to resume', async () => {
   const options = await started({ resume: NEVER });
@@ -201,6 +211,29 @@ it('has the SDK clear a transcript with no entry of a conversation under the id 
   expect(options).toMatchObject({ sessionId: OWN });
   expect(sdk.deleted).toEqual([[OWN, FOLDER]]);
   expect(existsSync(file)).toBe(false);
+});
+
+/*
+ * A record whose `writtenBy` is `getSessionInfo` asks the SDK whether the
+ * conversation is written as the first CLI starts, as VS Code's Claude asks
+ * before it materializes one: what the SDK holds is resumed, a transcript the
+ * listing reads as no conversation included, and the rest start under their
+ * own ids.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+ */
+it('asks the SDK whether a conversation is written where the record says getSessionInfo', async () => {
+  sdk.asked = [];
+  sdk.held = [];
+  const fresh = await started({ resume: VIA_SDK }, { writtenBy: 'getSessionInfo' });
+  expect(sdk.asked).toEqual([VIA_SDK]);
+  expect(fresh).not.toHaveProperty('resume');
+  expect(fresh).toMatchObject({ sessionId: VIA_SDK });
+
+  leftBehind(HELD, FOLDER);
+  sdk.held = [HELD];
+  const resumed = await started({ resume: HELD }, { writtenBy: 'getSessionInfo' });
+  expect(resumed).toMatchObject({ resume: HELD });
+  expect(resumed).not.toHaveProperty('sessionId');
 });
 
 /*
