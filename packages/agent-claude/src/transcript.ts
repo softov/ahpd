@@ -6,7 +6,7 @@ import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
+import { getClaudeToolInputString, lineOf, pastLineOf, questionAnswers, questionRequest, titleOf } from './input.js';
 import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
@@ -492,7 +492,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
         const given = bag(block.input);
-        const input = toolInputOf(name, given);
+        const input = getClaudeToolInputString(name, block.input);
         const meta = toolMetaOf(name);
         // From Claude's display table, as VS Code's replay names a call.
         // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393

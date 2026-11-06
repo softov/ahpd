@@ -6,20 +6,34 @@ import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMark
  * What a tool call says about its input, live and read back from a transcript.
  *
  * Three different things: the line a row draws, the subject a status line
- * reads, and the input a client parses.
+ * reads, and the input drawn under the row.
  */
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 /**
- * A call's `toolInput`: its whole input as JSON, which a client parses.
- *
- * Bash is its command, because a terminal row reads the command there. Absent
- * for a call with no input, as a call with nothing to say carries no `{}`.
+ * A call's `toolInput`, the input drawn under its row: a shell tool's
+ * command, a search tool's pattern, and any other input as indented JSON.
+ * Absent only for a call with no input. VS Code's Claude's
+ * `getClaudeToolInputString`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L543-L570
  */
-export function toolInputOf(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
+export function getClaudeToolInputString(toolName: string, input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  if (toolName === 'Bash' || toolName === 'BashOutput' || toolName === 'KillBash') {
+    const command = str(bag(input).command);
+    if (command) return command;
+  }
+  if (toolName === 'Grep' || toolName === 'Glob') {
+    const pattern = str(bag(input).pattern);
+    if (pattern) return pattern;
+  }
+  try {
+    return JSON.stringify(input, null, 2);
+  }
+  catch {
+    return undefined;
+  }
 }
 
 /** VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it is cut. */

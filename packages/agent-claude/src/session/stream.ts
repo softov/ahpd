@@ -4,7 +4,7 @@ import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
-import { lineOf, pastLineOf, titleOf, toolInputOf, writeOf } from '../input.js';
+import { getClaudeToolInputString, lineOf, pastLineOf, titleOf, writeOf } from '../input.js';
 import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
@@ -396,7 +396,7 @@ export function createStream(ctx: SessionContext): Stream {
         const displayName = displayNameOf(name);
         const line = lineOf(name, bag(block.input), displayName);
         ctx.pastLines.set(id, pastLineOf(name, bag(block.input), displayName));
-        const input = toolInputOf(name, bag(block.input));
+        const input = getClaudeToolInputString(name, block.input);
         const from = serverOf(name);
         /*
          * A spawning call, whose input is the only place the harness says what

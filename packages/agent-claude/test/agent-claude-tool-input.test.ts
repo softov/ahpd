@@ -8,10 +8,10 @@ import type { Bag, Session } from '@ahpd/sdk';
 /*
  * A tool call's `toolInput`, live and read back.
  *
- * `toolInput` is the call's whole input as JSON, so a client can parse it;
- * `invocationMessage` is the short line the row draws. Bash is the one tool
- * whose `toolInput` is its command, because a terminal row reads the command
- * there.
+ * `toolInput` is the input drawn under the call's row, as VS Code's Claude
+ * makes it: a shell tool's command, a search tool's pattern, and any other
+ * input as indented JSON; `invocationMessage` is the short line the row draws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L543-L570
  *
  * The row line is never cut JSON. It is VS Code's line for a tool VS Code
  * maps, as markdown where VS Code sends markdown, a Task or Agent call's own
@@ -384,7 +384,8 @@ it('draws a live call\'s row line as its description or VS Code\'s line, and its
     expect(held.get(id)?.invocationMessage, id).toEqual(line);
     expect(held.get(id)?.pastTenseMessage, id).toEqual(past);
     const input = block.input as Bag;
-    expect(held.get(id)?.toolInput, id).toBe(block.name === 'Bash' ? input.command : JSON.stringify(input));
+    const drawn = block.name === 'Bash' ? input.command : block.name === 'Grep' || block.name === 'Glob' ? input.pattern : JSON.stringify(input, null, 2);
+    expect(held.get(id)?.toolInput, id).toBe(drawn);
   }
   expect(held.get('toolu_said')?.success).toBe(false);
 });
@@ -396,7 +397,8 @@ it('draws a restored call\'s row line and past tense as the live one does', asyn
     expect(back.get(id)?.invocationMessage, id).toEqual(line);
     expect(back.get(id)?.pastTenseMessage, id).toEqual(past);
     const input = block.input as Bag;
-    expect(back.get(id)?.toolInput, id).toBe(block.name === 'Bash' ? input.command : JSON.stringify(input));
+    const drawn = block.name === 'Bash' ? input.command : block.name === 'Grep' || block.name === 'Glob' ? input.pattern : JSON.stringify(input, null, 2);
+    expect(back.get(id)?.toolInput, id).toBe(drawn);
   }
   expect(back.get('toolu_said')?.success).toBe(false);
 });
@@ -662,7 +664,7 @@ it('completes a live answered question with its text alone, the answers on its r
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
   expect(((part?.request as Bag | undefined)?.answers)).toBeDefined();
   // The input stays what the model sent, which has no answers in it.
-  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 it('holds a part-way answer on the request, and says nothing of the client\'s answer', async () => {
@@ -686,7 +688,7 @@ it('denies a live question nobody answered in VS Code\'s words, and carries no a
   expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
-  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 /*
@@ -709,13 +711,13 @@ it('reads a replayed answered question back with its text alone, as it completed
   const back = await restored([ask], [answerWith({ questions: asked.questions, answers: picked })]);
   expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
   // The input stays what the model sent, which has no answers in it.
-  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 it('carries no answers for a replayed question that was never answered', async () => {
   const back = await restored([ask], [answerWith()]);
   expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
-  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 /*

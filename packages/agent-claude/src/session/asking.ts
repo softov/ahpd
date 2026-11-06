@@ -2,7 +2,7 @@ import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
-import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
+import { getClaudeToolInputString, lineOf, pastLineOf, questionRequest, writeOf } from '../input.js';
 import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
@@ -346,7 +346,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * raised comes down, and one that would be raised is not raised.
        */
       ctx.holdCall(id);
-      const toolInput = toolInputOf(toolName, input);
+      const toolInput = getClaudeToolInputString(toolName, input);
       // Named and titled from Claude's tables, as VS Code's Claude agent puts
       // its confirmation, a client's tool by the name its client announced.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
