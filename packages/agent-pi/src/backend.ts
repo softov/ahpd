@@ -158,7 +158,7 @@ export interface BackendOptions {
    * included, with the source left whole.
    */
   forkAt?: string;
-  /** The id a new conversation is saved under; pi picks one when left out. */
+  /** The id a new conversation is saved under; pi picks one when left out or when its own check refuses this one. */
   id?: string;
   /** Where pi keeps its sessions; its own default when left out. */
   sessionDir?: string;
@@ -241,9 +241,6 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
   return wrap(sdk, session);
 }
 
-/** A UUID, the only form of id a session is saved under that pi did not pick itself. */
-export const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-
 /**
  * The first user message on a branch after an entry, from its root when there
  * is no entry, and nothing when the entry is not on the branch.
@@ -290,11 +287,23 @@ export function resumePoint(manager: Pick<SessionManager, 'getLeafEntry' | 'getE
  * copy under pi's own new id. A resumed id with a file continues that file,
  * and a resumed id nobody has is a new conversation under that id, so a client
  * that lost its file keeps its name. Anything else is a new conversation under
- * `id`, or pi's own. Only a UUID is passed to pi, so an id pi would refuse
- * becomes pi's own instead.
+ * `id`, or pi's own. An id is offered to pi as its `--session-id` takes one,
+ * opened where it exists and created where it does not, and pi's own check
+ * decides whether it is an id: one pi refuses (letters, numbers, '.', '_' and
+ * '-', starting and ending with a letter or number) becomes pi's own instead.
+ * https://www.npmjs.com/package/@earendil-works/pi-coding-agent (docs/cli.md, `--session-id`)
  */
 export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager {
   const { SessionManager } = sdk;
+  // Created under `id` where pi's own check takes it, and nothing otherwise.
+  const createdAs = (id: string): SessionManager | undefined => {
+    try {
+      return SessionManager.create(options.cwd, options.sessionDir, { id });
+    }
+    catch {
+      return undefined;
+    }
+  };
   if (options.forkAt !== undefined) {
     /*
      * Refused rather than continued empty.
@@ -323,10 +332,10 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
     // catalogue and the files can disagree after somebody tidied up, and
     // refusing would lose the prompt that was being sent. It keeps the id, so
     // the client's name for it still answers.
-    if (isUuid(options.resume)) return SessionManager.create(options.cwd, options.sessionDir, { id: options.resume });
+    const created = createdAs(options.resume);
+    if (created !== undefined) return created;
   }
-  const id = options.id;
-  return SessionManager.create(options.cwd, options.sessionDir, id !== undefined && isUuid(id) ? { id } : undefined);
+  return (options.id === undefined ? undefined : createdAs(options.id)) ?? SessionManager.create(options.cwd, options.sessionDir);
 }
 
 /**

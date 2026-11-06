@@ -31,7 +31,7 @@ import type {
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
-import { isUuid, openPi } from './backend.js';
+import { openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
 import { addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
@@ -976,9 +976,9 @@ export function piSession(
       ...(resume !== undefined ? { resume } : {}),
       // Only the first open forks: a rebuild continues the copy it made.
       ...(first && resume !== undefined && start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
-      // Only a UUID: pi is handed a name it can write a file by, and a name a
-      // client made up is left to pi, whose own name the host records after.
-      ...(first && resume === undefined && isUuid(writtenAs) ? { id: writtenAs } : {}),
+      // Offered to pi, whose own check takes it or leaves pi's own name, which
+      // the host records after.
+      ...(first && resume === undefined ? { id: writtenAs } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
       ...(tools.length > 0 ? { tools } : {}),
       ...(instructions.length > 0 ? { instructions } : {}),

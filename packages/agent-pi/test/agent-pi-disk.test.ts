@@ -354,11 +354,11 @@ it('opens a new session under the UUID its URI names', async () => {
   expect(pi.opens[0]?.resume).toBeUndefined();
 });
 
-it('leaves the id to pi when the URI does not name a UUID', async () => {
+it('offers pi the id its URI names whatever its form, for pi\'s own check', async () => {
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(pi.opens[0]?.id).toBeUndefined();
+  expect(pi.opens[0]?.id).toBe('s1');
 });
 
 it('resumes under the id it was resumed with, not the URI', async () => {
@@ -395,6 +395,22 @@ it('creates a resumed id that has no file under that id', async () => {
   const sdk = await loadPi();
   const store = resumeOrCreate(sdk, { cwd: root, sessionDir: join(root, 'pi'), resume: CLIENT_ID });
   expect(store.getSessionId()).toBe(CLIENT_ID);
+});
+
+/*
+ * pi's own check decides what an id is, as its `--session-id` takes one:
+ * letters, numbers, '.', '_' and '-', starting and ending with a letter or
+ * number. An id it refuses becomes pi's own.
+ * https://www.npmjs.com/package/@earendil-works/pi-coding-agent (docs/cli.md, `--session-id`)
+ */
+it('saves a session under any id pi takes, and under pi\'s own where pi refuses the one it was given', async () => {
+  const sdk = await loadPi();
+  const sessionDir = join(root, 'pi');
+  expect(resumeOrCreate(sdk, { cwd: root, sessionDir, id: 'chat.one_2' }).getSessionId()).toBe('chat.one_2');
+  expect(resumeOrCreate(sdk, { cwd: root, sessionDir, resume: 'peer-chat-7' }).getSessionId()).toBe('peer-chat-7');
+  const refused = resumeOrCreate(sdk, { cwd: root, sessionDir, id: '-not one-' }).getSessionId();
+  expect(refused).not.toBe('-not one-');
+  expect(refused).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/);
 });
 
 it('forks a session from disk at the entry it was given, and leaves the source as it was', async () => {
