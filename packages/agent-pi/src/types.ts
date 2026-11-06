@@ -81,7 +81,13 @@ export const modeOf = (value: unknown): PermissionMode =>
     ? value as PermissionMode
     : 'default');
 
-/** The `permissionMode` control a session publishes, as a client draws it. */
+/**
+ * The `permissionMode` control a session publishes, as a client draws it.
+ *
+ * Each chat keeps its own, as VS Code's Claude agent marks its mode
+ * `chatMutable`: every chat of a pi session is a pi session of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
+ */
 export const permissionModeProperty = (): Bag => ({
   type: 'string',
   title: 'Approvals',
@@ -91,6 +97,7 @@ export const permissionModeProperty = (): Bag => ({
   enumDescriptions: [...PERMISSION_DESCRIPTIONS],
   default: 'default',
   sessionMutable: true,
+  chatMutable: true,
 });
 
 /** One pi backend, as the configuration names it. */

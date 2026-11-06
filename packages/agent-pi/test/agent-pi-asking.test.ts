@@ -448,6 +448,11 @@ it('closes a refused call failed, never readied to run and never handed to its c
   expect(callIn(parts, 'c1')).toMatchObject({ status: 'completed', success: false });
 });
 
+/*
+ * Each chat keeps its own mode, as VS Code's Claude agent marks its mode
+ * `chatMutable`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
+ */
 it('advertises the six permission modes, defaulting to default', () => {
   const agent = piAgent({}, [root]);
   const properties = ((agent.schema?.() as Bag).properties as Bag);
@@ -455,6 +460,7 @@ it('advertises the six permission modes, defaulting to default', () => {
   expect(mode.enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
   expect(mode.default).toBe('default');
   expect(mode.sessionMutable).toBe(true);
+  expect(mode.chatMutable).toBe(true);
   expect((agent.defaults?.() as Bag).permissionMode).toBe('default');
 });
 
