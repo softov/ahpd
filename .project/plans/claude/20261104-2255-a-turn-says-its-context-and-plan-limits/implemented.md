@@ -41,8 +41,7 @@ A session's `_meta` carries the same keys and its account's plan from the handsh
 
 ## Departures from the plan
 
-- The branch was replayed on main as #243 after #240, #241 and #242. A turn's end asks for the breakdown and the limits at every result, because a stop closes the CLI, and the cases start their turn before they feed frames.
-
+- The branch was replayed on main as #243 after #240, #241 and #242. A turn's end asks for the breakdown and the limits at every result, because a stop closes the CLI. The cases start their turn before they feed frames.
 - task 01 - the plan named `session/context.ts`, which already exists as the session context, so the map is `session/contextusage.ts`.
 - task 01 - the control answer spells its fields in camelCase, so the map reads both that and `SDKContextUsage`'s snake_case.
 - task 01 - `resolvedModel` did not reach `Offered.models`, so the sdk type and `probe.ts` now carry it.
