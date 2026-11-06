@@ -240,11 +240,12 @@ own for the host it runs - `shutdown`, `getNetworkDiagnosticsInfo`,
 `diagnosticsFetch`, `getManagedSettingsDiagnostics`,
 `vscode/getAgentHostSessionStateFile`, `vscode/collectAgentHostDebugLogs` and
 `vscode/readAgentHostDebugLogsChunk` - and this is what the host answers them
-from: `version` goes into `serverInfo` and the network report, and `logs()`
-names the files a "collect logs" packs up under `agenthost/`. Leave it out and
-the host still answers the network and log requests with what it has.
-`shutdown` is the host's own: it closes the host, every backend stopped and
-every store closed, and answers once that is done, the process left running.
+from: `version` goes into `serverInfo` and the network report, `logs()` names
+the files a "collect logs" packs up under `agenthost/`, and `shutdown()` is run
+once the request has closed the host, every backend stopped and every store
+closed, and been answered: the daemon's stops it the way `ahpd stop` does.
+Leave it out and the host still answers the network and log requests with what
+it has, and a `shutdown` closes the host and answers, the process left running.
 The session's own file comes from the agent's `stateFile`, and the endpoints
 to probe from its `endpoints()`.
 

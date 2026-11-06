@@ -962,6 +962,12 @@ export interface Diagnostics {
    * error.
    */
   logs?(): string[];
+  /**
+   * What the window's `shutdown` request runs once every backend has been shut
+   * down and the request answered: the embedder's own end, which in the
+   * daemon is the way `ahpd stop` takes it down. A host given none stays up.
+   */
+  shutdown?(): void | Promise<void>;
 }
 
 /**

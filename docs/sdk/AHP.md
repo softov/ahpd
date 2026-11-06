@@ -1088,9 +1088,11 @@ IPv6 and fetches it, timed, with the body kept to 64 KiB and the proxy it went
 through, a URL that does not parse failing the request.
 `getManagedSettingsDiagnostics` is an empty list: the policy layer it reports
 on is Copilot's. `shutdown` closes the host, every backend stopped and every
-store closed, and answers `{}` once that is done, the process and the
-connection left running, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051)
-shuts its providers down and answers after.
+store closed, and answers `{}` once that is done, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051)
+shuts its providers down and answers after, and then stops the daemon the way
+`ahpd stop` does, through the service manager that holds it where one does. A
+host built without a way to stop answers and stays up, its connection
+answering and starting nothing new.
 
 ### What is served outside the protocol
 
@@ -1105,7 +1107,7 @@ refused `-32601`.
 | What | Why it stays |
 | --- | --- |
 | `activity: null` | A row that went idle has to say so. The partial is spread over the row a client holds, so a key left off would keep the last tool call showing, and the reference host sends `null` where its client reads cleared. [Server notifications](#server-notifications) |
-| `shutdown` | The window shuts the host's backends down. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `shutdown` | The window stops a daemon it started. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `getNetworkDiagnosticsInfo` | The window's diagnostics screen, where the host reports itself. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `getManagedSettingsDiagnostics` | The same screen, where the policy layer being reported on is Copilot's. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
 | `diagnosticsFetch` | The same screen, which looks one endpoint up and fetches it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |

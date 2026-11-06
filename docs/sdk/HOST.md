@@ -187,7 +187,7 @@ The verbs that read or change this host's own settings, one line each. The rest 
 | Change a root config key | `config:change` | `root/configChanged`, and a `replace` - `config:write` covers it |
 | Push `workspaceTrust` | `trust:push` | The same action, when `workspaceTrust` is the one key it carries - `trust:write` covers it |
 | Read the account an agent bills to | `account:read` | `seesAccount`, on the root state a connection subscribes to and on every `root/configChanged` after it |
-| Close the host | `config:change` | The `shutdown` command|
+| Stop the daemon | `config:change` | The `shutdown` command|
 | Edit the configuration over HTTP | `config:write` | `GET /api/config`; the plugin verbs that write take `plugin:` grants, and install, update and remove are the deployment token's |
 
 ## See also

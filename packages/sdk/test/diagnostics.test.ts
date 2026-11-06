@@ -329,25 +329,36 @@ describe('what the window asks', () => {
   });
 
   /*
-   * VS Code's shutdown: the providers shut down, then the answer, the host
-   * process and its connection left running.
+   * VS Code's order: the providers shut down, then the answer.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
+   * Then the embedder's own end, which in the daemon stops it the way `ahpd
+   * stop` does, as upstream decided; a host given none stays up, its
+   * connection answering and starting nothing new.
    */
-  it('stops its backends when told, answers once they have stopped, and keeps the connection', async () => {
+  it('stops its backends when told, answers once they have stopped, and then ends what it was given to', async () => {
     const dir = scratch();
     const stopped: string[] = [];
-    const { client } = await serving(dir, {
-      create: (start) => {
+    const backend = {
+      create: (start: Parameters<Agent['create']>[0]) => {
         const session = echo({ path: dir, pace: 0 }).create(start);
-        return { ...session, close: (why) => { stopped.push(String(why)); return session.close(why); } };
+        return { ...session, close: (why: Parameters<typeof session.close>[0]) => { stopped.push(String(why)); return session.close(why); } };
       },
-    })();
+    };
+    let ended = 0;
+    const { client } = await serving(dir, backend, { shutdown: () => { ended += 1; } })();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
     expect(await client.handle({ method: 'shutdown', params: {} })).toEqual({});
     expect(stopped).toEqual(['stopping']);
+    // Answered before it ends, so the window hears yes rather than a dropped socket.
+    expect(ended).toBe(0);
+    await new Promise((r) => { setTimeout(r, 20); });
+    expect(ended).toBe(1);
+
+    const { client: kept } = await serving(scratch(), {})();
+    expect(await kept.handle({ method: 'shutdown', params: {} })).toEqual({});
     // The connection still answers, and the closed host starts nothing new.
-    expect(await client.handle({ method: 'getManagedSettingsDiagnostics', params: {} })).toEqual([]);
-    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } }))
+    expect(await kept.handle({ method: 'getManagedSettingsDiagnostics', params: {} })).toEqual([]);
+    await expect(kept.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } }))
       .rejects.toMatchObject({ message: 'This host is closing, so nothing new starts on it' });
   });
 });

@@ -90,6 +90,7 @@ import { pty } from '../pty.js';
 import { shellIntegration } from '../shellintegration.js';
 import { screen } from '../screen.js';
 import { realManager } from '../service.js';
+import type { Manager, Service } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
 import { filesOf, lineFor, writerFor } from '../wire.js';
@@ -1499,13 +1500,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     /*
      * What the window's diagnostics get from this daemon.
      *
-     * The version out of the manifest, and the log a detached daemon writes to
-     * and every file of the wire capture when there is one - a capture that
-     * stops at the last roll is missing its start.
+     * The version out of the manifest, the log a detached daemon writes to and
+     * every file of the wire capture when there is one - a capture that stops
+     * at the last roll is missing its start - and a shutdown that stops the
+     * daemon the way `ahpd stop` does, through the service manager that holds
+     * it where one does.
      */
     diagnostics: {
       version: version(),
       logs: () => [daemonLog(), ...(capture.at === undefined ? [] : filesOf(capture.at))],
+      shutdown: daemonShutdown(() => wayDown, service === undefined ? undefined : { service, name: serviceName, manager: realManager() }),
     },
   };
 
@@ -2339,6 +2343,40 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   await controlListener?.listening;
   say.write(announcement);
 }
+
+/**
+ * What a `shutdown` request does to this daemon once it has been answered:
+ * stops it the way `ahpd stop` does.
+ *
+ * A daemon a service manager holds is stopped through the manager, as `ahpd
+ * stop` stops one, so a unit that starts its daemon again whenever it exits
+ * does not bring it back. Any other runs its way down once there is one, and
+ * the signal it sent itself before that.
+ *
+ * `way` answers the way down the daemon has now, or nothing in the window
+ * between the host being built with this and the lifecycle being made - the
+ * socket is bound in that window, so a request can land in it. There is no way
+ * down to run there, and the signal is kept for it rather than a request that
+ * does nothing. Once the way is there, this runs the same steps `ahpd stop`
+ * and the signals do, `stopping` first, so the stopping event, the plugin
+ * connections, the listeners and `host.close()` all happen - which sending
+ * `SIGTERM` to itself never did on Windows, where Node makes that a hard kill.
+ */
+export const daemonShutdown = (
+  way: () => (() => void) | undefined,
+  held?: { service: Service; name?: string | undefined; manager: Pick<Manager, 'stop'> },
+): (() => Promise<void>) => async () => {
+  if (held !== undefined) {
+    await held.manager.stop(held.service, held.name);
+    return;
+  }
+  const down = way();
+  if (down === undefined) {
+    process.kill(process.pid, 'SIGTERM');
+    return;
+  }
+  down();
+};
 
 /**
  * The options a recorded line runs with, read over the configuration as it is

@@ -619,18 +619,28 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      * The four the window asks of its own host about itself.
      *
      * `shutdown` closes the host, every backend stopped and every store
-     * closed, then the debug logs, and answers once that is done, the
-     * process and the connection left running, as the reference host's
-     * shutdown shuts its providers down and answers after. The network
-     * diagnostics are what the process can see - the proxy variables, and
-     * the endpoints its backends name - and `diagnosticsFetch` tries one.
-     * Managed settings answer an empty list, the host holding no managed
-     * policy layer.
+     * closed, then the debug logs, and answers once that is done, as the
+     * reference host's shutdown shuts its providers down and answers after;
+     * then, the answer gone, it runs the embedder's own end, which in the
+     * daemon stops it the way `ahpd stop` does, as upstream decided. The
+     * reference host's process stays up because the window that owns it ends
+     * it, and a daemon has no window that owns it. The network diagnostics
+     * are what the process can see - the proxy variables, and the endpoints
+     * its backends name - and `diagnosticsFetch` tries one. Managed settings
+     * answer an empty list, the host holding no managed policy layer.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
      */
     shutdown: async () => {
       await ctx.shutdown();
       await logs.close();
+      const end = options.diagnostics?.shutdown;
+      if (end !== undefined) {
+        setTimeout(() => {
+          Promise.resolve().then(end).catch((error: unknown) => {
+            log(`shutdown did not end the process: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }, 0);
+      }
       return {};
     },
     /*
