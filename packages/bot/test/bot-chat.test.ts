@@ -762,6 +762,25 @@ it('reads a steering line back in the turn it went into', async () => {
   expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
+it('reads a turn its log shows begun and never ended back interrupted, as VS Code\'s Copilot reads one', async () => {
+  const { host, configDir, records } = made();
+  const client = await anyone(host);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+  await said(client, 't1', 'hello');
+  chat.reply('done');
+  // Begun, and the daemon went before it ended: the log holds its first line alone.
+  await said(client, 't2', 'and then');
+
+  const fresh = await backend(configDir, records);
+  const read = await fresh.transcript?.('one');
+  expect(read?.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete'], ['t2', 'error']]);
+  expect(read?.[1]?.responseParts).toEqual([
+    { kind: 'error', error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' } },
+  ]);
+});
+
 it('waits a queued message out, and starts it when the turn in front ends', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];

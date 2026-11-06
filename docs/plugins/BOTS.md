@@ -151,7 +151,7 @@ A chat is the reader's own session: it works in the bot's `workspace`, it is tit
 
 `chat` is answered and never obeyed. A client that read a bot and writes the record back, `chat` and all, is writing what it was given, and the key is dropped rather than kept: a chat is the reader's, and the next reader's read answers the next reader's chat.
 
-A chat's log is the whole of its state. Nothing about a chat is kept in memory past the process that made it, so a daemon that starts again lists, opens and replays the chats it has logs for.
+A chat's log is the whole of its state. Nothing about a chat is kept in memory past the process that made it, so a daemon that starts again lists, opens and replays the chats it has logs for. A turn the log shows begun and never ended, one a daemon went down in, reads back as an error, as VS Code reads back a turn its record shows started and never ended: `executionInterrupted`, "The agent was interrupted before this request finished."
 
 A chat's session, its chat and its row carry the bot in `_meta['ahpd.bot']`, namespaced as VS Code's host namespaces the keys it puts in `_meta`: `{ id, name, color, labels, body, kind: "direct" }`, the bot as it is now, or as the log's lines last had it for a bot since deleted. Each line of the log carries the same mark, so a listing says which bot a chat nothing runs is with.
 

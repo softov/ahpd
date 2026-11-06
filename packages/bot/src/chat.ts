@@ -276,13 +276,18 @@ const messageOf = (text: string, from?: MessageFrom, model?: Chosen, attachments
   ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
 });
 
+/** The error part a turn that began and never ended reads back with, VS Code's words for an interrupted request. */
+const INTERRUPTED: Bag = {
+  kind: 'error',
+  error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+};
+
 /**
- * The ending a line's `state` names, or `complete` where it names none.
+ * The ending a line's `state` names: `cancelled` or `error`, and `complete` for
+ * any other.
  *
- * A line a turn *began* with carries no state, and neither does one a person
- * wrote by hand. A state is what an ending is, so anything that is not one of
- * the endings reads back as a turn that finished - which is what such a turn
- * is, as far as a chat that answers again after a restart can say.
+ * A line with no state is the one a turn began with, and a turn whose last line
+ * is that one is read back interrupted, in `logAt`.
  */
 const endingIn = (said: unknown): Ending => (
   said === 'cancelled' || said === 'error' ? said : 'complete'
@@ -337,8 +342,13 @@ const turnOf = (said: Bag): ChatTurn | undefined => {
  * A turn is two lines - the one it began with and the one it ended with - and
  * what comes back is one turn: the line an ending was written on replaces the
  * line the turn opened on, because it is the same turn said again, as it
- * finished. A chat whose daemon died mid-turn has only the first of the two,
- * and that reads as the turn it was.
+ * finished. A turn whose daemon died before it ended has only the first of the
+ * two, and reads back interrupted, as VS Code's Copilot reads back a turn its
+ * record shows started and never ended: an error, with the error part last.
+ * The part is not marked resumable, because nothing runs a bot chat's turn
+ * again.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6962-L6967
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
  */
 const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | undefined => {
   let text: string;
@@ -347,6 +357,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
   const turns: ChatTurn[] = [];
   /** Where each turn read so far sits, so the line that ends it can replace it. */
   const at = new Map<string, number>();
+  /** The turns whose last line so far is the one they began with. */
+  const unended = new Set<string>();
   let mark: Bag | undefined;
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
@@ -372,6 +384,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     const one = turnOf(held);
     if (one === undefined) continue;
     mark ??= markIn(held);
+    if (held['state'] === undefined) unended.add(one.id);
+    else unended.delete(one.id);
     const known = at.get(one.id);
     if (known === undefined) {
       at.set(one.id, turns.length);
@@ -379,7 +393,12 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     }
     else turns[known] = one;
   }
-  return { turns, mark };
+  return {
+    turns: turns.map((turn) => (unended.has(turn.id)
+      ? { ...turn, state: 'error' as const, responseParts: [...turn.responseParts, INTERRUPTED] }
+      : turn)),
+    mark,
+  };
 };
 
 /** Add one turn to a chat's log, making the folder the first time. */
