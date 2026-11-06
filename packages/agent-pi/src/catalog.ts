@@ -171,37 +171,33 @@ export async function deleteSession(
 }
 
 /**
- * Every session in the directories this host serves, newest last.
+ * Every session pi's store holds, wherever it ran, newest last.
  *
- * pi lists by directory, so each is asked and the answers are merged. A
- * directory it has never run in answers nothing rather than throwing, and one
- * that fails to read costs its own rows rather than the whole catalogue: a
- * listing that disappears because one project's store is unreadable is worse
- * than one that is short.
+ * pi's own `listAll`, which reads every project's folder of the store, as VS
+ * Code lists every session its runtime's store knows: a conversation the `pi`
+ * CLI had in a folder this host does not serve is one of pi's sessions all the
+ * same. A folder pi cannot read costs its own rows, which is how `listAll`
+ * reads them, and a store that cannot be read at all costs the rows on disk,
+ * this process's own records still answering.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L167-L181
  */
-export async function catalogue(
-  options: PiOptions,
-  provider: string,
-  directories: readonly string[],
-): Promise<Listed[]> {
+export async function catalogue(options: PiOptions, provider: string): Promise<Listed[]> {
   const rows = new Map<string, Listed>();
   const { SessionManager } = await loadPi();
 
-  for (const directory of directories) {
-    let found;
-    try { found = await SessionManager.list(directory, options.sessionDir); }
-    catch { continue; }
-    for (const one of found) {
-      rows.set(one.id, {
-        id: one.id,
-        // pi's listing answers `(no messages)` as the first message of a session
-        // nobody said anything in, which is listed untitled, as `rowOfFile` lists it.
-        title: one.name ?? (one.firstMessage === NO_MESSAGES ? '' : titleFrom(one.firstMessage, '')),
-        createdAt: one.created.toISOString(),
-        modifiedAt: one.modified.toISOString(),
-        workingDirectories: [uriOf(one.cwd === '' ? directory : one.cwd)],
-      });
-    }
+  let found: Awaited<ReturnType<typeof SessionManager.listAll>> = [];
+  try { found = await SessionManager.listAll(options.sessionDir); }
+  catch { found = []; }
+  for (const one of found) {
+    rows.set(one.id, {
+      id: one.id,
+      // pi's listing answers `(no messages)` as the first message of a session
+      // nobody said anything in, which is listed untitled, as `rowOfFile` lists it.
+      title: one.name ?? (one.firstMessage === NO_MESSAGES ? '' : titleFrom(one.firstMessage, '')),
+      createdAt: one.created.toISOString(),
+      modifiedAt: one.modified.toISOString(),
+      workingDirectories: one.cwd === '' ? [] : [uriOf(one.cwd)],
+    });
   }
 
   // What this process is running wins over what is on disk: it has the title

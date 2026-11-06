@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { expect, it } from 'vitest';
+import { uriOf } from '@ahpd/sdk';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { piAgent } from '../src/agent.js';
@@ -429,6 +431,38 @@ it('refuses a fork it cannot make rather than starting a conversation that is no
   // An entry the source does not have is pi's own refusal.
   expect(() => resumeOrCreate(sdk, { cwd: root, sessionDir, resume: disk.id, forkAt: 'no-such-entry' }))
     .toThrow(/not found/);
+});
+
+/*
+ * Every session pi's store holds, a conversation the `pi` CLI had in a folder
+ * this host does not serve among them, as VS Code lists every session its
+ * runtime's store knows; pi's own `listAll` reads every project's folder.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L167-L181
+ */
+it('lists a session pi ran in a folder this host does not serve', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'ahpd-pi-agent-'));
+  const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-pi-elsewhere-'));
+  const before = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    const { SessionManager } = await loadPi();
+    // In pi's own store, under the folder it ran in, as the CLI writes one.
+    const store = SessionManager.create(elsewhere);
+    store.appendMessage({ role: 'user', content: 'from the CLI', timestamp: Date.now() });
+    store.appendMessage(answer([{ type: 'text', text: 'Done.' }], 'stop'));
+
+    const rows = await piAgent({}, [root]).list?.();
+    expect(rows?.find((one) => one.id === store.getSessionId())).toMatchObject({
+      title: 'from the CLI',
+      workingDirectories: [uriOf(elsewhere)],
+    });
+  }
+  finally {
+    if (before === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = before;
+    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
 });
 
 it('lists an empty directory as no sessions rather than failing', async () => {

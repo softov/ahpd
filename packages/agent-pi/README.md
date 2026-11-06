@@ -145,7 +145,7 @@ Some of it does not, and the backend does not advertise it:
 
 ## The catalogue
 
-Sessions are listed from two places at once: pi's own files, so a conversation somebody had from the `pi` command in a served directory has a row here, and the sessions this process is running. A row that came off disk opens with its turns: the entries on the file's current branch are raised as the events pi raises live and read through the same mapping a running turn uses, so a rebuilt turn has the same text, reasoning and tool calls a watched one has. A session this process is running answers from what it watched, after the turns it resumed from the file.
+Sessions are listed from two places at once: every file pi's store holds, read with pi's own `listAll`, so a conversation somebody had from the `pi` command in any folder has a row here, and the sessions this process is running. A row that came off disk opens with its turns: the entries on the file's current branch are raised as the events pi raises live and read through the same mapping a running turn uses, so a rebuilt turn has the same text, reasoning and tool calls a watched one has. A session this process is running answers from what it watched, after the turns it resumed from the file.
 
 ## Documentation
 

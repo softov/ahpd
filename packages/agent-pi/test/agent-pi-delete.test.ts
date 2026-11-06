@@ -24,7 +24,7 @@ const found = vi.hoisted(() => ({ at: undefined as string | undefined }));
 
 vi.mock('@earendil-works/pi-coding-agent', () => ({
   SessionManager: {
-    list: async () => [],
+    listAll: async () => [],
     findById: () => found.at,
     open: () => ({}),
     create: () => ({}),
@@ -97,7 +97,7 @@ it('forgets a running session too, so the next listing does not offer it again',
   await deleteSession(options, 'pi', 'pi-1', root);
 
   const { catalogue } = await import('../src/catalog.js');
-  expect(await catalogue(options, 'pi', [root])).toEqual([]);
+  expect(await catalogue(options, 'pi')).toEqual([]);
 });
 
 it('counts a session pi has no file for as deleted', async () => {

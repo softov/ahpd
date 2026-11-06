@@ -132,12 +132,12 @@ export function piAgent(
 
     directories: () => [...paths],
 
-    list: (): Promise<Listed[]> => catalogue(options, provider, paths),
+    list: (): Promise<Listed[]> => catalogue(options, provider),
 
     /*
      * One session's row, read from its own file rather than by listing the
      * folder it is in: what a client opening a row the host does not hold
-     * costs, which `list` pays by reading every transcript in the directory.
+     * costs, which `list` pays by reading every transcript pi's store holds.
      * The session's recorded folder is asked before the configured paths.
      */
     find: (id, at): Promise<Listed | undefined> => findSession(options, provider, id, paths, at),
