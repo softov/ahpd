@@ -152,6 +152,36 @@ describe('what GitHub knows about the branch', () => {
     expect(rowMeta?.githubData?.[HOME]?.pullRequestState).toBe('merged');
   });
 
+  /*
+   * The lists as VS Code's host writes a session's GitHub state: each URL with
+   * its host in lower case and no trailing slash, each once, ten at most.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1435-L1447
+   */
+  it('writes the branch\'s pull requests as VS Code\'s host writes them, each once and ten at most', async () => {
+    const requests = [
+      { url: 'https://GitHub.com/softov/ahpd/pull/12/', state: 'open' as const },
+      { url: 'https://github.com/softov/ahpd/pull/12', state: 'open' as const },
+      ...Array.from({ length: 11 }, (_, at) => ({ url: `https://github.com/softov/ahpd/pull/${11 - at}`, state: 'closed' as const })),
+    ];
+    const { port } = lookup(() => requests);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/many', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/many' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    const ten = Array.from({ length: 10 }, (_, at) => `https://github.com/softov/ahpd/pull/${12 - at}`);
+    const github = state._meta?.github as { pullRequestUrls?: string[]; initialPullRequestUrls?: string[] };
+    expect(github.pullRequestUrls).toEqual(ten);
+    expect(github.initialPullRequestUrls).toEqual(ten);
+    expect(state._meta?.githubData).toEqual({ [HOME]: github });
+  });
+
   it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {
     let fail = false;
     const { port } = lookup(() => { if (fail) throw new Error('offline'); return []; });
@@ -550,11 +580,11 @@ describe('the pull request a create-pr recorded', () => {
     refresh: async () => false,
   });
 
-  /** A host on a real repository, its changes source and the fake GitHub, with tools. */
-  async function withRepo(baseline?: { initialPullRequestUrls: string[]; associatedPullRequestUrls: string[] }) {
+  /** A host on a real repository, its changes source and the fake GitHub, with tools, GitHub opening `opened`. */
+  async function withRepo(baseline?: { initialPullRequestUrls: string[]; associatedPullRequestUrls: string[] }, opened = URL) {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
-    const fake = lookup(URL);
+    const fake = lookup(opened);
     const store = memorySessions();
     // A baseline the session already carries. The directory facts are asked
     // again and know nothing of it, which is a session that outlived the
@@ -619,6 +649,24 @@ describe('the pull request a create-pr recorded', () => {
     expect(held).toHaveLength(1);
     expect(held?.[0]).toMatchObject({ type: 'pullRequest', isArtifact: true, link: URL });
     expect((meta?.github as { pullRequestUrls?: string[] } | undefined)?.pullRequestUrls?.[0]).toBe(URL);
+  });
+
+  /*
+   * The session's lists under the URL VS Code's host writes, its host in lower
+   * case and no trailing slash, and the artifact under the link as opened.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestOperationProvider.ts#L267-L286
+   */
+  it('records the pull request it opened under the URL VS Code\'s host writes', async () => {
+    const opened = 'https://GitHub.com/softov/ahpd/pull/1/';
+    const { client, peer: p, uri, changeset } = await withRepo(undefined, opened);
+    await create(client, changeset);
+    await settle(8);
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as Record<string, unknown> | undefined;
+    const github = meta?.github as { pullRequestUrls?: string[]; associatedPullRequestUrls?: string[] } | undefined;
+    expect(github?.pullRequestUrls).toEqual([URL]);
+    expect(github?.associatedPullRequestUrls).toEqual([URL]);
+    expect((meta?.[KEY] as { link: string }[] | undefined)?.[0]?.link).toBe(opened);
   });
 
   it('moves a pull request the branch already had out of the baseline, in the same move as the artifact', async () => {

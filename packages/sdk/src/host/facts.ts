@@ -18,6 +18,13 @@ import type { HostContext } from './context.js';
  */
 const PULL_REQUEST_CLOCK_SKEW_MS = 5 * 60_000;
 
+/**
+ * VS Code's `MAX_SESSION_PULL_REQUEST_REFERENCES`: how many pull requests each
+ * list of a session's GitHub state keeps.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1435-L1436
+ */
+const MAX_SESSION_PULL_REQUEST_REFERENCES = 10;
+
 /** What a session's directory says about it, and what the host asks to move it. */
 export interface Facts {
   describes(uri: string): Bag;
@@ -181,6 +188,34 @@ export function createFacts(ctx: HostContext): Facts {
   /** The comparison the reference makes, so a URL with a trailing slash is the same one. */
   const urlKey = (url: string): string => url.trim().replace(/\/+$/, '').toLowerCase();
   /**
+   * Pull request URLs as VS Code's host writes them into a session's GitHub
+   * state, most recent first: a pull request's URL with its host in lower case
+   * and no trailing slash, each once by the reference's comparison, and
+   * `MAX_SESSION_PULL_REQUEST_REFERENCES` of them at most. A URL is read as
+   * VS Code's pattern reads one, `https://<host>/<owner>/<repo>/pull/<number>`
+   * with one trailing slash at most, and any other is kept as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1435-L1447
+   */
+  const pullRequestUrlsOf = (urls: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    return urls
+      .map((url) => {
+        const parts = url.startsWith('https://') ? url.slice('https://'.length).split('/') : [];
+        if (parts.length === 6 && parts[5] === '') parts.pop();
+        const [host, owner, repo, pull, number] = parts;
+        if (parts.length !== 5 || !host || !owner || !repo || pull !== 'pull' || !number
+          || ![...number].every((digit) => digit >= '0' && digit <= '9')) return url;
+        return `https://${host.toLowerCase()}/${owner}/${repo}/pull/${number}`;
+      })
+      .filter((url) => {
+        const key = urlKey(url);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, MAX_SESSION_PULL_REQUEST_REFERENCES);
+  };
+  /**
    * Add to a session's pull request baseline what VS Code's host adds to one.
    *
    * Only a folder-isolated session has a baseline, or one that holds one
@@ -213,7 +248,8 @@ export function createFacts(ctx: HostContext): Facts {
     if (held?.initialPullRequestUrls !== undefined && added.length === 0) return;
     kept.setPullRequests(id, {
       ...held,
-      initialPullRequestUrls: [...(held?.initialPullRequestUrls ?? []), ...added],
+      // The newly found first, as VS Code's host adds one to the baseline.
+      initialPullRequestUrls: pullRequestUrlsOf([...added, ...(held?.initialPullRequestUrls ?? [])]),
       associatedPullRequestUrls: held?.associatedPullRequestUrls ?? [],
     });
   };
@@ -228,18 +264,10 @@ export function createFacts(ctx: HostContext): Facts {
    */
   const promotePullRequest = (uri: string, url: string): void => {
     const held = kept.pullRequests(idOf(uri));
-    const seen = new Set<string>();
-    const associatedPullRequestUrls: string[] = [];
-    for (const one of [url, ...(held?.associatedPullRequestUrls ?? [])]) {
-      const key = urlKey(one);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      associatedPullRequestUrls.push(one);
-    }
     const promoted = urlKey(url);
     kept.setPullRequests(idOf(uri), {
       initialPullRequestUrls: (held?.initialPullRequestUrls ?? []).filter((one) => urlKey(one) !== promoted),
-      associatedPullRequestUrls,
+      associatedPullRequestUrls: pullRequestUrlsOf([url, ...(held?.associatedPullRequestUrls ?? [])]),
     });
   };
   /**
@@ -550,7 +578,7 @@ export function createFacts(ctx: HostContext): Facts {
       owner,
       repo,
       ...(newest === undefined ? {} : {
-        pullRequestUrls: found.map((one) => one.url),
+        pullRequestUrls: pullRequestUrlsOf(found.map((one) => one.url)),
         pullRequestBranchName: branch,
         pullRequestState: newest.state,
         pullRequestStateUrl: newest.url,
@@ -589,15 +617,18 @@ export function createFacts(ctx: HostContext): Facts {
     const urls = Array.isArray(held.pullRequestUrls)
       ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string')
       : [];
+    // The URL first in the list VS Code's host writes.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1449-L1465
+    const pullRequestUrls = pullRequestUrlsOf([pullRequest.url, ...urls]);
     const now: Bag = {
       ...held,
-      pullRequestUrls: [pullRequest.url, ...urls.filter((one) => one !== pullRequest.url)],
+      pullRequestUrls,
       pullRequestBranchName: pullRequest.branch,
     };
-    // The state is kept only while it names the URL being associated.
+    // The state is kept only while it names the URL being associated, in any case.
     delete now.pullRequestState;
     delete now.pullRequestStateUrl;
-    if (held.pullRequestStateUrl === pullRequest.url) {
+    if (typeof held.pullRequestStateUrl === 'string' && held.pullRequestStateUrl.toLowerCase() === pullRequestUrls[0]?.toLowerCase()) {
       now.pullRequestState = held.pullRequestState;
       now.pullRequestStateUrl = held.pullRequestStateUrl;
     }
